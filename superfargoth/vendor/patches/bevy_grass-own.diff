@@ -1,4 +1,4 @@
-diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/far.rs superfargoth/vendor/bevy_grass/src/far.rs
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/far.rs superfargoth/vendor/bevy_grass/src/far.rs
 --- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/far.rs	2006-07-24 08:21:28.000000000 +0700
 +++ superfargoth/vendor/bevy_grass/src/far.rs	2026-11-23 18:06:09.541657300 +0700
 @@ -6,7 +6,7 @@
@@ -75,10 +75,20 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
          }
      }
  }
-diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/fields.rs superfargoth/vendor/bevy_grass/src/fields.rs
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/fields.rs superfargoth/vendor/bevy_grass/src/fields.rs
 --- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/fields.rs	2006-07-24 08:21:28.000000000 +0700
-+++ superfargoth/vendor/bevy_grass/src/fields.rs	2026-11-23 17:44:29.670184200 +0700
-@@ -16,7 +16,7 @@
++++ superfargoth/vendor/bevy_grass/src/fields.rs	2026-11-23 21:33:02.283798100 +0700
+@@ -6,7 +6,9 @@
+ //! GPU decides which blades exist (`shaders/generate.wesl`).
+ 
+ use std::collections::{HashMap, HashSet};
++use std::ops::Range; // superfargoth patch (own: stable tables)
+ use std::sync::Arc;
++use std::time::Duration; // superfargoth patch (own: rebuild phases)
+ 
+ use bevy::app::{App, PostUpdate};
+ use bevy::asset::{Asset, AssetEvent, AssetEventSystems, AssetId, Assets};
+@@ -16,7 +18,7 @@
  use bevy::ecs::prelude::*;
  use bevy::image::Image;
  use bevy::log::warn;
@@ -87,7 +97,265 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
  use bevy::platform::time::Instant;
  use bevy::transform::TransformSystems;
  use bevy::transform::components::GlobalTransform;
-@@ -173,6 +173,9 @@
+@@ -29,7 +31,7 @@
+ use crate::ground::{HOLE, MeshGrounds, bake_mesh_grounds};
+ use crate::packed::{self, PackedImages};
+ use crate::shader_model::{self, ChunkLayout};
+-use crate::stats::TableStats;
++use crate::stats::{RebuildPhases, TableStats}; // superfargoth patch (own: rebuild phases): `RebuildPhases`
+ use crate::style::MAX_SPECIES;
+ use crate::{GrassStats, GrassSystems};
+ 
+@@ -100,6 +102,193 @@
+     pub heights: Arc<Vec<f32>>,
+     /// The optional shading terms some field uses (`LookFeatures`).
+     pub features: LookFeatures,
++    // superfargoth patch (own: stable tables): where each table has room, so
++    // a field keeps its place in every table while it is unchanged, and what
++    // the latest rebuild wrote.
++    /// The free ranges of each table. A field's ranges are in its slot.
++    pub layout: TableLayout,
++    /// What changed since version `writes.since`, per table.
++    pub writes: TableWrites,
++}
++
++// superfargoth patch (own: stable tables)
++/// The free ranges of one table, so a field keeps its place while it is
++/// unchanged and a removed field's place goes to the next field that fits.
++///
++/// A sorted free list with best fit, not `offset-allocator` (in the lock file
++/// for Bevy's mesh allocator): a table holds tens of ranges, mostly of one size
++/// (streamed fields are alike, so a new field takes a removed one's place
++/// exactly), and this list grows in place at its end, where an
++/// `offset_allocator::Allocator` has a fixed size and growing it would move
++/// every field. It also needs no new dependency of the vendored crate.
++#[derive(Debug, Default, Clone, PartialEq)]
++pub(crate) struct FreeList {
++    /// Sorted, disjoint and never touching.
++    free: Vec<Range<u32>>,
++    /// The table's length.
++    end: u32,
++}
++
++impl FreeList {
++    pub(crate) fn end(&self) -> u32 {
++        self.end
++    }
++
++    /// The start of a free range of `len`: the smallest free range that fits
++    /// (the lowest of equals), or else the end, the table growing to at least
++    /// `grow_to`; `None` past `cap`.
++    fn take(&mut self, len: u32, grow_to: u32, cap: u32) -> Option<u32> {
++        if len == 0 {
++            return Some(0);
++        }
++        let best = self
++            .free
++            .iter()
++            .enumerate()
++            .filter(|(_, range)| range.end - range.start >= len)
++            .min_by_key(|(_, range)| range.end - range.start)
++            .map(|(index, _)| index);
++        if let Some(index) = best {
++            let at = self.free[index].start;
++            self.free[index].start += len;
++            if self.free[index].is_empty() {
++                self.free.remove(index);
++            }
++            return Some(at);
++        }
++        let start = match self.free.last() {
++            Some(tail) if tail.end == self.end => tail.start,
++            _ => self.end,
++        };
++        let need = start.checked_add(len).filter(|&need| need <= cap)?;
++        let grown = need.max(grow_to.min(cap));
++        self.release(self.end..grown);
++        self.end = grown;
++        self.take(len, grow_to, cap)
++    }
++
++    /// Gives `range` back.
++    fn release(&mut self, range: Range<u32>) {
++        if range.is_empty() {
++            return;
++        }
++        let at = self.free.partition_point(|free| free.start < range.start);
++        self.free.insert(at, range);
++        if at + 1 < self.free.len() && self.free[at].end == self.free[at + 1].start {
++            self.free[at].end = self.free.remove(at + 1).end;
++        }
++        if at > 0 && self.free[at - 1].end == self.free[at].start {
++            self.free[at - 1].end = self.free.remove(at).end;
++        }
++    }
++}
++
++// superfargoth patch (own: stable tables)
++/// The free ranges of the four tables, in their own units: entries, chunks,
++/// mask words and height texels.
++#[derive(Debug, Default, Clone, PartialEq)]
++pub(crate) struct TableLayout {
++    pub entries: FreeList,
++    pub chunks: FreeList,
++    pub masks: FreeList,
++    pub heights: FreeList,
++}
++
++// superfargoth patch (own: stable tables)
++/// What one table's latest change wrote, in its units.
++#[derive(Debug, Default, Clone, PartialEq)]
++pub(crate) struct Written {
++    /// The table was laid out afresh or grew: all of it is new.
++    pub full: bool,
++    /// The ranges written, sorted and merged (meaningful when not `full`).
++    pub ranges: Vec<Range<u32>>,
++}
++
++impl Written {
++    fn add(&mut self, range: Range<u32>) {
++        if !range.is_empty() {
++            self.ranges.push(range);
++        }
++    }
++
++    /// Nothing was written.
++    pub(crate) fn is_empty(&self) -> bool {
++        !self.full && self.ranges.is_empty()
++    }
++
++    fn merged(mut self) -> Self {
++        self.ranges.sort_by_key(|range| range.start);
++        let mut merged: Vec<Range<u32>> = Vec::with_capacity(self.ranges.len());
++        for range in self.ranges {
++            match merged.last_mut() {
++                Some(last) if last.end >= range.start => last.end = last.end.max(range.end),
++                _ => merged.push(range),
++            }
++        }
++        self.ranges = merged;
++        self
++    }
++}
++
++// superfargoth patch (own: stable tables)
++/// What changed in each table from version `since` to this one, for an upload
++/// of only those ranges. A gap of versions means: upload everything.
++#[derive(Debug, Default, Clone, PartialEq)]
++pub(crate) struct TableWrites {
++    pub since: u64,
++    pub fields: Written,
++    pub chunks: Written,
++    pub masks: Written,
++    pub heights: Written,
++}
++
++// superfargoth patch (own: stable tables)
++/// A chunk no field owns: a hole in the chunk table, skipped by `cull`.
++const UNUSED_CHUNK: ChunkGpu = ChunkGpu {
++    bounds: Vec4::ZERO,
++    ids: UVec4::new(NO_MAP, 0, 0, 0),
++};
++
++// superfargoth patch (own: stable tables)
++/// One table being rebuilt: the old one, copied on its first write.
++struct Table<T> {
++    data: Arc<Vec<T>>,
++    written: Written,
++}
++
++impl<T: Clone + PartialEq> Table<T> {
++    /// `old` at `len` (new texels are `fill`), or a new table of `len` if
++    /// `fresh`. Taken, not shared, so a table nothing else holds is written in
++    /// place.
++    fn new(old: Arc<Vec<T>>, len: u32, fill: T, fresh: bool) -> Self {
++        let mut data = if fresh { Arc::new(Vec::new()) } else { old };
++        let full = fresh || data.len() != len as usize;
++        if data.len() != len as usize {
++            Arc::make_mut(&mut data).resize(len as usize, fill);
++        }
++        Self {
++            data,
++            written: Written {
++                full,
++                ranges: Vec::new(),
++            },
++        }
++    }
++
++    /// Writes `values` at `at`; with `unless_same`, only if they differ.
++    fn write(&mut self, at: u32, values: &[T], unless_same: bool) {
++        let range = at as usize..at as usize + values.len();
++        if unless_same && self.data[range.clone()] == *values {
++            return;
++        }
++        Arc::make_mut(&mut self.data)[range].clone_from_slice(values);
++        self.written.add(at..at + values.len() as u32);
++    }
++
++    fn fill(&mut self, range: Range<u32>, value: &T) {
++        let values = vec![value.clone(); (range.end - range.start) as usize];
++        self.write(range.start, &values, true);
++    }
+ }
+ 
+ impl FieldTables {
+@@ -107,7 +296,6 @@
+     /// field that holds it, or `None` outside every field. A flat field is
+     /// exact; on a heightmap it is the top of the 16 m chunk.
+     pub(crate) fn highest_ground_at(&self, point: Vec2) -> Option<f32> {
+-        let mut first_chunk = 0usize;
+         for slot in self.slots.iter() {
+             let field = self.fields.get(slot.first)?;
+             let size = Vec2::new(field.extent.x, field.extent.y);
+@@ -115,10 +303,16 @@
+             let local = field.local_of(point);
+             if local.cmpge(Vec2::ZERO).all() && local.cmplt(size).all() {
+                 let cell = (local / CHUNK_SIZE).as_uvec2().min(counts - UVec2::ONE);
+-                let index = first_chunk + (cell.y * counts.x + cell.x) as usize;
+-                return self.chunks.get(index).map(|chunk| chunk.bounds.w);
++                // superfargoth patch (own: stable tables): the field's chunks
++                // start where its slot says, not after the previous field's.
++                let index = slot.chunks.start + cell.y * counts.x + cell.x;
++                return slot
++                    .chunks
++                    .contains(&index)
++                    .then(|| self.chunks.get(index as usize))
++                    .flatten()
++                    .map(|chunk| chunk.bounds.w);
+             }
+-            first_chunk += (counts.x * counts.y) as usize;
+         }
+         None
+     }
+@@ -130,8 +324,13 @@
+     ///
+     /// [`highest_ground_at`]: FieldTables::highest_ground_at
+     pub(crate) fn ground_below(&self, point: Vec2) -> f32 {
++        // superfargoth patch (own: stable tables): the first field's entry,
++        // which a hole may have pushed off index 0.
+         self.highest_ground_at(point)
+-            .or_else(|| self.fields.first().map(|field| field.min_corner.y))
++            .or_else(|| {
++                let first = self.slots.first()?;
++                self.fields.get(first.first).map(|field| field.min_corner.y)
++            })
+             .unwrap_or(0.0)
+     }
+ }
+@@ -154,6 +353,11 @@
+     pub entity: Entity,
+     pub first: usize,
+     pub entries: usize,
++    // superfargoth patch (own: stable tables): the field's ranges in the
++    // chunk, mask (words) and height (texels) tables.
++    pub chunks: Range<u32>,
++    pub mask: Option<Range<u32>>,
++    pub height: Option<Range<u32>>,
+     entry: EntryKey,
+     chunk: ChunkKey,
+ }
+@@ -173,6 +377,9 @@
      height: Option<(AssetId<Image>, u32, f32)>,
      species: usize,
      overrides: GrassFieldOverrides,
@@ -97,7 +365,19 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
  }
  
  /// Everything a field's chunks depend on besides the contents of its
-@@ -269,6 +272,8 @@
+@@ -182,8 +389,9 @@
+     size: Vec2,
+     base: f32,
+     height: Option<(AssetId<Image>, f32)>,
+-    /// The index of the field's first entry, which its chunks point at.
+-    first: usize,
++    // superfargoth patch (own: stable tables): no `first` (the index of the
++    // field's first entry): a moved entry only repoints the chunks, which
++    // `rebuild` does without scanning the heightmap again.
+ }
+ 
+ /// Optional shading terms, compiled into the grass shaders only when some
+@@ -269,6 +477,8 @@
          .init_resource::<MeshGrounds>()
          .init_resource::<GrassStats>()
          .init_resource::<PackedImages>()
@@ -106,7 +386,7 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
          .configure_sets(
              PostUpdate,
              (
-@@ -298,6 +303,33 @@
+@@ -298,6 +508,33 @@
      edit::plugin(app);
  }
  
@@ -140,7 +420,51 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
  /// What the tables need.
  #[derive(Resource, Debug, Default)]
  pub(crate) struct TablesDirty {
-@@ -576,6 +608,9 @@
+@@ -504,14 +741,18 @@
+     }
+ }
+ 
+-/// The asset an event is about.
+-fn event_id<A: Asset>(event: &AssetEvent<A>) -> AssetId<A> {
++/// superfargoth patch (own: no echo rebuild): the asset whose content changed,
++/// `None` for an asset that only appeared or went unused. `gather` already
++/// waits until every image and style a field uses has loaded (the tables stay
++/// dirty until then), so `Added` and `LoadedWithDependencies` carry nothing new;
++/// marking them re-read and re-joined every new field's images one frame after
++/// the rebuild that first read them (GC-3b4a: 5.5 ms twice per block move).
++fn changed_id<A: Asset>(event: &AssetEvent<A>) -> Option<AssetId<A>> {
+     match event {
+-        AssetEvent::Added { id }
+-        | AssetEvent::Modified { id }
+-        | AssetEvent::LoadedWithDependencies { id }
+-        | AssetEvent::Removed { id }
+-        | AssetEvent::Unused { id } => *id,
++        AssetEvent::Modified { id } | AssetEvent::Removed { id } => Some(*id),
++        AssetEvent::Added { .. }
++        | AssetEvent::LoadedWithDependencies { .. }
++        | AssetEvent::Unused { .. } => None,
+     }
+ }
+ 
+@@ -529,14 +770,15 @@
+     fields: Query<&GrassField>,
+ ) {
+     // Only styles and images some field uses matter.
++    // superfargoth patch (own: no echo rebuild): `changed_id`, was `event_id`.
+     for event in styles.read() {
+-        let id = event_id(event);
++        let Some(id) = changed_id(event) else { continue };
+         if fields.iter().any(|field| field.style.id() == id) {
+             dirty.styles.insert(id);
+         }
+     }
+     for event in images.read() {
+-        let id = event_id(event);
++        let Some(id) = changed_id(event) else { continue };
+         let used = fields.iter().any(|field| {
+             field
+                 .density_map
+@@ -576,6 +818,9 @@
      /// The field's X axis in world XZ.
      axis: Vec2,
      access: u32,
@@ -150,7 +474,7 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
  }
  
  impl Placement {
-@@ -584,6 +619,7 @@
+@@ -584,6 +829,7 @@
          transform: &GlobalTransform,
          visibility: InheritedVisibility,
          layers: Option<&RenderLayers>,
@@ -158,7 +482,7 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
      ) -> Self {
          let frame = FieldFrame::of(field, transform);
          Self {
-@@ -591,6 +627,7 @@
+@@ -591,6 +837,7 @@
              corner: Vec3::new(frame.corner.x, transform.translation().y, frame.corner.y),
              axis: frame.axis,
              access: access(visibility.get(), layers),
@@ -166,7 +490,63 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
          }
      }
  }
-@@ -682,6 +719,7 @@
+@@ -600,18 +847,30 @@
+ fn patch_access(tables: &mut FieldTables, fields: &Query<FieldInputs>) {
+     let mut entries = tables.fields.as_ref().clone();
+     let mut slots = tables.slots.as_ref().clone();
++    let mut written = Written::default(); // superfargoth patch (own: stable tables)
+     for slot in &mut slots {
+         let Ok((_, _, _, visibility, layers, _)) = fields.get(slot.entity) else {
+             continue;
+         };
+         let bits = access(visibility.get(), layers);
+         slot.entry.access = bits;
+-        for entry in &mut entries[slot.first..slot.first + slot.entries] {
++        // superfargoth patch (own: stable tables): the entries that changed.
++        let range = slot.first..slot.first + slot.entries;
++        if entries[range.clone()].iter().any(|entry| entry.access.x != bits) {
++            written.add(range.start as u32..range.end as u32);
++        }
++        for entry in &mut entries[range] {
+             entry.access.x = bits;
+         }
+     }
+     tables.fields = Arc::new(entries);
+     tables.slots = Arc::new(slots);
++    // superfargoth patch (own: stable tables)
++    tables.writes = TableWrites {
++        since: tables.version,
++        fields: written.merged(),
++        ..TableWrites::default()
++    };
+     tables.version += 1;
+ }
+ 
+@@ -665,7 +924,22 @@
+     /// Offsets of its mask and heightmap, in texels.
+     mask_offset: u32,
+     height_offset: u32,
+-}
++    // superfargoth patch (own: stable tables)
++    /// Its slot in the old tables, if it was in them (and they are kept).
++    old: Option<usize>,
++    /// Its ranges in the chunk, mask (words) and height (texels) tables.
++    chunks: Range<u32>,
++    mask: Option<Range<u32>>,
++    height: Option<Range<u32>>,
++    /// Which of its ranges were placed anew, and so must be written.
++    placed: [bool; 4],
++}
++
++// superfargoth patch (own: stable tables): indices into `Plan::placed`.
++const ENTRIES: usize = 0;
++const CHUNKS: usize = 1;
++const MASK: usize = 2;
++const HEIGHT: usize = 3;
+ 
+ impl Plan<'_> {
+     fn entry_key(&self) -> EntryKey {
+@@ -682,6 +956,7 @@
                  .map(|(id, _, scale)| (id, self.height_offset, scale)),
              species: self.species.len(),
              overrides: input.overrides,
@@ -174,7 +554,34 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
          }
      }
  
-@@ -722,6 +760,7 @@
+@@ -690,10 +965,25 @@
+             size: self.input.placement.size,
+             base: self.input.placement.corner.y,
+             height: self.input.height.map(|(id, _, scale)| (id, scale)),
+-            first: self.first,
+         }
+     }
+ 
++    // superfargoth patch (own: stable tables): what each table needs.
++    /// Its entries, chunks, mask words and height texels.
++    fn needs(&self) -> [u32; 4] {
++        let counts = (self.input.placement.size / CHUNK_SIZE).ceil().as_uvec2();
++        let mask = self
++            .input
++            .mask
++            .as_ref()
++            .map_or(0, |mask| packed::mask_words(mask.size.x * mask.size.y));
++        let height = self.input.height.map_or(0, |(_, image, _)| {
++            let size = image.size();
++            size.x * size.y
++        });
++        [1 + self.species.len() as u32, counts.x * counts.y, mask, height]
++    }
++
+     /// Whether the field's heightmap is one of `changed`.
+     fn uses_height(&self, changed: &HashSet<AssetId<Image>>) -> bool {
+         self.input
+@@ -722,6 +1012,7 @@
      images: &'a Assets<Image>,
      grounds: &MeshGrounds,
      edits: &'a EditLayers,
@@ -182,7 +589,7 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
  ) -> Option<Vec<Input<'a>>> {
      let mut inputs = Vec::with_capacity(sorted.len());
      for (entity, field, transform, visibility, layers, overrides) in sorted {
-@@ -760,7 +799,8 @@
+@@ -760,7 +1051,8 @@
          };
          inputs.push(Input {
              entity: *entity,
@@ -192,7 +599,485 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
              overrides: overrides.copied().unwrap_or_default(),
              style_id: field.style.id(),
              style: styles.get(&field.style)?,
-@@ -1009,7 +1049,13 @@
+@@ -783,7 +1075,7 @@
+ fn plan<'a>(inputs: &'a [Input<'a>]) -> (Vec<Plan<'a>>, Dropped) {
+     let mut plans = Vec::with_capacity(inputs.len());
+     let mut dropped = Dropped::default();
+-    let (mut entry_cursor, mut mask_words, mut height_texels) = (0usize, 0u32, 0u32);
++    let mut entry_cursor = 0usize; // superfargoth patch (own: stable tables): no image offsets
+     for (index, input) in inputs.iter().enumerate() {
+         let species = &input.style.species[..input.style.species.len().min(MAX_SPECIES - 1)];
+         dropped.species += input.style.species.len() - species.len();
+@@ -803,135 +1095,292 @@
+             dropped.fields = inputs.len() - index;
+             break;
+         }
++        // superfargoth patch (own: stable tables): `place` sets the offsets;
++        // this only counts the entries against the limit.
+         plans.push(Plan {
+             input,
+             species,
+-            first: entry_cursor,
+-            mask_offset: mask_words * 2,
+-            height_offset: height_texels,
++            first: 0,
++            mask_offset: 0,
++            height_offset: 0,
++            old: None,
++            chunks: 0..0,
++            mask: None,
++            height: None,
++            placed: [false; 4],
+         });
+         entry_cursor += 1 + species.len();
+-        if let Some(mask) = &input.mask {
+-            mask_words += packed::mask_words(mask.size.x * mask.size.y);
+-        }
+-        if let Some((_, image, _)) = input.height {
+-            let size = image.size();
+-            height_texels += size.x * size.y;
+-        }
+     }
+     (plans, dropped)
+ }
+ 
+-/// The masks and heightmaps of the tables, kept while the same images are used
+-/// in the same order and none changed, and otherwise joined from the packed
+-/// images, each read at most once (see `PackedImages`), and the edit layers.
+-struct Images {
+-    masks: Arc<Vec<u32>>,
+-    heights: Arc<Vec<f32>>,
+-    mask_ids: Arc<Vec<MaskKey>>,
+-    height_ids: Arc<Vec<AssetId<Image>>>,
+-    masks_same: bool,
+-    heights_same: bool,
+-}
+-
+-/// `edits_ahead` says the edit layers changed since the masks were last
+-/// joined. Edits reach the GPU as patches, so stale masks are kept while
+-/// nothing else is uploaded; but if the chunks or heightmaps are uploaded
+-/// (`chunks_same` false), the masks go with them and are joined afresh.
+-fn images_for(
+-    plans: &[Plan],
+-    old: &FieldTables,
+-    changed: &HashSet<AssetId<Image>>,
+-    cache: &mut PackedImages,
+-    (chunks_same, edits_ahead): (bool, bool),
+-) -> Images {
+-    let mask_ids: Vec<_> = plans
+-        .iter()
+-        .filter_map(|plan| plan.input.mask.as_ref().map(|mask| mask.key))
+-        .collect();
+-    let height_ids: Vec<_> = plans
+-        .iter()
+-        .filter_map(|plan| plan.input.height.map(|(id, ..)| id))
+-        .collect();
+-    let untouched = |ids: &[AssetId<Image>]| !ids.iter().any(|id| changed.contains(id));
+-    let mask_images: Vec<_> = plans
+-        .iter()
+-        .filter_map(|plan| plan.input.mask.as_ref().and_then(MaskInput::image_id))
+-        .collect();
+-    let heights_same = *old.height_ids == height_ids && untouched(&height_ids);
+-    let refresh = edits_ahead && !(chunks_same && heights_same);
+-    let masks_same = *old.mask_ids == mask_ids && untouched(&mask_images) && !refresh;
++// superfargoth patch (own: stable tables)
++/// Where `place` put the fields.
++struct Placed {
++    layout: TableLayout,
++    /// The tables were laid out afresh (the entries no longer fit around the
++    /// holes): every field is placed anew.
++    fresh: bool,
++    /// Entry and chunk ranges no field holds any more, to be marked unused.
++    /// Mask and height ranges are left as they are: no entry addresses them.
++    freed_entries: Vec<Range<u32>>,
++    freed_chunks: Vec<Range<u32>>,
++}
++
++// superfargoth patch (own: stable tables)
++/// Gives each field its ranges in the four tables: the ones it had while their
++/// sizes are the same, otherwise the best free range, the tables growing (by
++/// half at least) when none fits. Removed and resized fields give theirs back
++/// first, so a new field of the same size takes a removed one's place. When the
++/// entries no longer fit in `MAX_ENTRIES` around the holes, the tables are laid
++/// out afresh.
++fn place(plans: &mut [Plan], old: &FieldTables) -> Placed {
++    place_in(plans, old, false).unwrap_or_else(|| {
++        place_in(plans, old, true).unwrap_or_else(|| {
++            unreachable!("`plan` keeps the fields' entries within MAX_ENTRIES")
++        })
++    })
++}
+ 
+-    let masks = if masks_same {
+-        old.masks.clone()
++fn place_in(plans: &mut [Plan], old: &FieldTables, fresh: bool) -> Option<Placed> {
++    let mut placed = Placed {
++        layout: if fresh {
++            TableLayout::default()
++        } else {
++            old.layout.clone()
++        },
++        fresh,
++        freed_entries: Vec::new(),
++        freed_chunks: Vec::new(),
++    };
++    // Laid out afresh, the tables take exactly what they need.
++    let ends = if fresh {
++        [0; 4]
+     } else {
+-        let parts: Vec<_> = plans
+-            .iter()
+-            .filter_map(|plan| plan.input.mask.as_ref())
+-            .map(|mask| mask.words(cache))
+-            .collect();
+-        packed::join(&parts)
++        [
++            old.layout.entries.end(),
++            old.layout.chunks.end(),
++            old.layout.masks.end(),
++            old.layout.heights.end(),
++        ]
+     };
+-    let heights = if heights_same {
+-        old.heights.clone()
++    let previous: HashMap<Entity, usize> = if fresh {
++        HashMap::new()
+     } else {
+-        let parts: Vec<_> = plans
++        old.slots
+             .iter()
+-            .filter_map(|plan| plan.input.height)
+-            .map(|(id, image, _)| cache.heights(id, image))
+-            .collect();
+-        packed::join(&parts)
++            .enumerate()
++            .map(|(index, slot)| (slot.entity, index))
++            .collect()
+     };
+-    cache.retain(&mask_images, &height_ids);
+-    Images {
+-        masks,
+-        heights,
+-        mask_ids: if masks_same {
+-            old.mask_ids.clone()
++    let mut live = vec![false; old.slots.len()];
++    let Placed {
++        layout,
++        freed_entries,
++        freed_chunks,
++        ..
++    } = &mut placed;
++    // Keep what still fits; give back what does not, and every removed field's.
++    for plan in plans.iter_mut() {
++        let needs = plan.needs();
++        plan.old = previous.get(&plan.input.entity).copied();
++        plan.placed = [true; 4];
++        let Some(index) = plan.old else { continue };
++        live[index] = true;
++        let slot = &old.slots[index];
++        if slot.entries as u32 == needs[ENTRIES] {
++            plan.first = slot.first;
++            plan.placed[ENTRIES] = false;
+         } else {
+-            Arc::new(mask_ids)
+-        },
+-        height_ids: if heights_same {
+-            old.height_ids.clone()
++            let range = slot.first as u32..(slot.first + slot.entries) as u32;
++            layout.entries.release(range.clone());
++            freed_entries.push(range);
++        }
++        if slot.chunks.end - slot.chunks.start == needs[CHUNKS] {
++            plan.chunks = slot.chunks.clone();
++            plan.placed[CHUNKS] = false;
+         } else {
+-            Arc::new(height_ids)
+-        },
+-        masks_same,
+-        heights_same,
++            layout.chunks.release(slot.chunks.clone());
++            freed_chunks.push(slot.chunks.clone());
++        }
++        let wanted = [plan.input.mask.is_some(), plan.input.height.is_some()];
++        for (kind, had, list, keep) in [
++            (MASK, &slot.mask, &mut layout.masks, wanted[0]),
++            (HEIGHT, &slot.height, &mut layout.heights, wanted[1]),
++        ] {
++            let Some(range) = had else { continue };
++            if keep && range.end - range.start == needs[kind] {
++                plan.placed[kind] = false;
++                if kind == MASK {
++                    plan.mask = Some(range.clone());
++                } else {
++                    plan.height = Some(range.clone());
++                }
++            } else {
++                list.release(range.clone());
++            }
++        }
++    }
++    // Laid out afresh, the old slots hold nothing in the new layout.
++    let removed = old.slots.iter().zip(&live).filter(|(_, live)| !fresh && !**live);
++    for (slot, _) in removed {
++        let entries = slot.first as u32..(slot.first + slot.entries) as u32;
++        layout.entries.release(entries.clone());
++        freed_entries.push(entries);
++        layout.chunks.release(slot.chunks.clone());
++        freed_chunks.push(slot.chunks.clone());
++        for (had, list) in [
++            (&slot.mask, &mut layout.masks),
++            (&slot.height, &mut layout.heights),
++        ] {
++            if let Some(range) = had {
++                list.release(range.clone());
++            }
++        }
++    }
++    // Place the rest.
++    let grow = |end: u32| end.saturating_add(end / 2);
++    let cap = MAX_ENTRIES as u32;
++    for plan in plans.iter_mut() {
++        let needs = plan.needs();
++        if plan.placed[ENTRIES] {
++            plan.first = layout.entries.take(needs[ENTRIES], grow(ends[ENTRIES]), cap)? as usize;
++        }
++        if plan.placed[CHUNKS] {
++            let at = layout.chunks.take(needs[CHUNKS], grow(ends[CHUNKS]), u32::MAX)?;
++            plan.chunks = at..at + needs[CHUNKS];
++        }
++        if plan.placed[MASK] && plan.input.mask.is_some() {
++            let at = layout.masks.take(needs[MASK], grow(ends[MASK]), u32::MAX)?;
++            plan.mask = Some(at..at + needs[MASK]);
++        }
++        if plan.placed[HEIGHT] && plan.input.height.is_some() {
++            let at = layout.heights.take(needs[HEIGHT], grow(ends[HEIGHT]), u32::MAX)?;
++            plan.height = Some(at..at + needs[HEIGHT]);
++        }
++        plan.mask_offset = plan.mask.as_ref().map_or(0, |mask| mask.start * 2);
++        plan.height_offset = plan.height.as_ref().map_or(0, |height| height.start);
++    }
++    Some(placed)
++}
++
++// superfargoth patch (own: stable tables): the tables are written in place,
++// field by field, instead of joined afresh: a field that did not change keeps
++// its bytes at the same offsets, and only what changed is written (and
++// recorded in `Written`).
++
++/// The chunks: a field's are worked out again when it is new, was placed
++/// anew, resized, moved up or down or its heightmap changed, and only
++/// repointed when its entries moved. A removed field's are marked unused.
++fn write_chunks(
++    plans: &[Plan],
++    old: &mut FieldTables,
++    placed: &Placed,
++    changed: &HashSet<AssetId<Image>>,
++    cache: &mut PackedImages,
++) -> Table<ChunkGpu> {
++    let end = placed.layout.chunks.end();
++    let mut chunks = Table::new(std::mem::take(&mut old.chunks), end, UNUSED_CHUNK, placed.fresh);
++    for range in &placed.freed_chunks {
++        chunks.fill(range.clone(), &UNUSED_CHUNK);
+     }
++    let mut scratch = Vec::new();
++    for plan in plans {
++        let slot = plan.old.map(|index| &old.slots[index]);
++        let rescan = plan.placed[CHUNKS]
++            || slot.is_none_or(|slot| slot.chunk != plan.chunk_key())
++            || plan.uses_height(changed);
++        scratch.clear();
++        if rescan {
++            let heights = plan
++                .input
++                .height
++                .map(|(id, image, _)| cache.heights(id, image));
++            field_chunks(plan, heights.as_ref().map(|h| h.as_slice()), &mut scratch);
++        } else if slot.is_some_and(|slot| slot.first != plan.first) {
++            let range = plan.chunks.start as usize..plan.chunks.end as usize;
++            scratch.extend_from_slice(&chunks.data[range]);
++            for chunk in &mut scratch {
++                chunk.ids.x = plan.first as u32;
++            }
++        } else {
++            continue;
++        }
++        chunks.write(plan.chunks.start, &scratch, true);
++    }
++    chunks
+ }
+ 
+-/// The chunks, kept (and the second value true) while no field resized, moved
+-/// up or down, changed heightmap or shifted in the tables.
+-fn chunks_for(
++/// The heightmaps of the fields that are new, were placed anew, or whose
++/// heightmap is another or changed.
++fn write_heights(
+     plans: &[Plan],
+-    old: &FieldTables,
++    old: &mut FieldTables,
++    placed: &Placed,
+     changed: &HashSet<AssetId<Image>>,
+     cache: &mut PackedImages,
+-) -> (Arc<Vec<ChunkGpu>>, bool) {
+-    let same =
+-        old.slots.len() == plans.len()
+-            && old.slots.iter().zip(plans).all(|(slot, plan)| {
+-                slot.entity == plan.input.entity && slot.chunk == plan.chunk_key()
+-            })
+-            && !plans.iter().any(|plan| plan.uses_height(changed));
+-    if same {
+-        return (old.chunks.clone(), true);
+-    }
+-    let mut chunks = Vec::new();
++) -> Table<f32> {
++    let end = placed.layout.heights.end();
++    let mut heights = Table::new(std::mem::take(&mut old.heights), end, 0.0, placed.fresh);
+     for plan in plans {
+-        let heights = plan
+-            .input
+-            .height
+-            .map(|(id, image, _)| cache.heights(id, image));
+-        field_chunks(plan, heights.as_ref().map(|h| h.as_slice()), &mut chunks);
++        let (Some((id, image, _)), Some(range)) = (plan.input.height, &plan.height) else {
++            continue;
++        };
++        let slot = plan.old.map(|index| &old.slots[index]);
++        let same = !plan.placed[HEIGHT]
++            && slot.is_some_and(|slot| slot.entry.height.is_some_and(|(was, ..)| was == id))
++            && !changed.contains(&id);
++        if !same {
++            let texels = cache.heights(id, image);
++            let count = texels.len().min((range.end - range.start) as usize);
++            heights.write(range.start, &texels[..count], true);
++        }
++    }
++    heights
++}
++
++/// Whether a field's mask must be written: it is new, was placed anew, is
++/// another mask, or its image changed.
++fn mask_stale(plan: &Plan, old: &FieldTables, changed: &HashSet<AssetId<Image>>) -> bool {
++    let Some(mask) = &plan.input.mask else {
++        return false;
++    };
++    let slot = plan.old.map(|index| &old.slots[index]);
++    plan.placed[MASK]
++        || slot.is_none_or(|slot| slot.entry.mask.is_none_or(|(key, _)| key != mask.key))
++        || mask.image_id().is_some_and(|id| changed.contains(&id))
++}
++
++/// The stale masks (`mask_stale`), and with `refresh` every edited one too:
++/// edits reach the GPU as patches, so the masks here lag behind them, which is
++/// fine until the masks are uploaded with something else.
++fn write_masks(
++    plans: &[Plan],
++    old: &mut FieldTables,
++    placed: &Placed,
++    changed: &HashSet<AssetId<Image>>,
++    (cache, refresh): (&mut PackedImages, bool),
++) -> Table<u32> {
++    let end = placed.layout.masks.end();
++    let mut masks = Table::new(std::mem::take(&mut old.masks), end, 0, placed.fresh);
++    for plan in plans {
++        let (Some(mask), Some(range)) = (&plan.input.mask, &plan.mask) else {
++            continue;
++        };
++        if mask_stale(plan, old, changed) || (refresh && mask.edited.is_some()) {
++            let words = mask.words(cache);
++            let count = words.len().min((range.end - range.start) as usize);
++            // Always written: the GPU's copy may hold a removed field's
++            // edits that this copy never saw.
++            masks.write(range.start, &words[..count], false);
++        }
+     }
+-    (Arc::new(chunks), false)
++    masks
+ }
+ 
+ /// The field table, with the slots that say what each entry was built from.
+ struct Built {
+-    fields: Vec<FieldGpu>,
++    entries: Table<FieldGpu>,
+     slots: Vec<FieldSlot>,
+     features: LookFeatures,
+     /// Entries worked out again, not kept.
+@@ -939,42 +1388,47 @@
+ }
+ 
+ /// Each field's entries: kept when its style, place and images are the same
+-/// as when they were built, worked out again otherwise.
+-fn entries_for(
++/// as when they were built, worked out again otherwise. A removed field's are
++/// cleared (hidden everywhere).
++fn write_entries(
+     plans: &[Plan],
+-    old: &FieldTables,
++    old: &mut FieldTables,
++    placed: &Placed,
+     changed_styles: &HashSet<AssetId<GrassStyle>>,
+     changed_images: &HashSet<AssetId<Image>>,
+ ) -> Built {
+-    let previous: HashMap<Entity, &FieldSlot> =
+-        old.slots.iter().map(|slot| (slot.entity, slot)).collect();
++    let end = placed.layout.entries.end();
+     let mut built = Built {
+-        fields: Vec::with_capacity(old.fields.len()),
++        entries: Table::new(std::mem::take(&mut old.fields), end, FieldGpu::default(), placed.fresh),
+         slots: Vec::with_capacity(plans.len()),
+         features: LookFeatures::default(),
+         rewritten: 0,
+     };
++    for range in &placed.freed_entries {
++        built.entries.fill(range.clone(), &FieldGpu::default());
++    }
+     for plan in plans {
+         let (entry, chunk) = (plan.entry_key(), plan.chunk_key());
+         let count = 1 + plan.species.len();
+-        let kept = previous.get(&plan.input.entity).filter(|slot| {
+-            slot.entry == entry
+-                && slot.entries == count
+-                && !changed_styles.contains(&plan.input.style_id)
+-                && !plan.uses(changed_images)
+-        });
+-        if let Some(slot) = kept {
+-            built
+-                .fields
+-                .extend_from_slice(&old.fields[slot.first..slot.first + slot.entries]);
+-        } else {
+-            built.fields.extend(field_entries(plan));
++        let kept = !plan.placed[ENTRIES]
++            && plan.old.is_some_and(|index| {
++                let slot = &old.slots[index];
++                slot.entry == entry
++                    && slot.entries == count
++                    && !changed_styles.contains(&plan.input.style_id)
++                    && !plan.uses(changed_images)
++            });
++        if !kept {
++            built.entries.write(plan.first as u32, &field_entries(plan), true);
+             built.rewritten += count as u64;
+         }
+         built.slots.push(FieldSlot {
+             entity: plan.input.entity,
+             first: plan.first,
+             entries: count,
++            chunks: plan.chunks.clone(),
++            mask: plan.mask.clone(),
++            height: plan.height.clone(),
+             entry,
+             chunk,
+         });
+@@ -998,6 +1452,9 @@
+ ///   alone, a colour changing every frame for a season or the time of day,
+ ///   rewrites the entries of the fields using it and nothing else.
+ /// - A pass that finds the tables unchanged changes nothing.
++/// - superfargoth patch (own: stable tables): every field keeps its ranges in
++///   the four tables while their sizes hold (`place`), so adding or removing
++///   a field writes that field's ranges only (`FieldTables::writes`).
+ pub(crate) fn rebuild(
+     mut dirty: ResMut<TablesDirty>,
+     mut tables: ResMut<FieldTables>,
+@@ -1009,7 +1466,13 @@
      ),
      (mut cache, mut edits): (ResMut<PackedImages>, ResMut<EditLayers>),
      mut stats: ResMut<GrassStats>,
@@ -206,7 +1091,11 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
      if !dirty.rebuild() {
          if dirty.access {
              dirty.access = false;
-@@ -1020,7 +1066,8 @@
+@@ -1017,12 +1480,25 @@
+         }
+         return;
+     }
++    let gathering = Instant::now(); // superfargoth patch (own: rebuild phases)
      let mut sorted: Vec<_> = fields.iter().collect();
      sorted.sort_by_key(|(entity, ..)| *entity);
      let edits_ahead = edits.ahead;
@@ -215,8 +1104,164 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
 +    let Some(inputs) = gather(&sorted, &styles, &images, &grounds, &edits, world_offset.0) else {
          return;
      };
++    // superfargoth patch (own: rebuild phases): each phase's time.
++    let mut phases = RebuildPhases {
++        gather: gathering.elapsed(),
++        ..RebuildPhases::default()
++    };
++    let mut lap = Instant::now();
++    let mut split = |phase: &mut Duration| {
++        let now = Instant::now();
++        *phase = now - lap;
++        lap = now;
++    };
      // This pass reads every field's visibility too, and takes care of
-@@ -1159,6 +1206,7 @@
+     // everything that changed.
+     let changed_styles = std::mem::take(&mut dirty.styles);
+@@ -1032,49 +1508,115 @@
+ 
+     let started = Instant::now();
+     cache.forget(&changed_images);
+-    let old = (*tables).clone();
+-    let (plans, dropped) = plan(&inputs);
+-    let (chunks, chunks_same) = chunks_for(&plans, &old, &changed_images, &mut cache);
+-    let images = images_for(
++    // superfargoth patch (own: stable tables): taken, not cloned, so the
++    // tables are written in place when nothing else (the render world) still
++    // holds them; put back unchanged when nothing changed.
++    let mut old = std::mem::take(tables.bypass_change_detection());
++    split(&mut phases.clone); // superfargoth patch (own: rebuild phases)
++    // superfargoth patch (own: stable tables): each field placed (`place`),
++    // then only what changed written in place.
++    let (mut plans, dropped) = plan(&inputs);
++    let placed = place(&mut plans, &old);
++    split(&mut phases.plan); // superfargoth patch (own: rebuild phases)
++    let chunks = write_chunks(&plans, &mut old, &placed, &changed_images, &mut cache);
++    split(&mut phases.chunks); // superfargoth patch (own: rebuild phases)
++    let heights = write_heights(&plans, &mut old, &placed, &changed_images, &mut cache);
++    // The masks go to the GPU with the chunks and heightmaps, so the edits
++    // that reached it as patches are written here first.
++    let structure = !chunks.written.is_empty()
++        || !heights.written.is_empty()
++        || plans.iter().any(|plan| mask_stale(plan, &old, &changed_images));
++    let refresh = edits_ahead && structure;
++    let masks = write_masks(
+         &plans,
+-        &old,
++        &mut old,
++        &placed,
+         &changed_images,
+-        &mut cache,
+-        (chunks_same, edits_ahead),
++        (&mut cache, refresh),
+     );
+-    let built = entries_for(&plans, &old, &changed_styles, &changed_images);
++    let mask_ids: Vec<_> = plans
++        .iter()
++        .filter_map(|plan| plan.input.mask.as_ref().map(|mask| mask.key))
++        .collect();
++    let height_ids: Vec<_> = plans
++        .iter()
++        .filter_map(|plan| plan.input.height.map(|(id, ..)| id))
++        .collect();
++    let mask_images: Vec<_> = plans
++        .iter()
++        .filter_map(|plan| plan.input.mask.as_ref().and_then(MaskInput::image_id))
++        .collect();
++    cache.retain(&mask_images, &height_ids);
++    split(&mut phases.images); // superfargoth patch (own: rebuild phases)
++    let built = write_entries(&plans, &mut old, &placed, &changed_styles, &changed_images);
++    split(&mut phases.entries); // superfargoth patch (own: rebuild phases)
+     drop(plans);
+     drop(inputs);
+-    if !images.masks_same {
+-        // The masks were joined from the layers as they are now.
++    if refresh {
++        // The edited masks were written from the layers as they are now.
+         edits.ahead = false;
+     }
+ 
+-    let layout_changed = !(images.masks_same && images.heights_same && chunks_same);
++    let layout_changed =
++        !(chunks.written.is_empty() && masks.written.is_empty() && heights.written.is_empty());
+     let mut counted = stats.tables;
+     counted.entries_rewritten += built.rewritten;
+     counted.images_read = cache.reads;
+-    if !layout_changed && built.fields == *old.fields && built.slots == *old.slots {
++    if !layout_changed
++        && built.entries.written.is_empty()
++        && built.slots == *old.slots
++        && built.features == old.features
++    {
+         // Something changed that no field shows: another style, say. There is
+         // nothing to upload.
+         if counted != stats.tables {
+             stats.tables = counted;
+         }
++        // superfargoth patch (own: stable tables): the same tables back.
++        *tables.bypass_change_detection() = FieldTables {
++            fields: built.entries.data,
++            chunks: chunks.data,
++            masks: masks.data,
++            heights: heights.data,
++            ..old
++        };
+         return;
+     }
+-    let (fields_len, chunks_len) = (built.slots.len(), chunks.len());
++    let fields_len = built.slots.len();
++    let chunks_len = built
++        .slots
++        .iter()
++        .map(|slot| (slot.chunks.end - slot.chunks.start) as usize)
++        .sum();
+     *tables = FieldTables {
+         version: old.version + 1,
+         structure_version: old.structure_version + u64::from(layout_changed),
+-        fields: Arc::new(built.fields),
++        fields: built.entries.data,
+         slots: Arc::new(built.slots),
+-        chunks,
+-        masks: images.masks,
+-        heights: images.heights,
+-        mask_ids: images.mask_ids,
+-        height_ids: images.height_ids,
++        chunks: chunks.data,
++        masks: masks.data,
++        heights: heights.data,
++        mask_ids: if *old.mask_ids == mask_ids {
++            old.mask_ids.clone()
++        } else {
++            Arc::new(mask_ids)
++        },
++        height_ids: if *old.height_ids == height_ids {
++            old.height_ids.clone()
++        } else {
++            Arc::new(height_ids)
++        },
+         features: built.features,
++        layout: placed.layout,
++        writes: TableWrites {
++            since: old.version,
++            fields: built.entries.written.merged(),
++            chunks: chunks.written.merged(),
++            masks: masks.written.merged(),
++            heights: heights.written.merged(),
++        },
+     };
++    split(&mut phases.finish); // superfargoth patch (own: rebuild phases)
+     stats.tables = TableStats {
+         fields: fields_len,
+         chunks: chunks_len,
+@@ -1083,6 +1625,7 @@
+         rebuilds: counted.rebuilds + 1,
+         layout_rebuilds: counted.layout_rebuilds + u64::from(layout_changed),
+         last_rebuild: started.elapsed(),
++        last_rebuild_phases: phases, // superfargoth patch (own: rebuild phases)
+         ..counted
+     };
+ }
+@@ -1159,6 +1702,7 @@
          corner,
          axis,
          access,
@@ -224,7 +1269,7 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
      } = *placement;
      let overrides = &plan.input.overrides;
      let layout =
-@@ -1178,8 +1226,10 @@
+@@ -1178,8 +1722,10 @@
          extent: Vec4::new(size.x, size.y, height_scale, layout.tile_size),
          // The seed comes from where the field is, not from its entity, so
          // the same field looks the same however the scene was spawned.
@@ -236,10 +1281,253 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
              layout.tiles_per_side,
              mask_offset,
              height_offset,
-diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/lib.rs superfargoth/vendor/bevy_grass/src/lib.rs
+@@ -1315,5 +1861,146 @@
+     if range.0 > range.1 { (0.0, 0.0) } else { range }
+ }
+ 
++// superfargoth patch (own: stable tables): what the tests of the crate that
++// vendors this one read of the tables (`superfargoth_test`); cargo cannot run
++// this crate's own tests there.
++/// One field in the tables: its ranges, in each table's units (entries,
++/// chunks, mask words, height texels), and the words the GPU reads for it.
++#[derive(Debug, Clone, PartialEq)]
++pub struct FieldView {
++    /// The field.
++    pub entity: Entity,
++    /// Its entries.
++    pub entries: Range<u32>,
++    /// Its chunks.
++    pub chunks: Range<u32>,
++    /// Its mask, in words.
++    pub mask: Option<Range<u32>>,
++    /// Its heightmap, in texels.
++    pub height: Option<Range<u32>>,
++    /// Its entries, chunks, mask words and height texels, as 32-bit words.
++    pub words: Vec<u32>,
++}
++
++/// One table's latest writes (`Written`).
++#[derive(Debug, Clone, PartialEq, Default)]
++pub struct WrittenView {
++    /// All of the table is new.
++    pub full: bool,
++    /// The ranges written, sorted and merged.
++    pub ranges: Vec<Range<u32>>,
++}
++
++/// The tables as the tests see them.
++#[derive(Debug, Clone, PartialEq)]
++pub struct TablesView {
++    /// `FieldTables::version`.
++    pub version: u64,
++    /// `FieldTables::structure_version`.
++    pub structure_version: u64,
++    /// The version the writes lead from.
++    pub since: u64,
++    /// In entity order.
++    pub fields: Vec<FieldView>,
++    /// Entries, chunks, masks and heights.
++    pub writes: [WrittenView; 4],
++    /// The length of each table, in the same order.
++    pub lens: [u32; 4],
++}
++
++fn vec_words(v: Vec4) -> [u32; 4] {
++    v.to_array().map(f32::to_bits)
++}
++
++fn entry_words(entry: &FieldGpu, out: &mut Vec<u32>) {
++    let FieldGpu {
++        min_corner,
++        extent,
++        shape,
++        motion,
++        root_color,
++        tip_color,
++        placement,
++        map_sizes,
++        ground,
++        look,
++        mix,
++        form,
++        head,
++        patches,
++        variation,
++        tufts,
++        access,
++        axis,
++    } = *entry;
++    for v in [min_corner, extent, shape, motion, root_color, tip_color] {
++        out.extend(vec_words(v));
++    }
++    out.extend(placement.to_array());
++    out.extend(map_sizes.to_array());
++    for v in [ground, look, mix, form, head, patches, variation, tufts] {
++        out.extend(vec_words(v));
++    }
++    out.extend(access.to_array());
++    out.extend(vec_words(axis));
++}
++
++/// The tables in `world`, as the tests see them.
++pub fn tables_view(world: &World) -> TablesView {
++    let tables = world.resource::<FieldTables>();
++    let view = |written: &Written| WrittenView {
++        full: written.full,
++        ranges: written.ranges.clone(),
++    };
++    let fields = tables
++        .slots
++        .iter()
++        .map(|slot| {
++            let mut words = Vec::new();
++            for entry in &tables.fields[slot.first..slot.first + slot.entries] {
++                entry_words(entry, &mut words);
++            }
++            for chunk in &tables.chunks[slot.chunks.start as usize..slot.chunks.end as usize] {
++                words.extend(vec_words(chunk.bounds));
++                words.extend(chunk.ids.to_array());
++            }
++            if let Some(mask) = &slot.mask {
++                words.extend_from_slice(&tables.masks[mask.start as usize..mask.end as usize]);
++            }
++            if let Some(height) = &slot.height {
++                let texels = &tables.heights[height.start as usize..height.end as usize];
++                words.extend(texels.iter().map(|h| h.to_bits()));
++            }
++            FieldView {
++                entity: slot.entity,
++                entries: slot.first as u32..(slot.first + slot.entries) as u32,
++                chunks: slot.chunks.clone(),
++                mask: slot.mask.clone(),
++                height: slot.height.clone(),
++                words,
++            }
++        })
++        .collect();
++    let writes = &tables.writes;
++    TablesView {
++        version: tables.version,
++        structure_version: tables.structure_version,
++        since: writes.since,
++        fields,
++        writes: [
++            view(&writes.fields),
++            view(&writes.chunks),
++            view(&writes.masks),
++            view(&writes.heights),
++        ],
++        lens: [
++            tables.fields.len() as u32,
++            tables.chunks.len() as u32,
++            tables.masks.len() as u32,
++            tables.heights.len() as u32,
++        ],
++    }
++}
++
+ #[cfg(test)]
+ mod tests;
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/lib.rs superfargoth/vendor/bevy_grass/src/lib.rs
 --- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/lib.rs	2006-07-24 08:21:28.000000000 +0700
-+++ superfargoth/vendor/bevy_grass/src/lib.rs	2026-11-23 17:44:40.432540700 +0700
-@@ -81,6 +81,8 @@
++++ superfargoth/vendor/bevy_grass/src/lib.rs	2026-11-24 10:42:20.261565600 +0700
+@@ -56,6 +56,87 @@
+ #[cfg(test)]
+ mod mirror;
+ mod packed;
++/// superfargoth patch (own: raw image reads): the mask and height reads, so the
++/// workspace can test them (cargo cannot test a vendored, non-member crate).
++#[doc(hidden)]
++pub mod superfargoth_test {
++    pub use crate::packed::{
++        mask_words, pack_mask, pack_mask_per_texel, read_heights, read_heights_per_texel,
++    };
++    // superfargoth patch (own: stable tables): the tables' offsets and writes.
++    pub use crate::fields::{FieldView, TablesView, WrittenView, tables_view};
++    // superfargoth patch (own: partial upload): what the render world uploads.
++    pub use crate::render::resources::{
++        BufferPlan, CHUNK_BYTES, FIELD_BYTES, UploadPlan, UploadedState,
++    };
++
++    /// What the render world's buffers hold once it uploaded `world`'s tables.
++    pub fn uploaded_state(world: &bevy::ecs::world::World) -> UploadedState {
++        UploadedState::of(world.resource::<crate::fields::FieldTables>())
++    }
++
++    /// How the render world uploads `world`'s tables over buffers holding
++    /// `uploaded`.
++    pub fn upload_plan(
++        world: &bevy::ecs::world::World,
++        uploaded: Option<&UploadedState>,
++    ) -> UploadPlan {
++        crate::render::resources::upload_plan(
++            world.resource::<crate::fields::FieldTables>(),
++            uploaded,
++        )
++    }
++
++    // superfargoth patch (own: near tier): the Rust twins of the cull's
++    // candidate count and the near ring's keep.
++    /// Tiles per side and candidate density of a 16 m chunk of a style
++    /// `density` (blades per m²).
++    pub fn chunk_layout(chunk_size: f32, density: f32) -> (u32, f32) {
++        let layout = crate::shader_model::ChunkLayout::for_density(chunk_size, density);
++        (layout.tiles_per_side, layout.candidate_density)
++    }
++
++    /// Candidates the cull asks of a chunk of that layout where upstream
++    /// keeps `keep` of one layer and the ring multiplies it by `boost`.
++    pub fn candidates_needed(chunk_size: f32, density: f32, keep: f32, boost: f32) -> u32 {
++        crate::shader_model::ChunkLayout::for_density(chunk_size, density)
++            .candidates_needed_near(keep, boost)
++    }
++
++    /// The near ring's multiplier at `distance` for `settings` (sanitized).
++    pub fn near_boost(settings: &crate::GrassSettings, distance: f32) -> f32 {
++        crate::shader_model::NearTier::from_settings(&settings.sanitized()).boost(distance)
++    }
++
++    /// The share of layer `layer`'s candidates `evaluate` keeps.
++    pub fn layer_keep(keep: f32, boost: f32, layer: u32) -> f32 {
++        crate::shader_model::NearTier::layer_keep(keep, boost, layer)
++    }
++
++    /// Candidates per tile copy, per layer.
++    pub const TILE_POINTS: u32 = crate::shader_model::TILE_POINTS;
++
++    // superfargoth patch (own: trample source): the CPU twin of the press
++    // lookup, which passes run, and the uniform the shader reads.
++    pub use crate::trample_source::{built_in_trample_passes, trample_texture_push};
++
++    /// `TrampleSource` as `generate.wesl` gets it: (now, now texel, then,
++    /// then texel, lookup).
++    pub fn trample_source_uniform(
++        now: &crate::GrassTramplePlacement,
++        then: &crate::GrassTramplePlacement,
++        lookup: &crate::GrassTrampleLookup,
++    ) -> (
++        bevy::math::Vec4,
++        bevy::math::IVec4,
++        bevy::math::Vec4,
++        bevy::math::IVec4,
++        bevy::math::Vec4,
++    ) {
++        let u = crate::render::trample_source::TrampleSourceUniform::of(now, then, lookup);
++        (u.now, u.now_texel, u.then, u.then_texel, u.lookup)
++    }
++}
+ mod physics;
+ mod presets;
+ mod reach;
+@@ -67,6 +148,7 @@
+ mod style_file;
+ mod sun;
+ mod trample;
++mod trample_source; // superfargoth patch (own: trample source)
+ pub mod wind;
+ 
+ pub use api::{
+@@ -81,10 +163,17 @@
      GrassRegrowth, GrassSample, GrassSampler,
  };
  pub use far::{FarGrass, FarGrassMaterial, FarGrassPlugin, FarGrassUniform};
@@ -247,8 +1535,176 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
 +pub use fields::{GrassWorldOffset, field_seed};
  pub use physics::{GrassColliderBounds, GrassColliderSystems, GrassInteractorFromCollider};
  pub use render::platform::GrassSupport;
++// superfargoth patch (own: trample source)
++pub use render::trample_source::GrassTrampleSource;
++pub use trample_source::{
++    GrassGenerateSystems, GrassTrampleLookup, GrassTramplePlacement, GrassTrampleTexture,
++};
  pub use settings::{GrassQuality, GrassSettings, GrassShadows};
-diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/bevy_glue.rs superfargoth/vendor/bevy_grass/src/render/bevy_glue.rs
+-pub use stats::{GpuStats, GrassDiagnostics, GrassStats, TableStats};
++pub use stats::{GpuStats, GrassDiagnostics, GrassStats, RebuildPhases, TableStats}; // superfargoth patch (own: rebuild phases): `RebuildPhases`
+ pub use style_file::{GrassStyleFileError, GrassStyleFilePlugin, GrassStyleLoader};
+ pub use sun::{GrassLightFrame, GrassLightPlugin, GrassLightSystems};
+ pub use wind::{GrassWind, GrassWindFrame, GrassWindPlugin, GrassWindSystems};
+@@ -343,7 +432,9 @@
+         .register_type::<GrassSettings>()
+         .register_type::<GrassQuality>()
+         .register_type::<GrassShadows>()
+-        .register_type::<GrassSupport>();
++        .register_type::<GrassSupport>()
++        // superfargoth patch (own: trample source)
++        .register_type::<GrassTrampleTexture>();
+ }
+ 
+ /// Says which settings were out of range, once per change. The render world
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/packed.rs superfargoth/vendor/bevy_grass/src/packed.rs
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/packed.rs	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/packed.rs	2026-11-23 21:28:22.818415100 +0700
+@@ -64,7 +64,7 @@
+ }
+ 
+ /// Words in a mask of `texels` texels.
+-pub(crate) fn mask_words(texels: u32) -> u32 {
++pub fn mask_words(texels: u32) -> u32 {
+     texels.div_ceil(2)
+ }
+ 
+@@ -72,22 +72,58 @@
+ ///
+ /// Whatever the image's colour space, the red and green are the values
+ /// stored. (An sRGB image read as a colour would be gamma-curved.)
+-fn pack_mask(image: &Image) -> Vec<u32> {
++pub fn pack_mask(image: &Image) -> Vec<u32> {
++    // superfargoth patch (own: raw image reads): the 8-bit unorm formats read
++    // their bytes straight, which is what `get_color_at` rounds back to (a
++    // byte b is b / 255, and b / 255 * 255 rounds to b). Every other format,
++    // or an image whose data is missing or short, reads texel by texel.
++    let fast = match image.texture_descriptor.format {
++        TextureFormat::Rg8Unorm => texel_bytes(image, 2).map(|bytes| {
++            pack_texels(
++                bytes.len() / 2,
++                bytes
++                    .chunks_exact(2)
++                    .map(|t| u32::from(t[0]) | (u32::from(t[1]) << 8)),
++            )
++        }),
++        // One channel is grey: red and green are both the byte.
++        TextureFormat::R8Unorm => texel_bytes(image, 1).map(|bytes| {
++            pack_texels(bytes.len(), bytes.iter().map(|&v| u32::from(v) * 0x0101))
++        }),
++        TextureFormat::Rgba8Unorm => texel_bytes(image, 4).map(|bytes| {
++            pack_texels(
++                bytes.len() / 4,
++                bytes
++                    .chunks_exact(4)
++                    .map(|t| u32::from(t[0]) | (u32::from(t[1]) << 8)),
++            )
++        }),
++        _ => None,
++    };
++    fast.unwrap_or_else(|| pack_mask_per_texel(image))
++}
++
++// superfargoth patch (own: raw image reads): the bytes of every texel of a 2D
++// image, row by row, when its data holds them all; `None` sends the read down
++// the per-texel path.
++fn texel_bytes(image: &Image, bytes_per_texel: usize) -> Option<&[u8]> {
++    if image.texture_descriptor.dimension != TextureDimension::D2 {
++        return None;
++    }
+     let size = image.size();
+-    let mut words = Vec::with_capacity(mask_words(size.x * size.y) as usize);
++    let len = size.x as usize * size.y as usize * bytes_per_texel;
++    image.data.as_deref().and_then(|data| data.get(..len))
++}
++
++// superfargoth patch (own: raw image reads): `texels` mask texels as words,
++// two per word, low half first, the last word padded.
++fn pack_texels(texels: usize, texels_iter: impl Iterator<Item = u32>) -> Vec<u32> {
++    let mut words = Vec::with_capacity(texels.div_ceil(2));
+     let mut half = None;
+-    for y in 0..size.y {
+-        for x in 0..size.x {
+-            let texel = image.get_color_at(x, y).map_or(0xffff, |color| {
+-                let c = LinearRgba::from(color);
+-                let r = (c.red.clamp(0.0, 1.0) * 255.0).round() as u32;
+-                let g = (c.green.clamp(0.0, 1.0) * 255.0).round() as u32;
+-                r | (g << 8)
+-            });
+-            match half.take() {
+-                None => half = Some(texel),
+-                Some(low) => words.push(low | (texel << 16)),
+-            }
++    for texel in texels_iter {
++        match half.take() {
++            None => half = Some(texel),
++            Some(low) => words.push(low | (texel << 16)),
+         }
+     }
+     if let Some(low) = half {
+@@ -96,6 +132,24 @@
+     words
+ }
+ 
++// superfargoth patch (own: raw image reads): the original per-texel read, kept
++// for the formats the fast path does not cover.
++/// The per-texel read (`Image::get_color_at`), for formats the raw path does not cover.
++pub fn pack_mask_per_texel(image: &Image) -> Vec<u32> {
++    let size = image.size();
++    let texels = (0..size.y).flat_map(|y| {
++        (0..size.x).map(move |x| {
++            image.get_color_at(x, y).map_or(0xffff, |color| {
++                let c = LinearRgba::from(color);
++                let r = (c.red.clamp(0.0, 1.0) * 255.0).round() as u32;
++                let g = (c.green.clamp(0.0, 1.0) * 255.0).round() as u32;
++                r | (g << 8)
++            })
++        })
++    });
++    pack_texels((size.x * size.y) as usize, texels)
++}
++
+ /// `densities` as a density mask image, `texels` across: red the density,
+ /// green 1 (full height), kept on the CPU only, which is all a mask needs.
+ pub(crate) fn density_image(densities: &[f32], texels: UVec2) -> Image {
+@@ -121,7 +175,25 @@
+ }
+ 
+ /// A heightmap's red channel, normalized.
+-fn read_heights(image: &Image) -> Vec<f32> {
++pub fn read_heights(image: &Image) -> Vec<f32> {
++    // superfargoth patch (own: raw image reads): R32Float heights are their
++    // little-endian floats as stored, which is all `get_color_at` returns for
++    // red. Every other format, or missing or short data, reads texel by texel.
++    if image.texture_descriptor.format == TextureFormat::R32Float
++        && let Some(bytes) = texel_bytes(image, 4)
++    {
++        return bytes
++            .chunks_exact(4)
++            .map(|t| f32::from_le_bytes([t[0], t[1], t[2], t[3]]))
++            .collect();
++    }
++    read_heights_per_texel(image)
++}
++
++// superfargoth patch (own: raw image reads): the original per-texel read, kept
++// for the formats the fast path does not cover.
++/// The per-texel read (`Image::get_color_at`), for formats the raw path does not cover.
++pub fn read_heights_per_texel(image: &Image) -> Vec<f32> {
+     let size = image.size();
+     let mut heights = Vec::with_capacity((size.x * size.y) as usize);
+     for y in 0..size.y {
+@@ -136,6 +208,9 @@
+     heights
+ }
+ 
++// superfargoth patch (own: stable tables): the tables write each image in
++// place now (`fields::rebuild`); only the tests still join.
++#[cfg(test)]
+ /// Joins packed images end to end. One image needs no copy at all.
+ pub(crate) fn join<T: Copy>(parts: &[Arc<Vec<T>>]) -> Arc<Vec<T>> {
+     match parts {
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/bevy_glue.rs superfargoth/vendor/bevy_grass/src/render/bevy_glue.rs
 --- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/bevy_glue.rs	2006-07-24 08:21:28.000000000 +0700
 +++ superfargoth/vendor/bevy_grass/src/render/bevy_glue.rs	2026-11-23 17:55:25.053026400 +0700
 @@ -164,6 +164,11 @@
@@ -291,9 +1747,170 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
          empty_layout: prepass_pipeline.empty_layout.clone(),
          grass_layout: layouts.draw.clone(),
          shader: shaders.prepass.clone(),
-diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/extract.rs superfargoth/vendor/bevy_grass/src/render/extract.rs
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/compute.rs superfargoth/vendor/bevy_grass/src/render/compute.rs
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/compute.rs	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/render/compute.rs	2026-11-24 10:29:41.497145800 +0700
+@@ -11,8 +11,10 @@
+     CachedComputePipelineId, ComputePassDescriptor, ComputePipelineDescriptor, PipelineCache,
+ };
+ use bevy::render::renderer::RenderContext;
++use bevy::shader::ShaderDefVal; // superfargoth patch (own: trample source)
+ 
+ use super::resources::{GrassLayouts, GrassShaders, GrassShared, GrassSharedBindGroups};
++use super::trample_source::GrassTrampleSourceGroup; // superfargoth patch (own: trample source)
+ use super::view::{GrassViewBindGroups, GrassViewBuffers};
+ use crate::trample;
+ 
+@@ -28,17 +30,21 @@
+     SizeDispatch,
+     Generate,
+     WriteDrawArgs,
++    // superfargoth patch (own: trample source)
++    /// `generate` reading an external trample texture (`TRAMPLE_TEXTURE`).
++    GenerateTrampleTexture,
+ }
+ 
+ impl ComputePass {
+     /// Every pass, in declaration order, so `pass as usize` indexes it.
+-    pub(crate) const ALL: [Self; 6] = [
++    pub(crate) const ALL: [Self; 7] = [
+         Self::TrampleDecay,
+         Self::TrampleStamp,
+         Self::Cull,
+         Self::SizeDispatch,
+         Self::Generate,
+         Self::WriteDrawArgs,
++        Self::GenerateTrampleTexture, // superfargoth patch (own: trample source)
+     ];
+ 
+     /// The entry point's name in the shader.
+@@ -52,6 +58,7 @@
+             Self::SizeDispatch => "size_dispatch",
+             Self::Generate => "generate",
+             Self::WriteDrawArgs => "write_draw_args",
++            Self::GenerateTrampleTexture => "generate", // superfargoth patch (own: trample source)
+         }
+     }
+ 
+@@ -60,7 +67,21 @@
+     fn is_trample(self) -> bool {
+         match self {
+             Self::TrampleDecay | Self::TrampleStamp => true,
+-            Self::Cull | Self::SizeDispatch | Self::Generate | Self::WriteDrawArgs => false,
++            Self::Cull
++            | Self::SizeDispatch
++            | Self::Generate
++            | Self::WriteDrawArgs
++            | Self::GenerateTrampleTexture => false,
++        }
++    }
++
++    // superfargoth patch (own: trample source)
++    /// The shader defs the pass is built with.
++    fn shader_defs(self) -> Vec<ShaderDefVal> {
++        if self == Self::GenerateTrampleTexture {
++            vec![super::trample_source::TRAMPLE_TEXTURE_DEF.into()]
++        } else {
++            Vec::new()
+         }
+     }
+ }
+@@ -89,6 +110,7 @@
+                 shaders.generate.clone()
+             },
+             entry_point: Some(entry.into()),
++            shader_defs: pass.shader_defs(), // superfargoth patch (own: trample source)
+             ..Default::default()
+         })
+     };
+@@ -103,6 +125,7 @@
+     shared: Res<GrassShared>,
+     shared_groups: Res<GrassSharedBindGroups>,
+     mut views: Query<(&mut GrassViewBuffers, &GrassViewBindGroups)>,
++    trample_source: Res<GrassTrampleSourceGroup>, // superfargoth patch (own: trample source)
+ ) {
+     let get = |pass: ComputePass| pipeline_cache.get_compute_pipeline(pipelines.0[pass as usize]);
+     let (
+@@ -125,6 +148,14 @@
+     else {
+         return;
+     };
++    // superfargoth patch (own: trample source): with an external trample
++    // texture, `generate` reads it (group 3) and the built-in trample passes
++    // are skipped. Until its pipeline is ready the built-in path runs.
++    let external = trample_source
++        .group
++        .as_ref()
++        .zip(get(ComputePass::GenerateTrampleTexture))
++        .zip(shared_groups.empty.as_ref());
+     let diagnostics = ctx.diagnostic_recorder();
+     let diagnostics = diagnostics.as_deref();
+ 
+@@ -140,22 +171,31 @@
+         let encoder = ctx.command_encoder();
+         encoder.clear_buffer(&buffers.counters, 0, None);
+ 
+-        let span = diagnostics.time_span(encoder, "grass_trample");
+-        {
+-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+-                label: Some("grass_trample"),
+-                ..Default::default()
+-            });
+-            pass.set_bind_group(0, shared_group, &[]);
+-            pass.set_bind_group(1, trample_group, &[]);
+-            pass.set_pipeline(trample_decay);
+-            pass.dispatch_workgroups(TRAMPLE_CELLS.div_ceil(64), 1, 1);
+-            if buffers.interactor_count > 0 {
+-                pass.set_pipeline(trample_stamp);
+-                pass.dispatch_workgroups(buffers.interactor_count, 1, 1);
++        // superfargoth patch (own: trample source): `built_in_trample_passes`.
++        let (decay, stamp) = crate::trample_source::built_in_trample_passes(
++            external.is_some(),
++            buffers.interactor_count,
++        );
++        if decay || stamp {
++            let span = diagnostics.time_span(encoder, "grass_trample");
++            {
++                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
++                    label: Some("grass_trample"),
++                    ..Default::default()
++                });
++                pass.set_bind_group(0, shared_group, &[]);
++                pass.set_bind_group(1, trample_group, &[]);
++                if decay {
++                    pass.set_pipeline(trample_decay);
++                    pass.dispatch_workgroups(TRAMPLE_CELLS.div_ceil(64), 1, 1);
++                }
++                if stamp {
++                    pass.set_pipeline(trample_stamp);
++                    pass.dispatch_workgroups(buffers.interactor_count, 1, 1);
++                }
+             }
++            span.end(encoder);
+         }
+-        span.end(encoder);
+ 
+         let span = diagnostics.time_span(encoder, "grass_cull");
+         {
+@@ -184,7 +224,14 @@
+             });
+             pass.set_bind_group(0, shared_group, &[]);
+             pass.set_bind_group(1, generate_group, &[]);
+-            pass.set_pipeline(generate);
++            // superfargoth patch (own: trample source)
++            if let Some(((source_group, generate_texture), empty)) = external {
++                pass.set_bind_group(2, empty, &[]);
++                pass.set_bind_group(3, source_group, &[]);
++                pass.set_pipeline(generate_texture);
++            } else {
++                pass.set_pipeline(generate);
++            }
+             pass.dispatch_workgroups_indirect(&buffers.dispatch, 0);
+             pass.set_pipeline(write_draw_args);
+             pass.set_bind_group(1, args_group, &[]);
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/extract.rs superfargoth/vendor/bevy_grass/src/render/extract.rs
 --- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/extract.rs	2006-07-24 08:21:28.000000000 +0700
-+++ superfargoth/vendor/bevy_grass/src/render/extract.rs	2026-11-23 18:06:01.785415200 +0700
++++ superfargoth/vendor/bevy_grass/src/render/extract.rs	2026-11-23 21:40:32.485602700 +0700
 @@ -18,7 +18,7 @@
  };
  use crate::clock::GrassClock;
@@ -303,7 +1920,18 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
  use crate::sun::GrassLightFrame;
  use crate::trample::{self, Stamp, Tracked};
  use crate::wind::GrassWindFrame;
-@@ -65,6 +65,7 @@
+@@ -26,6 +26,10 @@
+ /// What the main world handed over this frame.
+ #[derive(Resource, Debug, Default)]
+ pub(crate) struct ExtractedGrass {
++    // superfargoth patch (own: partial upload): masks and heightmaps dropped
++    // once uploaded.
++    /// The latest tables; once uploaded, without their masks and heightmaps
++    /// (`prepare_shared`), which nothing here reads after that.
+     pub tables: FieldTables,
+     /// This frame's edits to the masks, written after `tables`.
+     pub mask_patches: Arc<PatchList>,
+@@ -65,6 +69,7 @@
      light: Extract<Res<GrassLightFrame>>,
      interactors: Extract<Query<Interactor>>,
      (settings, patches): (Extract<Res<GrassSettings>>, Extract<Res<MaskPatches>>),
@@ -311,7 +1939,7 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
  ) {
      extracted.settings = settings.sanitized();
      let rows = extracted.settings.blade_rows;
-@@ -81,14 +82,18 @@
+@@ -81,14 +86,18 @@
      };
      // The renderer clamps the wind to non-negative values, as it does the
      // settings, so a custom source cannot make the blades misbehave.
@@ -338,10 +1966,116 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
      // The light grass follows, from the built-in adapter or the game. A
      // direction of no length means no light.
      extracted.shadow_light = light.shadow_direction.and_then(Vec3::try_normalize);
-diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/resources.rs superfargoth/vendor/bevy_grass/src/render/resources.rs
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/gpu_test.rs superfargoth/vendor/bevy_grass/src/render/gpu_test.rs
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/gpu_test.rs	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/render/gpu_test.rs	2026-11-23 21:28:35.319973800 +0700
+@@ -32,6 +32,7 @@
+ use crate::GrassWind;
+ use crate::api::{GrassField, GrassGround, GrassInteractor, GrassInteractorFootprint, GrassStyle};
+ use crate::fields::{CHUNK_SIZE, FieldTables};
++use crate::gpu_layout::NO_MAP; // superfargoth patch (own: stable tables)
+ use crate::mirror;
+ use crate::shader_model::{self, ChunkLayout, DistanceLod, TILE_POINTS};
+ 
+@@ -171,7 +172,8 @@
+     let camera = view.camera_position.truncate();
+     let origin = view.instance_origin;
+     let mut out = Vec::new();
+-    for chunk in tables.chunks.iter() {
++    // superfargoth patch (own: stable tables): holes belong to no field.
++    for chunk in tables.chunks.iter().filter(|chunk| chunk.ids.x != NO_MAP) {
+         let field = tables.fields[chunk.ids.x as usize];
+         let tallest = field.shape.y;
+         // The box around the chunk's square, turned with its field.
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/mod.rs superfargoth/vendor/bevy_grass/src/render/mod.rs
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/mod.rs	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/render/mod.rs	2026-11-24 10:42:20.262564500 +0700
+@@ -10,6 +10,7 @@
+ pub(crate) mod platform;
+ pub(crate) mod resources;
+ mod shadows;
++pub(crate) mod trample_source; // superfargoth patch (own: trample source)
+ pub(crate) mod view;
+ 
+ use bevy::app::{App, Plugin, PostUpdate};
+@@ -48,6 +49,9 @@
+             .insert_resource(self.shaders.clone())
+             .init_resource::<resources::ExtractedGrass>()
+             .init_resource::<resources::GrassSharedBindGroups>()
++            // superfargoth patch (own: trample source)
++            .init_resource::<trample_source::ExtractedTrampleTexture>()
++            .init_resource::<trample_source::GrassTrampleSourceGroup>()
+             .init_resource::<SpecializedRenderPipelines<bevy_glue::GrassMainPipeline>>()
+             .init_resource::<SpecializedRenderPipelines<bevy_glue::GrassPrepassPipeline>>()
+             .init_resource::<SpecializedRenderPipelines<bevy_glue::GrassShadowPipeline>>()
+@@ -71,17 +75,27 @@
+             )
+             .add_systems(
+                 ExtractSchedule,
+-                (resources::extract_grass, resources::extract_cameras).run_if(platform::supported),
++                (
++                    resources::extract_grass,
++                    resources::extract_cameras,
++                    trample_source::extract_trample_texture, // superfargoth patch (own: trample source)
++                )
++                    .run_if(platform::supported),
+             )
+             .add_systems(
+                 Render,
+                 (
+                     bevy_glue::queue_grass.in_set(RenderSystems::Queue),
+-                    (resources::prepare_shared, view::prepare_views)
++                    (
++                        resources::prepare_shared,
++                        view::prepare_views,
++                        trample_source::resolve_trample_texture, // superfargoth patch (own: trample source)
++                    )
+                         .in_set(RenderSystems::PrepareResources),
+                     (
+                         resources::prepare_shared_bind_groups,
+                         view::prepare_view_bind_groups,
++                        trample_source::prepare_trample_source_group, // superfargoth patch (own: trample source)
+                     )
+                         .in_set(RenderSystems::PrepareBindGroups),
+                 )
+@@ -90,6 +104,7 @@
+             .add_systems(
+                 RenderGraph,
+                 compute::run_generate
++                    .in_set(crate::GrassGenerateSystems) // superfargoth patch (own: trample source)
+                     .before(camera_driver)
+                     .run_if(platform::supported),
+             );
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/resources.rs superfargoth/vendor/bevy_grass/src/render/resources.rs
 --- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/resources.rs	2006-07-24 08:21:28.000000000 +0700
-+++ superfargoth/vendor/bevy_grass/src/render/resources.rs	2026-11-23 18:04:50.030659500 +0700
-@@ -70,11 +70,30 @@
++++ superfargoth/vendor/bevy_grass/src/render/resources.rs	2026-11-24 10:29:41.497145800 +0700
+@@ -2,6 +2,7 @@
+ //! buffer (masks, then heightmaps), the blue-noise tile, the gust texture, the shared index
+ //! buffer and the per-frame uniform. Uploaded only when the fields change.
+ 
++use std::ops::Range; // superfargoth patch (own: partial upload)
+ use std::sync::Arc;
+ 
+ use bevy::asset::Handle;
+@@ -21,6 +22,8 @@
+ use bevy::render::renderer::{RenderDevice, RenderQueue};
+ use bevy::render::view::{ViewUniform, ViewUniforms};
+ use bevy::shader::Shader;
++// superfargoth patch (own: partial upload)
++use bevy::render::render_resource::encase::{self, ShaderSize, internal::WriteInto};
+ 
+ use super::compute::ComputePass;
+ pub(crate) use super::extract::{ExtractedGrass, extract_cameras, extract_grass};
+@@ -28,7 +31,7 @@
+ use super::view::ViewUniformData;
+ use crate::GrassSettings;
+ use crate::edit::PatchList;
+-use crate::fields::FieldTables;
++use crate::fields::{FieldTables, Written}; // superfargoth patch (own: partial upload): `Written`
+ use crate::gpu_layout::{ChunkGpu, FieldGpu, NO_MAP};
+ use crate::shader_model::{self, GUST_SIZE, gust_noise};
+ use crate::wind::GrassWindFrame;
+@@ -70,11 +73,30 @@
      pub sway_speed: f32,
      pub flutter: f32,
      pub gust_contrast: f32,
@@ -372,7 +2106,764 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
              direction: wind.direction,
              strength: wind.strength,
              gust_scale: wind.gust_scale,
-diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/bevy_bridge.wesl superfargoth/vendor/bevy_grass/src/shaders/bevy_bridge.wesl
+@@ -115,6 +137,10 @@
+     pub shadow_view: BindGroupLayoutDescriptor,
+     /// Group 1 of the shadow pass, empty so the grass group stays at 2.
+     pub empty: BindGroupLayoutDescriptor,
++    // superfargoth patch (own: trample source)
++    /// Group 3 of `generate` with an external trample texture (group 2 is
++    /// `empty` there).
++    pub trample_source: BindGroupLayoutDescriptor,
+ }
+ 
+ impl GrassLayouts {
+@@ -217,6 +243,7 @@
+             draw,
+             shadow_view,
+             empty,
++            trample_source: super::trample_source::layout(), // superfargoth patch (own: trample source)
+         }
+     }
+ 
+@@ -227,11 +254,18 @@
+             ComputePass::TrampleDecay | ComputePass::TrampleStamp => &self.trample_view,
+             ComputePass::SizeDispatch | ComputePass::WriteDrawArgs => &self.args_view,
+             ComputePass::Cull | ComputePass::Generate => &self.generate_view,
++            // superfargoth patch (own: trample source)
++            ComputePass::GenerateTrampleTexture => &self.generate_view,
+         };
+         let mut layout = vec![self.shared.clone(), view.clone()];
+         if pass == ComputePass::SizeDispatch {
+             layout.push(self.dispatch.clone());
+         }
++        // superfargoth patch (own: trample source)
++        if pass == ComputePass::GenerateTrampleTexture {
++            layout.push(self.empty.clone());
++            layout.push(self.trample_source.clone());
++        }
+         layout
+     }
+ }
+@@ -257,7 +291,11 @@
+     pub gust_view: TextureView,
+     pub gust_sampler: Sampler,
+     uploaded_version: u64,
+-    uploaded_structure: u64,
++    // superfargoth patch (own: partial upload): what the buffers hold, so the
++    // next version writes only the ranges it changed.
++    /// The tables the buffers hold; `None` before the first upload and after
++    /// a scene too large to draw.
++    uploaded: Option<UploadedState>,
+     /// Words in the mask buffer, which edits may write into.
+     mask_words: usize,
+     /// Chunks in the table; zero means no grass anywhere.
+@@ -357,7 +395,7 @@
+         gust_view,
+         gust_sampler,
+         uploaded_version: u64::MAX,
+-        uploaded_structure: u64::MAX,
++        uploaded: None, // superfargoth patch (own: partial upload)
+         mask_words: 0,
+         chunk_count: 0,
+     };
+@@ -379,6 +417,170 @@
+     }
+ }
+ 
++// superfargoth patch (own: partial upload)
++/// Bytes of one entry in the fields buffer: its stride as a storage array
++/// (every member is 16 bytes, so the size is the stride; so for a chunk).
++pub const FIELD_BYTES: u64 = <FieldGpu as ShaderSize>::SHADER_SIZE.get();
++/// Bytes of one chunk in the chunks buffer.
++pub const CHUNK_BYTES: u64 = <ChunkGpu as ShaderSize>::SHADER_SIZE.get();
++const _: () = assert!(FIELD_BYTES % 16 == 0 && CHUNK_BYTES % 16 == 0);
++
++// superfargoth patch (own: partial upload)
++/// What the buffers hold: the tables' version and structure version and each
++/// table's length (entries, chunks, mask words, height texels).
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct UploadedState {
++    version: u64,
++    structure_version: u64,
++    lens: [u32; 4],
++}
++
++impl UploadedState {
++    /// The state once `tables` are uploaded.
++    pub(crate) fn of(tables: &FieldTables) -> Self {
++        Self {
++            version: tables.version,
++            structure_version: tables.structure_version,
++            lens: [
++                tables.fields.len() as u32,
++                tables.chunks.len() as u32,
++                tables.masks.len() as u32,
++                tables.heights.len() as u32,
++            ],
++        }
++    }
++}
++
++// superfargoth patch (own: partial upload)
++/// How one buffer is brought up to date.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub enum BufferPlan {
++    /// Written whole, at the tables' size.
++    Full,
++    /// These byte ranges written into the buffer as it is, sorted and merged;
++    /// none leaves it untouched.
++    Ranges(Vec<Range<u64>>),
++}
++
++// superfargoth patch (own: partial upload)
++/// How each buffer is brought up to date with a new version of the tables.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct UploadPlan {
++    /// The entries (`FIELD_BYTES` each).
++    pub fields: BufferPlan,
++    /// The chunks (`CHUNK_BYTES` each).
++    pub chunks: BufferPlan,
++    /// The masks, then the heightmaps, 4 bytes a word or texel.
++    pub scene: BufferPlan,
++}
++
++/// `ranges`, sorted, merged where they touch.
++fn merged_bytes(ranges: impl IntoIterator<Item = Range<u64>>) -> Vec<Range<u64>> {
++    let mut ranges: Vec<Range<u64>> = ranges.into_iter().filter(|r| !r.is_empty()).collect();
++    ranges.sort_by_key(|range| range.start);
++    let mut merged: Vec<Range<u64>> = Vec::with_capacity(ranges.len());
++    for range in ranges {
++        match merged.last_mut() {
++            Some(last) if last.end >= range.start => last.end = last.end.max(range.end),
++            _ => merged.push(range),
++        }
++    }
++    merged
++}
++
++// superfargoth patch (own: partial upload)
++/// How to upload `tables` over buffers holding `uploaded`.
++///
++/// A buffer takes only the ranges the latest rebuild wrote when the writes
++/// lead from the version it holds and its tables kept their length; it is
++/// written whole when nothing was uploaded yet, a table was laid out afresh or
++/// changed length (the entries too when the mask words, which shift every
++/// heightmap offset, change), or a version came in between that this world
++/// never uploaded (two rebuilds in one frame, a skipped extraction), whose
++/// writes are unknown.
++pub(crate) fn upload_plan(tables: &FieldTables, uploaded: Option<&UploadedState>) -> UploadPlan {
++    use BufferPlan::{Full, Ranges};
++    let Some(uploaded) = uploaded else {
++        return UploadPlan {
++            fields: Full,
++            chunks: Full,
++            scene: Full,
++        };
++    };
++    let lens = UploadedState::of(tables).lens;
++    let same = |table: usize| lens[table] == uploaded.lens[table];
++    let writes = &tables.writes;
++    if writes.since != uploaded.version {
++        // The chunks and images change only with the structure version.
++        let structure = if tables.structure_version == uploaded.structure_version
++            && (1..4).all(same)
++        {
++            Ranges(Vec::new())
++        } else {
++            Full
++        };
++        return UploadPlan {
++            fields: Full,
++            chunks: structure.clone(),
++            scene: structure,
++        };
++    }
++    let bytes = |written: &Written, unit: u64, base: u64| {
++        written
++            .ranges
++            .iter()
++            .map(move |r| (base + u64::from(r.start)) * unit..(base + u64::from(r.end)) * unit)
++            .collect::<Vec<_>>()
++    };
++    let fields = if writes.fields.full || !same(0) || !same(2) {
++        Full
++    } else {
++        Ranges(bytes(&writes.fields, FIELD_BYTES, 0))
++    };
++    let chunks = if writes.chunks.full || !same(1) {
++        Full
++    } else {
++        Ranges(bytes(&writes.chunks, CHUNK_BYTES, 0))
++    };
++    let scene = if writes.masks.full || writes.heights.full || !same(2) || !same(3) {
++        Full
++    } else {
++        // The heightmaps follow the masks.
++        let mask_words = u64::from(lens[2]);
++        Ranges(merged_bytes(
++            bytes(&writes.masks, 4, 0)
++                .into_iter()
++                .chain(bytes(&writes.heights, 4, mask_words)),
++        ))
++    };
++    UploadPlan {
++        fields,
++        chunks,
++        scene,
++    }
++}
++
++/// `field` as the GPU reads it: the heightmaps follow the masks in the scene
++/// buffer, so a heightmap's offset counts the mask words before it too.
++fn on_gpu(mut field: FieldGpu, mask_words: u32) -> FieldGpu {
++    if field.placement.w != NO_MAP {
++        field.placement.w += mask_words;
++    }
++    field
++}
++
++/// `values` as their storage array bytes.
++fn encoded<T>(values: &[T]) -> Vec<u8>
++where
++    [T]: ShaderType + WriteInto,
++{
++    let mut bytes = encase::StorageBuffer::new(Vec::new());
++    bytes
++        .write(values)
++        .expect("a vector of fixed-size GPU structs encodes");
++    bytes.into_inner()
++}
++
+ fn upload_tables(
+     shared: &mut GrassShared,
+     tables: &FieldTables,
+@@ -386,52 +588,95 @@
+     queue: &RenderQueue,
+ ) {
+     shared.uploaded_version = tables.version;
+-    // The heightmaps follow the masks in the scene buffer, so on the GPU a
+-    // heightmap's offset counts the mask words before it too.
++    // superfargoth patch (own: partial upload): each buffer whole or only the
++    // ranges the latest rebuild wrote (`upload_plan`).
++    let plan = upload_plan(tables, shared.uploaded.as_ref());
++    shared.uploaded = None;
+     let mask_words = tables.masks.len() as u32;
+-    let mut fields = non_empty(&tables.fields);
+-    for field in &mut fields {
+-        if field.placement.w != NO_MAP {
+-            field.placement.w += mask_words;
++    match (&plan.fields, shared.fields.buffer()) {
++        (BufferPlan::Ranges(ranges), Some(buffer)) => {
++            for range in ranges {
++                let at = (range.start / FIELD_BYTES) as usize..(range.end / FIELD_BYTES) as usize;
++                let entries: Vec<FieldGpu> = tables.fields[at]
++                    .iter()
++                    .map(|field| on_gpu(*field, mask_words))
++                    .collect();
++                queue.write_buffer(buffer, range.start, &encoded(&entries));
++            }
++        }
++        _ => {
++            let fields = non_empty(&tables.fields)
++                .into_iter()
++                .map(|field| on_gpu(field, mask_words))
++                .collect();
++            shared.fields.set(fields);
++            shared.fields.write_buffer(device, queue);
+         }
+     }
+-    shared.fields.set(fields);
+-    shared.fields.write_buffer(device, queue);
+     // Showing or hiding a field changes its entries only; the chunks and the
+     // images, most of the bytes, stay where they are.
+-    if shared.uploaded_structure == tables.structure_version {
+-        return;
++    if plan.chunks == BufferPlan::Full || plan.scene == BufferPlan::Full {
++        // A binding larger than the device allows is a validation error that
++        // stops Bevy's renderer, so a scene that does not fit draws no grass.
++        let limit = device.limits().max_storage_buffer_binding_size;
++        if let Some(bytes) =
++            platform::scene_too_large(tables.masks.len(), tables.heights.len(), limit)
++        {
++            warn!(
++                "bevy_grass: the density masks and heightmaps of every GrassField take {bytes} \
++                 bytes together, and a storage binding on this GPU holds {limit}; no grass is \
++                 drawn. Use fewer or smaller masks and heightmaps."
++            );
++            shared.chunk_count = 0;
++            shared.mask_words = 0;
++            shared.scene.set(vec![0]);
++            shared.scene.write_buffer(device, queue);
++            return;
++        }
+     }
+-    shared.uploaded_structure = tables.structure_version;
+-    // A binding larger than the device allows is a validation error that
+-    // stops Bevy's renderer, so a scene that does not fit draws no grass.
+-    let limit = device.limits().max_storage_buffer_binding_size;
+-    if let Some(bytes) = platform::scene_too_large(tables.masks.len(), tables.heights.len(), limit)
+-    {
+-        warn!(
+-            "bevy_grass: the density masks and heightmaps of every GrassField take {bytes} \
+-             bytes together, and a storage binding on this GPU holds {limit}; no grass is \
+-             drawn. Use fewer or smaller masks and heightmaps."
+-        );
+-        shared.chunk_count = 0;
+-        shared.mask_words = 0;
+-        shared.scene.set(vec![0]);
+-        shared.scene.write_buffer(device, queue);
+-        return;
++    match (&plan.chunks, shared.chunks.buffer()) {
++        (BufferPlan::Ranges(ranges), Some(buffer)) => {
++            for range in ranges {
++                let at = (range.start / CHUNK_BYTES) as usize..(range.end / CHUNK_BYTES) as usize;
++                queue.write_buffer(buffer, range.start, &encoded(&tables.chunks[at]));
++            }
++        }
++        _ => {
++            shared.chunk_count = tables.chunks.len() as u32;
++            shared.chunks.set(non_empty(&tables.chunks));
++            shared.chunks.write_buffer(device, queue);
++        }
+     }
+-    shared.chunk_count = tables.chunks.len() as u32;
+-    shared.chunks.set(non_empty(&tables.chunks));
+-    shared.chunks.write_buffer(device, queue);
+-    shared.mask_words = tables.masks.len();
+-    let mut scene = Vec::with_capacity(tables.masks.len() + tables.heights.len());
+-    scene.extend_from_slice(&tables.masks);
+-    scene.extend(tables.heights.iter().map(|height| height.to_bits()));
+-    if scene.is_empty() {
+-        // Storage bindings may not be empty; nothing indexes this word.
+-        scene.push(0);
++    match (&plan.scene, shared.scene.buffer()) {
++        (BufferPlan::Ranges(ranges), Some(buffer)) => {
++            let masks = tables.masks.len();
++            for range in ranges {
++                let words = (range.start / 4) as usize..(range.end / 4) as usize;
++                if words.start < masks {
++                    let run = &tables.masks[words.start..words.end.min(masks)];
++                    queue.write_buffer(buffer, range.start, bytemuck::cast_slice(run));
++                }
++                if words.end > masks {
++                    let from = words.start.max(masks);
++                    let run = &tables.heights[from - masks..words.end - masks];
++                    queue.write_buffer(buffer, from as u64 * 4, bytemuck::cast_slice(run));
++                }
++            }
++        }
++        _ => {
++            shared.mask_words = tables.masks.len();
++            let mut scene = Vec::with_capacity(tables.masks.len() + tables.heights.len());
++            scene.extend_from_slice(&tables.masks);
++            scene.extend(tables.heights.iter().map(|height| height.to_bits()));
++            if scene.is_empty() {
++                // Storage bindings may not be empty; nothing indexes this word.
++                scene.push(0);
++            }
++            shared.scene.set(scene);
++            shared.scene.write_buffer(device, queue);
++        }
+     }
+-    shared.scene.set(scene);
+-    shared.scene.write_buffer(device, queue);
++    shared.uploaded = Some(UploadedState::of(tables));
+ }
+ 
+ /// Writes the rows edits changed into the masks at the start of the scene
+@@ -482,12 +727,19 @@
+ /// Uploads rebuilt tables and this frame's uniform.
+ pub(crate) fn prepare_shared(
+     mut shared: ResMut<GrassShared>,
+-    extracted: Res<ExtractedGrass>,
++    mut extracted: ResMut<ExtractedGrass>, // superfargoth patch (own: partial upload): `mut`
+     device: Res<RenderDevice>,
+     queue: Res<RenderQueue>,
+ ) {
+     if extracted.tables.version != shared.uploaded_version {
+         upload_tables(&mut shared, &extracted.tables, &device, &queue);
++        // superfargoth patch (own: partial upload): nothing in the render
++        // world reads the masks or heightmaps after the upload (the ground
++        // lookups read the entries and chunks), so let go of them: the main
++        // world is then their only owner and its next rebuild writes them in
++        // place instead of copying them whole.
++        extracted.tables.masks = Arc::default();
++        extracted.tables.heights = Arc::default();
+     }
+     write_mask_patches(&shared, &extracted.mask_patches, &queue);
+     // A game that changes the blades' rows gets new meshes, once.
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/trample_source.rs superfargoth/vendor/bevy_grass/src/render/trample_source.rs
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/trample_source.rs	1970-01-01 07:00:00.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/render/trample_source.rs	2026-11-24 10:35:55.301385800 +0700
+@@ -0,0 +1,196 @@
++// superfargoth patch (own: trample source): the whole file.
++//! The render side of an external trample texture (`crate::trample_source`):
++//! the source the generator reads, its uniform and its bind group (group 3 of
++//! the `generate` pipeline built with `TRAMPLE_TEXTURE`).
++
++use bevy::ecs::prelude::*;
++use bevy::math::{IVec4, Vec4};
++use bevy::render::Extract;
++use bevy::render::render_asset::RenderAssets;
++use bevy::render::render_resource::binding_types::{texture_2d, uniform_buffer};
++use bevy::render::render_resource::{
++    BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, PipelineCache,
++    ShaderStages, ShaderType, TextureSampleType, TextureView, UniformBuffer,
++};
++use bevy::render::renderer::{RenderDevice, RenderQueue};
++use bevy::render::texture::GpuImage;
++
++use super::resources::GrassLayouts;
++use crate::trample_source::{GrassTrampleLookup, GrassTramplePlacement, GrassTrampleTexture};
++
++/// The shader def of the `generate` pipeline that reads an external trample
++/// texture.
++pub(crate) const TRAMPLE_TEXTURE_DEF: &str = "TRAMPLE_TEXTURE";
++
++/// An external trample texture in the render world: what blade generation
++/// reads instead of its own trample cells while this resource exists. An app
++/// that writes its press on the GPU inserts it (and updates its views and
++/// placements each frame) before `RenderSystems::PrepareBindGroups`; one that
++/// has images uses [`GrassTrampleTexture`] instead, which fills this.
++#[derive(Resource, Debug, Clone)]
++pub struct GrassTrampleSource {
++    /// This frame's press.
++    pub current: TextureView,
++    /// Last frame's press, for the motion vectors.
++    pub previous: TextureView,
++    /// Where `current` lies.
++    pub current_placement: GrassTramplePlacement,
++    /// Where `previous` lay.
++    pub previous_placement: GrassTramplePlacement,
++    /// How both are read.
++    pub lookup: GrassTrampleLookup,
++}
++
++/// Mirrors `TrampleSource` in `generate.wesl`.
++#[derive(Debug, Clone, Copy, Default, ShaderType)]
++pub(crate) struct TrampleSourceUniform {
++    /// xy: the window's first corner; z: texels per metre (0: not placed).
++    pub now: Vec4,
++    /// xy: the texel holding the first corner; z: texels per side (0: not
++    /// placed); w: the press channel.
++    pub now_texel: IVec4,
++    /// `now` and `now_texel` for last frame.
++    pub then: Vec4,
++    pub then_texel: IVec4,
++    /// x: strength; y: edge margin; z: edge fade; w: direction floor.
++    pub lookup: Vec4,
++}
++
++impl TrampleSourceUniform {
++    pub(crate) fn of(
++        now: &GrassTramplePlacement,
++        then: &GrassTramplePlacement,
++        lookup: &GrassTrampleLookup,
++    ) -> Self {
++        let channel = lookup.channel.min(3) as i32;
++        let place = |p: &GrassTramplePlacement| {
++            if !p.is_placed() {
++                return (Vec4::ZERO, IVec4::new(0, 0, 0, channel));
++            }
++            // Reduced here so the shader wraps with one subtraction.
++            let first = (p.first_texel % p.size).as_ivec2();
++            (
++                Vec4::new(p.corner.x, p.corner.y, p.texels_per_metre, 0.0),
++                IVec4::new(first.x, first.y, p.size as i32, channel),
++            )
++        };
++        let (now, now_texel) = place(now);
++        let (then, then_texel) = place(then);
++        Self {
++            now,
++            now_texel,
++            then,
++            then_texel,
++            lookup: Vec4::new(
++                lookup.strength.max(0.0),
++                lookup.edge_margin.max(0.0),
++                lookup.edge_fade.max(0.0),
++                lookup.direction_floor.max(0.0),
++            ),
++        }
++    }
++}
++
++/// Group 3 of the `TRAMPLE_TEXTURE` generate pipeline: this frame's texture,
++/// last frame's, and the placements.
++pub(crate) fn layout() -> BindGroupLayoutDescriptor {
++    // Unfilterable: the texels are loaded, never sampled, so any float format
++    // binds.
++    let texture = || texture_2d(TextureSampleType::Float { filterable: false });
++    BindGroupLayoutDescriptor::new(
++        "grass_trample_source",
++        &BindGroupLayoutEntries::sequential(
++            ShaderStages::COMPUTE,
++            (
++                texture(),
++                texture(),
++                uniform_buffer::<TrampleSourceUniform>(false),
++            ),
++        ),
++    )
++}
++
++/// The main world's [`GrassTrampleTexture`], and whether the render world's
++/// [`GrassTrampleSource`] was made from it (so only that one is removed with
++/// it).
++#[derive(Resource, Default)]
++pub(crate) struct ExtractedTrampleTexture {
++    texture: Option<GrassTrampleTexture>,
++    made_source: bool,
++}
++
++pub(crate) fn extract_trample_texture(
++    mut extracted: ResMut<ExtractedTrampleTexture>,
++    texture: Extract<Option<Res<GrassTrampleTexture>>>,
++) {
++    extracted.texture = texture.as_deref().cloned();
++}
++
++/// Turns [`GrassTrampleTexture`]'s images into a [`GrassTrampleSource`] once
++/// both are on the GPU; removes it with the resource.
++pub(crate) fn resolve_trample_texture(
++    mut commands: Commands,
++    mut extracted: ResMut<ExtractedTrampleTexture>,
++    images: Res<RenderAssets<GpuImage>>,
++) {
++    let source = extracted.texture.as_ref().and_then(|texture| {
++        let current = images.get(&texture.current)?;
++        let previous = images.get(&texture.previous)?;
++        Some(GrassTrampleSource {
++            current: current.texture_view.clone(),
++            previous: previous.texture_view.clone(),
++            current_placement: texture.current_placement,
++            previous_placement: texture.previous_placement,
++            lookup: texture.lookup,
++        })
++    });
++    match source {
++        Some(source) => {
++            commands.insert_resource(source);
++            extracted.made_source = true;
++        }
++        None if extracted.made_source => {
++            commands.remove_resource::<GrassTrampleSource>();
++            extracted.made_source = false;
++        }
++        None => {}
++    }
++}
++
++/// The source's bind group, rebuilt every frame (the views and placements of
++/// a ring change every frame); `None` while there is no source.
++#[derive(Resource, Default)]
++pub(crate) struct GrassTrampleSourceGroup {
++    uniform: UniformBuffer<TrampleSourceUniform>,
++    pub group: Option<BindGroup>,
++}
++
++pub(crate) fn prepare_trample_source_group(
++    mut group: ResMut<GrassTrampleSourceGroup>,
++    source: Option<Res<GrassTrampleSource>>,
++    layouts: Res<GrassLayouts>,
++    pipeline_cache: Res<PipelineCache>,
++    device: Res<RenderDevice>,
++    queue: Res<RenderQueue>,
++) {
++    let Some(source) = source else {
++        group.group = None;
++        return;
++    };
++    group.uniform.set(TrampleSourceUniform::of(
++        &source.current_placement,
++        &source.previous_placement,
++        &source.lookup,
++    ));
++    group.uniform.write_buffer(&device, &queue);
++    let Some(uniform) = group.uniform.binding() else {
++        group.group = None;
++        return;
++    };
++    let bind_group = device.create_bind_group(
++        "grass_trample_source",
++        &pipeline_cache.get_bind_group_layout(&layouts.trample_source),
++        &BindGroupEntries::sequential((&source.current, &source.previous, uniform)),
++    );
++    group.group = Some(bind_group);
++}
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/view.rs superfargoth/vendor/bevy_grass/src/render/view.rs
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/render/view.rs	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/render/view.rs	2026-11-23 23:32:10.353933100 +0700
+@@ -21,7 +21,8 @@
+ use crate::GrassSettings;
+ use crate::api::{GrassCamera, NoGrass};
+ use crate::fields::{has_unsupported_layer, layer_mask};
+-use crate::shader_model::DistanceLod;
++// superfargoth patch (own: near tier): `NearTier`.
++use crate::shader_model::{DistanceLod, NearTier};
+ use crate::stats::GpuReadings;
+ use crate::{reach, trample};
+ 
+@@ -84,6 +85,10 @@
+     /// far an edge-on blade turns toward the camera, and the vertical range
+     /// of stored positions.
+     pub limits: Vec4,
++    // superfargoth patch (own: near tier)
++    /// The near ring: its density multiplier, where it starts to taper and
++    /// where it ends, in metres; w unused.
++    pub near: Vec4,
+ }
+ 
+ /// Where the overflow check is in its cycle.
+@@ -452,6 +457,11 @@
+             settings.turn_to_camera,
+             height_range,
+         ),
++        // superfargoth patch (own: near tier)
++        near: {
++            let near = NearTier::from_settings(settings);
++            Vec4::new(near.density, near.start, near.end, 0.0)
++        },
+     }
+ }
+ 
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/settings.rs superfargoth/vendor/bevy_grass/src/settings.rs
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/settings.rs	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/settings.rs	2026-11-23 23:31:41.079006700 +0700
+@@ -156,6 +156,20 @@
+     /// 0 (never; blades thin out to lines when seen side-on) to 1 (it
+     /// always faces the camera, which flattens the grass).
+     pub turn_to_camera: f32,
++    // superfargoth patch (own: near tier): a denser ring of blades around a
++    // perspective camera.
++    /// Density multiplier at the camera's feet, 1 (off) to
++    /// [`GrassSettings::MAX_NEAR_DENSITY`]: blades are this many times as
++    /// dense within [`near_start_m`](Self::near_start_m), tapering linearly
++    /// to the normal density at [`near_end_m`](Self::near_end_m). Chunks in
++    /// the ring evaluate extra layers of candidates, so it costs blades only
++    /// there; the blades keep their width. Orthographic views ignore it.
++    pub near_density: f32,
++    /// Where the near ring starts to taper, in metres from the camera
++    /// (less `radius_from_ground`), at least 0.
++    pub near_start_m: f32,
++    /// Where the near ring ends, in metres, at least `near_start_m`.
++    pub near_end_m: f32,
+ 
+     // Limits of the view.
+     /// Half the side of the square around an orthographic camera in which
+@@ -213,6 +227,10 @@
+     /// Largest `max_widening`: a blade's width is stored up to four times
+     /// its style's, and varies by up to 25% on its own.
+     pub const MAX_WIDENING: f32 = 3.2;
++    // superfargoth patch (own: near tier)
++    /// Largest `near_density`: a chunk evaluates at most this many layers of
++    /// candidates.
++    pub const MAX_NEAR_DENSITY: f32 = 4.0;
+ 
+     /// Steam Deck and integrated GPUs.
+     pub const LOW: Self = Self {
+@@ -257,6 +275,10 @@
+         mid_range_density: 0.5,
+         max_widening: 2.5,
+         turn_to_camera: 0.4,
++        // superfargoth patch (own: near tier): off, upstream's behaviour.
++        near_density: 1.0,
++        near_start_m: 4.0,
++        near_end_m: 7.0,
+         orthographic_extent: 256.0,
+         max_chunk_slices: 8192,
+         readback_interval: 120,
+@@ -300,7 +322,14 @@
+         let lod1_start = finite(self.lod1_start, high.lod1_start).clamp(0.0, 1.0);
+         let lod2_start = finite(self.lod2_start, high.lod2_start).clamp(lod1_start, 1.0);
+         let fade_start = finite(self.fade_start, high.fade_start).clamp(lod2_start, 1.0);
++        // superfargoth patch (own: near tier): the ring keeps its order too.
++        let near_start_m = finite(self.near_start_m, high.near_start_m).max(0.0);
++        let near_end_m = finite(self.near_end_m, high.near_end_m).max(near_start_m);
+         Self {
++            near_density: finite(self.near_density, high.near_density)
++                .clamp(1.0, Self::MAX_NEAR_DENSITY),
++            near_start_m,
++            near_end_m,
+             radius: finite(self.radius, high.radius).max(1.0),
+             density_scale: finite(self.density_scale, high.density_scale).max(0.0),
+             min_width_px: finite(self.min_width_px, high.min_width_px).max(0.0),
+@@ -387,6 +416,10 @@
+             mid_range_density,
+             max_widening,
+             turn_to_camera,
++            // superfargoth patch (own: near tier)
++            near_density,
++            near_start_m,
++            near_end_m,
+             orthographic_extent,
+             max_chunk_slices,
+             trample_recovery,
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shader_model.rs superfargoth/vendor/bevy_grass/src/shader_model.rs
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shader_model.rs	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/shader_model.rs	2026-11-23 23:31:53.896298500 +0700
+@@ -110,6 +110,59 @@
+     }
+ }
+ 
++// superfargoth patch (own: near tier): a denser ring around a perspective
++// camera. A chunk the ring reaches evaluates extra layers of candidates: copies
++// of its tile layout with their own per-cell offsets, after the first layer in
++// the candidate order. Every layer keeps a rank prefix, so the blades only
++// grow in number as the ring comes closer and the first layer is upstream's
++// exactly: no blade moves when a chunk enters or leaves the ring.
++/// The near ring of [`GrassSettings::near_density`].
++#[derive(Debug, Clone, Copy, PartialEq)]
++pub(crate) struct NearTier {
++    /// Density multiplier inside `start`, at least 1.
++    pub density: f32,
++    /// Where the taper starts, in metres.
++    pub start: f32,
++    /// Where the multiplier is back to 1, in metres.
++    pub end: f32,
++}
++
++impl NearTier {
++    /// The ring `settings` ask for.
++    pub(crate) fn from_settings(settings: &GrassSettings) -> Self {
++        Self {
++            density: settings.near_density,
++            start: settings.near_start_m,
++            end: settings.near_end_m,
++        }
++    }
++
++    /// The density multiplier at `distance`: `density` to `start`, linear to
++    /// 1 at `end`, 1 beyond. The WESL twin is `near_boost`.
++    pub(crate) fn boost(&self, distance: f32) -> f32 {
++        let t = ((distance - self.start) / (self.end - self.start).max(1e-4)).clamp(0.0, 1.0);
++        self.density + (1.0 - self.density) * t
++    }
++
++    /// The share of layer `layer`'s candidates kept where upstream keeps
++    /// `keep` and the ring multiplies it by `boost`. Layer 0 at a boost of 1
++    /// is upstream's `keep`. The WESL twin is in `evaluate`.
++    pub(crate) fn layer_keep(keep: f32, boost: f32, layer: u32) -> f32 {
++        (keep.clamp(0.0, 1.0) * boost - layer as f32).clamp(0.0, 1.0)
++    }
++}
++
++impl ChunkLayout {
++    /// Candidates a chunk evaluates, layers included, where upstream keeps
++    /// `keep` of one layer and the ring multiplies it by `boost`. Twin of
++    /// `needed` in `cull`.
++    pub(crate) fn candidates_needed_near(&self, keep: f32, boost: f32) -> u32 {
++        let layers = keep.clamp(0.0, 1.0) * boost.clamp(1.0, GrassSettings::MAX_NEAR_DENSITY);
++        let points = (layers * TILE_POINTS as f32).ceil() as u32;
++        points * self.tiles_per_side * self.tiles_per_side
++    }
++}
++
+ /// Distance-based thinning and level of detail for perspective views, from a
+ /// [`GrassSettings`]. The tier's own table is the architecture's: 100% to
+ /// the start of LOD 1, 50% where LOD 2 starts, 15% where the fade starts.
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/bevy_bridge.wesl superfargoth/vendor/bevy_grass/src/shaders/bevy_bridge.wesl
 --- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/bevy_bridge.wesl	2006-07-24 08:21:28.000000000 +0700
 +++ superfargoth/vendor/bevy_grass/src/shaders/bevy_bridge.wesl	2026-11-23 18:11:46.367566400 +0700
 @@ -58,6 +58,14 @@
@@ -390,19 +2881,197 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
  fn view_is_orthographic() -> bool {
      return view.clip_from_view[3].w == 1.0;
  }
-diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/generate.wesl superfargoth/vendor/bevy_grass/src/shaders/generate.wesl
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/common.wesl superfargoth/vendor/bevy_grass/src/shaders/common.wesl
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/common.wesl	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/shaders/common.wesl	2026-11-23 23:32:10.441229600 +0700
+@@ -87,6 +87,10 @@
+     /// range instance positions are stored over, in metres either side of
+     /// the origin.
+     limits: vec4<f32>,
++    /// superfargoth patch (own: near tier): x: the density multiplier at the
++    /// camera; y: where it starts to taper and z: where it is back to 1, in
++    /// metres.
++    near: vec4<f32>,
+ }
+ 
+ /// One field. Mirrors `FieldGpu` in `gpu_layout.rs`.
+@@ -164,6 +168,16 @@
+     return distance_thinning(view, distance) * mix(1.0, view.lod_density.z, into_mid);
+ }
+ 
++/// superfargoth patch (own: near tier): the near ring's density multiplier at
++/// `distance`: `near.x` to `near.y` metres, linear to 1 at `near.z`. 1 when
++/// the ring is off. It is not part of `density_falloff`, which also sets how
++/// far thinned blades widen: denser near blades keep their width. Twin of
++/// `NearTier::boost`.
++fn near_boost(view: View, distance: f32) -> f32 {
++    let t = clamp((distance - view.near.y) / max(view.near.z - view.near.y, 1e-4), 0.0, 1.0);
++    return mix(view.near.x, 1.0, t);
++}
++
+ /// The distance table, before the mid-range thinning: 1 to the start of LOD 1,
+ /// `lod_density.x` where LOD 2 starts, `lod_density.y` where the fade starts,
+ /// 0 at the radius. A boundary that coincides with the next (an empty span)
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/generate.wesl superfargoth/vendor/bevy_grass/src/shaders/generate.wesl
 --- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/generate.wesl	2006-07-24 08:21:28.000000000 +0700
-+++ superfargoth/vendor/bevy_grass/src/shaders/generate.wesl	2026-11-23 18:05:27.385847700 +0700
-@@ -19,7 +19,7 @@
++++ superfargoth/vendor/bevy_grass/src/shaders/generate.wesl	2026-11-24 10:30:44.973835600 +0700
+@@ -18,8 +18,10 @@
+     Frame, View, Field, Chunk, LodTable, BladeData, TILE_POINTS, NO_MAP, WIDTH_RANGE, TAU,
      LOD_VERTEX_STRIDE, hash, hash2, unit, density_falloff, height_thinning, select_lod, coverage_width, pack,
      trample_unpack, trample_slot, in_trample_window,
++    // superfargoth patch (own: near tier)
++    near_boost,
  };
 -import package::shaders::wind::{Wind, wind_bend};
 +import package::shaders::wind::{Wind, wind_bend, wind_world_xz}; // superfargoth patch (own: world offset): `wind_world_xz`
  
  /// The height a ground baked from a mesh has where the mesh does not reach:
  /// no blade grows there. Twin of `ground::HOLE`.
-@@ -225,6 +225,7 @@
+@@ -83,9 +85,35 @@
+ // use a buffer both ways.
+ @group(2) @binding(0) var<storage, read_write> dispatch: DispatchArgs;
+ 
++// superfargoth patch (own: trample source): an external trample texture
++// (`trample_source.rs`), read by `generate` instead of the trample cells when
++// built with `TRAMPLE_TEXTURE`. Group 2 is empty in that pipeline.
++/// Mirrors `TrampleSourceUniform` in `render/trample_source.rs`.
++@if(TRAMPLE_TEXTURE)
++struct TrampleSource {
++    /// xy: the window's first corner; z: texels per metre (0: not placed).
++    now: vec4<f32>,
++    /// xy: the texel holding the first corner (below the size); z: texels per
++    /// side (0: not placed); w: the press channel.
++    now_texel: vec4<i32>,
++    then: vec4<f32>,
++    then_texel: vec4<i32>,
++    /// x: strength; y: edge margin, z: edge fade, in metres; w: direction floor.
++    lookup: vec4<f32>,
++}
++@if(TRAMPLE_TEXTURE)
++@group(3) @binding(0) var trample_now: texture_2d<f32>;
++@if(TRAMPLE_TEXTURE)
++@group(3) @binding(1) var trample_then: texture_2d<f32>;
++@if(TRAMPLE_TEXTURE)
++@group(3) @binding(2) var<uniform> trample_source: TrampleSource;
++
+ const WORKGROUP: u32 = 64u;
+ /// Candidates per slice: one workgroup's share of a chunk.
+ const SLICE: u32 = 512u;
++/// superfargoth patch (own: near tier): most candidate layers a chunk has.
++/// Twin of `GrassSettings::MAX_NEAR_DENSITY`.
++const MAX_NEAR_LAYERS: f32 = 4.0;
+ const FIXED_LOD_NONE: u32 = 3u;
+ 
+ fn is_orthographic() -> bool {
+@@ -133,6 +161,11 @@
+         return;
+     }
+     let chunk = chunks[index];
++    // superfargoth patch (own: stable tables): a hole in the chunk table,
++    // left by a removed field, belongs to no field.
++    if chunk.ids.x == NO_MAP {
++        return;
++    }
+     let field = fields[chunk.ids.x];
+     // Hidden fields, and fields on layers this view does not draw.
+     if (field.access.x & view.layers) == 0u {
+@@ -164,6 +197,9 @@
+     }
+ 
+     var falloff = 1.0;
++    // superfargoth patch (own: near tier): the ring's multiplier at the
++    // chunk's nearest point, the largest anywhere in it.
++    var boost = 1.0;
+     if !is_orthographic() {
+         let nearest = clamp(view.camera_position.xyz, lo, hi);
+         let d = max(distance(nearest, view.camera_position.xyz) - view.distance_offset, 0.0);
+@@ -171,13 +207,16 @@
+             return;
+         }
+         falloff = density_falloff(view, d) * height_thinning(view);
++        boost = near_boost(view, d);
+     }
+     let tile_size = field.extent.w;
+     let candidate_density = f32(TILE_POINTS) / (tile_size * tile_size);
+     let keep = clamp(field.shape.w * view.density_scale * falloff / candidate_density, 0.0, 1.0);
+     let cells = field.placement.y * field.placement.y;
+-    // Twin of `ChunkLayout::candidates_needed`.
+-    let needed = u32(ceil(keep * f32(TILE_POINTS))) * cells;
++    // Twin of `ChunkLayout::candidates_needed_near` (superfargoth patch, own:
++    // near tier): `keep * boost` layers of candidates, one layer when the
++    // boost is 1, as upstream.
++    let needed = u32(ceil(keep * clamp(boost, 1.0, MAX_NEAR_LAYERS) * f32(TILE_POINTS))) * cells;
+     if needed == 0u {
+         return;
+     }
+@@ -202,6 +241,66 @@
+     return trample_unpack(trample[trample_slot(cell)]);
+ }
+ 
++// superfargoth patch (own: trample source)
++/// The press `texture` holds at window texel `texel` (counted from the first
++/// corner) of a window placed by `cells`: 0 outside the window. The first
++/// texel is below the size, so one subtraction wraps the torus.
++@if(TRAMPLE_TEXTURE)
++fn source_press(texture: texture_2d<f32>, cells: vec4<i32>, texel: vec2<i32>) -> f32 {
++    let n = vec2<i32>(cells.z);
++    if any(texel < vec2<i32>(0)) || any(texel >= n) {
++        return 0.0;
++    }
++    let wrapped = texel + cells.xy;
++    return textureLoad(texture, select(wrapped, wrapped - n, wrapped >= n), 0)[cells.w];
++}
++
++/// The push of the external trample texture at `point` for a blade whose own
++/// direction is `own`: down the press slope (forward differences one texel
++/// +X and +Z, `own` mixed in at the direction floor), as long as the press
++/// times the strength, at most 1. One fetch where nothing is pressed, three
++/// where something is. CPU twin: `trample_source::trample_texture_push`.
++@if(TRAMPLE_TEXTURE)
++fn source_push(texture: texture_2d<f32>, place: vec4<f32>, cells: vec4<i32>, point: vec2<f32>, own: vec2<f32>) -> vec2<f32> {
++    if cells.z <= 0 || place.z <= 0.0 {
++        return vec2<f32>(0.0);
++    }
++    let n = f32(cells.z);
++    let t = (point - place.xy) * place.z;
++    let edge = min(min(t.x, n - t.x), min(t.y, n - t.y)) / place.z;
++    let lookup = trample_source.lookup;
++    let fade = saturate((edge - lookup.y) / max(lookup.z, 1e-6));
++    if fade <= 0.0 {
++        return vec2<f32>(0.0);
++    }
++    let texel = vec2<i32>(floor(t));
++    let p = source_press(texture, cells, texel) * fade;
++    if p <= 0.0 {
++        return vec2<f32>(0.0);
++    }
++    let px = source_press(texture, cells, texel + vec2<i32>(1, 0)) * fade;
++    let pz = source_press(texture, cells, texel + vec2<i32>(0, 1)) * fade;
++    let away = -vec2<f32>(px - p, pz - p) + own * lookup.w;
++    return away / max(length(away), 1e-6) * min(p * lookup.x, 1.0);
++}
++
++/// The push at a blade root `point` of a blade facing `facing` (turns): xy
++/// this frame's, zw last frame's. Built in, both are the trample cell's.
++@if(TRAMPLE_TEXTURE)
++fn blade_push(point: vec2<f32>, facing: f32) -> vec4<f32> {
++    let own = vec2<f32>(sin(facing * TAU), cos(facing * TAU));
++    let s = trample_source;
++    return vec4<f32>(
++        source_push(trample_now, s.now, s.now_texel, point, own),
++        source_push(trample_then, s.then, s.then_texel, point, own),
++    );
++}
++@else
++fn blade_push(point: vec2<f32>, facing: f32) -> vec4<f32> {
++    let push = trample_push(point);
++    return vec4<f32>(push, push);
++}
++
+ @compute @workgroup_size(1)
+ fn size_dispatch() {
+     dispatch = DispatchArgs(min(atomicLoad(&counters[3]), view.max_visible_chunks), 1u, 1u);
+@@ -225,6 +324,7 @@
  }
  
  /// The noise bare patches are cut from. Twin of `mirror::bare_noise`.
@@ -410,7 +3079,56 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
  fn bare_noise(at: vec2<f32>, size: f32) -> f32 {
      let uv = at / (size * 8.0);
      let turned = vec2<f32>(uv.x * 0.8 - uv.y * 0.6, uv.x * 0.6 + uv.y * 0.8) * 1.37 + 0.5;
-@@ -353,7 +354,7 @@
+@@ -311,9 +411,17 @@
+ 
+     let tiles = field.placement.y;
+     let cells = tiles * tiles;
+-    let point = index / cells;
++    // superfargoth patch (own: near tier): candidates past the first
++    // TILE_POINTS per cell are the near ring's extra layers, each with its own
++    // per-cell offsets. Layer 0 is upstream's.
++    let layered = index / cells;
++    let layer = layered / TILE_POINTS;
++    let point = layered % TILE_POINTS;
+     let cell = index % cells;
+-    let cell_hash = hash2(hash2(chunk.ids.y, chunk.ids.z), hash2(cell, field.placement.x));
++    var cell_hash = hash2(hash2(chunk.ids.y, chunk.ids.z), hash2(cell, field.placement.x));
++    if layer > 0u {
++        cell_hash = hash2(cell_hash, layer ^ 0x2c1b3c6du);
++    }
+     let offset = vec2<f32>(unit(cell_hash), unit(hash(cell_hash)));
+     let p = fract(tile[point] + offset);
+     var local = chunk.bounds.xy + (vec2<f32>(f32(cell % tiles), f32(cell / tiles)) + p) * field.extent.w;
+@@ -330,6 +438,15 @@
+     if any(local >= field.extent.xy) || any(local < vec2<f32>(0.0)) {
+         return out;
+     }
++    // superfargoth patch (own: near tier): an extra layer's candidate beyond
++    // the ring, measured flat (never more than the true distance), is never
++    // kept; skip the ground and mask reads.
++    if layer > 0u {
++        let flat = distance(field_to_world(field, local), view.camera_position.xz);
++        if is_orthographic() || flat - view.distance_offset >= view.near.z {
++            return out;
++        }
++    }
+     let rank = (f32(point) + 0.5) / f32(TILE_POINTS);
+     let seed = hash2(cell_hash, point);
+ 
+@@ -343,21 +460,27 @@
+ 
+     var falloff = 1.0;
+     var distance_to_eye = 0.0;
++    // superfargoth patch (own: near tier)
++    var boost = 1.0;
+     if !is_orthographic() {
+         distance_to_eye = distance(root, view.camera_position.xyz);
+         // A raised view thins as if it stood on the ground below it, and
+         // for its height; its blades' detail still follows their distance.
+         let from_ground = max(distance_to_eye - view.distance_offset, 0.0);
+         falloff = density_falloff(view, from_ground) * height_thinning(view);
++        boost = near_boost(view, from_ground);
+     }
      var bare = 1.0;
      if field.tufts.z >= 0.0 {
          let threshold = field.tufts.z;
@@ -419,7 +3137,34 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
      }
      let tile_size = field.extent.w;
      let candidate_density = f32(TILE_POINTS) / (tile_size * tile_size);
-diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/grass_prepass.wesl superfargoth/vendor/bevy_grass/src/shaders/grass_prepass.wesl
+-    let keep = clamp(field.shape.w * mask.x * bare * view.density_scale * falloff / candidate_density, 0.0, 1.0);
++    let base_keep = clamp(field.shape.w * mask.x * bare * view.density_scale * falloff / candidate_density, 0.0, 1.0);
++    // superfargoth patch (own: near tier): twin of `NearTier::layer_keep`;
++    // `base_keep` at layer 0 and a boost of 1, as upstream.
++    let keep = clamp(base_keep * boost - f32(layer), 0.0, 1.0);
+     if rank >= keep {
+         return out;
+     }
+@@ -411,11 +534,14 @@
+     blade.clump = clump_of(root.xz);
+     // A trampled blade lies down away from what pushed it, and the wind moves
+     // it less the flatter it lies.
+-    let push = trample_push(root.xz);
++    // superfargoth patch (own: trample source): `blade_push`, this frame's
++    // push and last frame's (the same built in, as upstream).
++    let push = blade_push(root.xz, blade.facing);
+     // Flattened blades and sheltered fields move less.
+-    let calm = (1.0 - min(length(push), 1.0)) * (1.0 - look.motion.z);
+-    blade.bend = wind_bend(wind, root.xz, seed_unit, look.motion.y, frame.time, false, gust_texture, gust_sampler) * calm + push;
+-    blade.previous_bend = wind_bend(wind, root.xz, seed_unit, look.motion.y, frame.previous_time, true, gust_texture, gust_sampler) * calm + push;
++    let calm = (1.0 - min(length(push.xy), 1.0)) * (1.0 - look.motion.z);
++    let previous_calm = (1.0 - min(length(push.zw), 1.0)) * (1.0 - look.motion.z);
++    blade.bend = wind_bend(wind, root.xz, seed_unit, look.motion.y, frame.time, false, gust_texture, gust_sampler) * calm + push.xy;
++    blade.previous_bend = wind_bend(wind, root.xz, seed_unit, look.motion.y, frame.previous_time, true, gust_texture, gust_sampler) * previous_calm + push.zw;
+ 
+     out.keep = true;
+     out.bucket = select(lod, 0u, view.fixed_lod != 3u);
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/grass_prepass.wesl superfargoth/vendor/bevy_grass/src/shaders/grass_prepass.wesl
 --- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/grass_prepass.wesl	2006-07-24 08:21:28.000000000 +0700
 +++ superfargoth/vendor/bevy_grass/src/shaders/grass_prepass.wesl	2026-11-23 18:11:46.367566400 +0700
 @@ -9,7 +9,7 @@
@@ -441,7 +3186,7 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
  }
  
  @if(DEFERRED_PREPASS) {
-diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/look.wesl superfargoth/vendor/bevy_grass/src/shaders/look.wesl
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/look.wesl superfargoth/vendor/bevy_grass/src/shaders/look.wesl
 --- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/look.wesl	2006-07-24 08:21:28.000000000 +0700
 +++ superfargoth/vendor/bevy_grass/src/shaders/look.wesl	2026-11-23 18:10:12.980694500 +0700
 @@ -21,7 +21,9 @@
@@ -466,7 +3211,7 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
      let uv = vec2<f32>(at.x * 0.83 - at.y * 0.56, at.x * 0.56 + at.y * 0.83);
      let noise = textureSampleLevel(noise_texture, noise_sampler, uv, 0.0).r;
      let in_patch = field.patches.w * smoothstep(0.3, 0.7, noise);
-diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/wind.wesl superfargoth/vendor/bevy_grass/src/shaders/wind.wesl
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/wind.wesl superfargoth/vendor/bevy_grass/src/shaders/wind.wesl
 --- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/shaders/wind.wesl	2006-07-24 08:21:28.000000000 +0700
 +++ superfargoth/vendor/bevy_grass/src/shaders/wind.wesl	2026-11-23 18:05:00.154043500 +0700
 @@ -27,6 +27,17 @@
@@ -499,3 +3244,280 @@ diff -ru C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f
      let along = textureSampleLevel(gusts, gust_sampler, uv, 0.0).r;
      let turned = textureSampleLevel(gusts, gust_sampler, GUST_TURN * uv, 0.0).r;
      // The mean of two independent samples varies 1/sqrt(2) as much as one;
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/stats.rs superfargoth/vendor/bevy_grass/src/stats.rs
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/stats.rs	2006-07-24 08:21:28.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/stats.rs	2026-11-23 21:04:44.318765000 +0700
+@@ -81,6 +81,30 @@
+     pub entries_rewritten: u64,
+     /// How long the latest rebuild took on the CPU.
+     pub last_rebuild: Duration,
++    /// superfargoth patch (own: rebuild phases): where `last_rebuild` went.
++    pub last_rebuild_phases: RebuildPhases,
++}
++
++/// superfargoth patch (own: rebuild phases): the CPU time of each phase of the
++/// latest table rebuild. `gather` (sorting and reading the fields) comes before
++/// the span `last_rebuild` measures; the others add up to it.
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Reflect)]
++#[reflect(Default, Debug, PartialEq)]
++pub struct RebuildPhases {
++    /// Sorting the fields and reading each one's style, mask and heightmap.
++    pub gather: Duration,
++    /// Forgetting changed images and cloning the old tables.
++    pub clone: Duration,
++    /// Placing each field's entries and images in the tables.
++    pub plan: Duration,
++    /// The chunks (kept or built again).
++    pub chunks: Duration,
++    /// The masks and heightmaps (kept or joined again).
++    pub images: Duration,
++    /// The field entries (kept or worked out again).
++    pub entries: Duration,
++    /// Comparing with the old tables and storing the new ones.
++    pub finish: Duration,
+ }
+ 
+ /// Counters read back from the GPU. Summed over cameras.
+@@ -167,6 +191,7 @@
+             .init_resource::<GpuReadings>()
+             .register_type::<GrassStats>()
+             .register_type::<TableStats>()
++            .register_type::<RebuildPhases>() // superfargoth patch (own: rebuild phases)
+             .register_type::<GpuStats>()
+             .register_diagnostic(count(GrassDiagnostics::BLADES_NEAR))
+             .register_diagnostic(count(GrassDiagnostics::BLADES_MID))
+diff -ruN --strip-trailing-cr C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/trample_source.rs superfargoth/vendor/bevy_grass/src/trample_source.rs
+--- C:/Users/leogloglo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bevy_grass-0.20.6/src/trample_source.rs	1970-01-01 07:00:00.000000000 +0700
++++ superfargoth/vendor/bevy_grass/src/trample_source.rs	2026-11-24 10:42:20.261565600 +0700
+@@ -0,0 +1,231 @@
++// superfargoth patch (own: trample source): the whole file. Written to be
++// sent upstream: it names no game.
++//! An external trample texture: an app that already keeps where things pressed
++//! the ground (footprints in snow, a deformation ring) hands it to the blade
++//! generator, which then reads it instead of its own trample cells, and skips
++//! its own trample passes (decay and stamping) while it is set.
++//!
++//! Two ways in, use one:
++//!
++//! - [`GrassTrampleTexture`], a main-world resource holding two images (this
++//!   frame's and last frame's) and where each one sits;
++//! - [`GrassTrampleSource`], a render-world resource holding two GPU texture
++//!   views, for an app that writes its texture on the GPU. Insert or update it
++//!   before [`RenderSystems::PrepareBindGroups`]
++//!   (bevy::render::RenderSystems::PrepareBindGroups), remove it to go back to
++//!   the built-in trampling.
++//!
++//! The texture is a square window of `size × size` texels over the ground, in
++//! the space the fields' `GlobalTransform`s are in (Bevy's world space: with a
++//! floating origin, the render space, before
++//! [`GrassWorldOffset`](crate::GrassWorldOffset)). One channel holds the press,
++//! 0 (untouched) to 1 (flattened). The window may be addressed as a torus, as
++//! a ring that follows the player is: its first corner is held by texel
++//! `first_texel`, and the texels wrap at `size`. A plain texture has its first
++//! corner at texel 0.
++//!
++//! Each blade reads the texel its root is in (no filtering, as the built-in
++//! cells), and where it is pressed the texels one step +X and +Z: the blade
++//! lies down the press slope, away from where the ground is pressed most, as
++//! far as the press. Where the slope is flat (the middle of a footprint), its
++//! own facing, mixed in at [`GrassTrampleLookup::direction_floor`], gives the
++//! direction, so it never jumps. Last frame's texture and placement give last
++//! frame's bend, so motion vectors stay exact.
++
++use bevy::asset::Handle;
++use bevy::ecs::prelude::*;
++use bevy::ecs::schedule::SystemSet;
++use bevy::ecs::reflect::ReflectResource;
++use bevy::image::Image;
++use bevy::math::{IVec2, UVec2, Vec2};
++use bevy::reflect::Reflect;
++
++/// The blade generator's compute passes (render app, `RenderGraph` schedule,
++/// before `camera_driver`). An app that writes its trample texture on the GPU
++/// in the same schedule orders that pass before this set, so the blades read
++/// this frame's texture.
++#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
++pub struct GrassGenerateSystems;
++
++/// Where a trample texture lies over the ground.
++///
++/// Placed when both [`size`](Self::size) and
++/// [`texels_per_metre`](Self::texels_per_metre) are above zero
++/// ([`is_placed`](Self::is_placed)); [`NONE`](Self::NONE) is not, and presses
++/// nothing.
++#[derive(Debug, Clone, Copy, PartialEq, Reflect)]
++pub struct GrassTramplePlacement {
++    /// The window's lowest corner (its minimum X and Z), in metres.
++    pub corner: Vec2,
++    /// Texels per metre, along both axes.
++    pub texels_per_metre: f32,
++    /// Texels along each side of the window.
++    pub size: u32,
++    /// The texel that holds the window's first corner; the texels wrap at
++    /// `size` along each axis. Zero for a texture that does not wrap.
++    pub first_texel: UVec2,
++}
++
++impl GrassTramplePlacement {
++    /// No window: nothing is pressed.
++    pub const NONE: Self = Self {
++        corner: Vec2::ZERO,
++        texels_per_metre: 0.0,
++        size: 0,
++        first_texel: UVec2::ZERO,
++    };
++
++    /// Whether the window covers any ground.
++    pub fn is_placed(&self) -> bool {
++        self.size > 0 && self.texels_per_metre > 0.0
++    }
++
++    /// The texel of the window holding `point` (XZ, metres), counted from the
++    /// first corner; `None` outside the window or when not placed.
++    pub fn window_texel(&self, point: Vec2) -> Option<IVec2> {
++        if !self.is_placed() {
++            return None;
++        }
++        let t = ((point - self.corner) * self.texels_per_metre).floor();
++        let n = self.size as f32;
++        (t.cmpge(Vec2::ZERO).all() && t.cmplt(Vec2::splat(n)).all()).then(|| t.as_ivec2())
++    }
++
++    /// The texture texel holding window texel `texel` (`first_texel` added,
++    /// wrapped at `size`); `None` outside the window.
++    pub fn texture_texel(&self, texel: IVec2) -> Option<UVec2> {
++        let n = self.size as i32;
++        if !self.is_placed() || texel.cmplt(IVec2::ZERO).any() || texel.cmpge(IVec2::splat(n)).any()
++        {
++            return None;
++        }
++        // `first_texel` is reduced once, so one subtraction wraps (the
++        // shader's twin divides nothing).
++        let first = (self.first_texel % self.size).as_ivec2();
++        let wrapped = texel + first;
++        let wrapped = IVec2::select(wrapped.cmpge(IVec2::splat(n)), wrapped - n, wrapped);
++        Some(wrapped.as_uvec2())
++    }
++
++    /// Metres from `point` to the window's nearest edge (negative outside).
++    pub fn edge_distance(&self, point: Vec2) -> f32 {
++        let n = self.size as f32;
++        let t = (point - self.corner) * self.texels_per_metre;
++        t.x.min(n - t.x).min(t.y.min(n - t.y)) / self.texels_per_metre
++    }
++}
++
++impl Default for GrassTramplePlacement {
++    fn default() -> Self {
++        Self::NONE
++    }
++}
++
++/// How a trample texture is read; the same for both frames.
++#[derive(Debug, Clone, Copy, PartialEq, Reflect)]
++pub struct GrassTrampleLookup {
++    /// The channel that holds the press: 0 red, 1 green, 2 blue, 3 alpha.
++    pub channel: u32,
++    /// How far a press of 1 flattens a blade: 1 lays it flat, as the
++    /// built-in trampling's strongest push. The push is clamped to 1.
++    pub strength: f32,
++    /// Metres inside the window's edge where nothing is pressed yet.
++    pub edge_margin: f32,
++    /// Metres over which the press fades in after the margin; 0 for a hard
++    /// edge.
++    pub edge_fade: f32,
++    /// How much of the blade's own facing is mixed into the press slope, so a
++    /// blade where the press is flat still has a direction. A slope this
++    /// small (press per texel) and a facing turn it about equally.
++    pub direction_floor: f32,
++}
++
++impl Default for GrassTrampleLookup {
++    fn default() -> Self {
++        Self {
++            channel: 0,
++            strength: 1.0,
++            edge_margin: 0.0,
++            edge_fade: 1.0,
++            // One step of an 8-bit texture.
++            direction_floor: 1.0 / 256.0,
++        }
++    }
++}
++
++impl GrassTrampleLookup {
++    /// The press fade at `edge` metres inside the window's edge: 0 within the
++    /// margin, 1 past the fade.
++    pub fn fade(&self, edge: f32) -> f32 {
++        ((edge - self.edge_margin) / self.edge_fade.max(1e-6)).clamp(0.0, 1.0)
++    }
++}
++
++/// An external trample texture, as images: this frame's press and last
++/// frame's, and where each lies. While this resource exists the grass reads
++/// it instead of trampling itself; see the [module docs](self).
++///
++/// The images must be readable as `texture_2d<f32>` (any float or unorm
++/// format) and at least `size` texels on each side.
++#[derive(Resource, Debug, Clone, PartialEq, Reflect)]
++#[reflect(Resource)]
++pub struct GrassTrampleTexture {
++    /// This frame's press.
++    pub current: Handle<Image>,
++    /// Last frame's press, for the motion vectors.
++    pub previous: Handle<Image>,
++    /// Where `current` lies.
++    pub current_placement: GrassTramplePlacement,
++    /// Where `previous` lay.
++    pub previous_placement: GrassTramplePlacement,
++    /// How both are read.
++    pub lookup: GrassTrampleLookup,
++}
++
++/// The CPU twin of the generator's press lookup (`generate.wesl`
++/// `texture_push`): the push (direction the blade lies toward, times how
++/// flat, 0 to 1) at the blade root `root` (XZ) of a blade facing `facing`
++/// (turns), from a texture of `width` texels per row whose texels are
++/// `texels` (RGBA).
++///
++/// Zero outside the window, where it is not placed, or where the press is 0.
++pub fn trample_texture_push(
++    texels: &[[f32; 4]],
++    width: u32,
++    placement: &GrassTramplePlacement,
++    lookup: &GrassTrampleLookup,
++    root: Vec2,
++    facing: f32,
++) -> Vec2 {
++    let Some(texel) = placement.window_texel(root) else {
++        return Vec2::ZERO;
++    };
++    let fade = lookup.fade(placement.edge_distance(root));
++    if fade <= 0.0 {
++        return Vec2::ZERO;
++    }
++    let channel = lookup.channel.min(3) as usize;
++    let press = |t: IVec2| -> f32 {
++        placement.texture_texel(t).map_or(0.0, |t| {
++            texels
++                .get((t.y * width + t.x) as usize)
++                .map_or(0.0, |v| v[channel])
++        }) * fade
++    };
++    let p = press(texel);
++    if p <= 0.0 {
++        return Vec2::ZERO;
++    }
++    let slope = Vec2::new(press(texel + IVec2::X) - p, press(texel + IVec2::Y) - p);
++    let turn = facing * core::f32::consts::TAU;
++    let own = Vec2::new(turn.sin(), turn.cos());
++    let away = -slope + own * lookup.direction_floor;
++    away / away.length().max(1e-6) * (p * lookup.strength).min(1.0)
++}
++
++/// Which of the built-in trample passes run this frame: (decay, stamp). An
++/// external source replaces both; without one, decay runs every frame and
++/// stamping when interactors were gathered.
++pub fn built_in_trample_passes(external_source: bool, interactor_count: u32) -> (bool, bool) {
++    (!external_source, !external_source && interactor_count > 0)
++}

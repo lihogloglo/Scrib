@@ -73,6 +73,8 @@ impl wesl::Resolver for Files {
             "bevy_pbr" | "bevy_render" | "bevy_core_pipeline" | "bevy_grass" => vendor(package),
             "sf_groundcover_bevy" => PathBuf::from(CRATE).join("src"),
             "sf_wind_bevy" => crates().join("sf_wind_bevy/src"),
+            // The view's surface weather (the trample's press, GC-M3).
+            "sf_surface_bevy" => crates().join("sf_surface_bevy/src"),
             _ => return Err(missing("unknown package")),
         };
         for c in &path.components {
@@ -205,11 +207,13 @@ fn groundcover_stages_compile_for_every_def_set() {
     for v in VARIANTS {
         main.push(set(&[BASE, v]));
         main.push(set(&[BASE, HIGH, v]));
+        main.push(set(&[BASE, HIGH, v, &["SURFACE_WEATHER"]]));
     }
     let mut prepass = Vec::new();
     for v in VARIANTS {
         for p in PASSES {
             prepass.push(set(&[PREPASS_BASE, v, p]));
+            prepass.push(set(&[PREPASS_BASE, v, p, &["SURFACE_WEATHER_PREPASS"]]));
         }
     }
     let mut failures = check(MAIN, &main, &[("vertex", naga::ShaderStage::Vertex), ("fragment", naga::ShaderStage::Fragment)]);
@@ -232,7 +236,9 @@ fn vendored_grass_stages_compile() {
         set(&[&["PREPASS_PIPELINE", "DEPTH_PREPASS", "MOTION_VECTOR_PREPASS", "PREPASS_FRAGMENT"], LOOK]),
         set(&[&["PREPASS_PIPELINE", "DEPTH_PREPASS", "DEFERRED_PREPASS", "PREPASS_FRAGMENT"], LOOK]),
     ];
-    let mut failures = check("bevy_grass::shaders::generate", &[Vec::new()], &[("cull", Compute), ("generate", Compute)]);
+    // GC-3d1: and with the external trample texture (`TRAMPLE_TEXTURE`).
+    let generate = [Vec::new(), set(&[&["TRAMPLE_TEXTURE"]])];
+    let mut failures = check("bevy_grass::shaders::generate", &generate, &[("cull", Compute), ("generate", Compute)]);
     failures.extend(check("bevy_grass::shaders::grass", &main, &[("vertex", Vertex), ("fragment", Fragment)]));
     failures.extend(check("bevy_grass::shaders::grass_prepass", &prepass, &[("vertex", Vertex)]));
     failures.extend(check("bevy_grass::shaders::far_ground", &[set(&[BASE])], &[("fragment", Fragment)]));
@@ -240,6 +246,46 @@ fn vendored_grass_stages_compile() {
 {}", failures.len(), failures.join("
 
 "));
+}
+
+/// GC-3d1: blade generation reads the external trample texture (group 3: this frame's, last frame's, the
+/// placements) only when built with `TRAMPLE_TEXTURE`, and then not its own trample cells (group 1 binding 5).
+#[test]
+fn generate_reads_the_trample_texture_only_with_its_def() {
+    let bindings = |defs: &[&'static str]| -> Vec<(u32, u32)> {
+        let m = compile("bevy_grass::shaders::generate", defs).unwrap_or_else(|e| panic!("{e}"));
+        let mut b: Vec<(u32, u32)> = m
+            .global_variables
+            .iter()
+            .filter_map(|(_, g)| g.binding.as_ref().filter(|r| r.group == 3 || (r.group, r.binding) == (1, 5)).map(|r| (r.group, r.binding)))
+            .collect();
+        b.sort_unstable();
+        b
+    };
+    assert_eq!(bindings(&[]), [(1, 5)]);
+    assert_eq!(bindings(&["TRAMPLE_TEXTURE"]), [(3, 0), (3, 1), (3, 2)]);
+}
+
+/// GC-M3: with the view's surface weather the vertex stages read the trail ring's press (binding 52, this frame)
+/// and, for motion vectors, last frame's ring (53); without it (indoors, shadow views) neither is bound.
+#[test]
+fn trample_reads_the_ring_only_with_surface_weather() {
+    let reads = |module: &str, defs: &[&[&'static str]]| -> Vec<u32> {
+        let m = compile(module, &set(defs)).unwrap_or_else(|e| panic!("{e}"));
+        let mut b: Vec<u32> =
+            m.global_variables.iter().filter_map(|(_, g)| g.binding.as_ref().filter(|r| r.group == 0 && (52..=53).contains(&r.binding)).map(|r| r.binding)).collect();
+        b.sort_unstable();
+        b
+    };
+    let mv: &[&str] = &["DEPTH_PREPASS", "MOTION_VECTOR_PREPASS"];
+    assert_eq!(reads(MAIN, &[BASE, HIGH]), Vec::<u32>::new());
+    assert_eq!(reads(MAIN, &[BASE, HIGH, &["SURFACE_WEATHER"]]), [52]);
+    assert_eq!(reads(PREPASS, &[PREPASS_BASE, mv]), Vec::<u32>::new());
+    assert_eq!(reads(PREPASS, &[PREPASS_BASE, &["DEPTH_PREPASS", "SURFACE_WEATHER_PREPASS"]]), [52]);
+    assert_eq!(reads(PREPASS, &[PREPASS_BASE, mv, &["SURFACE_WEATHER_PREPASS"]]), [52, 53]);
+    // The fallback's weight is the ring's press resolution.
+    let layer = read(crates().join("sf_surface_bevy/src/layer.wesl"));
+    assert!(layer.contains("const TRAIL_PRESS_FLOOR: f32 = 0.00390625;"));
 }
 
 /// The WGSL `GroundcoverParams` / `GroundcoverSpecies` have the Rust structs' fields in their order, the species
@@ -257,13 +303,13 @@ fn uniform_matches_rust() {
             .filter_map(|l| l.split(':').next().map(str::to_string))
             .collect()
     };
-    assert_eq!(fields("GroundcoverParams"), ["fade", "wind", "sway", "sway_cross", "species"]);
+    assert_eq!(fields("GroundcoverParams"), ["fade", "wind", "sway", "sway_cross", "trample", "species"]);
     assert_eq!(fields("GroundcoverSpecies"), ["tint_a", "tint_b"]);
     assert!(src.contains(&format!("species: array<GroundcoverSpecies, {MAX_SPECIES_PER_BATCH}>")));
     assert!(src.contains(&format!("min(t >> 24u, {}u)", MAX_SPECIES_PER_BATCH - 1)));
     assert!(src.contains(&format!("@binding({PARAMS_BINDING}) var<uniform> groundcover")));
-    // The Rust layout: 4 vec4 + 16 × 2 vec4.
-    assert_eq!(<crate::GroundcoverParams as bevy::render::render_resource::ShaderType>::min_size().get(), 16 * (4 + 2 * MAX_SPECIES_PER_BATCH as u64));
+    // The Rust layout: 5 vec4 + 16 × 2 vec4.
+    assert_eq!(<crate::GroundcoverParams as bevy::render::render_resource::ShaderType>::min_size().get(), 16 * (5 + 2 * MAX_SPECIES_PER_BATCH as u64));
 }
 
 /// Every sway frequency the uniform carries is a whole number of cycles per `globals.time` wrap (3600 s), within
@@ -292,6 +338,7 @@ fn sway_frequencies_are_whole_cycles_per_hour() {
     assert_eq!(params.wind, v4(wind.scale, wind.bend_per_mps, wind.phase_offset_m, wind.gust_contrast));
     assert_eq!(params.sway, v4(wind.sway_amount, quantise_hz(wind.sway_hz), wind.flutter_amount, quantise_hz(wind.flutter_hz)));
     assert_eq!(params.sway_cross, v4(quantise_hz(CROSS_SWAY_RATIO * wind.sway_hz), 0.0, 0.0, 0.0));
+    assert_eq!(params.trample, v4(wind.trample_max_deg.to_radians(), wind.trample_amount, 0.0, 0.0));
 }
 
 /// `unpack_tag` reads the bytes `sf_groundcover::Tag::pack` writes.

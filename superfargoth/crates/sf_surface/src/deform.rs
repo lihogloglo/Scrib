@@ -23,6 +23,14 @@
 //! - **Ground** ([`GroundGrid`]): the convert needs each texel's ground height; the host gives a
 //!   heightfield sampler and the plugin samples it on a coarse world-snapped grid (bilinear here
 //!   and in the shader).
+//! - **Press** (the ring's A, GC-T2b; [`press_of`]): where a body comes within the press height
+//!   of the ground it presses the plants and blades there, with or without a cover look; the slab
+//!   then reaches that height ([`slab`]).
+//! - **Press spread** (GC-T3; [`Capture::spread_press_at`]): the press spreads around the body by
+//!   `spread_m` with a smoothstep falloff (the interaction-sphere radius of UE5 interaction render
+//!   targets and Horizon's foliage), so a leg pushes the plants around it, not only those under
+//!   it; readers bend down the press gradient, so plants ahead lean forward and beside lean aside.
+//!   Gathered from [`SPREAD_TAPS`] capture texels in a golden-angle disk ([`spread_tap`]).
 //! - **Sweep gaps** ([`sweep_gap`]): a fast mover at a low frame rate travels farther than its
 //!   width between captures; past a threshold the host stamps feet along the segment.
 //!
@@ -77,6 +85,18 @@ pub fn convert(d: f32, near: f32, range: f32, ground: f32, ring_depth: f32) -> f
     }
     let bottom = near + (1.0 - d.min(1.0)) * range;
     (bottom - ground - h).clamp(-h, 0.0)
+}
+
+/// The capture's depth `d` (as [`convert`]) over ground `ground` as a press (the ring's A,
+/// GC-T2b; 0..1): 1 where the deformer's bottom touches (or is under) the ground, 0 from
+/// `press_m` (`surface.trail.press_height_m`) above it, a smoothstep between; 0 in cleared
+/// texels and with no press height (no press demand). Merged with Max ([`crate::trail::press_update`]).
+pub fn press_of(d: f32, near: f32, range: f32, ground: f32, press_m: f32) -> f32 {
+    if d <= 0.0 || press_m <= 0.0 {
+        return 0.0;
+    }
+    let bottom = near + (1.0 - d.min(1.0)) * range;
+    1.0 - crate::smoothstep(0.0, press_m, bottom - ground)
 }
 
 /// The ceiling (m over the ground) a B value `c` stands for.
@@ -186,6 +206,12 @@ pub struct Capture {
     /// The slab's height (m; depth 0 at `near_y + range_m`).
     pub range_m: f32,
     pub ground: GroundGrid,
+    /// The press height (m, GC-T2b; [`press_of`]): `surface.trail.press_height_m` while a reader
+    /// demands the press (`sf_surface_bevy::TrailDemand`), else 0 (the capture presses nothing).
+    pub press_m: f32,
+    /// The press spread (m, GC-T3; [`Capture::spread_press_at`]): `surface.trail.press_spread_m`
+    /// (0 = the press stays under the body).
+    pub spread_m: f32,
 }
 
 impl Capture {
@@ -234,12 +260,72 @@ impl Capture {
         let d = depth[(t.y * MAX_CAPTURE_SIZE + t.x) as usize];
         convert(d, self.near_y, self.range_m, self.ground.at(q), ring_depth)
     }
+
+    /// The press (A) at render XZ `q` from the drawn target `depth` (as [`Capture::value_at`]):
+    /// [`press_of`] at the texel holding `q`; 0 outside. `trail.wgsl` `main`.
+    pub fn press_at(&self, q: Vec2, depth: &[f32]) -> f32 {
+        let Some(t) = self.texel_of(q) else { return 0.0 };
+        let d = depth[(t.y * MAX_CAPTURE_SIZE + t.x) as usize];
+        press_of(d, self.near_y, self.range_m, self.ground.at(q), self.press_m)
+    }
+
+    /// The spread press (A, GC-T3) at render XZ `q`: the max over the spread's taps ([`spread_tap`]
+    /// × `spread_m`, tap 0 at `q`) of [`Capture::press_at`] there × [`spread_weight`] of the tap's
+    /// distance; 0 when `q` is outside the window (a tap outside it reads 0). Spread 0:
+    /// [`Capture::press_at`] exactly. `trail.wgsl` `captured_spread`.
+    pub fn spread_press_at(&self, q: Vec2, depth: &[f32]) -> f32 {
+        if self.texel_of(q).is_none() {
+            return 0.0;
+        }
+        let mut a = self.press_at(q, depth);
+        if self.spread_m > 0.0 && self.press_m > 0.0 {
+            for i in 1..SPREAD_TAPS {
+                let o = spread_tap(i) * self.spread_m;
+                a = a.max(self.press_at(q + o, depth) * spread_weight(o.length(), self.spread_m));
+            }
+        }
+        a
+    }
+}
+
+/// The press spread's tap count (GC-T3): capture fetches per ring texel inside the window, the
+/// first at the texel itself.
+// tunables: const (a sampling layout: the GC-T3 budget of 24 capture fetches per ring texel; the spread tunable sets its reach)
+pub const SPREAD_TAPS: u32 = 24;
+
+/// The outermost tap's distance as a share of the spread (GC-T3): a tap past it would weigh
+/// under 0.1 ([`spread_weight`]), so the taps stay where they carry the press.
+// tunables: const (a sampling layout: where the smoothstep weight drops under 0.1)
+pub const SPREAD_REACH: f32 = 0.8;
+
+/// The golden angle (rad), `π (3 − √5)`: consecutive taps of a Vogel disk.
+// tunables: const (maths)
+const GOLDEN_ANGLE: f32 = 2.399_963_2;
+
+/// Tap `i` (< [`SPREAD_TAPS`]) of the press spread at unit spread (GC-T3): a golden-angle (Vogel)
+/// disk, even in area out to [`SPREAD_REACH`]; tap 0 is the centre. `trail.wgsl` `spread_tap`.
+#[allow(clippy::cast_precision_loss)]
+pub fn spread_tap(i: u32) -> Vec2 {
+    let r = SPREAD_REACH * (i as f32 / (SPREAD_TAPS - 1) as f32).sqrt();
+    let a = i as f32 * GOLDEN_ANGLE;
+    Vec2::new(a.cos(), a.sin()) * r
+}
+
+/// The spread's falloff (GC-T3): 1 at distance 0, `1 − smoothstep(0, spread, r)` out to the
+/// spread, 0 from it on; spread 0 keeps only distance 0.
+pub fn spread_weight(r_m: f32, spread_m: f32) -> f32 {
+    if spread_m <= 0.0 {
+        return if r_m <= 0.0 { 1.0 } else { 0.0 };
+    }
+    1.0 - crate::smoothstep(0.0, spread_m, r_m)
 }
 
 /// The slab (render Y of its bottom, its height) over ground ranging `ground` (lowest, highest):
-/// from `below_m` under the lowest ground to the highest raise over the highest ([`ceiling_ref`]).
-pub fn slab(ground: (f32, f32), below_m: f32, ring_depth: f32) -> (f32, f32) {
+/// from `below_m` under the lowest ground to the highest raise over the highest ([`ceiling_ref`])
+/// or, if higher, the press height `press_m` over it (GC-T2b; 0 without a press demand: the
+/// cover's slab alone), so every texel sees `press_m` over its ground even at ring depth 0.
+pub fn slab(ground: (f32, f32), below_m: f32, ring_depth: f32, press_m: f32) -> (f32, f32) {
     let near = ground.0 - below_m.max(0.0);
-    let far = ground.1 + ceiling_ref(ring_depth);
+    let far = ground.1 + ceiling_ref(ring_depth).max(press_m);
     (near, (far - near).max(1e-3))
 }

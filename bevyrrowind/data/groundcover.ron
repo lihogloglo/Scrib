@@ -242,13 +242,16 @@
             shadow: None,
             range: Near,
         ),
-        // Procedural meadow blades under the vanilla clumps (slice GC-3a2c): the `meadow` blade style below, drawn by
-        // `sf_groundcover_bevy::blades` only while `groundcover.blades.enabled` is on (off by default).
+        // Procedural blades under the vanilla clumps (slices GC-3a2c, GC-3e2a): one blade species per grass channel,
+        // each with the blade style of its region below, drawn by `sf_groundcover_bevy::blades` only while
+        // `groundcover.blades.enabled` is on (off by default). Footprints stay under the blade spacing at 150 / m²
+        // (1 / sqrt(150) = 0.082 m) so they never cap the density; slope and water limits as the region's clumps.
+        // Densities are blades per m² at rule weight 1; past 10 m the crate halves the count and widens the rest.
         (
             id: "ascadian_meadow_blades",
-            render: Blade(style: "meadow"),
-            footprint_m: 0.08, // Guess, under the blade spacing at full density (1 / sqrt(150) = 0.082 m) so it never caps the density
-            density: 150.0, // Guess (owner 2026-11-23 look GC-3: "could be denser" at 60, the MEADOW preset): coverage 3 (150 x 0.02 m wide blades), within bevy_grass's lush presets (130-250); no shipped game publishes a figure (docs/research/grass-blade-density-2026-11-23.md). Blades per m² at rule weight 1; past 10 m the crate halves the count and widens the rest
+            render: Blade(style: "ascadian"),
+            footprint_m: 0.08, // Guess, under the blade spacing
+            density: 150.0, // Guess (owner 2026-11-23 look GC-3: "could be denser" at 60, the MEADOW preset): coverage 3 (150 x 0.02 m wide blades), within bevy_grass's lush presets (130-250); no shipped game publishes a figure (docs/research/grass-blade-density-2026-11-23.md)
             slope_deg: Some((min: 0.0, max: 35.0)), // Guess, as flora_grass_01
             water_m: Some((min: 0.2, max: 100000.0)), // Guess, as flora_grass_01, metres above the sea surface
             scale: (min: 1.0, max: 1.0),
@@ -260,20 +263,199 @@
             shadow: None,
             range: Near,
         ),
+        (
+            id: "grazelands_blades",
+            render: Blade(style: "grazelands"),
+            footprint_m: 0.08, // Guess, under the blade spacing
+            density: 100.0, // Guess, drier
+            slope_deg: Some((min: 0.0, max: 35.0)), // Guess, as flora_grass_01
+            water_m: Some((min: 0.2, max: 100000.0)), // Guess, as flora_grass_01, metres above the sea surface
+            scale: (min: 1.0, max: 1.0),
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((1.0, 1.0, 1.0), (1.0, 1.0, 1.0)),
+            align_to_surface: (min: 0.0, max: 0.0),
+            wind: 1.0, // Guess
+            trample: 1.0, // Guess
+            shadow: None,
+            range: Near,
+        ),
+        (
+            id: "dirt_grass_blades",
+            render: Blade(style: "dirt_grass"),
+            footprint_m: 0.08, // Guess, under the blade spacing
+            density: 60.0, // Guess, thin (was 150 x rule weight 0.4)
+            slope_deg: Some((min: 0.0, max: 35.0)), // Guess, as flora_grass_01
+            water_m: Some((min: 0.2, max: 100000.0)), // Guess, as flora_grass_01, metres above the sea surface
+            scale: (min: 1.0, max: 1.0),
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((1.0, 1.0, 1.0), (1.0, 1.0, 1.0)),
+            align_to_surface: (min: 0.0, max: 0.0),
+            wind: 1.0, // Guess
+            trample: 1.0, // Guess
+            shadow: None,
+            range: Near,
+        ),
+        (
+            id: "bc_grass_blades",
+            render: Blade(style: "bc_grass"),
+            footprint_m: 0.08, // Guess, under the blade spacing
+            density: 70.0, // Guess, clumped
+            slope_deg: Some((min: 0.0, max: 30.0)), // Guess, as flora_bc_grass_01
+            water_m: Some((min: 0.0, max: 100000.0)), // Guess, as flora_bc_grass_01, metres above the sea surface
+            scale: (min: 1.0, max: 1.0),
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((1.0, 1.0, 1.0), (1.0, 1.0, 1.0)),
+            align_to_surface: (min: 0.0, max: 0.0),
+            wind: 1.0, // Guess
+            trample: 1.0, // Guess
+            shadow: None,
+            range: Near,
+        ),
+        (
+            id: "bc_moss_blades",
+            render: Blade(style: "bc_moss"),
+            footprint_m: 0.08, // Guess, under the blade spacing
+            density: 120.0, // Guess, carpet
+            slope_deg: Some((min: 0.0, max: 25.0)), // Guess, as flora_bc_fern_03
+            water_m: Some((min: 0.0, max: 100000.0)), // Guess, as flora_bc_fern_03, metres above the sea surface
+            scale: (min: 1.0, max: 1.0),
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((1.0, 1.0, 1.0), (1.0, 1.0, 1.0)),
+            align_to_surface: (min: 0.0, max: 0.0),
+            wind: 1.0, // Guess
+            trample: 1.0, // Guess
+            shadow: None,
+            range: Near,
+        ),
+        (
+            id: "bm_grass_blades",
+            render: Blade(style: "bm_grass"),
+            footprint_m: 0.08, // Guess, under the blade spacing
+            density: 90.0, // Guess, cold
+            slope_deg: Some((min: 0.0, max: 35.0)), // Guess, as flora_bm_grass_03
+            water_m: Some((min: 0.2, max: 100000.0)), // Guess, as flora_bm_grass_03, metres above the sea surface
+            scale: (min: 1.0, max: 1.0),
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((1.0, 1.0, 1.0), (1.0, 1.0, 1.0)),
+            align_to_surface: (min: 0.0, max: 0.0),
+            wind: 1.0, // Guess
+            trample: 1.0, // Guess
+            shadow: None,
+            range: Near,
+        ),
+        (
+            id: "bm_grass_dirt_blades",
+            render: Blade(style: "bm_grass_dirt"),
+            footprint_m: 0.08, // Guess, under the blade spacing
+            density: 35.0, // Guess, thin
+            slope_deg: Some((min: 0.0, max: 35.0)), // Guess, as flora_bm_grass_03
+            water_m: Some((min: 0.2, max: 100000.0)), // Guess, as flora_bm_grass_03, metres above the sea surface
+            scale: (min: 1.0, max: 1.0),
+            yaw_deg: (min: 0.0, max: 360.0),
+            tint: ((1.0, 1.0, 1.0), (1.0, 1.0, 1.0)),
+            align_to_surface: (min: 0.0, max: 0.0),
+            wind: 1.0, // Guess
+            trample: 1.0, // Guess
+            shadow: None,
+            range: Near,
+        ),
     ],
-    // Blade looks the `Blade(style: ..)` species name (slice GC-3e1; `mw_world::groundcover::BladeStyleDef`): a
-    // `bevy_grass` preset by its lower-case name (`base`) and overrides of its look, each `None` (left out) keeping
+    // Blade looks the `Blade(style: ..)` species name (slices GC-3e1, GC-3e2a; `mw_world::groundcover::BladeStyleDef`):
+    // a `bevy_grass` preset by its lower-case name (`base`) and overrides of its look, each `None` (left out) keeping
     // the preset's. Groups and fields (units in the names, colours sRGB 0-1):
     //   blade: height_m (shortest, tallest), width_m, lean, stiffness, root_color, tip_color, root_occlusion,
     //          translucency, specular, twist, droop, fold, head_length, head_width_m, head_color
     //   variation: patch_color, patch_amount, patch_size_m, dry_tips, dead_share, tufts, tuft_spacing_m, bare_share,
     //              bare_patch_size_m
     //   ground_tint: color, amount;  toon_bands (0 = physical shading)
+    //   ground_from: a channel `name` (below): the ground tint colour is the mean albedo of its land textures (from the
+    //                bake's layer table); an explicit `ground_tint.color` wins.
+    //   species: other plants among the style's blades (slice GC-3e2c), each (base, share, clustering, blade): `base` a
+    //            `bevy_grass` species preset by lower-case name (seed_heads, white_flowers, yellow_flowers, clover,
+    //            broad_leaf, moss, fern, bracken, leaf_litter, cotton_grass, cattail, cornflower, poppy) or
+    //            "style:<preset>" for a style preset's own blade; share 0-1 of the blades; clustering 0 (scattered) to 1
+    //            (only in patches, default 0); blade the same overrides as above, on that base. A non-empty list
+    //            REPLACES the preset's own species; left out (empty) keeps them. At most 15.
     // The preset's density is never used: the species `density` sets the blades per m². Every override is a `Guess`
-    // until the owner's look loop sets it, e.g. `blade: (tip_color: Some((0.62, 0.58, 0.30))), // Guess`.
+    // until the owner's look loop sets it.
     blade_styles: [
-        // `bevy_grass`'s MEADOW preset as it ships, no overrides.
-        (name: "meadow", base: "meadow"),
+        // Ascadian Isles: lush meadow, its tips toned down from the MEADOW preset's saturated green (owner
+        // 2026-11-23, GC-M4: "too bright uranium green").
+        (
+            name: "ascadian",
+            base: "meadow", // Guess, lush
+            blade: (tip_color: Some((0.34, 0.45, 0.19))), // Guess, desaturated
+            variation: (patch_amount: Some(0.2)), // Guess, variety
+            ground_tint: (amount: Some(0.35)), // Guess, seated
+            ground_from: Some("ascadian_grass"),
+        ),
+        // Grazelands: open, drier, yellow-green prairie.
+        (
+            name: "grazelands",
+            base: "dry_savanna", // Guess, drier
+            blade: (height_m: Some((0.3, 0.7)), tip_color: Some((0.60, 0.58, 0.30))), // Guess, knee-high; Guess, yellow-green
+            ground_tint: (amount: Some(0.35)), // Guess, seated
+            ground_from: Some("grazelands_grass"),
+            // A taller prairie grass in tufts among the short dry blades (owner 2026-11-24: "higher grasses in the
+            // grasslands ... a different species"), from the PAMPAS leaf without its plumes.
+            species: [
+                (
+                    base: "style:pampas", // Guess, long arching tuft leaves
+                    share: 0.15, // Guess, a minority over the short grass
+                    clustering: 0.6, // Guess, in tufts
+                    blade: (
+                        height_m: Some((1.0, 1.9)), // Guess (owner 2026-11-24: "some could be even higher" at 0.9-1.4), waist to head high
+                        width_m: Some(0.012), // Guess, narrower than the base's 0.02
+                        droop: Some(0.5), // Guess, arching less than pampas at this height
+                        lean: Some(0.3), // Guess, upright tufts
+                        stiffness: Some(0.4), // Guess, sways more than the short stiff grass
+                        root_color: Some((0.16, 0.20, 0.08)), // Guess, greener root
+                        tip_color: Some((0.58, 0.60, 0.30)), // Guess, greener-gold than the base tips
+                    ),
+                ),
+            ],
+        ),
+        // Dirt and rocky mixes: short, sparse, dusty, bare patches.
+        (
+            name: "dirt_grass",
+            base: "meadow", // Guess, temperate
+            blade: (height_m: Some((0.1, 0.3)), tip_color: Some((0.40, 0.44, 0.22))), // Guess, short; Guess, dusty
+            variation: (tufts: Some(0.4), bare_share: Some(0.3)), // Guess, clumped; Guess, dirt
+            ground_tint: (amount: Some(0.45)), // Guess, dirt
+            ground_from: Some("dirt_grass"),
+        ),
+        // Bitter Coast: dark swamp grass in clumps with cattails, waist-high rather than the REED_MARSH preset's 1.2-2 m.
+        (
+            name: "bc_grass",
+            base: "reed_marsh", // Guess, swampy
+            blade: (height_m: Some((0.4, 0.9))), // Guess, waist-high
+            ground_tint: (amount: Some(0.4)), // Guess, wet
+            ground_from: Some("bc_grass"),
+        ),
+        // Bitter Coast moss under the ferns.
+        (
+            name: "bc_moss",
+            base: "forest_moss", // Guess, moss
+            ground_tint: (amount: Some(0.4)), // Guess, seated
+            ground_from: Some("bc_moss"),
+        ),
+        // Solstheim: pale, cold, stiff tundra grass; the FROSTED_MEADOW preset without the frost.
+        (
+            name: "bm_grass",
+            base: "frosted_meadow", // Guess, cold
+            blade: (root_color: Some((0.22, 0.28, 0.20)), tip_color: Some((0.60, 0.66, 0.56)), specular: Some(0.3)), // Guess, cold; Guess, pale; Guess, unfrosted
+            ground_tint: (amount: Some(0.35)), // Guess, seated
+            ground_from: Some("bm_grass"),
+        ),
+        // Solstheim grass on dirt: the same, shorter, with bare patches.
+        (
+            name: "bm_grass_dirt",
+            base: "frosted_meadow", // Guess, cold
+            blade: (height_m: Some((0.08, 0.22)), root_color: Some((0.22, 0.28, 0.20)), tip_color: Some((0.60, 0.66, 0.56)), specular: Some(0.3)), // Guess, short; Guess, cold; Guess, pale; Guess, unfrosted
+            variation: (bare_share: Some(0.3)), // Guess, dirt
+            ground_tint: (amount: Some(0.45)), // Guess, dirt
+            ground_from: Some("bm_grass_dirt"),
+        ),
     ],
     rules: (rules: [
         // 0 ascadian_grass: the Ascadian Isles meadow; tall grass sparse.
@@ -282,9 +464,9 @@
             (species: "flora_grass_02", weight: 0.25), // Guess
             (species: "flora_grass_03", weight: 0.25), // Guess
             (species: "flora_grass_04", weight: 0.25), // Guess
-            (species: "flora_grass_05", weight: 0.04), // Guess
-            (species: "flora_grass_06", weight: 0.04), // Guess
-            (species: "flora_grass_07", weight: 0.04), // Guess
+            (species: "flora_grass_05", weight: 0.0), // owner 2026-11-24: "super weird, a long band of grass" (Tribunal tall clump asset); tall grass now comes from blades
+            (species: "flora_grass_06", weight: 0.0), // owner 2026-11-24: "super weird, a long band of grass" (Tribunal tall clump asset); tall grass now comes from blades
+            (species: "flora_grass_07", weight: 0.0), // owner 2026-11-24: "super weird, a long band of grass" (Tribunal tall clump asset); tall grass now comes from blades
             (species: "ascadian_meadow_blades", weight: 1.0), // Guess
         ]),
         // 1 grazelands_grass: same clumps, more of the tall ones.
@@ -293,10 +475,10 @@
             (species: "flora_grass_02", weight: 0.2), // Guess
             (species: "flora_grass_03", weight: 0.2), // Guess
             (species: "flora_grass_04", weight: 0.2), // Guess
-            (species: "flora_grass_05", weight: 0.12), // Guess
-            (species: "flora_grass_06", weight: 0.12), // Guess
-            (species: "flora_grass_07", weight: 0.12), // Guess
-            (species: "ascadian_meadow_blades", weight: 1.0), // Guess
+            (species: "flora_grass_05", weight: 0.0), // owner 2026-11-24: "super weird, a long band of grass" (Tribunal tall clump asset); tall grass now comes from the tall blades
+            (species: "flora_grass_06", weight: 0.0), // owner 2026-11-24: "super weird, a long band of grass" (Tribunal tall clump asset); tall grass now comes from the tall blades
+            (species: "flora_grass_07", weight: 0.0), // owner 2026-11-24: "super weird, a long band of grass" (Tribunal tall clump asset); tall grass now comes from the tall blades
+            (species: "grazelands_blades", weight: 1.0), // Guess
         ]),
         // 2 dirt_grass: dirt, rocky and darkstone mixes, thin short grass.
         (channel: 2, species: [
@@ -304,7 +486,7 @@
             (species: "flora_grass_02", weight: 0.1), // Guess
             (species: "flora_grass_03", weight: 0.1), // Guess
             (species: "flora_grass_04", weight: 0.1), // Guess
-            (species: "ascadian_meadow_blades", weight: 0.4), // Guess
+            (species: "dirt_grass_blades", weight: 1.0), // Guess (its density sets the thinning)
         ]),
         // 3 bc_grass: Bitter Coast swamp grass with some ferns.
         (channel: 3, species: [
@@ -312,6 +494,7 @@
             (species: "flora_bc_grass_02", weight: 0.4), // Guess
             (species: "flora_bc_fern_03", weight: 0.15), // Guess
             (species: "flora_bc_fern_04", weight: 0.15), // Guess
+            (species: "bc_grass_blades", weight: 1.0), // Guess
         ]),
         // 4 bc_moss: Bitter Coast moss, mostly ferns.
         (channel: 4, species: [
@@ -319,16 +502,19 @@
             (species: "flora_bc_grass_02", weight: 0.1), // Guess
             (species: "flora_bc_fern_03", weight: 0.25), // Guess
             (species: "flora_bc_fern_04", weight: 0.25), // Guess
+            (species: "bc_moss_blades", weight: 1.0), // Guess
         ]),
         // 5 bm_grass: Solstheim grass.
         (channel: 5, species: [
             (species: "flora_bm_grass_03", weight: 0.5), // Guess
             (species: "flora_bm_grass_06", weight: 0.3), // Guess
+            (species: "bm_grass_blades", weight: 1.0), // Guess
         ]),
         // 6 bm_grass_dirt: Solstheim grass on dirt, thin.
         (channel: 6, species: [
             (species: "flora_bm_grass_03", weight: 0.2), // Guess
             (species: "flora_bm_grass_06", weight: 0.1), // Guess
+            (species: "bm_grass_dirt_blades", weight: 1.0), // Guess (its density sets the thinning)
         ]),
     ]),
     // Rule channel ← LTEX record ids (matched case-insensitively against the terrain layer records). Land textures

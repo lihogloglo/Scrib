@@ -15,12 +15,13 @@
 //!   ([`blade_styles`]: a `bevy_grass` preset plus overrides; slice GC-3e1) for the data's blade species; drawn only
 //!   while `groundcover.blades.enabled` is on (off by default). Blade fields get the exterior's render layer, as the batches.
 //! - **Statics** (slice GC-M4): the exterior's grounded statics are exclusion regions (`groundcover_statics`), so
-//!   nothing grows inside rocks, buildings, docks or stairs. Built once at `Startup` from the world index, the
-//!   models' baked bounds and the baked terrain.
+//!   nothing grows inside rocks, buildings, docks or stairs. Built once from the world index, the models' baked
+//!   bounds and the baked terrain, in a task `Startup` spawns on `AsyncComputeTaskPool` (slice GC-M4b; the source
+//!   and the rest arrive a few frames later, through [`poll_build`]).
 //! - **Off**: `--off groundcover` adds none of the renderer.
 //!
-//! Log lines: at `Startup`, `groundcover: statics read P placements, S boxes, excluded E, floating F, no ground G,
-//! terrain tiles T in X ms`; once every model resolved, `groundcover: species S, channels matched M/N, unmatched
+//! Log lines: from the startup task, `groundcover: statics read P placements, S boxes, excluded E, floating F, no
+//! ground G, terrain tiles T in X ms (task)` (X since the task started); once every model resolved, `groundcover: species S, channels matched M/N, unmatched
 //! [..], models loaded L/T` and `groundcover: blade species B, styles registered R`. Gauges `groundcover/*`
 //! (`sf_groundcover_bevy::publish_gauges`).
 
@@ -29,12 +30,13 @@ use std::sync::Arc;
 use bevy::asset::{LoadState, RecursiveDependencyLoadState};
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
+use bevy::tasks::{AsyncComputeTaskPool, Task, futures::check_ready};
 use bevy::world_serialization::WorldAsset;
-use mw_world::groundcover::{BladeStyleDef, GroundcoverData};
+use mw_world::groundcover::{BladeOverrides, BladeStyleDef, GroundcoverData, SubSpeciesDef};
 use mw_world::ids;
 use sf_bake::{Manifest, Store};
 use sf_groundcover::{OverrideSet, Overrides, RenderKind};
-use sf_groundcover_bevy::blades::{BladeBlock, BladeStyles, BladesPlugin, GrassStyle};
+use sf_groundcover_bevy::blades::{BladeBlock, BladeStyles, BladesPlugin, GrassBlade, GrassSpecies, GrassStyle};
 use sf_groundcover_bevy::{
     GroundcoverBatch, GroundcoverModel, GroundcoverModels, GroundcoverPlugin, GroundcoverSource, GroundcoverViewer,
     LayerChannels, TerrainGround, TerrainGroundPlugin, TerrainGroundRef,
@@ -128,7 +130,7 @@ impl Plugin for GroundcoverGamePlugin {
         app.add_plugins((GroundcoverPlugin, TerrainGroundPlugin, BladesPlugin))
             .insert_resource(GroundcoverInputs { off: false, table })
             .add_systems(Startup, setup)
-            .add_systems(Update, (load_models, batch_layers))
+            .add_systems(Update, (poll_build, load_models, batch_layers, press_demand))
             .add_observer(viewer_on)
             .add_observer(viewer_off);
     }
@@ -136,22 +138,139 @@ impl Plugin for GroundcoverGamePlugin {
 
 /// The data's blade styles (`blade_styles` in the data file) as the renderer's: each entry's `base` preset (its
 /// lower-case `bevy_grass` constant name, `"meadow"` = `GrassStyle::MEADOW`) with the entry's overrides applied. An
-/// unknown preset is an error naming it and the style.
-pub fn blade_styles(data: &GroundcoverData) -> Result<BladeStyles, String> {
+/// unknown preset is an error naming it and the style. A style with `ground_from` takes its ground tint colour from
+/// that channel's layers in `table` ([`ground_from_color`]; slice GC-3e2a) unless it sets the colour itself; without
+/// a table or a matched layer it keeps the preset's colour, with one warning naming the style.
+pub fn blade_styles(data: &GroundcoverData, table: Option<&LayerTable>) -> Result<BladeStyles, String> {
     let mut styles = BladeStyles::default();
     for def in &data.blade_styles {
-        styles.0.insert(def.name.clone(), blade_style(def)?);
+        let mut style = blade_style(def)?;
+        let from = ground_from_color(data, def, table)?;
+        if def.ground_tint.color.is_none() {
+            match from {
+                Some([r, g, b]) => style.ground_tint.color = Color::linear_rgb(r, g, b),
+                None if def.ground_from.is_some() => warn!(
+                    "groundcover: blade style {:?}: no terrain layer feeds channel {:?}, ground tint keeps the preset's colour",
+                    def.name,
+                    def.ground_from.as_deref().unwrap_or_default()
+                ),
+                None => {}
+            }
+        }
+        styles.0.insert(def.name.clone(), style);
     }
     Ok(styles)
 }
 
-/// One [`BladeStyleDef`] as a `GrassStyle`.
+/// The ground colour `def.ground_from` names: the mean, in linear RGB, of the `mean_albedo` of every layer of `table`
+/// whose record is one of that channel's LTEX ids (ASCII case ignored, as [`GroundcoverData::resolve`]). `Ok(None)`
+/// when the style names no channel, there is no table or no layer matches; an unknown channel name is an error naming
+/// it and the style.
+pub fn ground_from_color(
+    data: &GroundcoverData,
+    def: &BladeStyleDef,
+    table: Option<&LayerTable>,
+) -> Result<Option<[f32; 3]>, String> {
+    let Some(name) = &def.ground_from else { return Ok(None) };
+    let channel = data.channels.iter().find(|c| c.name == *name).ok_or_else(|| {
+        format!(
+            "groundcover data: blade style {:?} takes its ground colour from channel {name:?}, which channels does not name",
+            def.name
+        )
+    })?;
+    let Some(table) = table else { return Ok(None) };
+    let (sum, n) = table
+        .layers
+        .iter()
+        .filter(|l| channel.ltex.iter().any(|t| t.eq_ignore_ascii_case(&l.record)))
+        .fold(([0.0_f32; 3], 0_u16), |(s, n), l| {
+            ([s[0] + l.mean_albedo[0], s[1] + l.mean_albedo[1], s[2] + l.mean_albedo[2]], n + 1)
+        });
+    if n == 0 {
+        return Ok(None);
+    }
+    let n = f32::from(n);
+    Ok(Some(sum.map(|v| v / n)))
+}
+
+/// Most sub-species a style lists: `bevy_grass` mixes at most 16 species, the style's own blades included.
+// tunables: const (a capacity: bevy_grass mixes at most 16 species per field)
+const MAX_SUB_SPECIES: usize = 15;
+
+/// One [`BladeStyleDef`] as a `GrassStyle`. A non-empty `species` list replaces the preset's own ([`sub_species`]).
 fn blade_style(def: &BladeStyleDef) -> Result<GrassStyle, String> {
     let mut s = GrassStyle::preset(&def.base.to_ascii_uppercase()).ok_or_else(|| {
         format!("groundcover data: blade style {:?} starts from preset {:?}, which bevy_grass does not have", def.name, def.base)
     })?;
     let srgb = |c: [f32; 3]| Color::srgb(c[0], c[1], c[2]);
-    let (b, o) = (&mut s.blade, &def.blade);
+    apply_blade(&mut s.blade, &def.blade);
+    let (v, o) = (&mut s.variation, &def.variation);
+    set(&mut v.patch_color, o.patch_color.map(srgb));
+    set(&mut v.patch_amount, o.patch_amount);
+    set(&mut v.patch_size, o.patch_size_m);
+    set(&mut v.dry_tips, o.dry_tips);
+    set(&mut v.dead_share, o.dead_share);
+    set(&mut v.tufts, o.tufts);
+    set(&mut v.tuft_spacing, o.tuft_spacing_m);
+    set(&mut v.bare_share, o.bare_share);
+    set(&mut v.bare_patch_size, o.bare_patch_size_m);
+    set(&mut s.ground_tint.color, def.ground_tint.color.map(srgb));
+    set(&mut s.ground_tint.amount, def.ground_tint.amount);
+    set(&mut s.toon_bands, def.toon_bands);
+    if !def.species.is_empty() {
+        if def.species.len() > MAX_SUB_SPECIES {
+            return Err(format!(
+                "groundcover data: blade style {:?} lists {} species, more than the {MAX_SUB_SPECIES} bevy_grass mixes with its own",
+                def.name,
+                def.species.len()
+            ));
+        }
+        let species = def.species.iter().map(|sp| sub_species(def, sp)).collect::<Result<Vec<_>, _>>()?;
+        s.species = species.into();
+    }
+    Ok(s)
+}
+
+/// One [`SubSpeciesDef`] of `style` as a `GrassSpecies`: its base blade (a species preset by lower-case name, or
+/// `style:<preset>` for a style preset's own blade) with its overrides. An unknown base is an error naming it.
+fn sub_species(style: &BladeStyleDef, def: &SubSpeciesDef) -> Result<GrassSpecies, String> {
+    let base = match def.base.strip_prefix("style:") {
+        Some(preset) => GrassStyle::preset(&preset.to_ascii_uppercase()).map(|p| p.blade),
+        None => species_preset(&def.base),
+    };
+    let mut blade = base.ok_or_else(|| {
+        format!(
+            "groundcover data: blade style {:?} mixes in species {:?}, which bevy_grass does not have (a species preset, or style:<preset>)",
+            style.name, def.base
+        )
+    })?;
+    apply_blade(&mut blade, &def.blade);
+    Ok(GrassSpecies::new(blade, def.share).clustered(def.clustering))
+}
+
+/// The `bevy_grass` species preset (a `GrassBlade` constant) by its lower-case name.
+fn species_preset(name: &str) -> Option<GrassBlade> {
+    Some(match name {
+        "seed_heads" => GrassBlade::SEED_HEADS,
+        "white_flowers" => GrassBlade::WHITE_FLOWERS,
+        "yellow_flowers" => GrassBlade::YELLOW_FLOWERS,
+        "clover" => GrassBlade::CLOVER,
+        "broad_leaf" => GrassBlade::BROAD_LEAF,
+        "moss" => GrassBlade::MOSS,
+        "fern" => GrassBlade::FERN,
+        "bracken" => GrassBlade::BRACKEN,
+        "leaf_litter" => GrassBlade::LEAF_LITTER,
+        "cotton_grass" => GrassBlade::COTTON_GRASS,
+        "cattail" => GrassBlade::CATTAIL,
+        "cornflower" => GrassBlade::CORNFLOWER,
+        "poppy" => GrassBlade::POPPY,
+        _ => return None,
+    })
+}
+
+/// The data's blade overrides on `b`.
+fn apply_blade(b: &mut GrassBlade, o: &BladeOverrides) {
+    let srgb = |c: [f32; 3]| Color::srgb(c[0], c[1], c[2]);
     set(&mut b.height, o.height_m.map(Vec2::from));
     set(&mut b.width, o.width_m);
     set(&mut b.lean, o.lean);
@@ -167,20 +286,6 @@ fn blade_style(def: &BladeStyleDef) -> Result<GrassStyle, String> {
     set(&mut b.head_length, o.head_length);
     set(&mut b.head_width, o.head_width_m);
     set(&mut b.head_color, o.head_color.map(srgb));
-    let (v, o) = (&mut s.variation, &def.variation);
-    set(&mut v.patch_color, o.patch_color.map(srgb));
-    set(&mut v.patch_amount, o.patch_amount);
-    set(&mut v.patch_size, o.patch_size_m);
-    set(&mut v.dry_tips, o.dry_tips);
-    set(&mut v.dead_share, o.dead_share);
-    set(&mut v.tufts, o.tufts);
-    set(&mut v.tuft_spacing, o.tuft_spacing_m);
-    set(&mut v.bare_share, o.bare_share);
-    set(&mut v.bare_patch_size, o.bare_patch_size_m);
-    set(&mut s.ground_tint.color, def.ground_tint.color.map(srgb));
-    set(&mut s.ground_tint.amount, def.ground_tint.amount);
-    set(&mut s.toon_bands, def.toon_bands);
-    Ok(s)
 }
 
 /// `*field = value` when the data gives one.
@@ -221,9 +326,24 @@ pub fn build_source(
     Ok((source, ground, report))
 }
 
-/// `Startup`: inserts `GroundcoverSource` (with the statics' exclusions when the bake and the world index are
-/// there), the data's `BladeStyles`, `TerrainGroundRef` and the model list ([`GroundcoverLoading`]); nothing under the off switch or without a
-/// layer table.
+/// The startup build (statics footprints, then the source) running on `AsyncComputeTaskPool` (slice GC-M4b);
+/// [`poll_build`] inserts what it built and removes it.
+#[derive(Resource)]
+pub struct GroundcoverBuild(Task<Result<Built, String>>);
+
+/// What the [`GroundcoverBuild`] task hands back.
+pub struct Built {
+    source: GroundcoverSource,
+    ground: Arc<TerrainGround>,
+    report: SetupReport,
+    styles: BladeStyles,
+    keys: Vec<String>,
+}
+
+/// `Startup`: spawns the [`GroundcoverBuild`] task, which builds `GroundcoverSource` (with the statics' exclusions
+/// when the bake and the world index are there) off the main thread; [`poll_build`] then inserts it with the data's
+/// `BladeStyles`, `TerrainGroundRef` and the model list ([`GroundcoverLoading`]). Nothing under the off switch or
+/// without a layer table.
 pub fn setup(
     mut commands: Commands,
     inputs: Option<Res<GroundcoverInputs>>,
@@ -244,7 +364,7 @@ pub fn setup(
             return;
         }
     };
-    let styles = match blade_styles(&data) {
+    let styles = match blade_styles(&data, Some(table)) {
         Ok(s) => s,
         Err(e) => {
             error!("groundcover: {e}");
@@ -256,19 +376,51 @@ pub fn setup(
     if sea_level.is_none() {
         warn!("groundcover: the exterior record has no sea level: plants may stand under water");
     }
-    let exclusions = match (bake, index) {
-        (Some(bake), Some(index)) => static_exclusions(&bake, index.0.as_ref(), &ws, footprint_settings(tunables.as_deref())),
-        _ => Vec::new(),
+    let statics_in = match (bake, index) {
+        (Some(bake), Some(index)) => Some((bake.clone(), index.0.clone(), footprint_settings(tunables.as_deref()))),
+        _ => None,
     };
-    match build_source(&data, table, ws, sea_level, exclusions) {
-        Ok((source, ground, report)) => {
+    let table = table.clone();
+    let task = AsyncComputeTaskPool::get().spawn(async move {
+        let started = std::time::Instant::now();
+        let exclusions = statics_in.map_or_else(Vec::new, |(bake, index, settings)| {
+            static_exclusions(&bake, index.as_ref(), &ws, settings, started)
+        });
+        let (source, ground, report) = build_source(&data, &table, ws, sea_level, exclusions)?;
+        Ok(Built { source, ground, report, styles, keys: data.model_keys() })
+    });
+    commands.insert_resource(GroundcoverBuild(task));
+}
+
+/// `Update`: once the [`GroundcoverBuild`] task finished, inserts what it built (or logs its error) and removes it.
+pub fn poll_build(mut commands: Commands, build: Option<ResMut<GroundcoverBuild>>) {
+    let Some(mut build) = build else { return };
+    let Some(result) = check_ready(&mut build.0) else { return };
+    commands.remove_resource::<GroundcoverBuild>();
+    match result {
+        Ok(Built { source, ground, report, styles, keys }) => {
             commands.insert_resource(source);
             commands.insert_resource(styles);
             commands.insert_resource(TerrainGroundRef(ground));
-            commands.insert_resource(GroundcoverLoading { report, keys: data.model_keys(), ..default() });
+            commands.insert_resource(GroundcoverLoading { report, keys, ..default() });
         }
         Err(e) => error!("groundcover: {e}"),
     }
+}
+
+/// `Update` (slice GC-T2a): asks the trail ring for its press channel (`sf_surface_bevy::TrailDemand::press`) while
+/// groundcover is built ([`GroundcoverSource`]), on (`groundcover.enabled`) and has a viewer (an exterior camera), so
+/// feet press the plants with no snow or ash look; off otherwise. Nothing without the surface plugin.
+#[allow(clippy::needless_pass_by_value)]
+pub fn press_demand(
+    source: Option<Res<GroundcoverSource>>,
+    tunables: Option<Res<sf_tunables_bevy::Tunables>>,
+    viewers: Query<(), With<GroundcoverViewer>>,
+    demand: Option<ResMut<sf_surface_bevy::TrailDemand>>,
+) {
+    let Some(mut demand) = demand else { return };
+    let press = source.is_some() && !viewers.is_empty() && sf_groundcover_bevy::groundcover_enabled(tunables);
+    demand.set_if_neq(sf_surface_bevy::TrailDemand { press });
 }
 
 /// The footprint tunables' values (defaults for anything unregistered).
@@ -279,18 +431,19 @@ fn footprint_settings(tunables: Option<&sf_tunables_bevy::Tunables>) -> Footprin
     FootprintSettings { reach_m: read(&statics::REACH_M), margin_m: read(&statics::MARGIN_M) }
 }
 
-/// The exclusion regions of `ws`'s grounded statics, with the log line; none on an error (logged).
+/// The exclusion regions of `ws`'s grounded statics, with the log line (the time since the task's `started`);
+/// none on an error (logged).
 fn static_exclusions(
     bake: &GroundcoverBake,
     index: &dyn sf_world::IndexReader,
     ws: &WorldspaceId,
     settings: FootprintSettings,
+    started: std::time::Instant,
 ) -> Vec<sf_groundcover::Region> {
-    let started = std::time::Instant::now();
     match statics::build(index, &bake.store, &bake.manifest, ws, settings) {
         Ok((regions, r)) => {
             info!(
-                "groundcover: statics read {} placements, {} boxes, excluded {}, floating {}, no ground {}, terrain tiles {} in {:.0} ms",
+                "groundcover: statics read {} placements, {} boxes, excluded {}, floating {}, no ground {}, terrain tiles {} in {:.0} ms (task)",
                 r.placements,
                 r.statics,
                 r.excluded,
@@ -436,7 +589,7 @@ fn viewer_off(remove: On<Remove<TerrainCamera>>, mut commands: Commands) {
 mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
-    use mw_world::groundcover::{BladeOverrides, GroundTintOverrides, VariationOverrides};
+    use mw_world::groundcover::{GroundTintOverrides, VariationOverrides};
     use sf_terrain_bevy::sf_terrain::{LayerInfo, layer_id};
 
     fn layer(record: &str) -> LayerInfo {
@@ -458,11 +611,27 @@ mod tests {
         LayerTable { layers: vec![layer("ai_grass"), layer("gl_grass_01"), layer("rm_rock_01")], ..LayerTable::default() }
     }
 
+    /// `setup`, then `poll_build` until the task finished (at most ~2 s); whether a task was pending after `setup`.
+    fn run_setup(world: &mut World) -> bool {
+        AsyncComputeTaskPool::get_or_init(bevy::tasks::TaskPool::default);
+        world.run_system_once(setup).unwrap();
+        let pending = world.contains_resource::<GroundcoverBuild>();
+        for _ in 0..2000 {
+            if !world.contains_resource::<GroundcoverBuild>() {
+                break;
+            }
+            world.run_system_once(poll_build).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(!world.contains_resource::<GroundcoverBuild>(), "the build task finished");
+        pending
+    }
+
     #[test]
     fn setup_maps_the_grass_layers() {
         let mut world = World::new();
         world.insert_resource(GroundcoverInputs { off: false, table: Some(table()) });
-        world.run_system_once(setup).unwrap();
+        assert!(run_setup(&mut world), "a build task is pending after Startup");
         let source = world.get_resource::<GroundcoverSource>().expect("source inserted");
         assert!(!source.cover.is_empty());
         let ground = world.get_resource::<TerrainGroundRef>().expect("ground inserted");
@@ -473,9 +642,11 @@ mod tests {
         let loading = world.get_resource::<GroundcoverLoading>().unwrap();
         assert_eq!(loading.report.channels_matched, 2);
         assert_eq!(loading.keys.len(), loading.report.models);
-        assert_eq!(loading.report.blade_species, 1);
+        assert_eq!(loading.report.blade_species, 7);
         let styles = world.get_resource::<BladeStyles>().expect("blade styles inserted");
-        assert!(styles.0.contains_key("meadow"), "the data's blade style is registered");
+        assert!(styles.0.contains_key("ascadian"), "the data's blade styles are registered");
+        // `layer` gives every layer the same albedo, so the ascadian ground is that colour.
+        assert_eq!(styles.0["ascadian"].ground_tint.color, Color::linear_rgb(0.2, 0.3, 0.1));
     }
 
     fn def(base: &str) -> BladeStyleDef {
@@ -485,15 +656,89 @@ mod tests {
             blade: BladeOverrides::default(),
             variation: VariationOverrides::default(),
             ground_tint: GroundTintOverrides::default(),
+            ground_from: None,
             toon_bands: None,
+            species: Vec::new(),
         }
     }
 
+    fn layer_with(record: &str, mean_albedo: [f32; 3]) -> LayerInfo {
+        LayerInfo { mean_albedo, ..layer(record) }
+    }
+
+    /// The builtin data with one style, `test` from MEADOW, its ground from channel `from`.
+    fn data_with_ground_from(from: &str) -> GroundcoverData {
+        let mut data = GroundcoverData::builtin().unwrap();
+        data.blade_styles = vec![BladeStyleDef { ground_from: Some(from.into()), ..def("meadow") }];
+        data
+    }
+
     #[test]
-    fn the_data_meadow_style_is_the_meadow_preset() {
-        let styles = blade_styles(&GroundcoverData::builtin().unwrap()).unwrap();
-        assert_eq!(styles.0.len(), 1);
-        assert_eq!(styles.0["meadow"], GrassStyle::MEADOW);
+    fn the_ground_colour_is_the_linear_mean_of_the_channel_layers() {
+        // ascadian_grass = AI_Grass + AI_Grass_02 (records stored lowercase); gl_grass_01 feeds another channel.
+        let table = LayerTable {
+            layers: vec![
+                layer_with("ai_grass", [0.2, 0.3, 0.1]),
+                layer_with("gl_grass_01", [0.9, 0.9, 0.9]),
+                layer_with("AI_GRASS_02", [0.4, 0.1, 0.3]),
+            ],
+            ..LayerTable::default()
+        };
+        let data = data_with_ground_from("ascadian_grass");
+        // Summed then divided by the layer count, as the code does (not `f32::midpoint`, which rounds through f64).
+        let n = 2.0_f32;
+        let want = [(0.2_f32 + 0.4) / n, (0.3_f32 + 0.1) / n, (0.1_f32 + 0.3) / n];
+        assert_eq!(ground_from_color(&data, &data.blade_styles[0], Some(&table)).unwrap(), Some(want));
+        let style = &blade_styles(&data, Some(&table)).unwrap().0["test"];
+        assert_eq!(style.ground_tint.color, Color::linear_rgb(want[0], want[1], want[2]));
+        let mut rest = style.clone();
+        rest.ground_tint.color = GrassStyle::MEADOW.ground_tint.color;
+        assert_eq!(rest, GrassStyle::MEADOW, "only the ground colour changes");
+    }
+
+    #[test]
+    fn an_explicit_ground_colour_wins() {
+        let mut data = data_with_ground_from("ascadian_grass");
+        data.blade_styles[0].ground_tint.color = Some([0.5, 0.4, 0.3]);
+        let style = &blade_styles(&data, Some(&table())).unwrap().0["test"];
+        assert_eq!(style.ground_tint.color, Color::srgb(0.5, 0.4, 0.3));
+    }
+
+    #[test]
+    fn an_unknown_ground_channel_is_an_error_naming_it() {
+        let data = data_with_ground_from("no_such_channel");
+        let err = blade_styles(&data, Some(&table())).unwrap_err();
+        assert!(err.contains("\"no_such_channel\"") && err.contains("\"test\""), "{err}");
+        assert!(blade_styles(&data, None).is_err(), "named channels are checked without a table too");
+    }
+
+    #[test]
+    fn no_table_or_no_matched_layer_keeps_the_preset_colour() {
+        let data = data_with_ground_from("bm_grass");
+        assert_eq!(ground_from_color(&data, &data.blade_styles[0], None).unwrap(), None);
+        assert_eq!(blade_styles(&data, None).unwrap().0["test"], GrassStyle::MEADOW);
+        // `table()` has no Solstheim layer.
+        assert_eq!(blade_styles(&data, Some(&table())).unwrap().0["test"], GrassStyle::MEADOW);
+    }
+
+    #[test]
+    fn every_builtin_blade_species_resolves_to_a_style_of_its_own() {
+        let data = GroundcoverData::builtin().unwrap();
+        let styles = blade_styles(&data, Some(&table())).unwrap();
+        let used: Vec<&str> = data
+            .species
+            .iter()
+            .filter_map(|s| match &s.render {
+                RenderKind::Blade { style } => Some(style.as_str()),
+                RenderKind::Mesh { .. } => None,
+            })
+            .collect();
+        assert_eq!(used.len(), data.channels.len(), "one blade species per grass channel");
+        assert_eq!(used.iter().collect::<std::collections::BTreeSet<_>>().len(), used.len(), "each with its own style");
+        for style in used {
+            assert!(styles.0.contains_key(style), "blade style {style:?} resolves");
+        }
+        assert_ne!(styles.0["ascadian"].blade.tip_color, GrassStyle::MEADOW.blade.tip_color, "the ascadian tips are toned down");
     }
 
     #[test]
@@ -558,13 +803,72 @@ mod tests {
         assert_eq!((style.density, &style.species), (GrassStyle::MEADOW.density, &GrassStyle::MEADOW.species));
     }
 
+    fn sub(base: &str, share: f32) -> SubSpeciesDef {
+        SubSpeciesDef { base: base.into(), share, clustering: 0.0, blade: BladeOverrides::default() }
+    }
+
+    #[test]
+    fn a_species_preset_takes_its_share_clustering_and_overrides() {
+        let mut d = def("meadow");
+        d.species = vec![SubSpeciesDef {
+            clustering: 0.6,
+            blade: BladeOverrides { height_m: Some([0.9, 1.4]), tip_color: Some([0.5, 0.5, 0.2]), ..BladeOverrides::default() },
+            ..sub("seed_heads", 0.15)
+        }];
+        let style = blade_style(&d).unwrap();
+        let mut blade = GrassBlade::SEED_HEADS;
+        blade.height = Vec2::new(0.9, 1.4);
+        blade.tip_color = Color::srgb(0.5, 0.5, 0.2);
+        assert_eq!(&*style.species, &[GrassSpecies { share: 0.15, clustering: 0.6, blade }]);
+        assert_eq!(style.blade, GrassStyle::MEADOW.blade, "the style's own blade is untouched");
+    }
+
+    #[test]
+    fn a_style_base_takes_that_presets_own_blade() {
+        let mut d = def("dry_savanna");
+        d.species = vec![sub("style:pampas", 0.1), sub("bracken", 0.05)];
+        let style = blade_style(&d).unwrap();
+        assert_eq!(&*style.species, &[GrassSpecies::new(GrassStyle::PAMPAS.blade, 0.1), GrassSpecies::new(GrassBlade::BRACKEN, 0.05)]);
+    }
+
+    #[test]
+    fn an_unknown_species_base_is_an_error_naming_it() {
+        for base in ["no_such_species", "style:no_such_preset"] {
+            let mut d = def("meadow");
+            d.species = vec![sub(base, 0.1)];
+            let err = blade_style(&d).unwrap_err();
+            assert!(err.contains(&format!("{base:?}")) && err.contains("\"test\""), "{err}");
+        }
+        let mut d = def("meadow");
+        d.species = vec![sub("moss", 0.01); MAX_SUB_SPECIES + 1];
+        assert!(blade_style(&d).unwrap_err().contains("16 species"), "more than 15 is an error");
+        d.species.pop();
+        assert_eq!(blade_style(&d).unwrap().species.len(), MAX_SUB_SPECIES);
+    }
+
+    #[test]
+    fn an_empty_species_list_keeps_the_presets() {
+        let style = blade_style(&def("pampas")).unwrap();
+        assert!(!GrassStyle::PAMPAS.species.is_empty());
+        assert_eq!(style.species, GrassStyle::PAMPAS.species);
+    }
+
+    #[test]
+    fn the_builtin_grazelands_mix_in_a_taller_grass() {
+        let styles = blade_styles(&GroundcoverData::builtin().unwrap(), None).unwrap();
+        let g = &styles.0["grazelands"];
+        assert!(!g.species.is_empty(), "grazelands mixes in a species");
+        let tall = g.species.iter().map(|s| s.blade.height.y).fold(0.0_f32, f32::max);
+        assert!(tall > g.blade.height.y, "a species taller ({tall} m) than the base blade ({} m)", g.blade.height.y);
+    }
+
     #[test]
     fn an_unknown_preset_is_an_error_naming_it() {
         let err = blade_style(&def("no_such_preset")).unwrap_err();
         assert!(err.contains("\"no_such_preset\"") && err.contains("\"test\""), "{err}");
         let mut data = GroundcoverData::builtin().unwrap();
         data.blade_styles[0].base = "no_such_preset".into();
-        assert!(blade_styles(&data).unwrap_err().contains("no_such_preset"));
+        assert!(blade_styles(&data, None).unwrap_err().contains("no_such_preset"));
     }
 
     #[test]
@@ -572,8 +876,59 @@ mod tests {
         let mut world = World::new();
         world.insert_resource(GroundcoverInputs { off: true, table: Some(table()) });
         world.run_system_once(setup).unwrap();
+        assert!(!world.contains_resource::<GroundcoverBuild>(), "no task under the off switch");
         assert!(!world.contains_resource::<GroundcoverSource>());
         assert!(!world.contains_resource::<TerrainGroundRef>());
         assert!(!world.contains_resource::<GroundcoverLoading>());
+    }
+
+    /// GC-T2a: the press demand is on with groundcover built, on and viewed; off without a viewer, with
+    /// `groundcover.enabled` off, and without a source (`--off groundcover`: nothing built).
+    #[test]
+    fn press_demand_follows_groundcover() {
+        use sf_tunables_bevy::TunablesAppExt;
+        let mut app = App::new();
+        app.register_tunables(&[&sf_groundcover_bevy::tunables::ENABLED])
+            .init_resource::<sf_surface_bevy::TrailDemand>()
+            .add_systems(Update, press_demand);
+        let press = |app: &App| app.world().resource::<sf_surface_bevy::TrailDemand>().press;
+        let viewer = app.world_mut().spawn(GroundcoverViewer).id();
+        app.update();
+        assert!(!press(&app), "not built");
+        app.world_mut().insert_resource(GroundcoverInputs { off: false, table: Some(table()) });
+        run_setup(app.world_mut());
+        app.update();
+        assert!(press(&app), "built, on, viewed");
+        let set = |app: &mut App, on: bool| {
+            let mut store = app.world_mut().resource_mut::<sf_tunables_bevy::Tunables>();
+            let id = store.0.id_of(&sf_groundcover_bevy::tunables::ENABLED).expect("registered");
+            store.0.set_by(id.untyped(), sf_tunables_bevy::Value::Bool(on), sf_tunables_bevy::SetBy::Console).expect("bool");
+        };
+        set(&mut app, false);
+        app.update();
+        assert!(!press(&app), "groundcover.enabled off");
+        set(&mut app, true);
+        app.update();
+        assert!(press(&app));
+        app.world_mut().entity_mut(viewer).remove::<GroundcoverViewer>();
+        app.update();
+        assert!(!press(&app), "no viewer (interior)");
+        // `--off groundcover`: the plugin builds no source.
+        let mut world = World::new();
+        world.insert_resource(GroundcoverInputs { off: true, table: Some(table()) });
+        world.init_resource::<sf_surface_bevy::TrailDemand>();
+        world.run_system_once(setup).unwrap();
+        world.spawn(GroundcoverViewer);
+        world.run_system_once(press_demand).unwrap();
+        assert!(!world.resource::<sf_surface_bevy::TrailDemand>().press, "off");
+    }
+
+    #[test]
+    fn no_table_spawns_no_task() {
+        let mut world = World::new();
+        world.insert_resource(GroundcoverInputs { off: false, table: None });
+        world.run_system_once(setup).unwrap();
+        assert!(!world.contains_resource::<GroundcoverBuild>());
+        assert!(!world.contains_resource::<GroundcoverSource>());
     }
 }

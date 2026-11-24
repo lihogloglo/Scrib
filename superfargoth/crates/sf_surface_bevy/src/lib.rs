@@ -84,7 +84,7 @@ pub use deform::{DEFORM_SUBVIEW, DeformGap, DeformGaps, DeformGround, DeformSett
 pub use kickup::{KickupSettings, KickupStats};
 pub use shelter::{CANOPY_SUBVIEW, FAR_CANOPY_SUBVIEW, FAR_SHELTER_SUBVIEW, NoSurfaceShelter, SHELTER_SUBVIEW, ShelterFoliage};
 pub use sf_surface;
-pub use trail::{TrailFrame, TrailStamp};
+pub use trail::{TrailDemand, TrailFrame, TrailPassSystems, TrailPlacement, TrailPressSettings, TrailStamp, TrailViews};
 pub use uniform::{FLAG_ASH, FLAG_PUDDLE, FLAG_RAISE, FLAG_SNOW, FLAG_WET, SurfaceUniform, U_SLOTS};
 
 /// Marks the camera that gets surface weather (one exterior camera; the game inserts and
@@ -141,6 +141,10 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &deform::DEFORM_GAP_TEXELS,
     &deform::DEFORM_GROUND_STEP_M,
     &deform::DEFORM_LOG_S,
+    &trail::PRESS_RECOVERY_S,
+    &trail::PRESS_RADIUS_M,
+    &trail::PRESS_HEIGHT_M,
+    &trail::PRESS_SPREAD_M,
 ];
 
 /// The far shelter level (SW-5e; `sf_surface::view::ShelterLevel::far`): a second capture of
@@ -317,6 +321,8 @@ impl Plugin for SurfaceWeatherPlugin {
             .init_resource::<probe::ProbeState>()
             .init_resource::<shelter::ShelterPending>()
             .init_resource::<TrailFrame>()
+            .init_resource::<TrailPressSettings>()
+            .init_resource::<TrailDemand>()
             .init_resource::<DeformSettings>()
             .init_resource::<DeformGaps>()
             .add_message::<TrailStamp>()
@@ -368,7 +374,7 @@ impl Plugin for SurfaceWeatherPlugin {
         let render_app = app.sub_app_mut(RenderApp);
         render_app
             .init_resource::<cells::PendingCellWrites>()
-            .add_systems(ExtractSchedule, (cells::extract_writes, deform::extract_lod_distance, (trail::extract, exposure::extract, render::extract_view).chain()));
+            .add_systems(ExtractSchedule, (cells::extract_writes, deform::extract_lod_distance, (trail::extract, trail::publish_views, exposure::extract, render::extract_view).chain()));
         render::build(render_app);
         trail::build(app);
     }

@@ -18,7 +18,7 @@ import bevy_pbr::{
     },
 };
 import bevy_render::globals::Globals;
-import super::groundcover_common::{unpack_tag, fade_scale, instance_scale, bent, bent_prev};
+import super::groundcover_common::{unpack_tag, fade_scale, instance_scale, bent_by, bent_prev, press_now, pressed_dir};
 
 // Every prepass view layout (with and without motion vectors, shadow views included) binds Bevy's globals at
 // group 0 binding 1 (`superfargoth/vendor/bevy_pbr/src/prepass/mod.rs` `PrepassPipeline` layouts); no Bevy
@@ -34,7 +34,8 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     let root = world_from_local[3].xyz;
     let s = fade_scale(root, view.world_position, tag.fade);
     let unbent = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position * s, 1.0));
-    out.world_position = vec4<f32>(bent(unbent.xyz, root, instance_scale(world_from_local), tag, globals.time), 1.0);
+    let press = press_now(root, tag);
+    out.world_position = vec4<f32>(bent_by(unbent.xyz, root, instance_scale(world_from_local), tag, globals.time, press), 1.0);
     out.position = position_world_to_clip(out.world_position.xyz);
 @if(UNCLIPPED_DEPTH_ORTHO_EMULATION) {
     out.unclipped_depth = out.position.z;
@@ -49,14 +50,12 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
 
 @if(NORMAL_PREPASS_OR_DEFERRED_PREPASS) {
 @if(VERTEX_NORMALS)
-    out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex_in.instance_index);
+    out.world_normal = pressed_dir(mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex_in.instance_index), press);
 
-@if(VERTEX_TANGENTS)
-    out.world_tangent = mesh_functions::mesh_tangent_local_to_world(
-        world_from_local,
-        vertex.tangent,
-        vertex_in.instance_index
-    );
+@if(VERTEX_TANGENTS) {
+    out.world_tangent = mesh_functions::mesh_tangent_local_to_world(world_from_local, vertex.tangent, vertex_in.instance_index);
+    out.world_tangent = vec4<f32>(pressed_dir(out.world_tangent.xyz, press), out.world_tangent.w);
+}
 }
 
 @if(VERTEX_COLORS)

@@ -166,6 +166,22 @@ pub const FLUTTER_HZ: Def<f32> = def!(float "groundcover.render.flutter_hz" = 3.
     .source(Source::Guess)
     .lifetime(Lifetime::Live);
 
+/// `groundcover.render.trample_max_deg` (GC-M3, [`crate::trample`]): the tilt of a fully pressed mesh plant.
+pub const TRAMPLE_MAX_DEG: Def<f32> = def!(float "groundcover.render.trample_max_deg" = 75.0)
+    .range(0.0, 89.0)
+    .unit(Unit::Degrees)
+    .help("How far a mesh plant under a full press (a foot, a body lying on it) tilts away from it about its root; it springs back with the press")
+    .source(Source::Guess)
+    .lifetime(Lifetime::Live);
+
+/// `groundcover.render.trample_amount` (GC-M3): the scale on the trail ring's press for mesh plants.
+pub const TRAMPLE_AMOUNT: Def<f32> = def!(float "groundcover.render.trample_amount" = 1.0)
+    .range(0.0, 2.0)
+    .unit(Unit::Ratio)
+    .help("Scale on the press that pushes mesh plants down and aside (capped at a full press); 0 = plants are not trampled")
+    .source(Source::Guess)
+    .lifetime(Lifetime::Live);
+
 pub const BLADES_BLOCK: Def<f32> = def!(float "groundcover.blades.block_m" = 64.0)
     .range(16.0, 256.0)
     .unit(Unit::Meters)
@@ -310,6 +326,8 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &SWAY_HZ,
     &FLUTTER_AMOUNT,
     &FLUTTER_HZ,
+    &TRAMPLE_MAX_DEG,
+    &TRAMPLE_AMOUNT,
     &BLADES_BLOCK,
     &BLADES_RING,
     &BLADES_HYSTERESIS,

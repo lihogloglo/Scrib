@@ -50,3 +50,21 @@ Status: awaiting owner. Scene `gc-blades`. Look for: the ground at your feet cov
 ring where the extra density ends (4 m full, fading out by 7 m), no blades popping or reshuffling as you walk. Live:
 `groundcover.blades.near_density` (1 = off, 2.5 default, max 4), `near_start_m` 4, `near_end_m` 7. perf ab: GPU +0.06 ms.
 Known: colour is still the bright MEADOW green (GC-3e2 next).
+
+### GC-3e2: a blade style per region, tinted by the ground (2026-11-24, groundcover)
+
+Status: owner 2026-11-24 (Grazelands): "much better", density and colour good, some grass could be higher (tall tufts raised to 1.9 m, GC-3e2c); weird long band grass removed (Tribunal `flora_grass_05-07` weight 0). Bitter Coast, Solstheim not seen yet. Scenes `gc-blades` (Ascadian), `gc-blades-grazelands`, `gc-blades-bittercoast`. Look for: each
+region its own grass (Ascadian: toned-down meadow green, no "uranium" glow; Grazelands: drier, taller, yellower; Bitter
+Coast: reeds on the swamp grass, low dark moss on the moss; Grazelands also tall tufts of a second, taller grass up to ~1.4 m, GC-3e2c), the lower third of every blade blending into the colour of
+the ground under it, regions meeting without a hard seam. Known: tint is one mean colour per region (per-pixel ground
+colour = GC-3e3 later); Solstheim styles untested (no scene yet; keep a few white seed heads); values all Guess.
+
+### GC-T: trampling, meshes and blades (2026-11-24, groundcover; GC-T1, T2, M3, 3d)
+
+Status: owner 2026-11-24: "trampling is nice but could be even more exaggerated" (knees should push like snow) -> GC-T3 body press spread 0.45 m + press height 1.0 m, relaunched; owner then: commit. Scenes `gc-blades`, `gc-blades-grazelands`, `gc-blades-bittercoast`; walk in third
+person through the grass, stop, look back. Look for: clumps, ferns and blades leaning away from the feet and the body
+(down and aside, not sinking), each plant falling its own way under the body, standing back up over ~2 s; no smear or
+ghosting behind the feet with DLSS; lighting of a flattened plant matches its lean; NPCs and creatures do the same.
+Live: `groundcover.render.trample_amount` (0 off, 1 default, max 2), `trample_max_deg` 75, `surface.trail.press_recovery_s`
+2, `press_radius_m` 0.35, `press_height_m` 0.5. Known: shadows of plants stay upright (no shadows on species today);
+snow and grass together = GC-W1 (later).

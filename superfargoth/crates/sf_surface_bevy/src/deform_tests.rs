@@ -105,6 +105,40 @@ fn capture_draws_only_deformer_meshes() {
     assert!(app.world().resource::<TrailFrame>().capture.is_none());
 }
 
+/// GC-T2b: a press demand runs the capture with no cover look and no snow under the window, its
+/// slab reaching the press height at ring depth 0, and hands the press height to the ring pass;
+/// without a demand nor cover nothing is captured.
+#[test]
+fn a_press_demand_runs_the_capture_without_cover() {
+    use crate::deform::capture_wanted;
+    assert!(capture_wanted(0.5, || false), "demand, no cover");
+    assert!(capture_wanted(0.0, || true), "cover, no demand");
+    assert!(!capture_wanted(0.0, || false));
+    assert!(capture_wanted(0.5, || panic!("the cover lookup is skipped on a demand")));
+    let mut app = app();
+    app.world_mut().spawn((Camera::default(), SurfaceWeatherCamera, GlobalTransform::from_translation(Vec3::new(0.0, 2.0, 3.0))));
+    let root = app.world_mut().spawn((Deformer { width_m: 0.15 }, GlobalTransform::from_translation(Vec3::new(1.0, 0.0, 1.0)))).id();
+    let body = mesh(&mut app, Vec3::new(1.0, 0.9, 1.0));
+    app.world_mut().entity_mut(body).insert(ChildOf(root));
+    app.update();
+    assert_eq!(casters(&app), None, "no demand, no cover look: no capture");
+    app.world_mut().resource_mut::<TrailDemand>().press = true;
+    app.update();
+    assert_eq!(casters(&app), Some(vec![body]), "a press demand: the capture runs over bare ground");
+    app.update();
+    let (cap, _) = app.world().resource::<TrailFrame>().capture.clone().expect("last frame's capture");
+    let height = app.world().resource::<TrailPressSettings>().height_m;
+    assert_eq!(cap.press_m, height);
+    assert_eq!(cap.spread_m, app.world().resource::<TrailPressSettings>().spread_m, "GC-T3: the spread handed over");
+    assert_eq!(app.world().resource::<TrailFrame>().depth_m, 0.0, "press only: ring depth 0");
+    assert!((cap.near_y + 0.25).abs() < 1e-6);
+    assert!(cap.range_m >= 0.25 + height - 1e-5 && (cap.near_y + cap.range_m - height).abs() < 1e-5, "slab to the press height: {cap:?}");
+    // Demand withdrawn: no capture again.
+    app.world_mut().resource_mut::<TrailDemand>().press = false;
+    app.update();
+    assert_eq!(casters(&app), None);
+}
+
 fn stats_of(app: &App) -> SurfaceStats {
     *app.world().resource::<SurfaceStats>()
 }
@@ -165,7 +199,7 @@ fn stamps_and_capture_land_under_the_actor_across_a_recentre() {
     // The foot print: the deepest ring texel holds the foot's world point.
     let f = app.world().resource::<TrailFrame>().clone();
     assert_eq!(f.stamps.len(), 1);
-    let pass = TrailPass { corner: f.corner, depth_m: f.depth_m, new_min: f.new_min, old_min: None, refill_m: 0.0, stamps: f.stamps.clone(), capture: None };
+    let pass = TrailPass { corner: f.corner, depth_m: f.depth_m, new_min: f.new_min, old_min: None, refill_m: 0.0, stamps: f.stamps.clone(), capture: None, press: sf_surface::trail::Press::default() };
     let r = pass.run(&vec![[0.0; 2]; (n * n) as usize]);
     // The print's texels (the ring wraps far from them) centre on the foot's texel, which is
     // printed to the full depth.

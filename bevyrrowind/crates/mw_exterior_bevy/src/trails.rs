@@ -49,18 +49,23 @@ const TOE_SHIFT_M: f32 = 0.05;
 /// Writes one stamp per foot-down of every posed animated character over terrain, at the
 /// foot's position and facing when it planted (a foot that slides while planted still leaves one
 /// print, as footprint decals spawn at foot-down).
-#[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 pub(crate) fn foot_stamps(
     animators: Query<(Entity, &Animator, &GlobalTransform)>,
     heights: Option<Res<TerrainHeightsMap>>,
     settings: Res<SurfaceSettings>,
     kickup: Res<sf_surface_bevy::KickupSettings>,
+    demand: Option<Res<sf_surface_bevy::TrailDemand>>,
     origin: Res<SurfaceOrigin>,
     mut out: MessageWriter<TrailStamp>,
     mut plants: Local<HashMap<(Entity, usize), TrailStamp>>,
 ) {
-    // The same foot-downs feed the prints (W6) and the kick-up puffs (W7).
-    if !(settings.trails || kickup.on) || !settings.cover || !settings.layer {
+    // The same foot-downs feed the prints (W6), the press (GC-T2a: without a cover look too, while
+    // a reader asks for it) and the kick-up puffs (W7).
+    let press = demand.is_some_and(|d| d.press);
+    let prints = settings.trails && (settings.cover || press);
+    let puffs = kickup.on && settings.cover;
+    if !settings.layer || !(prints || puffs) {
         plants.clear();
         return;
     }
@@ -159,19 +164,22 @@ pub(crate) fn terrain_ground(heights: TerrainHeights) -> DeformGround {
 }
 
 /// Keeps [`DeformGround`] on this frame's exterior heights whenever the capture can run (deform
-/// on, cover trails on, a surface camera, a deformer): a snapshot (`TerrainHeights` is a map of
+/// on, trails on with cover or a press demand (GC-T2b: the capture presses grass too), a surface
+/// camera, a deformer): a snapshot (`TerrainHeights` is a map of
 /// shared tiles, a few dozen `Arc`s; no runtime edits in this game) the hook reads, since a hook
 /// can't borrow the world. Before `SurfaceSystems`, after the terrain's update.
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn refresh_ground(
     deform: Option<Res<DeformSettings>>,
     settings: Res<SurfaceSettings>,
+    demand: Option<Res<sf_surface_bevy::TrailDemand>>,
     heights: Option<Res<TerrainHeightsMap>>,
     cameras: Query<(), With<SurfaceWeatherCamera>>,
     deformers: Query<(), With<Deformer>>,
     mut ground: ResMut<DeformGround>,
 ) {
-    let on = deform.is_some_and(|d| d.on) && settings.layer && settings.cover && settings.trails;
+    let press = demand.is_some_and(|d| d.press);
+    let on = deform.is_some_and(|d| d.on) && settings.layer && settings.trails && (settings.cover || press);
     if !on || cameras.is_empty() || deformers.is_empty() {
         return;
     }
@@ -193,7 +201,8 @@ pub(crate) fn gap_fractions(length_m: f32, stride_m: f32) -> impl Iterator<Item 
 
 /// S1b: a deformer that moved farther than its width since its last capture (a fast mover at a
 /// low frame rate) left a gap in its trench: last frame's [`DeformGaps`] get foot prints along the
-/// segment, one per stride of the width, facing the travel, over terrain only (as foot stamps).
+/// segment, one per stride of the width, facing the travel, over terrain only (as foot stamps),
+/// with cover or a press demand (GC-T2b: the stamps press the gap's grass too).
 /// Foot stamps ([`foot_stamps`]) don't read the capture at all: they print for every actor, in
 /// or out of the capture window, with the capture off or absent from the preset.
 #[allow(clippy::needless_pass_by_value)]
@@ -202,10 +211,12 @@ pub(crate) fn gap_stamps(
     deformers: Query<&Deformer>,
     heights: Option<Res<TerrainHeightsMap>>,
     settings: Res<SurfaceSettings>,
+    demand: Option<Res<sf_surface_bevy::TrailDemand>>,
     mut out: MessageWriter<TrailStamp>,
 ) {
     let Some(gaps) = gaps.filter(|g| !g.0.is_empty()) else { return };
-    if !settings.trails || !settings.cover || !settings.layer {
+    let press = demand.is_some_and(|d| d.press);
+    if !settings.trails || !(settings.cover || press) || !settings.layer {
         return;
     }
     let Some(terrain) = heights.as_deref().and_then(|h| h.0.get(&ids::exterior())) else { return };
@@ -388,6 +399,27 @@ mod tests {
         assert_eq!(off.world().resource::<DeformGround>().0(DVec2::ZERO), None);
     }
 
+    /// GC-T2b: with no cover look the hook still follows the terrain on a press demand (the
+    /// capture presses grass), and not without one.
+    #[test]
+    fn the_hook_follows_a_press_demand_without_cover() {
+        let run = |press: bool| {
+            let mut app = App::new();
+            app.insert_resource(DeformSettings::default())
+                .insert_resource(SurfaceSettings { cover: false, ..SurfaceSettings::default() })
+                .insert_resource(sf_surface_bevy::TrailDemand { press })
+                .insert_resource(heights_map(sloped()))
+                .insert_resource(DeformGround(Arc::new(|_| None)))
+                .add_systems(Update, refresh_ground);
+            app.world_mut().spawn(SurfaceWeatherCamera);
+            app.world_mut().spawn((Deformer { width_m: 0.18 }, GlobalTransform::default()));
+            app.update();
+            app.world().resource::<DeformGround>().0(DVec2::ZERO)
+        };
+        assert!(run(true).is_some(), "press demand: the capture's ground follows the terrain");
+        assert_eq!(run(false), None, "no cover, no demand: left alone");
+    }
+
     #[test]
     fn a_gap_gets_one_print_per_stride_strictly_inside() {
         let t: Vec<f32> = gap_fractions(1.0, 0.18).collect();
@@ -431,6 +463,11 @@ mod tests {
         // Over something other than terrain (a bridge 5 m up): none.
         let bridge = DeformGap { root, from: at(0.0, 17.5, 0.0), to: at(1.0, 17.5, 0.0) };
         assert!(stamps_for(vec![bridge], &mut app).is_empty());
+        // No cover look: none, unless a reader demands the press (GC-T2b).
+        app.world_mut().resource_mut::<SurfaceSettings>().cover = false;
+        assert!(stamps_for(vec![gap], &mut app).is_empty());
+        app.insert_resource(sf_surface_bevy::TrailDemand { press: true });
+        assert_eq!(stamps_for(vec![gap], &mut app).len(), 5);
         // Trails off (the preset or `--off trails`): none.
         app.world_mut().resource_mut::<SurfaceSettings>().trails = false;
         assert!(stamps_for(vec![gap], &mut app).is_empty());

@@ -38,6 +38,7 @@
 //! # #[derive(Resource)] struct MyCover(Groundcover);
 //! ```
 
+pub mod blade_press;
 pub mod blades;
 mod ground;
 pub mod material;
@@ -46,6 +47,7 @@ pub mod render;
 pub mod residency;
 mod ring;
 pub mod terrain_ground;
+pub mod trample;
 pub mod tunables;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -239,6 +241,8 @@ impl WindSettings {
             sway_hz: read(store, &tunables::SWAY_HZ),
             flutter_amount: read(store, &tunables::FLUTTER_AMOUNT),
             flutter_hz: read(store, &tunables::FLUTTER_HZ),
+            trample_max_deg: read(store, &tunables::TRAMPLE_MAX_DEG),
+            trample_amount: read(store, &tunables::TRAMPLE_AMOUNT),
         }
     }
 }
@@ -580,12 +584,18 @@ pub fn publish_gauges(stats: Res<GroundcoverStats>, counters: Res<DiagCounters>)
 }
 
 #[cfg(test)]
+mod blade_press_tests;
+#[cfg(test)]
 mod grass_near_tests;
 #[cfg(test)]
 mod grass_reads_tests;
 #[cfg(test)]
 mod grass_stable_tests;
 #[cfg(test)]
+mod grass_trample_source_tests;
+#[cfg(test)]
 mod shader_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod trample_tests;

@@ -8351,6 +8351,7 @@ dependencies = [
  "sf_coords",
  "sf_diag_bevy",
  "sf_groundcover",
+ "sf_surface_bevy",
  "sf_terrain_bevy",
  "sf_tunables",
  "sf_tunables_bevy",

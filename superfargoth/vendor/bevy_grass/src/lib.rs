@@ -115,6 +115,27 @@ pub mod superfargoth_test {
 
     /// Candidates per tile copy, per layer.
     pub const TILE_POINTS: u32 = crate::shader_model::TILE_POINTS;
+
+    // superfargoth patch (own: trample source): the CPU twin of the press
+    // lookup, which passes run, and the uniform the shader reads.
+    pub use crate::trample_source::{built_in_trample_passes, trample_texture_push};
+
+    /// `TrampleSource` as `generate.wesl` gets it: (now, now texel, then,
+    /// then texel, lookup).
+    pub fn trample_source_uniform(
+        now: &crate::GrassTramplePlacement,
+        then: &crate::GrassTramplePlacement,
+        lookup: &crate::GrassTrampleLookup,
+    ) -> (
+        bevy::math::Vec4,
+        bevy::math::IVec4,
+        bevy::math::Vec4,
+        bevy::math::IVec4,
+        bevy::math::Vec4,
+    ) {
+        let u = crate::render::trample_source::TrampleSourceUniform::of(now, then, lookup);
+        (u.now, u.now_texel, u.then, u.then_texel, u.lookup)
+    }
 }
 mod physics;
 mod presets;
@@ -127,6 +148,7 @@ mod style;
 mod style_file;
 mod sun;
 mod trample;
+mod trample_source; // superfargoth patch (own: trample source)
 pub mod wind;
 
 pub use api::{
@@ -145,6 +167,11 @@ pub use far::{FarGrass, FarGrassMaterial, FarGrassPlugin, FarGrassUniform};
 pub use fields::{GrassWorldOffset, field_seed};
 pub use physics::{GrassColliderBounds, GrassColliderSystems, GrassInteractorFromCollider};
 pub use render::platform::GrassSupport;
+// superfargoth patch (own: trample source)
+pub use render::trample_source::GrassTrampleSource;
+pub use trample_source::{
+    GrassGenerateSystems, GrassTrampleLookup, GrassTramplePlacement, GrassTrampleTexture,
+};
 pub use settings::{GrassQuality, GrassSettings, GrassShadows};
 pub use stats::{GpuStats, GrassDiagnostics, GrassStats, RebuildPhases, TableStats}; // superfargoth patch (own: rebuild phases): `RebuildPhases`
 pub use style_file::{GrassStyleFileError, GrassStyleFilePlugin, GrassStyleLoader};
@@ -405,7 +432,9 @@ fn register_types(app: &mut App) {
         .register_type::<GrassSettings>()
         .register_type::<GrassQuality>()
         .register_type::<GrassShadows>()
-        .register_type::<GrassSupport>();
+        .register_type::<GrassSupport>()
+        // superfargoth patch (own: trample source)
+        .register_type::<GrassTrampleTexture>();
 }
 
 /// Says which settings were out of range, once per change. The render world

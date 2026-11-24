@@ -59,9 +59,35 @@ pub struct BladeStyleDef {
     /// Overrides of the ground showing through at the foot.
     #[serde(default)]
     pub ground_tint: GroundTintOverrides,
+    /// The rule channel (its [`ChannelNames::name`]) whose land textures set the ground tint colour: the linear mean
+    /// of their layers' mean albedo (slice GC-3e2a). An explicit `ground_tint.color` wins; `None` keeps the preset's.
+    #[serde(default)]
+    pub ground_from: Option<String>,
     /// Flat toon shading bands; 0 shades physically.
     #[serde(default)]
     pub toon_bands: Option<u32>,
+    /// Other plants among the style's own blades (slice GC-3e2c). A non-empty list replaces the preset's own species
+    /// list; an empty one keeps it. At most 15 (the renderer mixes 16 with the style's own blades).
+    #[serde(default)]
+    pub species: Vec<SubSpeciesDef>,
+}
+
+/// One plant growing among a blade style's own blades (`bevy_grass::GrassSpecies`; slice GC-3e2c): a blade preset
+/// with overrides and its share of the field.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SubSpeciesDef {
+    /// The blade it starts from: a `bevy_grass` species preset by its lower-case name (`"seed_heads"`), or
+    /// `"style:<preset>"` for a style preset's own blade (`"style:pampas"`).
+    pub base: String,
+    /// Share of the field's blades, 0 to 1.
+    pub share: f32,
+    /// Growing in patches about a metre across, 0 (scattered) to 1 (only in patches).
+    #[serde(default)]
+    pub clustering: f32,
+    /// Overrides of the base blade's look.
+    #[serde(default)]
+    pub blade: BladeOverrides,
 }
 
 /// Overrides of one blade's look (`bevy_grass::GrassBlade`); every `None` keeps the base preset's value.
@@ -308,34 +334,29 @@ mod tests {
     fn builtin_data_parses_and_builds() {
         let data = GroundcoverData::builtin().unwrap();
         let cover = data.build().unwrap();
-        assert_eq!(cover.len(), 14);
+        assert_eq!(cover.len(), 20);
         assert_eq!(data.rules.rules.len(), 7);
         assert_eq!(data.channels.len(), 7);
     }
 
     #[test]
-    fn one_meadow_blade_species_on_the_grass_channels() {
+    fn a_blade_species_of_its_own_on_every_grass_channel() {
         let data = GroundcoverData::builtin().unwrap();
         data.build().unwrap();
         let blades: Vec<&Species> = data.species.iter().filter(|s| matches!(s.render, RenderKind::Blade { .. })).collect();
-        assert_eq!(blades.len(), 1);
-        let blade = blades[0];
-        assert_eq!(blade.render, RenderKind::Blade { style: "meadow".into() });
-        let weight = |channel: u16| -> f32 {
-            data.rules
-                .rules
-                .iter()
-                .filter(|r| r.channel == channel)
-                .flat_map(|r| r.species.iter())
-                .filter(|w| w.species == blade.id)
-                .map(|w| w.weight)
-                .sum()
-        };
-        let name = |n: &str| data.channels.iter().find(|c| c.name == n).unwrap().channel;
-        assert!(weight(name("ascadian_grass")) > 0.0, "blades on the ascadian grass");
-        assert!(weight(name("grazelands_grass")) > 0.0, "blades on the grazelands grass");
+        assert_eq!(blades.len(), data.channels.len(), "one blade species per channel");
+        let mut seen = BTreeSet::new();
+        for c in &data.channels {
+            let rule = data.rules.rules.iter().find(|r| r.channel == c.channel).unwrap();
+            let on: Vec<&Species> = blades.iter().copied().filter(|b| rule.species.iter().any(|w| w.species == b.id && w.weight > 0.0)).collect();
+            assert_eq!(on.len(), 1, "channel {} has one blade species", c.name);
+            assert!(seen.insert(on[0].id.as_str()), "{} is on one channel only", on[0].id);
+            let RenderKind::Blade { style } = &on[0].render else { unreachable!() };
+            let def = data.blade_styles.iter().find(|d| d.name == *style).expect("its style is defined");
+            assert_eq!(def.ground_from.as_deref(), Some(c.name.as_str()), "{style} takes the ground colour of its channel");
+        }
         let keys = data.model_keys();
-        assert!(!keys.iter().any(|k| k.contains(&blade.id) || k.contains("meadow")), "blades load no model: {keys:?}");
+        assert!(!keys.iter().any(|k| blades.iter().any(|b| k.contains(&b.id))), "blades load no model: {keys:?}");
     }
 
     #[test]
@@ -383,33 +404,43 @@ mod tests {
     }
 
     #[test]
-    fn the_meadow_blade_style_is_the_bare_preset() {
-        let data = GroundcoverData::builtin().unwrap();
-        assert_eq!(
-            data.blade_styles,
-            vec![BladeStyleDef {
-                name: "meadow".into(),
-                base: "meadow".into(),
-                blade: BladeOverrides::default(),
-                variation: VariationOverrides::default(),
-                ground_tint: GroundTintOverrides::default(),
-                toon_bands: None,
-            }]
-        );
-    }
-
-    #[test]
     fn blade_style_overrides_parse_into_their_fields() {
         let def: BladeStyleDef = ron::from_str(
             "(name: \"dry\", base: \"meadow\", blade: (tip_color: Some((0.6, 0.5, 0.3)), height_m: Some((0.2, 0.4))), \
-             ground_tint: (amount: Some(0.5)), toon_bands: Some(3))",
+             ground_tint: (amount: Some(0.5)), ground_from: Some(\"bc_moss\"), toon_bands: Some(3))",
         )
         .unwrap();
         assert_eq!(def.blade, BladeOverrides { tip_color: Some([0.6, 0.5, 0.3]), height_m: Some([0.2, 0.4]), ..BladeOverrides::default() });
         assert_eq!(def.variation, VariationOverrides::default());
         assert_eq!(def.ground_tint, GroundTintOverrides { color: None, amount: Some(0.5) });
         assert_eq!(def.toon_bands, Some(3));
+        assert_eq!(def.ground_from.as_deref(), Some("bc_moss"));
+        assert!(def.species.is_empty(), "no species listed keeps the preset's");
         assert!(ron::from_str::<BladeStyleDef>("(name: \"x\", base: \"meadow\", blade: (tip_colour: None))").is_err(), "typos are errors");
+    }
+
+    #[test]
+    fn blade_style_species_parse_into_their_fields() {
+        let def: BladeStyleDef = ron::from_str(
+            "(name: \"dry\", base: \"dry_savanna\", species: [             (base: \"style:pampas\", share: 0.15, clustering: 0.6, blade: (height_m: Some((0.9, 1.4)))),              (base: \"seed_heads\", share: 0.05)])",
+        )
+        .unwrap();
+        assert_eq!(
+            def.species,
+            vec![
+                SubSpeciesDef {
+                    base: "style:pampas".into(),
+                    share: 0.15,
+                    clustering: 0.6,
+                    blade: BladeOverrides { height_m: Some([0.9, 1.4]), ..BladeOverrides::default() },
+                },
+                SubSpeciesDef { base: "seed_heads".into(), share: 0.05, clustering: 0.0, blade: BladeOverrides::default() },
+            ]
+        );
+        assert!(
+            ron::from_str::<BladeStyleDef>("(name: \"x\", base: \"meadow\", species: [(base: \"moss\", shares: 0.1)])").is_err(),
+            "typos are errors"
+        );
     }
 
     #[test]
@@ -419,12 +450,12 @@ mod tests {
         let err = data.check().unwrap_err();
         assert!(
             matches!(&err, GroundcoverDataError::MissingBladeStyle { species, style }
-                if species == "ascadian_meadow_blades" && style == "meadow"),
+                if species == "ascadian_meadow_blades" && style == "ascadian"),
             "{err}"
         );
-        assert!(err.to_string().contains("\"meadow\""), "{err}");
+        assert!(err.to_string().contains("\"ascadian\""), "{err}");
         let mut data = GroundcoverData::builtin().unwrap();
         data.blade_styles.push(data.blade_styles[0].clone());
-        assert!(matches!(data.check(), Err(GroundcoverDataError::DuplicateBladeStyle(n)) if n == "meadow"));
+        assert!(matches!(data.check(), Err(GroundcoverDataError::DuplicateBladeStyle(n)) if n == "ascadian"));
     }
 }

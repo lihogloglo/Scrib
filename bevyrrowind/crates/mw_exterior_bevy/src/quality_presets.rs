@@ -234,6 +234,14 @@ pub fn bind_live(app: &mut App) {
         .bind_resource(|c: &mut sf_atmos_bevy::Clouds, v| c.settings.quality.map_per_sample = v);
     let _puddles = app.add_tunable(&PUDDLES).bind_resource(|s: &mut sf_surface_bevy::SurfaceSettings, v| s.puddles = v);
     let _shelter = app.add_tunable(&SHELTER).bind_resource(|s: &mut sf_surface_bevy::SurfaceSettings, v| s.shelter = v);
+    // The trail ring's press (GC-T1, GC-T2b, GC-T3): live, for the owner's trample look.
+    {
+        use sf_surface_bevy::{TrailPressSettings as P, trail as t};
+        let _recovery = app.add_tunable(&t::PRESS_RECOVERY_S).bind_resource(|s: &mut P, v| s.recovery_s = v);
+        let _radius = app.add_tunable(&t::PRESS_RADIUS_M).bind_resource(|s: &mut P, v| s.radius_m = v);
+        let _height = app.add_tunable(&t::PRESS_HEIGHT_M).bind_resource(|s: &mut P, v| s.height_m = v);
+        let _spread = app.add_tunable(&t::PRESS_SPREAD_M).bind_resource(|s: &mut P, v| s.spread_m = v);
+    }
     app.add_feature_switch(&mw_environment_bevy::quality_tunables::PUDDLES_SWITCH)
         .add_feature_switch(&mw_environment_bevy::quality_tunables::SHELTER_SWITCH);
     mw_assets::add_parallax_tunables(app);
@@ -409,6 +417,7 @@ mod tests {
             .insert_resource(sf_world_bevy::Streaming::new(sf_world_bevy::StreamingConfig::default()))
             .insert_resource(mw_assets::MaterialMaps::new(true, true, true))
             .init_resource::<sf_surface_bevy::SurfaceSettings>()
+            .init_resource::<sf_surface_bevy::TrailPressSettings>()
             .insert_resource(sf_atmos_bevy::Clouds {
                 settings: sf_atmos_bevy::sf_atmos::CloudSettings::default(),
                 enabled: true,
@@ -543,6 +552,25 @@ mod tests {
         let bloom = w.get::<bevy::post_process::bloom::Bloom>(view).expect("bloom on");
         assert!((bloom.intensity - 0.1).abs() < 1e-6, "the level's intensity");
         assert_eq!(w.resource::<sf_sky_bevy::UpscalingSetting>().0, sf_sky_bevy::sf_sky::Upscaling::Taa);
+    }
+
+    /// The trail ring's press tunables (GC-T1, GC-T2b, GC-T3) reach `TrailPressSettings` live, and
+    /// every one is in the framework crate's `TUNABLES`.
+    #[test]
+    #[allow(clippy::float_cmp)] // exact: parsed console values
+    fn press_bindings_are_live() {
+        use sf_surface_bevy::trail as t;
+        let names = [&t::PRESS_RECOVERY_S, &t::PRESS_RADIUS_M, &t::PRESS_HEIGHT_M, &t::PRESS_SPREAD_M].map(Def::name);
+        for name in names {
+            assert!(sf_surface_bevy::TUNABLES.iter().any(|d| d.name() == name), "{name} registered");
+        }
+        let mut app = app(Quality::High, &Off::default(), &[]);
+        assert_eq!(*app.world().resource::<sf_surface_bevy::TrailPressSettings>(), sf_surface_bevy::TrailPressSettings::default());
+        for (name, value) in names.into_iter().zip(["3", "0.5", "1.2", "0.8"]) {
+            console(&mut app, name, value);
+        }
+        let s = *app.world().resource::<sf_surface_bevy::TrailPressSettings>();
+        assert_eq!((s.recovery_s, s.radius_m, s.height_m, s.spread_m), (3.0, 0.5, 1.2, 0.8));
     }
 
     /// `--off sizecull|bloom|puddles|shelter|gi` and `--texture-cap` sit at `CommandLine`; a `--set` of a

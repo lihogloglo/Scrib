@@ -152,7 +152,7 @@ fn pass_keeps_moves_and_stamps() {
     // Render space = world here (origin 0).
     #[allow(clippy::cast_possible_truncation)]
     let corner = min.as_vec2() * RING_TEXEL_M as f32;
-    let first = TrailPass { corner, depth_m: D, new_min: min, old_min: None, refill_m: 0.0, stamps: vec![foot(Vec2::new(0.03, 0.03), Vec2::X)], capture: None };
+    let first = TrailPass { corner, depth_m: D, new_min: min, old_min: None, refill_m: 0.0, stamps: vec![foot(Vec2::new(0.03, 0.03), Vec2::X)], capture: None, press: Press::default() };
     let ring = first.run(&vec![[1.0, 1.0]; idx(IVec2::new(0, n))]);
     // The texel under the stamp's centre: world texel (0, 0), at address world mod n.
     let under = IVec2::ZERO.rem_euclid(IVec2::splat(n));
@@ -263,4 +263,193 @@ fn refill_quantum_survives_half_float_at_knee_depth() {
     assert_eq!(v[0], 0.0);
     // 225 quanta, a few more where the half-float steps round down.
     assert!((225..=240).contains(&steps), "{steps}");
+}
+
+// -- the press channel (A, GC-T1) ---------------------------------------------------------------
+
+const RECOVERY: f32 = 2.0;
+const RADIUS: f32 = 0.35;
+
+fn press(dt_s: f32) -> Press {
+    Press { dt_s, recovery_s: RECOVERY, radius_m: RADIUS }
+}
+
+/// A stamp presses 1 at its centre, 0.5 at half the radius (the smoothstep's midpoint) and
+/// nothing from the radius on, round whatever the foot's facing.
+#[test]
+fn stamp_presses_its_centre_and_fades_to_the_radius() {
+    let s = [foot(Vec2::ZERO, Vec2::Y)];
+    let at = |d: Vec2| press_update(0.0, d, &s, &press(0.0), 0.0);
+    assert_eq!(at(Vec2::ZERO), 1.0);
+    assert_eq!(at(Vec2::new(RADIUS / 2.0, 0.0)), 0.5);
+    assert_eq!(at(Vec2::new(0.0, -RADIUS / 2.0)), 0.5);
+    assert_eq!(at(Vec2::new(RADIUS, 0.0)), 0.0);
+    assert_eq!(at(Vec2::new(0.0, RADIUS * 1.5)), 0.0);
+    assert_eq!(press_profile(0.1, 0.0), 0.0, "no radius: no press");
+}
+
+/// Two stamps Max-combine (a texel between two feet keeps the stronger press), and a stamp never
+/// lowers an older, stronger press.
+#[test]
+fn presses_combine_max() {
+    let a = foot(Vec2::ZERO, Vec2::X);
+    let b = foot(Vec2::new(RADIUS, 0.0), Vec2::X);
+    let q = Vec2::new(RADIUS / 4.0, 0.0);
+    let pa = press_profile(RADIUS / 4.0, RADIUS);
+    let pb = press_profile(RADIUS * 0.75, RADIUS);
+    assert!(pa > pb && pb > 0.0);
+    assert_eq!(press_update(0.0, q, &[a, b], &press(0.0), 0.0), pa);
+    assert_eq!(press_update(0.0, q, &[b, a], &press(0.0), 0.0), pa);
+    assert_eq!(press_update(0.9, q, &[b], &press(0.0), 0.0), 0.9);
+}
+
+/// N passes of `dt` give `exp(-N dt / recovery)` within a half float's rounding, and the press
+/// is exactly 0 from the pass that takes it under the floor (`ln(256)` recovery times). Stored
+/// in the half-float ring, each pass rounds once at most (2⁻¹¹), and the press still reaches 0.
+#[test]
+#[allow(clippy::cast_precision_loss)]
+fn press_springs_back_exponentially_and_snaps_to_zero() {
+    let dt = 1.0 / 60.0;
+    let far = Vec2::splat(50.0);
+    let (mut a, mut h) = (1.0f32, 1.0f32);
+    let (mut pass, mut zero_at, mut half_zero_at) = (0, None, None);
+    while (a > 0.0 || h > 0.0) && pass < 10_000 {
+        a = press_update(a, far, &[], &press(dt), 0.0);
+        h = half(press_update(h, far, &[], &press(dt), 0.0));
+        pass += 1;
+        let want = (-(pass as f32) * dt / RECOVERY).exp();
+        if a > 0.0 {
+            assert!((a - want).abs() <= want * HALF_ROUNDING, "pass {pass}: {a} vs {want}");
+        } else if zero_at.is_none() {
+            zero_at = Some(pass);
+            assert!(want < PRESS_FLOOR * (1.0 + HALF_ROUNDING), "snapped at {want}");
+            let before = (-((pass - 1) as f32) * dt / RECOVERY).exp();
+            assert!(before >= PRESS_FLOOR * (1.0 - HALF_ROUNDING), "snapped late: {before}");
+        }
+        if h > 0.0 {
+            assert!(h >= PRESS_FLOOR);
+            assert!((h / want).ln().abs() <= pass as f32 * HALF_ROUNDING * 1.01, "half pass {pass}: {h} vs {want}");
+        } else if half_zero_at.is_none() {
+            half_zero_at = Some(pass);
+        }
+    }
+    assert_eq!((a, h), (0.0, 0.0));
+    // ln(256) · 2 s ≈ 11.1 s of 60 Hz passes; the half ring within the bound.
+    let t = zero_at.unwrap() as f32 * dt;
+    assert!((t - RECOVERY * (1.0 / PRESS_FLOOR).ln()).abs() < 2.0 * dt, "{t} s");
+    assert!(half_zero_at.unwrap() as f32 * dt <= RECOVERY * press_bound() + dt);
+    // No decay released: the press stays; no recovery time: it is gone at once.
+    assert_eq!(press_update(0.5, Vec2::ZERO, &[], &press(0.0), 0.0), 0.5);
+    assert_eq!(press_update(0.5, Vec2::ZERO, &[], &Press { dt_s: dt, recovery_s: 0.0, radius_m: RADIUS }, 0.0), 0.0);
+}
+
+/// A slow spring back at a high frame rate still moves a half-float press: decay is released in
+/// steps of at least `PRESS_STEP` recovery times, each above the half float's rounding.
+#[test]
+#[allow(clippy::cast_precision_loss)]
+fn press_steps_survive_half_float() {
+    let (dt, recovery) = (1.0 / 360.0, 10.0);
+    let mut clock = PressClock::default();
+    clock.advance(dt, recovery, true);
+    let mut a = 1.0f32;
+    let mut frames = 0;
+    while a > 0.0 && frames < 100_000 {
+        let p = Press { dt_s: clock.advance(dt, recovery, false), recovery_s: recovery, radius_m: RADIUS };
+        if p.dt_s > 0.0 {
+            let next = half(press_update(a, Vec2::ZERO, &[], &p, 0.0));
+            assert!(next < a, "a released step must move the press at {a}");
+            a = next;
+        }
+        frames += 1;
+    }
+    assert_eq!(a, 0.0);
+    let t = frames as f32 * dt;
+    assert!(t <= recovery * (press_bound() + PRESS_STEP) + dt, "{t} s");
+}
+
+/// The clock keeps releasing decay for `press_bound` recovery times after the last press stamp
+/// and then stops (the pass has no press work left); a new press restarts it.
+#[test]
+#[allow(clippy::cast_precision_loss)]
+fn press_clock_runs_for_the_bound_after_the_last_press() {
+    let dt = 1.0 / 120.0;
+    let mut clock = PressClock::default();
+    assert_eq!(clock.advance(dt, RECOVERY, false), 0.0, "nothing pressed: no work");
+    assert!(!clock.live());
+    clock.advance(dt, RECOVERY, true);
+    let (mut released, mut last_release, mut frame) = (0.0, 0, 0);
+    while frame < 100_000 {
+        frame += 1;
+        let r = clock.advance(dt, RECOVERY, false);
+        if r > 0.0 {
+            // Each release is at least one step of recovery times.
+            assert!(r >= PRESS_STEP * RECOVERY - 1e-6, "{r}");
+            released += r;
+            last_release = frame;
+        }
+        if !clock.live() {
+            break;
+        }
+    }
+    let bound_s = press_bound() * RECOVERY;
+    assert!(released >= bound_s && released - bound_s <= PRESS_STEP * RECOVERY + dt, "{released} vs {bound_s}");
+    assert!((last_release as f32 * dt - bound_s).abs() <= PRESS_STEP * RECOVERY + dt, "stopped at frame {last_release}");
+    // Past the bound: no more work, nothing pending.
+    for _ in 0..1000 {
+        assert_eq!(clock.advance(dt, RECOVERY, false), 0.0);
+    }
+    assert_eq!(clock.pending_s, 0.0);
+    // The bound covers every rounding up: 1 decayed by it is under the floor.
+    assert!((-press_bound()).exp() * (1.0 + HALF_ROUNDING).powf(press_bound() / PRESS_STEP) < PRESS_FLOOR * 1.0001);
+    // A new press restarts the count.
+    clock.advance(dt, RECOVERY, true);
+    assert!(clock.live());
+    assert_eq!(clock.decayed, Some(0.0));
+}
+
+/// Snow-only behaviour is untouched by the press: R/G of the pass and the header slots before
+/// the press are the same with and without it, and the press slot carries dt, recovery, radius
+/// and the floor.
+#[test]
+fn press_leaves_the_snow_channels_alone() {
+    let min = window_min(DVec2::new(0.0, 0.0));
+    #[allow(clippy::cast_possible_truncation)]
+    let corner = min.as_vec2() * RING_TEXEL_M as f32;
+    let base = TrailPass { corner, depth_m: D, new_min: min, old_min: Some(min), refill_m: 0.002, stamps: vec![foot(Vec2::new(0.03, 0.03), Vec2::X)], capture: None, press: Press::default() };
+    let pressed = TrailPass { press: press(0.25), ..base.clone() };
+    let n = usize::try_from(RING_SIZE * RING_SIZE).unwrap();
+    let prev: Vec<[f32; 2]> = (0..n).map(|i| if i % 7 == 0 { [-0.05, 0.01] } else { [0.0, 0.0] }).collect();
+    assert_eq!(base.run(&prev), pressed.run(&prev));
+    let (s0, s1) = (base.slots(), pressed.slots());
+    assert_eq!(s0[..HEADER_SLOTS - 1], s1[..HEADER_SLOTS - 1]);
+    assert_eq!(s0[HEADER_SLOTS..], s1[HEADER_SLOTS..]);
+    assert_eq!(s1[HEADER_SLOTS - 1], [0.25, RECOVERY, RADIUS, PRESS_FLOOR].map(f32::to_bits));
+    // The press pass: the stamp's centre texel at 1, the entering texels and the far ring at 0.
+    let a = pressed.run_press(&vec![0.0; n], &[]);
+    let under = usize::try_from(IVec2::ZERO.rem_euclid(IVec2::splat(RING_SIZE)).x).unwrap();
+    assert!(a[under] > 0.9);
+    assert_eq!(a[n / 2 + 300], 0.0);
+}
+
+/// A press-only pass (GC-T2a: no cover look, ring depth 0): a stamp leaves R/G at 0 (finite, no
+/// NaN from the zero depth) and still presses A.
+#[test]
+fn a_stamp_at_depth_zero_prints_nothing_and_still_presses() {
+    let s = foot(Vec2::new(0.03, 0.03), Vec2::X);
+    for q in [s.center, s.center + Vec2::new(0.1, 0.05), s.center + Vec2::new(0.2, 0.0)] {
+        let v = lip_cap(s.at(q, 0.0), 0.0);
+        assert!(v.iter().all(|x| x.is_finite()), "{v:?}");
+        assert_eq!(v, [0.0, 0.0]);
+    }
+    let min = window_min(DVec2::new(0.0, 0.0));
+    #[allow(clippy::cast_possible_truncation)]
+    let corner = min.as_vec2() * RING_TEXEL_M as f32;
+    let pass = TrailPass { corner, depth_m: 0.0, new_min: min, old_min: None, refill_m: 0.0, stamps: vec![s], capture: None, press: press(0.0) };
+    let n = usize::try_from(RING_SIZE * RING_SIZE).unwrap();
+    let ring = pass.run(&vec![[0.0, 0.0]; n]);
+    assert!(ring.iter().all(|v| *v == [0.0, 0.0] && v.iter().all(|x| x.is_finite())));
+    let a = pass.run_press(&vec![0.0; n], &[]);
+    assert!(a.iter().all(|x| x.is_finite()));
+    let under = usize::try_from(IVec2::ZERO.rem_euclid(IVec2::splat(RING_SIZE)).x).unwrap();
+    assert!(a[under] > 0.9, "{}", a[under]);
 }

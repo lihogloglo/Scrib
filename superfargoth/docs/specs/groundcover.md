@@ -273,11 +273,13 @@ Rules for every slice below: one deliverable plus its test; one build agent at a
 - **GC-3d** blades trampled by our trail ring (owner 2026-11-23: one source from the start, no interim on the crate's
   own interactor window): vendor patch, the blade shaders read the ring's press channel and the crate's own trample
   pass is off. After GC-T1 and GC-T2. Test: shader + the sampled press at a known texel.
+  **Done 2026-11-24 (3d1 + 3d2):** vendor hook "trample source" (`GrassTrampleSource`, torus placement, `generate` def `TRAMPLE_TEXTURE`, built-in trample passes skipped); `trail_pass` moved to the root RenderGraph before `camera_driver` so blades, meshes and terrain read one ring; glue `blade_press.rs` via `sf_surface_bevy::TrailViews`.
 - **GC-3s** vendor patch: blades cast only into the `GrassSun` cascades (today also the moon's and our `sun_view` rain,
   shelter and canopy maps); then `GrassShadows::Near`. Test: view filter.
 - **GC-3e** Morrowind blade styles and rules for every grass channel (one field per style, two where regions meet); mesh
   species re-weighted as accents (data only). Terrain colour under the blade needs a vendor patch: its own slice after
   the owner has seen the per-style tints.
+  **GC-3e2a done 2026-11-24:** a blade species + style per grass channel (7), `BladeStyleDef.ground_from` = the channel whose land textures' baked `mean_albedo` (linear mean) sets `ground_tint.color`. Next GC-3e2b live colour tunables, GC-3e3 per-pixel ground colour (vendor patch). Cost to watch: each block is sampled once per blade species.
 - **GC-3f** preset tiers and the live switch (`NoGrass` on the camera when `groundcover.enabled` is off). Test: switch.
 - **Patch policy:** every vendor patch is written to be sent upstream (github.com/GEMI/bevy-grass) and listed in
   `superfargoth/vendor/README.md`.
@@ -303,13 +305,24 @@ Rules for every slice below: one deliverable plus its test; one build agent at a
   `sf_surface_bevy/src/{trail,deform}.rs`). Two additions to the ring first, each its own slice:
   - **GC-T1** a press channel that springs back in seconds (snow prints stay): CPU twin in `sf_surface::trail` + the
     compute pass. Test: exact decay and stamp values against the twin.
+    Design (2026-11-24, facts `docs/research/gc-trample-facts-2026-11-24.md`): the ring's free A channel holds a
+    press strength 0-1, independent of the cover depth (so groundcover-only ground needs no cover look); foot stamps
+    write it with a soft radial profile (Max-combined), it decays as `exp(-dt / recovery_s)` and snaps to 0 under a
+    half-float-safe floor; the CPU keeps the pass running until the last press has decayed (time bound, no readback).
+    Push direction = minus the press gradient, taken by the reader (GC-M3, GC-3d), so one channel suffices. Standard:
+    a world-anchored interaction render target decayed per frame (UE5 interactive foliage, Horizon), the ring itself
+    being the Tomb Raider snow design. Tunables `surface.trail.press_recovery_s`, `press_radius_m` (Guess).
+    GC-T2 adds the whole-body press from the deformer capture and the groundcover gates.
   - **GC-T2** the stamps and the deformer capture also run when groundcover is in range (today only over snow or ash).
     Test: the gate.
+    **Done 2026-11-24 (T2a + T2b):** generic `TrailDemand { press }` (the game sets it while groundcover is built, on and viewed); ring depth 0 without a cover look (snow shading untouched); the capture writes A = 1 − smoothstep(0, `press_height_m` 0.5, body height over ground), slab sized for it, gate `cover || demand`.
 - **GC-M3** mesh plants pushed down and aside by the press channel (vertex stage of the groundcover material). Test:
   push direction and amount from a known press, headless.
+  **Done 2026-11-24 (GC-M3 + M3b):** root fetch + two forward differences (`surface_press_slope_at`), push down the gradient (plant phase as fallback at the press floor weight), Rodrigues tilt by press × `trample_max_deg` 75 after the wind (sway fades with the press), normals + tangents turned alike, last frame's ring for motion vectors; live `groundcover.render.trample_max_deg`, `trample_amount`. Shadow views have no ring: casting species would keep upright shadows.
 - **GC-M4** (order 2026-11-23: next after GC-3g, before the trample chain; covers blades too, since they read the
   same `density_at` with the overrides) exclusion under statics: placements' footprints as exclusion regions (the game passes `Overrides::none()`
   today, `mw_exterior_bevy/src/groundcover.rs:135`). Test: no instance inside a footprint.
+  **GC-M4b done 2026-11-24:** the statics footprints + `build_source` run as one `AsyncComputeTaskPool` task (`GroundcoverBuild`, `poll_build` inserts the resources a few frames late).
 - **GC-M5** `RangeClass::Mid` in the renderer (a second ring for small bushes) and whole models (every mesh of the NIF,
   normal maps). Test: ring membership per class.
 - **Owner look 2** after GC-T1, GC-T2, GC-3d, GC-M2 and GC-M3: trampling by whole bodies on blades and clumps alike, accents moving with the carpet.
@@ -320,6 +333,12 @@ Rules for every slice below: one deliverable plus its test; one build agent at a
 - **GC-4** streaming over the walk (tile blocks with the terrain rings), hitch check on the Seyda Neen → Balmora walk.
 - **GC-5** explicit placements from mods (adapter), priority vs procedural.
 - **GC-6** worldgen hook (WG-N3): rule table reads material fields on a generated world.
+- **GC-W1** (owner 2026-11-24: on the plan, much later) groundcover reads the snow/ash cover: plants shrink and hide
+  by how far they stick out of the cover (it raises the terrain up to ~0.45 m, `surface-weather.md` SW-5c), the part
+  above it frosted (snow) or greyed (ash), live as the weather changes; where a snow print exists the readers hold
+  the plant flat (max of the press and the print) instead of springing back. Meshes in the vertex stage, blades in
+  `generate.wesl` through the GC-3d binding hook. Standard: RDR2 / Horizon / UE snow-mask vegetation. Test: visible
+  height from a known cover depth.
 
 ### Wind layers and trampling (rule 0 checks for GC-3c, GC-M2, GC-M3)
 

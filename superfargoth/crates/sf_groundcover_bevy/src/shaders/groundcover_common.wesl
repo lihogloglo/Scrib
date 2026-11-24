@@ -1,10 +1,17 @@
 // sf_groundcover_bevy: what the groundcover vertex stages share (groundcover.md "Renderers", GC-2;
 // `GroundcoverMaterial`, `material.rs`): the extension's uniform, the instance tag, the dithered
-// distance fade and the wind bend (main bending from the wind field plus per-instance detail motion, GC-M2).
+// distance fade, the wind bend (main bending from the wind field plus per-instance detail motion, GC-M2) and the
+// trample (GC-M3: plants pushed down and aside by the trail ring's press, `sf_surface_bevy::view`).
 // The extension is non-bindless: its uniform is material binding 100 and the wind buffer 101
 // (`SF_WIND_BINDING`, set in `GroundcoverWind::specialize`).
 
 import sf_wind_bevy::wind::{wind, wind_sample_gusty, wind_sample_prev_gusty};
+// The trail ring's press (GC-M3): the view's surface weather bindings (vendored bevy_pbr patch "SW"), in the main
+// pass and the prepass of the same views; none indoors or in shadow views, where nothing is pressed.
+@if(SURFACE_WEATHER || SURFACE_WEATHER_PREPASS)
+import sf_surface_bevy::view::{surface_press_now, surface_press_then};
+@if(SURFACE_WEATHER || SURFACE_WEATHER_PREPASS)
+import sf_surface_bevy::layer::TRAIL_PRESS_FLOOR;
 
 const TAU: f32 = 6.28318530718;
 // Phase multipliers that decorrelate the cross sway and the flutter from the along-wind sway of the same
@@ -36,6 +43,8 @@ struct GroundcoverParams {
     sway: vec4<f32>,
     // Cross-wind sway Hz (whole cycles per hour), unused, unused, unused.
     sway_cross: vec4<f32>,
+    // Trample (GC-M3): largest tilt under a full press (rad), scale on the press (0 = off), unused, unused.
+    trample: vec4<f32>,
     species: array<GroundcoverSpecies, 16>,
 }
 
@@ -125,21 +134,97 @@ fn vertex_phase(world: vec3<f32>, root: vec3<f32>) -> f32 {
     return dot(world.xz - root.xz, FLUTTER_SPREAD);
 }
 
+// The trample of an instance from the ring's press at its root (`surface_press_now`: x press, yz its forward
+// differences one ring texel to +X and +Z; CPU twin `trample::push`): x the press 0..1 (times the trample amount),
+// yz the push direction (unit XZ), away from the press peak (down the press gradient). Where the press has no
+// slope (under a lying body, a stamp's centre) the instance's own direction from its wind phase takes over, blended
+// in at the weight of the press's resolution so the direction never jumps.
+fn trample_of(s: vec3<f32>, tag: GroundcoverTag) -> vec3<f32> {
+    let p = saturate(s.x * groundcover.trample.y);
+    if p <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    let a = tag.phase * TAU;
+    let v = -s.yz + vec2<f32>(cos(a), sin(a)) * TRAIL_PRESS_FLOOR;
+    return vec3<f32>(p, v / max(length(v), 1e-6));
+}
+
+// The offset `o` of a vertex from its instance root rotated about the root toward the push direction `t.yz` by
+// `t.x × trample.x` (Rodrigues about the horizontal axis up × push: up tilts toward the push, lengths kept; CPU
+// twin `trample::tilt`).
+fn trample(o: vec3<f32>, t: vec3<f32>) -> vec3<f32> {
+    let a = t.x * groundcover.trample.x;
+    let c = cos(a);
+    let k = vec3<f32>(t.z, 0.0, -t.y);
+    return o * c + cross(k, o) * sin(a) + k * (dot(k, o) * (1.0 - c));
+}
+
+// The press at the instance root this frame / last frame (0 without surface weather: indoors, shadow views).
+@if(SURFACE_WEATHER || SURFACE_WEATHER_PREPASS)
+fn press_now(root: vec3<f32>, tag: GroundcoverTag) -> vec3<f32> {
+    if groundcover.trample.y <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    return trample_of(surface_press_now(root.xz), tag);
+}
+@else
+fn press_now(root: vec3<f32>, tag: GroundcoverTag) -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+
+@if(SURFACE_WEATHER || SURFACE_WEATHER_PREPASS)
+fn press_then(root: vec3<f32>, tag: GroundcoverTag) -> vec3<f32> {
+    if groundcover.trample.y <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    return trample_of(surface_press_then(root.xz), tag);
+}
+@else
+fn press_then(root: vec3<f32>, tag: GroundcoverTag) -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+
+// The wind bend `b` of a vertex at `world`, faded by the press `t.x` (a pressed plant stops swaying), then the
+// whole plant tilted about its root by the trample.
+fn pressed(world: vec3<f32>, root: vec3<f32>, b: vec3<f32>, t: vec3<f32>) -> vec3<f32> {
+    let w = world + b * (1.0 - t.x);
+    if t.x <= 0.0 {
+        return w;
+    }
+    return root + trample(w - root, t);
+}
+
 // This frame's bend of a vertex at `world` (instance root `root`, scale `scale`) at time `t`
-// (`globals.time`).
+// (`globals.time`), pressed by this frame's ring.
 fn bent(world: vec3<f32>, root: vec3<f32>, scale: f32, tag: GroundcoverTag, t: f32) -> vec3<f32> {
+    return bent_by(world, root, scale, tag, t, press_now(root, tag));
+}
+
+// [`bent`] with this frame's press `p` (`press_now`) passed in, so the vertex stage reads the ring once and turns
+// the normal and tangent by the same press ([`pressed_dir`]).
+fn bent_by(world: vec3<f32>, root: vec3<f32>, scale: f32, tag: GroundcoverTag, t: f32, p: vec3<f32>) -> vec3<f32> {
     let h = world.y - root.y;
     let v = wind_sample_gusty(wind_point(root, tag), max(h, 0.0), groundcover.wind.w);
     let d = detail_wind(v, tag, t, vertex_phase(world, root));
-    return world + bend(h, d, species_of(tag), scale);
+    return pressed(world, root, bend(h, d, species_of(tag), scale), p);
+}
+
+// A world direction (normal, tangent) turned by the press `p` with the plant's tilt, so a flattened plant is lit
+// as lying (GC-M3b). The wind bend leaves directions alone, as before.
+fn pressed_dir(n: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
+    if p.x <= 0.0 {
+        return n;
+    }
+    return trample(n, p);
 }
 
 // Last frame's bend (motion vectors): last frame's field, around this frame's origin, at last frame's time
 // `t_prev` (`globals.time - globals.delta_time`; exact across the hourly wrap since every frequency is whole
-// cycles per hour).
+// cycles per hour), pressed by last frame's ring at last frame's placement (`surface_press_then`, the terrain's
+// motion-vector rule).
 fn bent_prev(world: vec3<f32>, root: vec3<f32>, scale: f32, tag: GroundcoverTag, t_prev: f32) -> vec3<f32> {
     let h = world.y - root.y;
     let v = wind_sample_prev_gusty(wind_point(root, tag), max(h, 0.0), groundcover.wind.w);
     let d = detail_wind(v, tag, t_prev, vertex_phase(world, root));
-    return world + bend(h, d, species_of(tag), scale);
+    return pressed(world, root, bend(h, d, species_of(tag), scale), press_then(root, tag));
 }

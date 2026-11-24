@@ -145,7 +145,7 @@ fn window_snaps_to_whole_world_texels() {
 #[test]
 fn view_maps_texels_and_depth_as_the_convert_reads_them() {
     let ground = GroundGrid::flat(Vec2::new(-1.0, -1.0), 0.5, 20, GROUND);
-    let cap = Capture { corner: Vec2::new(-0.5, 1.0), texel_m: 0.0625, size: 64, near_y: NEAR, range_m: RANGE, ground };
+    let cap = Capture { corner: Vec2::new(-0.5, 1.0), texel_m: 0.0625, size: 64, near_y: NEAR, range_m: RANGE, ground, press_m: 0.0, spread_m: 0.0 };
     let (_, clip) = cap.view();
     for q in [Vec2::new(-0.47, 1.03), Vec2::new(1.2, 3.9), Vec2::new(3.4, 1.53), Vec2::new(0.01, 2.01)] {
         // Drawn as the shadow pass rasterises it: over the whole target.
@@ -184,7 +184,7 @@ fn ground_grid_is_bilinear_and_placed_on_world_steps() {
     // Clamped at the edge.
     assert!(close(g.at(Vec2::new(-10.0, 6.0)), plane(corner)));
     assert_eq!(g.range(), (plane(corner + Vec2::new(0.0, 3.5)), plane(corner + Vec2::new(3.5, 0.0))));
-    let (near, range) = slab(g.range(), 0.25, RING);
+    let (near, range) = slab(g.range(), 0.25, RING, 0.0);
     assert!(close(near, g.range().0 - 0.25));
     assert!(close(near + range, g.range().1 + ceiling_ref(RING)));
 }
@@ -209,13 +209,13 @@ fn pass_merges_the_capture_into_b() {
     #[allow(clippy::cast_possible_truncation)]
     let corner = min.as_vec2() * RING_TEXEL_M as f32;
     let ground = GroundGrid::flat(Vec2::splat(-2.0), 0.5, 10, GROUND);
-    let cap = Capture { corner: Vec2::splat(-1.0), texel_m: 0.0625, size: 32, near_y: NEAR, range_m: RANGE, ground };
+    let cap = Capture { corner: Vec2::splat(-1.0), texel_m: 0.0625, size: 32, near_y: NEAR, range_m: RANGE, ground, press_m: 0.0, spread_m: 0.0 };
     let edge = MAX_CAPTURE_SIZE;
     let mut target = vec![0.0; (edge * edge) as usize];
     let leg = Vec2::new(0.03, 0.03);
     let t = cap.texel_of(leg).unwrap();
     target[(t.y * edge + t.x) as usize] = depth_of(GROUND + 0.1);
-    let pass = TrailPass { corner, depth_m: RING, new_min: min, old_min: Some(min), refill_m: 0.002, stamps: vec![], capture: Some(cap.clone()) };
+    let pass = TrailPass { corner, depth_m: RING, new_min: min, old_min: Some(min), refill_m: 0.002, stamps: vec![], capture: Some(cap.clone()), press: crate::trail::Press::default() };
     let mut prev = vec![0.0; idx(IVec2::new(0, n))];
     let old = IVec2::new(500, 7);
     prev[idx(old)] = -0.2;
@@ -270,8 +270,8 @@ fn capture_carves_the_ring_under_the_leg_far_from_the_origin() {
     let min = capture_min(DVec2::new(world.x, world.z), texel, size);
     let corner = (min.as_dvec2() * texel - o_xz).as_vec2();
     let ground = GroundGrid::flat(corner - Vec2::splat(0.5), 0.5, 36, focus.y);
-    let (near_y, range_m) = slab(ground.range(), 0.25, RING);
-    let cap = Capture { corner, texel_m: texel as f32, size, near_y, range_m, ground };
+    let (near_y, range_m) = slab(ground.range(), 0.25, RING, 0.0);
+    let cap = Capture { corner, texel_m: texel as f32, size, near_y, range_m, ground, press_m: 0.0, spread_m: 0.0 };
     let (_, clip) = cap.view();
     // Leg and hand points around the root (both feet, ahead and behind, left and right), a few
     // cm to 0.3 m over the ground.
@@ -298,7 +298,7 @@ fn capture_carves_the_ring_under_the_leg_far_from_the_origin() {
     let cam_world = origin + cam.as_dvec3();
     let new_min = window_min(DVec2::new(cam_world.x, cam_world.z));
     let ring_corner = (new_min.as_dvec2() * RING_TEXEL_M - o_xz).as_vec2();
-    let pass = TrailPass { corner: ring_corner, depth_m: RING, new_min, old_min: Some(new_min), refill_m: 0.0, stamps: vec![], capture: Some(cap.clone()) };
+    let pass = TrailPass { corner: ring_corner, depth_m: RING, new_min, old_min: Some(new_min), refill_m: 0.0, stamps: vec![], capture: Some(cap.clone()), press: crate::trail::Press::default() };
     let n = RING_SIZE;
     let b = pass.run_ceiling(&vec![0.0; (n * n) as usize], &target);
     // The ring texel that holds a world point: its world texel index, wrapped (`trail.wgsl`).
@@ -321,4 +321,161 @@ fn capture_carves_the_ring_under_the_leg_far_from_the_origin() {
         (0..n * n).filter(|&i| b[i as usize] < 0.0).map(|i| IVec2::new(i % n, i / n)).collect();
     carved.sort_by_key(|a| (a.y, a.x));
     assert_eq!(carved, want, "carved texels away from the leg");
+}
+
+/// GC-T2b: the capture's press (A) is 1 where a body touches the ground, 0.5 at half the press
+/// height, 0 from it on; a texel the capture didn't hit leaves A as it was; B doesn't change.
+#[test]
+fn capture_presses_a_from_the_bodys_height_over_the_ground() {
+    const PRESS: f32 = 0.5;
+    let at = |b: f32| press_of(depth_of(GROUND + b), NEAR, RANGE, GROUND, PRESS);
+    assert!(close(at(0.0), 1.0));
+    assert!(close(at(-0.1), 1.0), "under the ground: full");
+    assert!(close(at(PRESS * 0.5), 0.5));
+    assert_eq!(at(PRESS), 0.0);
+    assert_eq!(at(PRESS + 0.2), 0.0);
+    assert_eq!(press_of(0.0, NEAR, RANGE, GROUND, PRESS), 0.0, "cleared texel");
+    assert_eq!(press_of(depth_of(GROUND), NEAR, RANGE, GROUND, 0.0), 0.0, "no press demand");
+    // Through the ring pass: a leg on the ground over one texel, the rest of the window cleared.
+    let n = RING_SIZE;
+    let idx = |a: IVec2| usize::try_from(a.y * n + a.x).unwrap();
+    let min = window_min(DVec2::ZERO);
+    #[allow(clippy::cast_possible_truncation)]
+    let corner = min.as_vec2() * RING_TEXEL_M as f32;
+    let ground = GroundGrid::flat(Vec2::splat(-2.0), 0.5, 10, GROUND);
+    let cap = Capture { corner: Vec2::splat(-1.0), texel_m: 0.0625, size: 32, near_y: NEAR, range_m: RANGE, ground, press_m: PRESS, spread_m: 0.0 };
+    let edge = MAX_CAPTURE_SIZE;
+    let mut target = vec![0.0; (edge * edge) as usize];
+    let leg = Vec2::new(0.03, 0.03);
+    let t = cap.texel_of(leg).unwrap();
+    target[(t.y * edge + t.x) as usize] = depth_of(GROUND + 0.1);
+    assert!(close(cap.press_at(leg, &target), 1.0 - crate::smoothstep(0.0, PRESS, 0.1)));
+    let pass = TrailPass { corner, depth_m: RING, new_min: min, old_min: Some(min), refill_m: 0.0, stamps: vec![], capture: Some(cap.clone()), press: crate::trail::Press::default() };
+    let mut prev = vec![0.0; idx(IVec2::new(0, n))];
+    let beside = IVec2::new(1, 0);
+    prev[idx(beside)] = 0.3;
+    let a = pass.run_press(&prev, &target);
+    assert!(close(a[idx(IVec2::ZERO)], cap.press_at(leg, &target)));
+    assert_eq!(a[idx(beside)], 0.3, "no capture hit: A unchanged");
+    // B: the same with or without the press (a cover look, ring depth 0.4).
+    let no_press = TrailPass { capture: Some(Capture { press_m: 0.0, ..cap.clone() }), ..pass.clone() };
+    let zeros = vec![0.0; prev.len()];
+    assert_eq!(pass.run_ceiling(&zeros, &target), no_press.run_ceiling(&zeros, &target));
+    assert!(close(ceiling(pass.run_ceiling(&zeros, &target)[idx(IVec2::ZERO)], RING), 0.1));
+    assert_eq!(f32::from_bits(pass.slots()[6][2]), PRESS, "the press height rides in the ground slot");
+    // Ring depth 0 (press only): B stays 0, A still presses.
+    let bare = TrailPass { depth_m: 0.0, ..pass.clone() };
+    assert!(bare.run_ceiling(&zeros, &target).iter().all(|b| *b == 0.0));
+    assert!(close(bare.run_press(&zeros, &target)[idx(IVec2::ZERO)], a[idx(IVec2::ZERO)]));
+}
+
+/// GC-T2b: with a press demand the slab reaches the press height over the highest ground even
+/// at ring depth 0; without one it is the cover's alone.
+#[test]
+fn slab_reaches_the_press_height_on_demand() {
+    let g = (1.0, 1.6);
+    let (near, h) = slab(g, 0.25, 0.0, 0.5);
+    assert!(close(near, 0.75));
+    assert!(near + h >= g.1 + 0.5 - 1e-6 && h >= 0.5, "{h}");
+    assert!(close(near + h, g.1 + 0.5));
+    // A deep cover wins over the press.
+    assert!(close(near + slab(g, 0.25, RING, 0.1).1, g.1 + ceiling_ref(RING)));
+    // No demand: as before.
+    assert_eq!(slab(g, 0.25, RING, 0.0), (near, g.1 + ceiling_ref(RING) - near));
+    assert!(close(slab(g, 0.25, 0.0, 0.0).1, g.1 - near));
+}
+
+/// GC-T3: a capture with a leg texel at ground height under each of `legs` (the rest cleared)
+/// and the spread `spread`, plus its target.
+fn spread_capture(legs: &[Vec2], spread: f32) -> (Capture, Vec<f32>) {
+    let ground = GroundGrid::flat(Vec2::splat(-2.0), 0.5, 10, GROUND);
+    let cap = Capture { corner: Vec2::splat(-1.0), texel_m: 0.0625, size: 32, near_y: NEAR, range_m: RANGE, ground, press_m: 1.0, spread_m: spread };
+    let edge = MAX_CAPTURE_SIZE;
+    let mut target = vec![0.0; (edge * edge) as usize];
+    for leg in legs {
+        let t = cap.texel_of(*leg).unwrap();
+        target[(t.y * edge + t.x) as usize] = depth_of(GROUND);
+    }
+    (cap, target)
+}
+
+/// GC-T3: the tap layout: 24 taps, tap 0 at the centre, the rest inside the reach.
+#[test]
+fn spread_taps_fill_a_disk() {
+    assert_eq!(spread_tap(0), Vec2::ZERO);
+    assert!((spread_tap(SPREAD_TAPS - 1).length() - SPREAD_REACH).abs() < 1e-6);
+    for i in 1..SPREAD_TAPS {
+        let r = spread_tap(i).length();
+        assert!(r > 0.0 && r <= SPREAD_REACH + 1e-6, "tap {i} at {r}");
+    }
+    assert_eq!(spread_weight(0.0, 0.0), 1.0);
+    assert_eq!(spread_weight(0.1, 0.0), 0.0);
+    assert!(close(spread_weight(0.25, 0.5), 0.5));
+    assert_eq!(spread_weight(0.5, 0.5), 0.0);
+}
+
+/// GC-T3: spread 0 is the GC-T2b press exactly, everywhere (window and around it).
+#[test]
+fn spread_zero_is_the_bare_press() {
+    let legs = [Vec2::new(0.03, 0.03), Vec2::new(0.4, -0.2)];
+    let (cap, target) = spread_capture(&legs, 0.0);
+    for z in -24..24 {
+        for x in -24..24 {
+            #[allow(clippy::cast_precision_loss)]
+            let q = Vec2::new(x as f32, z as f32) * 0.05 + Vec2::splat(0.01);
+            assert_eq!(cap.spread_press_at(q, &target), cap.press_at(q, &target), "at {q}");
+        }
+    }
+    // The pass: the same ring as with the bare press, and the spread in the ground slot.
+    let n = RING_SIZE;
+    let min = window_min(DVec2::ZERO);
+    #[allow(clippy::cast_possible_truncation)]
+    let corner = min.as_vec2() * RING_TEXEL_M as f32;
+    let pass = TrailPass { corner, depth_m: 0.0, new_min: min, old_min: Some(min), refill_m: 0.0, stamps: vec![], capture: Some(cap.clone()), press: crate::trail::Press::default() };
+    let prev = vec![0.0; usize::try_from(n * n).unwrap()];
+    let a = pass.run_press(&prev, &target);
+    for (i, v) in a.iter().enumerate() {
+        let i = i32::try_from(i).unwrap();
+        let q = pass.texel_center(IVec2::new(i % n, i / n));
+        assert_eq!(*v, crate::trail::press_update(0.0, q, &[], &pass.press, cap.press_at(q, &target)));
+    }
+    let spread = TrailPass { capture: Some(Capture { spread_m: 0.45, ..cap }), ..pass };
+    assert_eq!(f32::from_bits(spread.slots()[6][3]), 0.45, "the spread rides in the ground slot");
+}
+
+/// GC-T3: one leg on the ground presses 1 at itself, ~0.5 at half the spread (where a tap lands
+/// on it), 0 beyond the spread; two legs combine with Max; nothing outside the window.
+#[test]
+fn spread_presses_around_a_leg() {
+    const SPREAD: f32 = 0.45;
+    let leg = Vec2::new(0.03, 0.03);
+    let (cap, target) = spread_capture(&[leg], SPREAD);
+    assert!(close(cap.spread_press_at(leg, &target), 1.0), "at the leg");
+    // Half the spread: the tap nearest 0.5 (tap 9 at 0.8 √(9/23) ≈ 0.5004) lands on the leg.
+    let o = spread_tap(9) * SPREAD;
+    assert!((o.length() / SPREAD - 0.5).abs() < 1e-3);
+    let half = cap.spread_press_at(leg - o, &target);
+    assert!((half - 0.5).abs() < 0.01, "half the spread: {half}");
+    assert!(close(half, spread_weight(o.length(), SPREAD)));
+    // Beyond the spread (past the leg's texel by the spread): nothing, in any direction.
+    for k in 0..16 {
+        #[allow(clippy::cast_precision_loss)]
+        let a = k as f32 * std::f32::consts::TAU / 16.0;
+        let q = leg + Vec2::new(a.cos(), a.sin()) * (SPREAD + 0.1);
+        assert_eq!(cap.spread_press_at(q, &target), 0.0, "beyond at {q}");
+    }
+    // Two legs: Max of each alone.
+    let other = Vec2::new(0.4, 0.03);
+    let (both, t2) = spread_capture(&[leg, other], SPREAD);
+    let (alone, t1) = spread_capture(&[other], SPREAD);
+    for x in 0..12 {
+        #[allow(clippy::cast_precision_loss)]
+        let q = Vec2::new(-0.2 + x as f32 * 0.07, 0.1);
+        let m = cap.spread_press_at(q, &target).max(alone.spread_press_at(q, &t1));
+        assert_eq!(both.spread_press_at(q, &t2), m, "Max at {q}");
+    }
+    // Outside the window (it spans -1..1): nothing, though a leg inside is within the spread.
+    let (edge_cap, te) = spread_capture(&[Vec2::new(-0.97, 0.03)], SPREAD);
+    assert!(edge_cap.spread_press_at(Vec2::new(-0.97, 0.03), &te) > 0.99);
+    assert_eq!(edge_cap.spread_press_at(Vec2::new(-1.05, 0.03), &te), 0.0, "outside the window");
 }

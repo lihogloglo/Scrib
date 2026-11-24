@@ -43,6 +43,8 @@ log.workspace = true
 sf_coords.workspace = true
 sf_diag_bevy.workspace = true
 sf_groundcover.workspace = true
+# TrailViews, TrailPassSystems: the trail ring's press (A) drives the blades (GC-3d2, `blade_press`).
+sf_surface_bevy.workspace = true
 # TerrainGround: the resident terrain heights and level-0 layer maps (TerrainHeightsMap, TerrainLayersMap).
 sf_terrain_bevy.workspace = true
 sf_tunables.workspace = true

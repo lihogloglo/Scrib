@@ -1,0 +1,45 @@
+# GC trample chain: facts for GC-T1, GC-T2, GC-M3, GC-3d (2026-11-24)
+
+Paths relative to `superfargoth/`; sfb = `crates/sf_surface_bevy/src`, sfs = `crates/sf_surface/src`, gcb = `crates/sf_groundcover_bevy/src`, vg = `vendor/bevy_grass/src`.
+
+## 1. Ring texture and binding
+- `Rgba16Float` 1024², two textures (current, previous), storage + sampled: `sfb/trail.rs:57,216-228`. R depression (m), G lip (m), B deformer ceiling. **A is free**: the pass writes `vec4(v, b, 0.0)` (`sfb/trail.wgsl:136`), nothing reads A (`surface_ring_at` returns `.xyz`, `sfb/layer.wesl:650`). A press needs no second texture or format change.
+- `@group(0) @binding(52) surface_trail`, 53 = last frame's ring (same ring if no pass ran): `sfb/view.wesl:38-40`. Mesh-view bindings 43-53 come from the vendored `bevy_pbr` SW patch (layout `vendor/bevy_pbr/src/render/mesh_view_bindings.rs:412`, vertex+fragment visibility `render/surface_weather.rs:88-94`, bind group fed by `sfb/render.rs:127-139`). Placement: uniform slots `trail`, `trail_cells`; sampled by `surface_ring_at` (`layer.wesl:638-651`, torus, edge fade, 0 when `place.w <= 0`).
+- Who sees it: views carrying `SurfaceWeatherView` get `SURFACE_WEATHER` (`vendor/bevy_pbr/src/render/mesh.rs:495-498,3839`): StandardMaterial, terrain, the groundcover `ExtendedMaterial` main pass (it imports `mesh_view_bindings`, `gcb/shaders/groundcover.wesl:13-19`); prepass via the `_sw` view layouts (`vendor/bevy_pbr/src/prepass/mod.rs:256-260`). **Shadow views never carry it** (`vendor/README.md:32`). `sf_groundcover_bevy` does not depend on `sf_surface_bevy` (`gcb/../Cargo.toml:50`): a vertex read needs that dependency or its own binding-52 declaration under `@if(SURFACE_WEATHER)`, plus sampler 47 and uniform 43.
+- bevy_grass pipelines: main uses `mesh_pipeline.get_view_layout` (`vg/render/bevy_glue.rs:119`), prepass picks the `_sw` layouts (`:214-221`). Blades do not read trample there (see 5).
+
+## 2. CPU twin and compute pass
+- `sfs/trail.rs`: `RING_SIZE` `:30`, `RING_TEXEL_M` `:32`, `LIP_HEIGHT` `:38`, `REFILL` 6.0 `:45`, `REFILL_QUANTUM_M` `:47`; `profile` `:90`, `combine` (Min R, Max G) `:118`, `lip_cap` `:123`, `decay` `:129`, `texel_update` `:135`, `slots` (uniform packing) `:189`, `run` `:248`, `run_ceiling` `:224`. Header `HEADER_SLOTS` 7.
+- `sfb/trail.wgsl` mirrors it: main `:93-136` (keep if same world texel, refill `:111-113`, stamps, capture merge into B, lip cap, store). Uniform has refill per pass, **no dt**: spring-back needs a time/decay term in the header, size kept equal to `PARAM_SLOTS*16`.
+- The pass runs only when `stamps || refill_m > 0 || capture || window moved` (`sfb/trail.rs:318`): a recovering press must keep it running until the press is 0.
+- Tests: exact CPU tests `sfs/trail_tests.rs` (`:111` decay, `:128` quanta, `:148` pass, `:250` half-float quantum). `sfb/shader_tests.rs:299` only parses/validates the WGSL with naga and checks uniform byte size, stamp array length and the layer's lip constant. **No GPU-vs-twin value test exists**; the twin is the value test. Half float: pick steps above its mantissa (see `:250`).
+
+## 3. Stamps and gates
+- Producers: feet `mw_exterior_bevy/src/trails.rs:53-108` (planted legs on terrain); gap prints `:200-208`; whole bodies = deformer capture `sfb/deform.rs:20-27` (feeds ring B only, not R/G).
+- Ring gate `sfb/trail.rs:122`: `settings.layer && cover && trails && depth > 0`, `depth = ring_depth` (`:96-98`) = deepest **cover look** (`cover[c].x > 0`). No snow/ash look = depth 0 = ring off, stamps dropped (`:123-131`). Host gate `trails.rs:63`: `!(trails || kickup.on) || !cover || !layer`; `refresh_ground` `:174`. Range 40 m, 64 stamps/frame (`sfb/trail.rs:145-158`).
+- Capture gate `sfb/deform.rs:388-394` `cover_under`: snow or ash cell value > 0 (and that look exists) at the window's 4 corners in `WorldSurface`; used `:452`, skip log `:453-465`. Inputs: `WorldSurface`, `SurfaceUniform.cover[0..2].x`, `window_m`.
+- Trap for GC-T2: stamp depth is a share of cover depth (`sfs/trail.rs:~108-113`), `lip_cap` and the B ceiling divide by it (`trail.wgsl:131-134`, `slab.y`). A groundcover-only ring needs its own depth, or the press channel must not depend on it.
+
+## 4. Groundcover mesh vertex stage
+- `gcb/shaders/groundcover_common.wesl`: `bent` `:130-135` returns `world + bend(...)`; `bent_prev` `:140-145`. Callers: main `groundcover.wesl:~37`, prepass `groundcover_prepass.wesl:37` and `:69` (`previous_world_position`, last-frame time).
+- The press offset goes into `bent` and `bent_prev`: sample at `root.xz` (one fetch, plant lies one way) with the ring for `bent`, `surface_trail_previous` for `bent_prev` (same rule as the terrain, `sfb/view.wesl:72-78`). Binding 52/53 are reachable in the main pass (view layout) and the prepass (`_sw` layouts), not the shadow pass; gate with `SURFACE_WEATHER` / `SURFACE_WEATHER_PREPASS` (indoor views have no 52). The prepass declares `globals` itself (`groundcover_prepass.wesl:28`). Specialization hook `gcb/material.rs:156-170`.
+
+## 5. bevy_grass trample
+- It is **compute-time, not vertex-stage**: `vg/shaders/trample.wesl` (`trample_decay` `:31`, `trample_stamp` `:55`) fills a packed-push storage buffer (256² cells of 0.25 m, `vg/trample.rs:15`; `generate.wesl:80-82` binding 5). `generate.wesl:213-219` `trample_push`, used at `:452-458`: `bend = wind_bend * calm + push`, **packed into the instance words** (`:462`). `blade.wesl:128` only reads `instance.bend`/`previous_bend`. Generation runs every frame per view (`vg/render/compute.rs:125-175`).
+- Off switch: we spawn no `GrassInteractor`, so stamping is already off (`compute.rs:154`, `interactor_count > 0`); the decay pass over all cells still dispatches every frame (`:150-153`, 0.009 ms, `docs/ledger/groundcover.md:18`). Settings `trample_recovery` (s, default 1.5) and `trample_cell_size` (`vg/settings.rs:199-203,285-286`). Fully off = drop both trample passes and bindings 5/6 (`vg/render/resources.rs:165-199`) in a vendor patch.
+- GC-3d therefore edits `generate.wesl` (`trample_push` reads the ring), not `blade.wesl`/`grass.wesl`. The generate group (`resources.rs:177-189`, group 1) has no mesh-view layout: ring view, sampler/`textureLoad`, placement (`trail`, `trail_cells`) and the previous ring (for `previous_bend`) are new bindings fed from `TrailGpu` (`sfb/render.rs:138-139`) through a generic crate hook (upstream-shaped, listed in `vendor/README.md`). Ring texel 6.25 cm vs crate cell 25 cm (one fetch at the root, as `generate.wesl:208-211` chose over bilinear). Style field `trample: 1.0` already exists (`gcb/blades.rs:862`).
+
+## 6. Industry (from memory, not re-fetched; verify before quoting)
+- Standard: a camera-following, world-anchored **interaction render target** stamped by characters, decayed per frame, read in the foliage vertex shader (or at instance generation) as a bend vector. UE5 "interactive grass" tutorials use a scene-capture or Niagara grid RT this way; recovery by lerp-to-zero in the same pass, about 1-5 s for grass, much longer for snow/mud.
+- Ghost of Tsushima (Wohllaib, GDC 2021): compute-generated blades per tile; its interaction numbers are not public in what we hold (`docs/research/grass-blade-density-2026-11-23.md:9`). Horizon Zero Dawn / Forbidden West (Guerrilla vegetation talks): foliage pushed by player and machines from a local interaction field; BotW and RDR2 similar. Sea of Thieves: nothing found, do not cite.
+- Our ring is already the Tomb Raider snow design (GPU Pro 7, `sfs/trail.rs` header); the new part is one texture with two lifetimes (prints stay, press springs back in seconds).
+
+## 7. Wiki / ledger
+- `docs/wiki/engine/sky-atmosphere-weather.md`: no "trail" line. `app-and-dev-tools.md:48` lists `surface.trail` R and G only (B/A undocumented).
+- `docs/ledger/sky-weather.md:26`: ring pass < 0.01 ms, capture 0.05-0.2 ms est., runs only with snow/ash under the window, one frame lag; `:25` trail-offset fix. Ring module doc: full-ring pass ~16 MB, ~0.06 ms, only on changing frames (`sfb/trail.rs:~20`). No line gates the ring on groundcover.
+
+## Proposed slice cuts
+- **GC-T1** `sfs/trail.rs` (press decay + Max stamp on A, dt, `PARAM_SLOTS`), `sfb/trail.wgsl`, `sfb/trail.rs:318` (run while press > 0). Test: exact stamp and N-step decay in `sfs/trail_tests.rs` (+ naga size check, `shader_tests.rs:299`).
+- **GC-T2** `sfb/trail.rs:96-122`, `sfb/deform.rs:388-465`, `mw_exterior_bevy/src/trails.rs:63,174,208`. Test: gate truth table (`deform_tests.rs`) and ring-on without a cover look (`sfb/tests.rs`).
+- **GC-M3** `groundcover_common.wesl`, `groundcover.wesl`, `groundcover_prepass.wesl`, `gcb/material.rs`, `Cargo.toml`. Test: push direction/amount from a known press (CPU twin) + naga compile with and without SW (`gcb/shader_tests.rs`).
+- **GC-3d** `vg/shaders/generate.wesl`, `vg/render/{resources,compute,view}.rs`, `vg/settings.rs`, glue in `sf_groundcover_bevy`, `vendor/README.md`. Test: sampled press at a known texel + naga compile of `generate.wesl`.

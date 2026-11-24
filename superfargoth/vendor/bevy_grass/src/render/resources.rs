@@ -137,6 +137,10 @@ pub(crate) struct GrassLayouts {
     pub shadow_view: BindGroupLayoutDescriptor,
     /// Group 1 of the shadow pass, empty so the grass group stays at 2.
     pub empty: BindGroupLayoutDescriptor,
+    // superfargoth patch (own: trample source)
+    /// Group 3 of `generate` with an external trample texture (group 2 is
+    /// `empty` there).
+    pub trample_source: BindGroupLayoutDescriptor,
 }
 
 impl GrassLayouts {
@@ -239,6 +243,7 @@ impl GrassLayouts {
             draw,
             shadow_view,
             empty,
+            trample_source: super::trample_source::layout(), // superfargoth patch (own: trample source)
         }
     }
 
@@ -249,10 +254,17 @@ impl GrassLayouts {
             ComputePass::TrampleDecay | ComputePass::TrampleStamp => &self.trample_view,
             ComputePass::SizeDispatch | ComputePass::WriteDrawArgs => &self.args_view,
             ComputePass::Cull | ComputePass::Generate => &self.generate_view,
+            // superfargoth patch (own: trample source)
+            ComputePass::GenerateTrampleTexture => &self.generate_view,
         };
         let mut layout = vec![self.shared.clone(), view.clone()];
         if pass == ComputePass::SizeDispatch {
             layout.push(self.dispatch.clone());
+        }
+        // superfargoth patch (own: trample source)
+        if pass == ComputePass::GenerateTrampleTexture {
+            layout.push(self.empty.clone());
+            layout.push(self.trample_source.clone());
         }
         layout
     }

@@ -631,6 +631,151 @@ fn trails_take_stamps_and_place_the_ring() {
     assert_eq!(uniform(&app).trail, Vec4::ZERO);
 }
 
+/// GC-T2a: with no cover look the ring runs only on a press demand ([`TrailDemand`]), at depth 0:
+/// its stamps press A in the pass while R/G stay 0 and the shading's ring depth (`trail.w`) stays
+/// 0; a cover look with the demand on is the cover ring as before.
+#[test]
+fn a_press_demand_runs_the_ring_without_a_cover_look() {
+    use bevy_math::Vec2;
+    use sf_surface::trail::{FOOT_HALF_M, RING_SIZE, RING_TEXEL_M, TrailPass, window_min};
+    let frame = |app: &App| app.world().resource::<TrailFrame>().clone();
+    let mut app = app();
+    app.world_mut().spawn((Camera::default(), SurfaceWeatherCamera, GlobalTransform::from_translation(Vec3::new(10.0, 0.0, -3.0))));
+    let origin = app.world().resource::<SurfaceOrigin>().0;
+    let stamp = TrailStamp { at: origin.offset(Vec3::new(12.0, 0.0, -3.0)), forward: Vec2::Y, half_m: FOOT_HALF_M, depth: 1.0 };
+    // No cover look, no demand: off, the stamp dropped.
+    app.world_mut().write_message(stamp);
+    app.update();
+    let f = frame(&app);
+    assert!(!f.on);
+    assert!(f.stamps.is_empty());
+    assert_eq!(uniform(&app).trail, Vec4::ZERO);
+    // The demand: on at depth 0, the stamp kept.
+    app.world_mut().resource_mut::<TrailDemand>().press = true;
+    app.world_mut().write_message(stamp);
+    app.update();
+    let f = frame(&app);
+    assert!(f.on);
+    assert_eq!((f.stamps.len(), f.depth_m, f.refill_m), (1, 0.0, 0.0));
+    let world = origin.offset(Vec3::new(10.0, 0.0, -3.0)).to_f64();
+    assert_eq!(f.new_min, window_min(DVec2::new(world.x, world.z)));
+    let u = uniform(&app);
+    assert_eq!((u.trail.z, u.trail.w), (16.0, 0.0), "placed, but no depth for the shading to cut");
+    // The pass the render world runs on this frame (`trail::extract`), on the CPU twin.
+    let pass = TrailPass {
+        corner: f.corner,
+        depth_m: f.depth_m,
+        new_min: f.new_min,
+        old_min: None,
+        refill_m: f.refill_m,
+        stamps: f.stamps.clone(),
+        capture: f.capture.clone().map(|(c, _)| c),
+        press: f.press,
+    };
+    let n = usize::try_from(RING_SIZE * RING_SIZE).unwrap();
+    assert!(pass.run(&vec![[0.0, 0.0]; n]).iter().all(|v| *v == [0.0, 0.0]), "R/G untouched");
+    assert!(pass.run_ceiling(&vec![0.0; n], &[]).iter().all(|b| *b == 0.0), "B untouched");
+    let a = pass.run_press(&vec![0.0; n], &[]);
+    // The texel under the stamp (render X, Z 12, -3).
+    #[allow(clippy::cast_possible_truncation)]
+    let rel = ((Vec2::new(12.0, -3.0) - f.corner) / RING_TEXEL_M as f32).floor().as_ivec2();
+    let addr = (f.new_min + rel).rem_euclid(IVec2::splat(RING_SIZE));
+    let under = usize::try_from(addr.y * RING_SIZE + addr.x).unwrap();
+    assert!(a[under] > 0.9, "{}", a[under]);
+    assert!(a.iter().all(|x| x.is_finite()));
+    // A cover look with the demand on: the cover ring as before (its depth, the shading's too).
+    app.world_mut().resource_mut::<SurfaceUniform>().cover[0] = Vec4::new(0.25, 0.15, 1.0, 1.0);
+    app.world_mut().write_message(stamp);
+    app.update();
+    let f = frame(&app);
+    assert!(f.on);
+    assert_eq!((f.stamps.len(), f.depth_m, uniform(&app).trail.w), (1, 0.15, 0.15));
+    // `--off cover` with the demand: the press-only ring (depth 0); `--off trails`: off.
+    app.world_mut().resource_mut::<SurfaceSettings>().cover = false;
+    app.update();
+    assert!(frame(&app).on);
+    assert_eq!((frame(&app).depth_m, uniform(&app).trail.w), (0.0, 0.0));
+    app.world_mut().resource_mut::<SurfaceSettings>().trails = false;
+    app.update();
+    assert!(!frame(&app).on);
+    assert_eq!(uniform(&app).trail, Vec4::ZERO);
+}
+
+/// GC-M3: `layer.wesl` `surface_press_at` reads the press-only ring (GC-T2a: placed, depth `trail.w` 0), which
+/// `surface_ring_at` ignores, and reads 0 where no ring is placed. The twin below transcribes
+/// `surface_ring_lookup` (the lines it mirrors are pinned in `shader_tests.rs`
+/// `press_reader_reads_the_press_only_ring`) and samples the CPU pass's press bilinearly over the torus.
+#[test]
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::many_single_char_names)]
+fn the_press_reads_on_the_press_only_ring() {
+    use bevy_math::{IVec4, Vec2};
+    use sf_surface::trail::{FOOT_HALF_M, RING_SIZE, RING_TEXEL_M, TrailPass};
+    /// `surface_ring_lookup`: torus UV and edge fade (0: not placed).
+    fn lookup(place: Vec4, cells: IVec4, xz: Vec2) -> (Vec2, f32) {
+        let n = cells.z as f32;
+        if place.z <= 0.0 || n <= 0.0 {
+            return (Vec2::ZERO, 0.0);
+        }
+        let t = (xz - Vec2::new(place.x, place.y)) * place.z;
+        let edge_m = t.x.min(n - t.x).min(t.y.min(n - t.y)) / place.z;
+        let fade = ((edge_m - 0.5) / 2.0).clamp(0.0, 1.0);
+        ((t + Vec2::new(cells.x as f32, cells.y as f32)) / n, fade)
+    }
+    /// `surface_press_at` on a CPU ring `a` (repeat addressing, bilinear as the sampler).
+    #[allow(clippy::many_single_char_names)]
+    fn press_at(a: &[f32], place: Vec4, cells: IVec4, xz: Vec2) -> f32 {
+        let (uv, fade) = lookup(place, cells, xz);
+        if fade <= 0.0 {
+            return 0.0;
+        }
+        let n = cells.z;
+        let p = uv * n as f32 - 0.5;
+        let (f, w) = (p.floor(), p - p.floor());
+        #[allow(clippy::cast_possible_truncation)]
+        let at = |dx: i32, dy: i32| {
+            let (x, y) = ((f.x as i32 + dx).rem_euclid(n), (f.y as i32 + dy).rem_euclid(n));
+            a[usize::try_from(y * n + x).unwrap()]
+        };
+        let top = at(0, 0) * (1.0 - w.x) + at(1, 0) * w.x;
+        let bottom = at(0, 1) * (1.0 - w.x) + at(1, 1) * w.x;
+        (top * (1.0 - w.y) + bottom * w.y) * fade
+    }
+    let mut app = app();
+    app.world_mut().spawn((Camera::default(), SurfaceWeatherCamera, GlobalTransform::from_translation(Vec3::new(10.0, 0.0, -3.0))));
+    let origin = app.world().resource::<SurfaceOrigin>().0;
+    app.world_mut().resource_mut::<TrailDemand>().press = true;
+    app.world_mut().write_message(TrailStamp { at: origin.offset(Vec3::new(12.0, 0.0, -3.0)), forward: Vec2::Y, half_m: FOOT_HALF_M, depth: 1.0 });
+    app.update();
+    let f = app.world().resource::<TrailFrame>().clone();
+    let u = uniform(&app);
+    assert_eq!(u.trail.w, 0.0, "the press-only ring: no depth");
+    let pass = TrailPass {
+        corner: f.corner,
+        depth_m: f.depth_m,
+        new_min: f.new_min,
+        old_min: None,
+        refill_m: f.refill_m,
+        stamps: f.stamps.clone(),
+        capture: f.capture.clone().map(|(c, _)| c),
+        press: f.press,
+    };
+    let n = usize::try_from(RING_SIZE * RING_SIZE).unwrap();
+    let a = pass.run_press(&vec![0.0; n], &[]);
+    // At the centre of the texel under the stamp: exactly that texel's press, the ring's edge 30 m away.
+    let rel = ((Vec2::new(12.0, -3.0) - f.corner) / RING_TEXEL_M as f32).floor();
+    let xz = f.corner + (rel + 0.5) * RING_TEXEL_M as f32;
+    let addr = (f.new_min + rel.as_ivec2()).rem_euclid(IVec2::splat(RING_SIZE));
+    let under = a[usize::try_from(addr.y * RING_SIZE + addr.x).unwrap()];
+    assert_eq!(lookup(u.trail, u.trail_cells, xz).1, 1.0);
+    let p = press_at(&a, u.trail, u.trail_cells, xz);
+    assert!(under > 0.9 && (p - under).abs() < 1e-3, "press {p}, texel {under}");
+    // Not placed (the ring off: `trail` zero; or no cells): 0.
+    assert_eq!(press_at(&a, Vec4::ZERO, u.trail_cells, xz), 0.0);
+    assert_eq!(press_at(&a, u.trail, IVec4::ZERO, xz), 0.0);
+    // Past the ring's edge fade: 0.
+    assert_eq!(press_at(&a, u.trail, u.trail_cells, f.corner - Vec2::splat(1.0)), 0.0);
+}
+
 /// SW-5/SW-6 "resets": a shelter redraw draws its casters even when no camera or light frustum
 /// sees them (Bevy extracts only meshes some view sees): the redraw marks them visible, and only
 /// on redraw frames. A far proxy out of the map centre's `VisibilityRange` is no caster at all

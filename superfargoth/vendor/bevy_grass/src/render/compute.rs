@@ -11,8 +11,10 @@ use bevy::render::render_resource::{
     CachedComputePipelineId, ComputePassDescriptor, ComputePipelineDescriptor, PipelineCache,
 };
 use bevy::render::renderer::RenderContext;
+use bevy::shader::ShaderDefVal; // superfargoth patch (own: trample source)
 
 use super::resources::{GrassLayouts, GrassShaders, GrassShared, GrassSharedBindGroups};
+use super::trample_source::GrassTrampleSourceGroup; // superfargoth patch (own: trample source)
 use super::view::{GrassViewBindGroups, GrassViewBuffers};
 use crate::trample;
 
@@ -28,17 +30,21 @@ pub(crate) enum ComputePass {
     SizeDispatch,
     Generate,
     WriteDrawArgs,
+    // superfargoth patch (own: trample source)
+    /// `generate` reading an external trample texture (`TRAMPLE_TEXTURE`).
+    GenerateTrampleTexture,
 }
 
 impl ComputePass {
     /// Every pass, in declaration order, so `pass as usize` indexes it.
-    pub(crate) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::TrampleDecay,
         Self::TrampleStamp,
         Self::Cull,
         Self::SizeDispatch,
         Self::Generate,
         Self::WriteDrawArgs,
+        Self::GenerateTrampleTexture, // superfargoth patch (own: trample source)
     ];
 
     /// The entry point's name in the shader.
@@ -52,6 +58,7 @@ impl ComputePass {
             Self::SizeDispatch => "size_dispatch",
             Self::Generate => "generate",
             Self::WriteDrawArgs => "write_draw_args",
+            Self::GenerateTrampleTexture => "generate", // superfargoth patch (own: trample source)
         }
     }
 
@@ -60,7 +67,21 @@ impl ComputePass {
     fn is_trample(self) -> bool {
         match self {
             Self::TrampleDecay | Self::TrampleStamp => true,
-            Self::Cull | Self::SizeDispatch | Self::Generate | Self::WriteDrawArgs => false,
+            Self::Cull
+            | Self::SizeDispatch
+            | Self::Generate
+            | Self::WriteDrawArgs
+            | Self::GenerateTrampleTexture => false,
+        }
+    }
+
+    // superfargoth patch (own: trample source)
+    /// The shader defs the pass is built with.
+    fn shader_defs(self) -> Vec<ShaderDefVal> {
+        if self == Self::GenerateTrampleTexture {
+            vec![super::trample_source::TRAMPLE_TEXTURE_DEF.into()]
+        } else {
+            Vec::new()
         }
     }
 }
@@ -89,6 +110,7 @@ pub(crate) fn init_generate_pipelines(
                 shaders.generate.clone()
             },
             entry_point: Some(entry.into()),
+            shader_defs: pass.shader_defs(), // superfargoth patch (own: trample source)
             ..Default::default()
         })
     };
@@ -103,6 +125,7 @@ pub(crate) fn run_generate(
     shared: Res<GrassShared>,
     shared_groups: Res<GrassSharedBindGroups>,
     mut views: Query<(&mut GrassViewBuffers, &GrassViewBindGroups)>,
+    trample_source: Res<GrassTrampleSourceGroup>, // superfargoth patch (own: trample source)
 ) {
     let get = |pass: ComputePass| pipeline_cache.get_compute_pipeline(pipelines.0[pass as usize]);
     let (
@@ -125,6 +148,14 @@ pub(crate) fn run_generate(
     else {
         return;
     };
+    // superfargoth patch (own: trample source): with an external trample
+    // texture, `generate` reads it (group 3) and the built-in trample passes
+    // are skipped. Until its pipeline is ready the built-in path runs.
+    let external = trample_source
+        .group
+        .as_ref()
+        .zip(get(ComputePass::GenerateTrampleTexture))
+        .zip(shared_groups.empty.as_ref());
     let diagnostics = ctx.diagnostic_recorder();
     let diagnostics = diagnostics.as_deref();
 
@@ -140,22 +171,31 @@ pub(crate) fn run_generate(
         let encoder = ctx.command_encoder();
         encoder.clear_buffer(&buffers.counters, 0, None);
 
-        let span = diagnostics.time_span(encoder, "grass_trample");
-        {
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
-                label: Some("grass_trample"),
-                ..Default::default()
-            });
-            pass.set_bind_group(0, shared_group, &[]);
-            pass.set_bind_group(1, trample_group, &[]);
-            pass.set_pipeline(trample_decay);
-            pass.dispatch_workgroups(TRAMPLE_CELLS.div_ceil(64), 1, 1);
-            if buffers.interactor_count > 0 {
-                pass.set_pipeline(trample_stamp);
-                pass.dispatch_workgroups(buffers.interactor_count, 1, 1);
+        // superfargoth patch (own: trample source): `built_in_trample_passes`.
+        let (decay, stamp) = crate::trample_source::built_in_trample_passes(
+            external.is_some(),
+            buffers.interactor_count,
+        );
+        if decay || stamp {
+            let span = diagnostics.time_span(encoder, "grass_trample");
+            {
+                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                    label: Some("grass_trample"),
+                    ..Default::default()
+                });
+                pass.set_bind_group(0, shared_group, &[]);
+                pass.set_bind_group(1, trample_group, &[]);
+                if decay {
+                    pass.set_pipeline(trample_decay);
+                    pass.dispatch_workgroups(TRAMPLE_CELLS.div_ceil(64), 1, 1);
+                }
+                if stamp {
+                    pass.set_pipeline(trample_stamp);
+                    pass.dispatch_workgroups(buffers.interactor_count, 1, 1);
+                }
             }
+            span.end(encoder);
         }
-        span.end(encoder);
 
         let span = diagnostics.time_span(encoder, "grass_cull");
         {
@@ -184,7 +224,14 @@ pub(crate) fn run_generate(
             });
             pass.set_bind_group(0, shared_group, &[]);
             pass.set_bind_group(1, generate_group, &[]);
-            pass.set_pipeline(generate);
+            // superfargoth patch (own: trample source)
+            if let Some(((source_group, generate_texture), empty)) = external {
+                pass.set_bind_group(2, empty, &[]);
+                pass.set_bind_group(3, source_group, &[]);
+                pass.set_pipeline(generate_texture);
+            } else {
+                pass.set_pipeline(generate);
+            }
             pass.dispatch_workgroups_indirect(&buffers.dispatch, 0);
             pass.set_pipeline(write_draw_args);
             pass.set_bind_group(1, args_group, &[]);

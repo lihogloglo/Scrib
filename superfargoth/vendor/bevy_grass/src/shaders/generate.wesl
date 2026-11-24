@@ -85,6 +85,29 @@ struct DrawArgs {
 // use a buffer both ways.
 @group(2) @binding(0) var<storage, read_write> dispatch: DispatchArgs;
 
+// superfargoth patch (own: trample source): an external trample texture
+// (`trample_source.rs`), read by `generate` instead of the trample cells when
+// built with `TRAMPLE_TEXTURE`. Group 2 is empty in that pipeline.
+/// Mirrors `TrampleSourceUniform` in `render/trample_source.rs`.
+@if(TRAMPLE_TEXTURE)
+struct TrampleSource {
+    /// xy: the window's first corner; z: texels per metre (0: not placed).
+    now: vec4<f32>,
+    /// xy: the texel holding the first corner (below the size); z: texels per
+    /// side (0: not placed); w: the press channel.
+    now_texel: vec4<i32>,
+    then: vec4<f32>,
+    then_texel: vec4<i32>,
+    /// x: strength; y: edge margin, z: edge fade, in metres; w: direction floor.
+    lookup: vec4<f32>,
+}
+@if(TRAMPLE_TEXTURE)
+@group(3) @binding(0) var trample_now: texture_2d<f32>;
+@if(TRAMPLE_TEXTURE)
+@group(3) @binding(1) var trample_then: texture_2d<f32>;
+@if(TRAMPLE_TEXTURE)
+@group(3) @binding(2) var<uniform> trample_source: TrampleSource;
+
 const WORKGROUP: u32 = 64u;
 /// Candidates per slice: one workgroup's share of a chunk.
 const SLICE: u32 = 512u;
@@ -216,6 +239,66 @@ fn trample_push(point: vec2<f32>) -> vec2<f32> {
         return vec2<f32>(0.0);
     }
     return trample_unpack(trample[trample_slot(cell)]);
+}
+
+// superfargoth patch (own: trample source)
+/// The press `texture` holds at window texel `texel` (counted from the first
+/// corner) of a window placed by `cells`: 0 outside the window. The first
+/// texel is below the size, so one subtraction wraps the torus.
+@if(TRAMPLE_TEXTURE)
+fn source_press(texture: texture_2d<f32>, cells: vec4<i32>, texel: vec2<i32>) -> f32 {
+    let n = vec2<i32>(cells.z);
+    if any(texel < vec2<i32>(0)) || any(texel >= n) {
+        return 0.0;
+    }
+    let wrapped = texel + cells.xy;
+    return textureLoad(texture, select(wrapped, wrapped - n, wrapped >= n), 0)[cells.w];
+}
+
+/// The push of the external trample texture at `point` for a blade whose own
+/// direction is `own`: down the press slope (forward differences one texel
+/// +X and +Z, `own` mixed in at the direction floor), as long as the press
+/// times the strength, at most 1. One fetch where nothing is pressed, three
+/// where something is. CPU twin: `trample_source::trample_texture_push`.
+@if(TRAMPLE_TEXTURE)
+fn source_push(texture: texture_2d<f32>, place: vec4<f32>, cells: vec4<i32>, point: vec2<f32>, own: vec2<f32>) -> vec2<f32> {
+    if cells.z <= 0 || place.z <= 0.0 {
+        return vec2<f32>(0.0);
+    }
+    let n = f32(cells.z);
+    let t = (point - place.xy) * place.z;
+    let edge = min(min(t.x, n - t.x), min(t.y, n - t.y)) / place.z;
+    let lookup = trample_source.lookup;
+    let fade = saturate((edge - lookup.y) / max(lookup.z, 1e-6));
+    if fade <= 0.0 {
+        return vec2<f32>(0.0);
+    }
+    let texel = vec2<i32>(floor(t));
+    let p = source_press(texture, cells, texel) * fade;
+    if p <= 0.0 {
+        return vec2<f32>(0.0);
+    }
+    let px = source_press(texture, cells, texel + vec2<i32>(1, 0)) * fade;
+    let pz = source_press(texture, cells, texel + vec2<i32>(0, 1)) * fade;
+    let away = -vec2<f32>(px - p, pz - p) + own * lookup.w;
+    return away / max(length(away), 1e-6) * min(p * lookup.x, 1.0);
+}
+
+/// The push at a blade root `point` of a blade facing `facing` (turns): xy
+/// this frame's, zw last frame's. Built in, both are the trample cell's.
+@if(TRAMPLE_TEXTURE)
+fn blade_push(point: vec2<f32>, facing: f32) -> vec4<f32> {
+    let own = vec2<f32>(sin(facing * TAU), cos(facing * TAU));
+    let s = trample_source;
+    return vec4<f32>(
+        source_push(trample_now, s.now, s.now_texel, point, own),
+        source_push(trample_then, s.then, s.then_texel, point, own),
+    );
+}
+@else
+fn blade_push(point: vec2<f32>, facing: f32) -> vec4<f32> {
+    let push = trample_push(point);
+    return vec4<f32>(push, push);
 }
 
 @compute @workgroup_size(1)
@@ -451,11 +534,14 @@ fn evaluate(chunk: Chunk, field: Field, index: u32) -> Generated {
     blade.clump = clump_of(root.xz);
     // A trampled blade lies down away from what pushed it, and the wind moves
     // it less the flatter it lies.
-    let push = trample_push(root.xz);
+    // superfargoth patch (own: trample source): `blade_push`, this frame's
+    // push and last frame's (the same built in, as upstream).
+    let push = blade_push(root.xz, blade.facing);
     // Flattened blades and sheltered fields move less.
-    let calm = (1.0 - min(length(push), 1.0)) * (1.0 - look.motion.z);
-    blade.bend = wind_bend(wind, root.xz, seed_unit, look.motion.y, frame.time, false, gust_texture, gust_sampler) * calm + push;
-    blade.previous_bend = wind_bend(wind, root.xz, seed_unit, look.motion.y, frame.previous_time, true, gust_texture, gust_sampler) * calm + push;
+    let calm = (1.0 - min(length(push.xy), 1.0)) * (1.0 - look.motion.z);
+    let previous_calm = (1.0 - min(length(push.zw), 1.0)) * (1.0 - look.motion.z);
+    blade.bend = wind_bend(wind, root.xz, seed_unit, look.motion.y, frame.time, false, gust_texture, gust_sampler) * calm + push.xy;
+    blade.previous_bend = wind_bend(wind, root.xz, seed_unit, look.motion.y, frame.previous_time, true, gust_texture, gust_sampler) * previous_calm + push.zw;
 
     out.keep = true;
     out.bucket = select(lod, 0u, view.fixed_lod != 3u);

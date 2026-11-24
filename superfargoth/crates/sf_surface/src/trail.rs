@@ -7,8 +7,8 @@
 //!   a texel's world index follows from its address ([`world_of`]), and a texel that held another
 //!   world texel last frame (it entered the ring) starts from 0 ([`kept`]).
 //! - **Texel:** R the depression (m, ≤ 0, down to `-depth`: the stamp carves the cover to the
-//!   ground), G the lip (m, ≥ 0). The GPU texture is `Rgba16Float` (a core storage format; B, A
-//!   spare for W6b).
+//!   ground), G the lip (m, ≥ 0). The GPU texture is `Rgba16Float` (a core storage format); B the
+//!   deformer ceiling (S1a), A the press (GC-T1).
 //! - **Stamps** ([`Stamp`]): oriented ellipses (feet, later lying bodies), combined with Min on R
 //!   and Max on G; the profile is a flat-bottomed print with a soft wall and a quadratic lip
 //!   around it (Rise of the Tomb Raider's deferred snow deformation: the trail plus an elevated
@@ -19,6 +19,15 @@
 //!   nothing falling the prints stay. Refill is released in whole [`REFILL_QUANTUM_M`] steps so a
 //!   half-float texel (11-bit mantissa) never rounds a small step away, and the pass runs only on
 //!   those frames.
+//! - **Press** (A; GC-T1, groundcover.md "One trample source"): a press strength 0..1, independent
+//!   of the cover depth, that plants and blades read (GC-M3, GC-3d). Each stamp writes
+//!   [`press_profile`] around its centre (Max), every pass decays it by `exp(-dt / recovery)`
+//!   ([`Press::keep`]) and snaps it to 0 under [`PRESS_FLOOR`] ([`press_update`]). Decay is
+//!   released in steps of at least [`PRESS_STEP`] recovery times ([`PressClock`]) so a half float
+//!   never rounds a step away, and the pass runs until the last press is under the floor
+//!   ([`press_bound`]): a CPU time bound, no readback. The standard world-anchored interaction
+//!   target decayed per frame (UE5 interactive foliage, Horizon's grass). The deformer capture
+//!   presses it too (GC-T2b, [`crate::deform::press_of`]): whole legs, bodies and creatures.
 //!
 //! Presentation only (design rule "net-ready"): stamps never feed gameplay.
 
@@ -49,9 +58,22 @@ pub const REFILL_QUANTUM_M: f32 = 0.002;
 /// Wider than the sole: a boot pushes snow aside, and the ring's 6.25 cm texels need ≥ 1.5 texels.
 pub const FOOT_HALF_M: Vec2 = Vec2::new(0.16, 0.09);
 
+/// A press under this snaps to 0 (A, GC-T1): one 8-bit step, so no reader moves visibly for it,
+/// and well inside the half float's normal range (≥ 2⁻¹⁴, 11-bit significand), so its decay
+/// steps stay exact. A format constant (the 8-bit step and the half float), not a tunable.
+// tunables: const (a format: one 8-bit step, inside the half float's normal range)
+pub const PRESS_FLOOR: f32 = 1.0 / 256.0;
+/// Press decay is released in steps of at least this many recovery times: each step shrinks the
+/// press by ≥ 0.78 %, 16 × a half float's rounding ([`HALF_ROUNDING`]), so no step rounds away.
+// tunables: const (a format margin: 16 × the half float's rounding; the decay is exp(-dt / recovery) whatever it is)
+pub const PRESS_STEP: f32 = 1.0 / 128.0;
+/// A half float's round-to-nearest relative error bound (2⁻¹¹, 11-bit significand).
+// tunables: const (a format: the half float's 11-bit significand)
+pub const HALF_ROUNDING: f32 = 1.0 / 2048.0;
+
 /// Uniform header slots: window, mins, counts, shape, then the deformer capture's three
-/// (`capture`, `slab`, `ground`; S1a).
-pub const HEADER_SLOTS: usize = 7;
+/// (`capture`, `slab`, `ground`; S1a), then the press (`press`, GC-T1).
+pub const HEADER_SLOTS: usize = 8;
 /// Uniform words: the header's `vec4` slots, then two per stamp.
 pub const PARAM_SLOTS: usize = HEADER_SLOTS + 2 * MAX_STAMPS;
 
@@ -111,6 +133,100 @@ impl Stamp {
         let (dep, lip) = profile(Vec2::new(along, across).length());
         let h = depth_m * self.depth;
         [-h * dep, LIP_HEIGHT * h * lip]
+    }
+}
+
+/// The press (A) at distance `r` (m) from a stamp's centre: 1 at the centre, 0 from
+/// `radius_m` on, a smoothstep between (0.5 at half the radius). Round, not the print's ellipse:
+/// a foot bends the plants around it on every side, whatever its facing.
+pub fn press_profile(r: f32, radius_m: f32) -> f32 {
+    if radius_m <= 0.0 {
+        return 0.0;
+    }
+    1.0 - smoothstep(0.0, 1.0, r / radius_m)
+}
+
+/// The press pass's parameters (GC-T1; uniform slot `press`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Press {
+    /// Decay released this pass (s; 0 = none, [`PressClock::advance`]).
+    pub dt_s: f32,
+    /// `surface.trail.press_recovery_s`: the spring back's e-folding time (s).
+    pub recovery_s: f32,
+    /// `surface.trail.press_radius_m`: a stamp's press reach (m; 0 = stamps press nothing).
+    pub radius_m: f32,
+}
+
+impl Press {
+    /// The share of the press kept this pass: `exp(-dt / recovery)` (no recovery time: none).
+    pub fn keep(&self) -> f32 {
+        if self.dt_s <= 0.0 {
+            1.0
+        } else if self.recovery_s <= 0.0 {
+            0.0
+        } else {
+            (-self.dt_s / self.recovery_s).exp()
+        }
+    }
+}
+
+/// One texel's press: its last value (0 if it entered the ring) decayed, stamped (Max) at its
+/// centre `q` (render XZ), merged (Max) with the deformer capture's press `captured` there
+/// (GC-T2b; spread, GC-T3: [`crate::deform::Capture::spread_press_at`]; 0 = none), snapped to 0 under [`PRESS_FLOOR`].
+/// `trail.wgsl` `main`.
+pub fn press_update(prev: f32, q: Vec2, stamps: &[Stamp], press: &Press, captured: f32) -> f32 {
+    let mut a = prev * press.keep();
+    for s in stamps {
+        a = a.max(press_profile(q.distance(s.center), press.radius_m));
+    }
+    a = a.max(captured);
+    if a < PRESS_FLOOR { 0.0 } else { a }
+}
+
+/// Recovery times of decay after the last press stamp that bring any press (≤ 1) under
+/// [`PRESS_FLOOR`] even when every stored step rounds up by [`HALF_ROUNDING`] (at most one
+/// rounding per [`PRESS_STEP`]): `ln(1 / floor) / (1 − rounding / step)` ≈ 5.9.
+pub fn press_bound() -> f32 {
+    (1.0 / PRESS_FLOOR).ln() / (1.0 - HALF_ROUNDING / PRESS_STEP)
+}
+
+/// The CPU side of the press decay (GC-T1): accumulates frame time and releases it in steps of
+/// at least [`PRESS_STEP`] recovery times while a press may still stand above the floor.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PressClock {
+    /// Time not released yet (s).
+    pub pending_s: f32,
+    /// Recovery times released since the last press stamp (`None`: every press is under the
+    /// floor, the pass has no press work).
+    pub decayed: Option<f32>,
+}
+
+impl PressClock {
+    /// Advances by `dt_s` (negative: ignored) at this frame's recovery time; `pressed`: a stamp
+    /// writes a press this frame (after this pass's decay). Returns the decay this pass applies
+    /// ([`Press::dt_s`]; 0 = none): non-zero means the pass must run.
+    pub fn advance(&mut self, dt_s: f32, recovery_s: f32, pressed: bool) -> f32 {
+        let mut out = 0.0;
+        if let Some(done) = self.decayed {
+            self.pending_s += dt_s.max(0.0);
+            if self.pending_s > 0.0 && (recovery_s <= 0.0 || self.pending_s >= PRESS_STEP * recovery_s) {
+                out = std::mem::take(&mut self.pending_s);
+                let x = if recovery_s > 0.0 { done + out / recovery_s } else { f32::INFINITY };
+                self.decayed = (x < press_bound()).then_some(x);
+            }
+        }
+        if pressed {
+            self.decayed = Some(0.0);
+        }
+        if self.decayed.is_none() {
+            self.pending_s = 0.0;
+        }
+        out
+    }
+
+    /// Whether a press may still stand above the floor.
+    pub fn live(&self) -> bool {
+        self.decayed.is_some()
     }
 }
 
@@ -181,6 +297,8 @@ pub struct TrailPass {
     pub stamps: Vec<Stamp>,
     /// The deformer capture drawn last frame (S1a, `crate::deform`), merged into B.
     pub capture: Option<crate::deform::Capture>,
+    /// The press channel's decay and stamp reach (A, GC-T1).
+    pub press: Press,
 }
 
 impl TrailPass {
@@ -200,8 +318,9 @@ impl TrailPass {
             let g = &c.ground;
             s[4] = f([c.corner.x, c.corner.y, c.texel_m, c.near_y]);
             s[5] = f([c.range_m, crate::deform::ceiling_ref(self.depth_m), g.corner.x, g.corner.y]);
-            s[6] = f([g.step_m, g.edge as f32, 0.0, 0.0]);
+            s[6] = f([g.step_m, g.edge as f32, c.press_m, c.spread_m]);
         }
+        s[7] = f([self.press.dt_s, self.press.recovery_s, self.press.radius_m, PRESS_FLOOR]);
         for (i, st) in self.stamps.iter().take(MAX_STAMPS).enumerate() {
             s[HEADER_SLOTS + 2 * i] = f([st.center.x, st.center.y, st.axis.x, st.axis.y]);
             s[HEADER_SLOTS + 1 + 2 * i] = f([st.half.x, st.half.y, st.depth, 0.0]);
@@ -232,6 +351,27 @@ impl TrailPass {
                 let last = if kept(addr, self.old_min, self.new_min, n) { prev[i] } else { 0.0 };
                 let captured = self.capture.as_ref().map_or(0.0, |c| c.value_at(self.texel_center(addr), depth, self.depth_m));
                 out[i] = crate::deform::ceiling_update(last, self.refill_m, captured);
+            }
+        }
+        out
+    }
+
+    /// The pass's A channel (the press, GC-T1; the capture's, GC-T2b, spread GC-T3) on a CPU ring (`RING_SIZE`²,
+    /// row-major by Z then X) with the drawn capture target `depth` (as [`TrailPass::run_ceiling`];
+    /// ignored without a capture): the GPU's result.
+    pub fn run_press(&self, prev: &[f32], depth: &[f32]) -> Vec<f32> {
+        let n = RING_SIZE;
+        let stamps = &self.stamps[..self.stamps.len().min(MAX_STAMPS)];
+        let mut out = vec![0.0; prev.len()];
+        for z in 0..n {
+            for x in 0..n {
+                let addr = IVec2::new(x, z);
+                #[allow(clippy::cast_sign_loss)]
+                let i = (z * n + x) as usize;
+                let last = if kept(addr, self.old_min, self.new_min, n) { prev[i] } else { 0.0 };
+                let q = self.texel_center(addr);
+                let captured = self.capture.as_ref().map_or(0.0, |c| c.spread_press_at(q, depth));
+                out[i] = press_update(last, q, stamps, &self.press, captured);
             }
         }
         out

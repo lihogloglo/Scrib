@@ -18,7 +18,7 @@ import sf_surface_bevy::layer::{
     SurfaceUniform, SurfaceInput, CLASS_STATIC, CLASS_DYNAMIC, FLAG_PUDDLE, FLAG_RAISE, apply_surface_layer,
     surface_porosity, surface_height_of, surface_raise_amounts, surface_raise_tops, surface_raise_of,
     surface_raise_filter_m,
-    surface_ring_at,
+    surface_ring_at, surface_press_slope_at,
 };
 
 @group(0) @binding(43) var<uniform> surface_uniform: SurfaceUniform;
@@ -76,6 +76,21 @@ fn surface_raise_at(p: vec3<f32>, n: vec3<f32>, top: f32, filter_m: f32) -> vec3
         surface_raise_of(u, a, c, vec3(0.0), 0.0),
         surface_raise_of(u, a, c, then, u.trail_prev.w),
     );
+}
+
+/// The trail ring's press (A, GC-T1) at render XZ `xz` with its forward differences one ring texel to
+/// +X and +Z (`surface_press_slope_at`): this frame's ring and placement. Reads the press-only ring
+/// (GC-T2a, depth 0) too; 0 where no ring is placed. Mesh groundcover's trample (GC-M3).
+fn surface_press_now(xz: vec2<f32>) -> vec3<f32> {
+    let u = surface_uniform;
+    return surface_press_slope_at(surface_trail, surface_sampler, u.trail, u.trail_cells, xz);
+}
+
+/// `surface_press_now` on last frame's ring and placement (motion vectors; the cells and shelter as
+/// now, the rule of `surface_raise_at`'s z).
+fn surface_press_then(xz: vec2<f32>) -> vec3<f32> {
+    let u = surface_uniform;
+    return surface_press_slope_at(surface_trail_previous, surface_sampler, u.trail_prev, u.trail_prev_cells, xz);
 }
 
 /// The layer on the view's resources.

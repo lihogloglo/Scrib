@@ -25,9 +25,11 @@
 //!   `NotShadowCaster` is not a filter here; Bevy's CPU mesh path still drops such meshes in
 //!   `queue_shadows`, the GPU path draws them. [`NoDeform`] meshes are left out (S1b: a
 //!   first-person view-model copy, drawn with the camera's projection).
-//! - **Gate** ([`cover_under`], S1b): no capture and no gaps unless snow or ash lies on a cover
-//!   cell under the window (`sf_weather_bevy::WorldSurface`); without a
-//!   `SurfaceWeatherCamera` (a host's indoor view) nothing runs at all.
+//! - **Gate** ([`capture_wanted`]; [`cover_under`], S1b): no capture and no gaps unless snow or
+//!   ash lies on a cover cell under the window (`sf_weather_bevy::WorldSurface`) or a reader
+//!   demands the press (GC-T2b, `TrailDemand`: the capture then also presses the ring's A,
+//!   `sf_surface::deform::press_of`, over grass too); without a `SurfaceWeatherCamera` (a host's
+//!   indoor view) nothing runs at all.
 //! - **Window**: [`DeformSettings::window_m`] around the [`Deformer`] root nearest the camera
 //!   (the player), world-snapped to whole texels (`sf_surface::deform::capture_min`); the target
 //!   is [`MAX_CAPTURE_SIZE`]² `Depth32Float`, the window in its first texels. The view's
@@ -394,6 +396,12 @@ pub(crate) fn cover_under(surface: Option<&WorldSurface>, uniform: &SurfaceUnifo
     })
 }
 
+/// Whether the capture runs (GC-T2b): a press demand (`press_m` > 0, [`TrailFrame::capture_press_m`])
+/// or snow or ash under the window (`covered`, [`cover_under`]; only asked without a demand).
+pub(crate) fn capture_wanted(press_m: f32, covered: impl FnOnce() -> bool) -> bool {
+    press_m > 0.0 || covered()
+}
+
 /// Picks the deformers, places the window and the slab, requests this frame's capture and hands
 /// last frame's to the ring pass (see the module docs). After `trail::update_trails`.
 #[allow(clippy::too_many_arguments, clippy::needless_pass_by_value, clippy::too_many_lines, clippy::type_complexity)]
@@ -447,9 +455,11 @@ pub(crate) fn update_deform(
         return;
     };
     let center = Vec2::new(focus.x, focus.z);
-    // No snow or ash under the window: nothing to carve, no capture (the ring still runs).
+    // No snow or ash under the window and no press demand (GC-T2b): nothing to carve or press, no
+    // capture (the ring still runs).
     let focus_world = origin.offset(focus).to_f64();
-    if !cover_under(cover.0.as_deref(), &cover.1, DVec2::new(focus_world.x, focus_world.z), f64::from(settings.window_m) * 0.5) {
+    let covered = || cover_under(cover.0.as_deref(), &cover.1, DVec2::new(focus_world.x, focus_world.z), f64::from(settings.window_m) * 0.5);
+    if !capture_wanted(trail.capture_press_m, covered) {
         if !memory.gated && settings.log_s > 0.0 {
             bevy_log::info!(
                 "surface deform: no capture, no snow or ash on the cover cells under the window (focus {:.2} {:.2} {:.2}); foot prints only",
@@ -513,8 +523,9 @@ pub(crate) fn update_deform(
             "surface deform: no ground height hook (DeformGround) or no height under the capture; carving over a plane through the player's root (wrong on slopes)"
         );
     }
-    let (near_y, range_m) = slab(ground.range(), settings.slab_below_m, trail.depth_m);
-    let capture = Capture { corner, texel_m: texel, size, near_y, range_m, ground };
+    let press_m = trail.capture_press_m;
+    let (near_y, range_m) = slab(ground.range(), settings.slab_below_m, trail.depth_m, press_m);
+    let capture = Capture { corner, texel_m: texel, size, near_y, range_m, ground, press_m, spread_m: trail.capture_spread_m };
     let (view_from_world, clip_from_world) = capture.view();
     stats.deform_captures += 1;
     stats.deform_casters = casters.len();

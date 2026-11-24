@@ -63,17 +63,28 @@ pub struct GroundcoverParams {
     pub sway: Vec4,
     /// x: cross-wind sway Hz (quantised), yzw: unused.
     pub sway_cross: Vec4,
+    /// Trample (GC-M3, [`crate::trample`]): x the largest tilt under a full press (rad), y the scale on the press
+    /// (0 = off), zw unused.
+    pub trample: Vec4,
     pub species: [GroundcoverSpeciesGpu; MAX_SPECIES_PER_BATCH],
 }
 
 impl Default for GroundcoverParams {
     fn default() -> Self {
-        Self { fade: Vec4::ZERO, wind: Vec4::ZERO, sway: Vec4::ZERO, sway_cross: Vec4::ZERO, species: [GroundcoverSpeciesGpu::default(); MAX_SPECIES_PER_BATCH] }
+        Self {
+            fade: Vec4::ZERO,
+            wind: Vec4::ZERO,
+            sway: Vec4::ZERO,
+            sway_cross: Vec4::ZERO,
+            trample: Vec4::ZERO,
+            species: [GroundcoverSpeciesGpu::default(); MAX_SPECIES_PER_BATCH],
+        }
     }
 }
 
 /// The live wind values (`groundcover.render.wind_scale`, `bend_per_mps`, `phase_offset_m`, `gust_contrast`,
-/// `sway_amount`, `sway_hz`, `flutter_amount`, `flutter_hz`).
+/// `sway_amount`, `sway_hz`, `flutter_amount`, `flutter_hz`) and the trample's (`trample_max_deg`, `trample_amount`;
+/// GC-M3).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WindSettings {
     pub scale: f32,
@@ -84,6 +95,8 @@ pub struct WindSettings {
     pub sway_hz: f32,
     pub flutter_amount: f32,
     pub flutter_hz: f32,
+    pub trample_max_deg: f32,
+    pub trample_amount: f32,
 }
 
 /// Seconds after which Bevy's `globals.time` wraps to 0 (`bevy_render` `globals.wesl`: "Wraps to 0 after 1 hour").
@@ -112,16 +125,19 @@ impl Default for WindSettings {
             sway_hz: t::SWAY_HZ.default_value(),
             flutter_amount: t::FLUTTER_AMOUNT.default_value(),
             flutter_hz: t::FLUTTER_HZ.default_value(),
+            trample_max_deg: t::TRAMPLE_MAX_DEG.default_value(),
+            trample_amount: t::TRAMPLE_AMOUNT.default_value(),
         }
     }
 }
 
 impl WindSettings {
-    /// Writes the wind, sway and cross-sway fields of `params` (frequencies quantised by [`quantise_hz`]).
+    /// Writes the wind, sway, cross-sway and trample fields of `params` (frequencies quantised by [`quantise_hz`]).
     pub fn apply(self, params: &mut GroundcoverParams) {
         params.wind = Vec4::new(self.scale, self.bend_per_mps, self.phase_offset_m, self.gust_contrast);
         params.sway = Vec4::new(self.sway_amount, quantise_hz(self.sway_hz), self.flutter_amount, quantise_hz(self.flutter_hz));
         params.sway_cross = Vec4::new(quantise_hz(CROSS_SWAY_RATIO * self.sway_hz), 0.0, 0.0, 0.0);
+        params.trample = Vec4::new(self.trample_max_deg.to_radians(), self.trample_amount, 0.0, 0.0);
     }
 }
 

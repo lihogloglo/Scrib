@@ -10,6 +10,7 @@ mod msaa;
 pub(crate) mod platform;
 pub(crate) mod resources;
 mod shadows;
+pub(crate) mod trample_source; // superfargoth patch (own: trample source)
 pub(crate) mod view;
 
 use bevy::app::{App, Plugin, PostUpdate};
@@ -48,6 +49,9 @@ impl Plugin for GrassRenderPlugin {
             .insert_resource(self.shaders.clone())
             .init_resource::<resources::ExtractedGrass>()
             .init_resource::<resources::GrassSharedBindGroups>()
+            // superfargoth patch (own: trample source)
+            .init_resource::<trample_source::ExtractedTrampleTexture>()
+            .init_resource::<trample_source::GrassTrampleSourceGroup>()
             .init_resource::<SpecializedRenderPipelines<bevy_glue::GrassMainPipeline>>()
             .init_resource::<SpecializedRenderPipelines<bevy_glue::GrassPrepassPipeline>>()
             .init_resource::<SpecializedRenderPipelines<bevy_glue::GrassShadowPipeline>>()
@@ -71,17 +75,27 @@ impl Plugin for GrassRenderPlugin {
             )
             .add_systems(
                 ExtractSchedule,
-                (resources::extract_grass, resources::extract_cameras).run_if(platform::supported),
+                (
+                    resources::extract_grass,
+                    resources::extract_cameras,
+                    trample_source::extract_trample_texture, // superfargoth patch (own: trample source)
+                )
+                    .run_if(platform::supported),
             )
             .add_systems(
                 Render,
                 (
                     bevy_glue::queue_grass.in_set(RenderSystems::Queue),
-                    (resources::prepare_shared, view::prepare_views)
+                    (
+                        resources::prepare_shared,
+                        view::prepare_views,
+                        trample_source::resolve_trample_texture, // superfargoth patch (own: trample source)
+                    )
                         .in_set(RenderSystems::PrepareResources),
                     (
                         resources::prepare_shared_bind_groups,
                         view::prepare_view_bind_groups,
+                        trample_source::prepare_trample_source_group, // superfargoth patch (own: trample source)
                     )
                         .in_set(RenderSystems::PrepareBindGroups),
                 )
@@ -90,6 +104,7 @@ impl Plugin for GrassRenderPlugin {
             .add_systems(
                 RenderGraph,
                 compute::run_generate
+                    .in_set(crate::GrassGenerateSystems) // superfargoth patch (own: trample source)
                     .before(camera_driver)
                     .run_if(platform::supported),
             );

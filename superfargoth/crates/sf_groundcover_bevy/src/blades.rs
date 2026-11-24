@@ -15,12 +15,15 @@
 //! viewer's block; a field is despawned only once it is `groundcover.blades.hysteresis_blocks` outside the ring, and
 //! the spawns and despawns of one move land in one frame (`bevy_grass` rebuilds its tables on any field change).
 //! When the floating origin moves, every field's transform is rewritten from its world centre. Not yet: despawn on
-//! disable, trampling, render layers.
+//! disable, render layers.
 //!
 //! **Wind (slice GC-3c):** the crate's own wind model is off (`GrassPlugin { wind: false }`); [`sample_blade_wind`]
 //! writes `GrassWindFrame` from the weather's wind (`sf_wind_bevy::WindField`, still air without one) through the
 //! pure [`blade_wind_frame`]: direction and strength follow the wind, the gust fronts scroll downwind at the wind
 //! speed, and the look values are the live `groundcover.blades.*` wind tunables ([`BladeWindSettings`]).
+//!
+//! **Trampling (slice GC-3d2, [`crate::blade_press`]):** the trail ring's press (A) is the blades' external
+//! trample source, the same frame's ring the mesh plants read; `groundcover.render.trample_amount` scales it.
 //!
 //! Systems: [`BladeSystems::Drive`] (`PostUpdate`, after `WorldOriginSystems`, before
 //! `GrassSystems::DetectChanges`, so a field spawned or moved is seen the same frame); [`sample_blade_wind`]
@@ -63,8 +66,9 @@ use crate::tunables::{
 };
 use crate::{GroundcoverSource, GroundcoverViewer, RenderSettings, read};
 
-/// The `bevy_grass` style a [`BladeStyles`] entry maps to, for games that don't depend on the crate.
-pub use bevy_grass::GrassStyle;
+/// The `bevy_grass` style a [`BladeStyles`] entry maps to, its blade and its sub-species, for games that don't depend on
+/// the crate.
+pub use bevy_grass::{GrassBlade, GrassSpecies, GrassStyle};
 
 /// Adds `bevy_grass` (blades, its wind and light following) with blade shadows off. Add it after
 /// Bevy's render plugins; headless (no render app) it keeps only its main-world part.
@@ -99,6 +103,10 @@ impl Plugin for BladesPlugin {
                 .before(GrassSystems::DetectChanges)
                 .run_if(blades_enabled),
         );
+        // The trail ring's press drives the blades (GC-3d2).
+        if let Some(render_app) = app.get_sub_app_mut(bevy_render::RenderApp) {
+            crate::blade_press::build(render_app);
+        }
     }
 }
 

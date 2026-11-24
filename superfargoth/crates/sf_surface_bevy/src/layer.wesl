@@ -182,6 +182,10 @@ const COVER_ASH: u32 = 1u;
 /// when the camera moves on); the prints' gradient fades as a pixel grows from 1 to 4 texels.
 const TRAIL_EDGE_FADE_M: f32 = 2.0;
 const TRAIL_LIP_HEIGHT: f32 = 0.25;
+/// The press channel's resolution (A, GC-T1; `sf_surface::trail::PRESS_FLOOR`, checked by a test): the
+/// pass snaps a press under it to 0, so a press difference under it carries no direction.
+// tunables: const (the ring's press resolution, sf_surface::trail::PRESS_FLOOR; a format fact)
+const TRAIL_PRESS_FLOOR: f32 = 0.00390625;
 
 const LUMA: vec3<f32> = vec3(0.2126, 0.7152, 0.0722);
 
@@ -636,18 +640,54 @@ fn surface_trail_at(trail: texture_2d<f32>, samp: sampler, u: SurfaceUniform, xz
 /// A ring placed by `place` (`trail` slot layout) and `cells` (`trail_cells`) at `xz`: this
 /// frame's (`surface_trail_at`) or last frame's (W6b motion vectors). 0 when the ring is off.
 fn surface_ring_at(trail: texture_2d<f32>, samp: sampler, place: vec4<f32>, cells: vec4<i32>, xz: vec2<f32>) -> vec3<f32> {
+    if place.w <= 0.0 {
+        return vec3(0.0);
+    }
+    let l = surface_ring_lookup(place, cells, xz);
+    if l.z <= 0.0 {
+        return vec3(0.0);
+    }
+    return textureSampleLevel(trail, samp, l.xy, 0.0).xyz * l.z;
+}
+
+/// Where a ring placed by `place` (`trail` slot layout) and `cells` (`trail_cells`) holds render XZ
+/// `xz`: xy the torus UV, z the edge fade (0 over TRAIL_EDGE_FADE_M before the ring's edge, and when
+/// no ring is placed: `place.z` or `cells.z` 0). The depth `place.w` plays no part (GC-M3: the
+/// press-only ring, GC-T2a, sits at depth 0).
+fn surface_ring_lookup(place: vec4<f32>, cells: vec4<i32>, xz: vec2<f32>) -> vec3<f32> {
     let n = f32(cells.z);
-    if place.w <= 0.0 || place.z <= 0.0 || n <= 0.0 {
+    if place.z <= 0.0 || n <= 0.0 {
         return vec3(0.0);
     }
     let t = (xz - place.xy) * place.z;
     let edge_m = min(min(t.x, n - t.x), min(t.y, n - t.y)) / place.z;
     let fade = saturate((edge_m - 0.5) / TRAIL_EDGE_FADE_M);
-    if fade <= 0.0 {
+    return vec3((t + vec2<f32>(cells.xy)) / n, fade);
+}
+
+/// The press (A, 0..1; GC-T1) of a ring placed by `place` and `cells` at `xz` (bilinear over the
+/// torus, the same edge fade as `surface_ring_at`). Unlike `surface_ring_at` it reads a press-only
+/// ring (depth `place.w` 0, GC-T2a): 0 only where no ring is placed (GC-M3).
+fn surface_press_at(trail: texture_2d<f32>, samp: sampler, place: vec4<f32>, cells: vec4<i32>, xz: vec2<f32>) -> f32 {
+    let l = surface_ring_lookup(place, cells, xz);
+    if l.z <= 0.0 {
+        return 0.0;
+    }
+    return textureSampleLevel(trail, samp, l.xy, 0.0).w * l.z;
+}
+
+/// The press at `xz` and its forward differences one ring texel away (GC-M3; three fetches, one
+/// when there is no press): x the press, y the press one texel to +X minus x, z one texel to +Z
+/// minus x. All 0 where the press is 0.
+fn surface_press_slope_at(trail: texture_2d<f32>, samp: sampler, place: vec4<f32>, cells: vec4<i32>, xz: vec2<f32>) -> vec3<f32> {
+    let p = surface_press_at(trail, samp, place, cells, xz);
+    if p <= 0.0 {
         return vec3(0.0);
     }
-    let uv = (t + vec2<f32>(cells.xy)) / n;
-    return textureSampleLevel(trail, samp, uv, 0.0).xyz * fade;
+    let d = 1.0 / place.z;
+    let px = surface_press_at(trail, samp, place, cells, xz + vec2(d, 0.0));
+    let pz = surface_press_at(trail, samp, place, cells, xz + vec2(0.0, d));
+    return vec3(p, px - p, pz - p);
 }
 
 /// Raised cover (W6b; twin `sf_surface::trail::cover_raise`): how high a cover of depth `d`

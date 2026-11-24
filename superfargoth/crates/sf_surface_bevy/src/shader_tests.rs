@@ -306,9 +306,77 @@ fn trail_pass_compiles_and_matches_the_cpu_twin() {
     let naga::TypeInner::Struct { span, .. } = params.1.inner else { panic!("TrailParams is a struct") };
     assert_eq!(span as usize, sf_surface::trail::PARAM_SLOTS * 16);
     assert!(src.contains(&format!("stamps: array<Stamp, {}>", sf_surface::trail::MAX_STAMPS)));
+    // The press spread's tap layout (GC-T3) is the twin's.
+    assert!(src.contains(&format!("const SPREAD_TAPS: u32 = {}u;", sf_surface::deform::SPREAD_TAPS)));
+    assert!(src.contains(&format!("const SPREAD_REACH: f32 = {:?};", sf_surface::deform::SPREAD_REACH)));
     // The layer's lip height is the twin's (the debug view scales by it).
     let layer = include_str!("layer.wesl");
     assert!(layer.contains(&format!("const TRAIL_LIP_HEIGHT: f32 = {:?};", sf_surface::trail::LIP_HEIGHT)));
+}
+
+/// GC-M3: the press reader (`surface_press_at`, via `surface_press_now` / `surface_press_then`) links and
+/// validates in the view module, gates on the placement (`place.z`, `cells.z`), never on the depth `place.w`
+/// (the press-only ring sits at depth 0), reads A with the ring's edge fade; `surface_ring_at` keeps its depth
+/// gate. These are the lines `tests.rs` `the_press_reads_on_the_press_only_ring` transcribes; the press floor
+/// is the twin's.
+#[test]
+fn press_reader_reads_the_press_only_ring() {
+    for defs in [with(HIGH, &["SURFACE_WEATHER"]), with(HIGH, &["SURFACE_WEATHER_PREPASS"])] {
+        let wgsl = compile_with("sf_surface_bevy::view", &defs, false).unwrap_or_else(|e| panic!("{e}"));
+        // The root module keeps its names; the imported layer functions come mangled, the name inside.
+        for f in ["fn surface_press_now(", "fn surface_press_then(", "surface_press_slope_at(", "surface_press_at(", "surface_ring_lookup("] {
+            assert!(wgsl.contains(f), "{f} missing");
+        }
+    }
+    let layer = include_str!("layer.wesl");
+    let body = |name: &str| layer.split(&format!("fn {name}(")).nth(1).unwrap().split("\n}\n").next().unwrap().to_owned();
+    let lookup = body("surface_ring_lookup");
+    assert!(lookup.contains("if place.z <= 0.0 || n <= 0.0 {"));
+    assert!(lookup.contains("let t = (xz - place.xy) * place.z;"));
+    assert!(lookup.contains("let edge_m = min(min(t.x, n - t.x), min(t.y, n - t.y)) / place.z;"));
+    assert!(lookup.contains(&format!("let fade = saturate((edge_m - {:?}) / TRAIL_EDGE_FADE_M);", crate::trail::RING_EDGE_MARGIN_M)));
+    assert!(lookup.contains("return vec3((t + vec2<f32>(cells.xy)) / n, fade);"));
+    let press = body("surface_press_at");
+    assert!(press.contains("return textureSampleLevel(trail, samp, l.xy, 0.0).w * l.z;"));
+    for b in [&lookup, &press, &body("surface_press_slope_at")] {
+        assert!(!b.contains("place.w"), "the press ignores the depth:\n{b}");
+    }
+    assert!(body("surface_ring_at").contains("if place.w <= 0.0 {"), "the ring's R/G/B keep the depth gate");
+    assert!(layer.contains(&format!("const TRAIL_EDGE_FADE_M: f32 = {:?};", crate::trail::RING_EDGE_FADE_M)));
+    assert!(layer.contains(&format!("const TRAIL_PRESS_FLOOR: f32 = {:?};", sf_surface::trail::PRESS_FLOOR)));
+}
+
+/// GC-T1: the pass runs on the frames that release press decay, for the bound after the last
+/// press stamp (`sf_surface::trail::press_bound` recovery times), then stops with nothing else
+/// to do; the press sits in the header slot `TrailPass::slots` packs it in.
+#[test]
+#[allow(clippy::cast_precision_loss)]
+fn trail_pass_runs_until_the_press_has_decayed() {
+    use sf_surface::trail::{HEADER_SLOTS, PRESS_STEP, Press, PressClock, press_bound};
+    let src = include_str!("trail.wgsl");
+    let press_slot = src.find("    press: vec4<f32>,").expect("TrailParams.press");
+    assert!(src.find("    ground: vec4<f32>,").unwrap() < press_slot && press_slot < src.find("    stamps: array").unwrap());
+    assert_eq!(HEADER_SLOTS, 8, "window, mins, counts, shape, capture, slab, ground, press");
+    let (dt, recovery) = (1.0 / 120.0, 2.0);
+    let held = bevy_math::IVec2::new(3, -4);
+    let mut frame = crate::TrailFrame { on: true, new_min: held, ..Default::default() };
+    assert!(!frame.has_work(Some(held)), "an idle ring does nothing");
+    assert!(frame.has_work(None) && frame.has_work(Some(held + 1)), "a moved window is work");
+    let mut clock = PressClock::default();
+    clock.advance(dt, recovery, true);
+    let (mut runs, mut last_run) = (0, 0);
+    for i in 1..3000 {
+        frame.press = Press { dt_s: clock.advance(dt, recovery, false), recovery_s: recovery, radius_m: 0.35 };
+        if frame.has_work(Some(held)) {
+            runs += 1;
+            last_run = i;
+        }
+    }
+    let bound_s = press_bound() * recovery;
+    let stopped_s = last_run as f32 * dt;
+    assert!(stopped_s >= bound_s && stopped_s <= bound_s + PRESS_STEP * recovery + dt, "stopped at {stopped_s} s, bound {bound_s} s");
+    // At most every frame, at least once per step.
+    assert!(runs <= last_run && runs as f32 >= bound_s / (PRESS_STEP * recovery + dt), "{runs} runs");
 }
 
 /// SW-5: the exposure pack pass parses and validates as naga reads it, its uniform is the size
@@ -445,4 +513,18 @@ fn raise_filter_matches_the_cpu_twin() {
     let n = sf_surface::view::NOISE_SIZE as usize;
     let texels: usize = (0..=n.trailing_zeros()).map(|l| (n >> l) * (n >> l)).sum();
     assert_eq!(sf_surface::view::noise_atlas_mips().len(), texels);
+}
+
+/// GC-3d2: the ring pass runs once per frame in the root `RenderGraph` schedule before
+/// `camera_driver`, in [`crate::TrailPassSystems`] (blades order their generate after it), and
+/// [`crate::TrailViews`] is published after the rings flip, before the views bind them. Source
+/// check (as the shader checks): the order is not observable without a GPU.
+#[test]
+fn trail_pass_runs_before_every_camera() {
+    let squash = |s: &str| s.split_whitespace().collect::<String>();
+    let trail = squash(&std::fs::read_to_string(PathBuf::from(CRATE).join("src/trail.rs")).expect("trail.rs"));
+    assert!(trail.contains("RenderGraph,trail_pass.in_set(TrailPassSystems).in_set(RenderGraphSystems::Render).before(camera_driver),"));
+    assert!(!trail.contains("Core3d"), "the ring pass no longer runs inside a camera's graph");
+    let lib = squash(&std::fs::read_to_string(PathBuf::from(CRATE).join("src/lib.rs")).expect("lib.rs"));
+    assert!(lib.contains("(trail::extract,trail::publish_views,exposure::extract,render::extract_view).chain()"));
 }

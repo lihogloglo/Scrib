@@ -19,7 +19,7 @@ import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
     pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT,
 };
-import super::groundcover_common::{unpack_tag, species_of, fade_scale, instance_scale, bent};
+import super::groundcover_common::{unpack_tag, species_of, fade_scale, instance_scale, bent_by, press_now, pressed_dir};
 
 @if(VISIBILITY_RANGE_DITHER)
 import bevy_pbr::render::pbr_functions::visibility_range_dither;
@@ -33,23 +33,22 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     let root = world_from_local[3].xyz;
     let s = fade_scale(root, view.world_position, tag.fade);
     let unbent = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position * s, 1.0));
-    out.world_position = vec4<f32>(bent(unbent.xyz, root, instance_scale(world_from_local), tag, globals.time), 1.0);
+    let press = press_now(root, tag);
+    out.world_position = vec4<f32>(bent_by(unbent.xyz, root, instance_scale(world_from_local), tag, globals.time, press), 1.0);
     out.position = position_world_to_clip(out.world_position.xyz);
 
 @if(VERTEX_NORMALS)
-    out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex_in.instance_index);
+    out.world_normal = pressed_dir(mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex_in.instance_index), press);
 
 @if(VERTEX_UVS_A)
     out.uv = vertex.uv;
 @if(VERTEX_UVS_B)
     out.uv_b = vertex.uv_b;
 
-@if(VERTEX_TANGENTS)
-    out.world_tangent = mesh_functions::mesh_tangent_local_to_world(
-        world_from_local,
-        vertex.tangent,
-        vertex_in.instance_index
-    );
+@if(VERTEX_TANGENTS) {
+    out.world_tangent = mesh_functions::mesh_tangent_local_to_world(world_from_local, vertex.tangent, vertex_in.instance_index);
+    out.world_tangent = vec4<f32>(pressed_dir(out.world_tangent.xyz, press), out.world_tangent.w);
+}
 
 @if(VERTEX_COLORS)
     out.color = vertex.color;
