@@ -26,7 +26,7 @@ the console. The sandboxed Luau runtime exists in the framework and is parked.
   write-back on unload. `inventory`, `inventory_ui`, `item_use` (potions), `effects`, `cast` (spells).
 - **MWScript** (`mw_script`): lexer, lenient parser, resolver; each leniency is a named `Rule`, a script with an
   Error is inert. Native interpreter `interp.rs` walks the AST over a `Host`; step-limited. A Luau emitter (`emit.rs`)
-  exists, parked.
+  exists, superseded (DQ-1 2026-11-25: interpreter + one game API; deletion is its own slice).
 - **Luau** (`sf_script`, `sf_script_bevy`): one sandboxed state per mod, memory/CPU limits, fault isolation,
   timers, snapshots; `ScriptSlot` systems `Input`/`Update`/`Ui` (`sf_script_bevy/src/lib.rs`). `mw_scripts_bevy::add`
   (`exterior.rs:551`) creates contexts per mod, script handles for placements, and door activation.

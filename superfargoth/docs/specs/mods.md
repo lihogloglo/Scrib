@@ -208,8 +208,8 @@ profile. Mods add:
   A texture-only mod changes no product unless a step reads that texture (terrain layer arrays
   do; cooked meshes store texture paths, not bytes).
 - **Mod-authored products** use the existing override paths ("authored beats derived").
-- **Translated legacy scripts** are bake products (scripting-adapter.md), keyed on the script
-  record's fingerprint and the translator version.
+- **Legacy scripts** are interpreted at runtime, not baked (scripting-adapter.md, DQ-1 2026-11-25; the old
+  translation-as-bake-product design is archived there).
 - **Native Luau scripts are not baked**: Luau compiles source in microseconds per file at load;
   a bytecode cache can be added if context start misses its gate.
 - Profiles share objects; switching profiles back and forth costs nothing after the first bake.

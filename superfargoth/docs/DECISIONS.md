@@ -1959,3 +1959,5 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   Travel: ships are walkable moving decks (Sea of Thieves), players may leave any vehicle anywhere; mounts steer like RDR2
   (inertia, procedural legs); operators always replaced (no place cut off); natural sit/stand on creatures and vehicles is
   the big interaction slice; until it lands, travel = instant teleport (fade, time spent).
+- 2026-11-25 (gameplay-roadmaps-3, owner): a passenger leaving a boat at sea: the boat slows down and stops (Sea of
+  Thieves); after a while the crew loses patience and goes on, like land vehicles.

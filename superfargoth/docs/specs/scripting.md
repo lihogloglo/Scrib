@@ -11,7 +11,7 @@ Crates (built, parked after L3 per owner 2026-10-18): `sf_script` (Bevy-free: ru
 `sf_script_bevy` (plugin: schedule slots, world access, entity handles, hot reload, diagnostics),
 API modules next to the systems they expose (`sf_ui_lua` per ui.md; small modules may live in
 `sf_script_bevy` behind features). Mod pipeline: [mods.md](mods.md). First adapter:
-`bevyrrowind/docs/specs/scripting-adapter.md` (legacy script translation).
+`bevyrrowind/docs/specs/scripting-adapter.md` (MWScript interpreter; Luau binds the same game API later, DQ-1).
 
 <!-- agent-summary -->
 > **Agent summary (2026-10-26).** Status: PARKED after L3 (owner 2026-10-18). Built: L1 `sf_script` core (Luau, spike), L2 `sf_script_bevy`, L3 API v0.1 (core, events, timers, interfaces, world spawn/despawn, entity scripts, `on_load`, `.d.luau`), verified in game 2026-10-18. Parked: `@sf/records`, `@sf/input`, `@sf/anim`, `@sf/physics`, MS-2.

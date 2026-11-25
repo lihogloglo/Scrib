@@ -3,6 +3,23 @@
 Moved here to keep [ai.md](ai.md) inside its size budget. Newest slice first; the module docs in
 `superfargoth/crates/sf_ai/src/` are the detailed reference.
 
+## AI8a: awareness core `sf_ai::perception` (2026-11-25)
+
+Built to "Perception and stimuli" (AI0b). `perception.rs` + `tests_perception.rs` (12 tests; crate 72 pass, clippy
+clean, census unchanged). Types: `PerceptTarget`, `AwarenessBand`, `LastSeen`, `Awareness`, `Distraction`,
+`PerceptClock`, `HeardNoise`, `Stimulus` (Sight, Noise, Touch, Damage), `StimulusOutcome`, `AwarenessConfig` (spec
+defaults, bound from `ai.awareness.*` in sf_ai_bevy later), `AwarenessMeter`, `PlayerDetection` + `player_detection()`.
+Serde only on `PlayerDetection` and `AwarenessBand` (awareness is not saved). Choices where the spec was silent:
+`PerceptTarget::Actor` holds `ActorKey`; sight arrives with its gain from AI8b; "seen" = last sight/touch/damage and the
+Alerted hold counts from it; decay integrates across band changes, Unaware decays at the Curious rate and a 0-level
+Unaware entry is forgotten; a big drop lands in the highest band whose stay level still holds (same as many small
+steps); the wake test is the noise reach left at the sleeper (loudness - distance), and a waking noise still adds gain;
+Touch raises to the Searching floor, damage from a known attacker alerts at once, sourceless damage only wakes; a
+sourceless or non-revealing noise fills the distraction slot (replaced if as loud or older than `distraction_ttl_s`);
+eviction drops lowest level, then oldest gain, then highest target, after settling all entries; `PlayerDetection.band`
+= highest band over counting actors. New tunables (Guess): `distraction_ttl_s` 10, `alert_alertness` 1.5,
+`groggy_alertness` 0.5. Not built: `Notify` (AI8e; the spec does not yet say how much a notify raises the meter).
+
 ## AI6: move executors `MoveTo`, `Wait`, `Face` and HTN `PlanRunner` (2026-11-18)
 
 `sf_ai::exec` (Bevy-free; `sf_coords` + `glam` in `[dependencies]`, 0 Bevy crates): built-in operator vocabulary

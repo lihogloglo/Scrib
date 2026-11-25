@@ -37,7 +37,7 @@ NPC barks and ambient reactive lines, localised line IDs.
    scheduling rules stay those of scripting-adapter "Instances, scheduling, state" (globals in start order, locals by
    `PlacementId`, active cells only, edge flags set before ticks), retargeted from Luau contexts to interpreter
    instances. Reference OpenMW `mwscript/*extensions.cpp`, `mwworld/localscripts.cpp` (cite commit per slice).
-   Departs from the spec's "Decision: translate to Luau" (DQ-1 rewrites it).
+   Every command goes through one game API (`mw_rpg::api` over sf_* ops) that Luau binds later (DQ-1, done).
 2. **Scripts are only as live as the systems they call** (note §5, OpenMW lesson). This lane binds functions whose
    system exists; AI, combat, crime and magic functions are bound by those lanes' slices (ai-adapter MA2/MA4/MA5/MA6)
    or here as soon as the system lands. A measured coverage number (call sites live / total, by family) gates each
@@ -160,7 +160,7 @@ Stage 6, seam only today.
 ## 5. Spec changes (spec slices before build slices)
 
 - DQ-1 `scripting-adapter.md`: title/Goal/"Decision" (Luau translator) and the M5 status table contradict the as-built
-  interpreter and the wiki; rewrite for the interpreter, keep Luau as the parked alternative; register MS-4/MS-5.
+  interpreter and the wiki; rewrite for the interpreter, Luau later binds the same game API (owner 2026-11-25; done DQ-1); register MS-4/MS-5.
 - DQ-16 `rpg.md` "Quests" + "World and character state" (status, objectives, aliases, facts); `journal-ui.md` gap P2.
 - DQ-22 `rpg.md` "Dialogue" "Database" + "Adapter hook": `accepts` becomes rule compilation; update the agent summary
   ("first passing response wins") and "Research" (challenges §5.3 again: rules + scenes, not one graph).

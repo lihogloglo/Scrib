@@ -95,8 +95,7 @@ ignored, so the topic shows and the refusal applies; verify).
 
 After a `Line` output the host runs the INFO's `script_text` as the speaker (scripting-adapter.md
 rule 9), context player = the talking player. Results run in `mw_script`'s native interpreter
-over the W1 AST (Luau translation W1/W2 exists, 17,144 results compile; parked with Luau, owner
-2026-10-18); the runner binds these functions to `sf_rpg` commands and session callbacks:
+over the W1 AST (the Luau translation W1/W2 is superseded by the interpreter, DQ-1 2026-11-25: scripting-adapter.md); the runner binds these functions to `sf_rpg` commands and session callbacks:
 
 | MWScript | `sf_rpg` |
 |---|---|

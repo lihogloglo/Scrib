@@ -1,0 +1,222 @@
+# scripting-adapter: Luau translation design (2026-10)
+
+Superseded 2026-11-25 by DQ-1 (scripts run on the native interpreter, [scripting-adapter.md](../scripting-adapter.md)); text below moved verbatim from that spec (title, status, goal, "Decision", "Design", M5 table, verification, industry comparison, open questions, as last edited before 2026-11-25). Path mentions are as they were in the spec (one folder up); the one link was repointed so it resolves.
+
+## Old title, status and goal
+
+# Scripting adapter (MWScript → Luau)
+
+Status: draft (2026-10-13, m5-spec session, docs only). Built in M5; W1 front end built 2026-10-13 (m5-w1, see "As built (W1)").
+Crates (proposed): `mw_script` (Bevy-free: lexer, lenient parser, AST, function table,
+semantic checks, Luau emitter, diagnostics), a `mwscript.translate` step in `mw_bake`,
+`mw_script_bevy` (thin: the `@mw/script` API module over the framework APIs, legacy instance
+bookkeeping), and the Luau half of the `mw` runtime library as files in Bevyrrowind's builtin
+mod. Framework specs: `../../../superfargoth/docs/specs/scripting.md` (runtime),
+`../../../superfargoth/docs/specs/mods.md` (pipeline). Related: `ui-adapter.md` "MWScript UI
+calls", `physics-adapter.md` "Scripts", `weather-adapter.md` "Scripting".
+
+## Goal
+
+Make the original game's scripts (SCPT records and dialogue result text) run on the framework's
+Luau runtime, so quests, activators, doors, shrines and start scripts behave as the content
+expects, and so native Luau mods can read and write the same state. ARCHITECTURE §6.3 chose a
+transpiler; this spec confirms that with evidence, specifies it, and scopes what can run in M5
+before the RPG core (M7) exists.
+
+Non-goals: MWSE-Lua (patches `Morrowind.exe`, §6.3), OpenMW-Lua compatibility (`mw_openmw_lua`,
+after the core game), bug-for-bug emulation of the original compiler's undefined behaviour.
+
+## Decision: translate to Luau at bake time (not an interpreter)
+
+| Criterion | Translator (MWScript → Luau source → Luau bytecode) | Runtime interpreter (own bytecode VM in Rust) |
+|---|---|---|
+| Runtime machinery (sandbox, limits, error isolation, save state, hot reload, diagnostics, debugger story) | inherited from `sf_script` | all built a second time |
+| Interop with native Luau mods (read/write locals, globals, journal) | same tables in the same VM family | a bridge layer |
+| Speed | Luau-compiled ticks (register VM, constant folding) | a hand-written interpreter must beat Luau's to matter; no reason it would |
+| Fidelity | the parser and function table carry the semantics; integer wrap / float32 rounding are emitted as helper calls where they can differ | same parser and function table needed anyway |
+| Cost per load | translate once per script fingerprint (bake product); load = bytecode | compile at every start (OpenMW's approach) |
+| Debugging | generated Luau with `-- L<n>` source-line comments; errors report the MWScript line | needs its own tooling |
+
+Evidence it fits: the control flow maps 1:1 onto Luau; per-frame polling maps onto an entity
+`tick`; edge-triggered functions map onto per-instance flags set by engine messages and cleared
+when read; locals are plain data, which is exactly what `sf_script` persists. The corpus is
+small (1.76 MB of source including dialogue), so translating all of it is a fraction of a
+second, then cached. OpenMW (black box) compiles all scripts at startup to its own bytecode and
+interprets them; it offers compile-everything switches (`--script-all`,
+`--script-all-dialogue`) that report scripts failing to compile and keeps running when one
+fails. We take the observable lesson (compile everything up front, report, never crash) and
+cache the result instead of recompiling each start.
+
+The same `mw_script` crate is a library, so it also translates **live** where a bake makes no
+sense: the dev console (one line → snippet → run as the selected object) and dev hot reload of
+an edited ESP script.
+
+## Design
+
+### Pipeline
+
+1. **Lex/parse** (lenient): tokens are case-insensitive; every leniency is a **named rule**
+   (`MissingSpaceAroundArrow`, `CommaBetweenArgs`, `TrailingTokens`, ...) that records a
+   diagnostic, so the corpus test can count how often each fires. Unrecoverable scripts are
+   reported and **inert** (never crash, never half-run).
+2. **Resolve**: locals and types, globals (GLOB), explicit references (record IDs, `Player`),
+   function calls against the **function table**, other scripts' variables (`id.var`), journal
+   and topic IDs (warnings for unknown IDs, as they may come from later plugins at runtime).
+3. **Emit Luau**: one module per script, one function per dialogue result (grouped per topic).
+   Emitted code keeps all state in module tables, never in globals: in Luau sandbox mode a state
+   has one writable environment shared by every chunk it loads (m5-l1 finding, scripting.md
+   "Spike results (L1)"), so globals would leak between translated scripts in the shared state.
+4. **Compile**: Luau bytecode via mlua's `Compiler` (optimization level 2), stored as a bake
+   product. Only engine-compiled bytecode is ever loaded (scripting.md "Modules").
+
+### Generated shape (illustration, not vanilla text)
+
+```lua
+-- generated by mw_script v1 from SCPT "example_door" (example.esp), do not edit
+return function(mw)
+  return mw.script {
+    id = "example_door",
+    vars = { button = "short", asked = "short" },
+    activation = "script",                 -- reads OnActivate: default activation suppressed
+    tick = function(self, v)               -- self: handle; v: this instance's variables
+      if mw.menu_mode() == 1 then return end                     -- L4
+      if self:on_activate() == 1 then                            -- L7
+        mw.message_box(self, "Go through?", nil, { "Yes", "No" }) -- L8
+        v.asked = 1
+      end
+      if v.asked == 1 then                                       -- L11
+        v.button = mw.short(self:get_button_pressed())           -- L12
+        if v.button >= 0 then v.asked = 0 end
+        if v.button == 0 then self:activate() end                -- L15
+      end
+    end,
+  }
+end
+```
+
+- `mw.short`/`mw.long` wrap assignments to integer locals (two's-complement wrap, truncation
+  toward zero); floats are Luau doubles rounded through `f32` on assignment
+  (`mw.float`), matching the original's storage.
+- Comparisons and arithmetic follow MWScript's numeric rules (integer division semantics where
+  both sides are integers is checked against the oracle in W1 and emitted as a helper if it
+  differs).
+- `id->Fn args` becomes `mw.ref("id"):fn(args)`; references are cached per instance.
+
+### The `mw` runtime library
+
+- **Function table** (data, one row per MWScript function, written from UESP's function list):
+  name, argument kinds, return kind, explicit-reference allowed, and **status** (`live`,
+  `stub(neutral value)`, `later(Mx)`). It drives the parser (arity, argument kinds), the emitter,
+  the generated `@mw/script` type definitions and the coverage report.
+- **Luau half** (`scripts/mw/*.luau` in the builtin mod): `mw.script`, numeric helpers,
+  message-box state machine, edge flags, timers. Editable and hot-reloadable like any mod code.
+- **Rust half** (`@mw/script` in `mw_script_bevy`): functions that need the world, written only
+  against framework APIs (`@sf/world`, `@sf/ui`, `@sf/anim`, `@sf/physics`, records) plus the
+  small M5 data stores below. It never reaches into Bevy components the framework doesn't
+  expose, so the framework's API stays the contract.
+
+### Instances, scheduling, state
+
+- All translated scripts run in **one shared context** (`mw.legacy`, owned by the builtin mod):
+  scripts are records, so the winning plugin's version runs, and scripts address each other by
+  ID across plugins (scripting.md "Contexts").
+- **Global instances** keyed by script ID; **local instances** are framework entity scripts
+  keyed by `PlacementId`, with variables stored in the placement overlay (saved, survive cell
+  unloads).
+- **Script-active region**: local scripts tick only for instances inside the MWScript active
+  cells (rule 2), computed by the adapter from the player's cell, independent of the render
+  streaming rings (which are much larger). Globals tick always.
+- Order per frame: globals in start order, then locals by `PlacementId`; deterministic.
+- Edge flags (`OnActivate`, `OnDeath`, ...) are set by engine messages (`Activated`, `Died`,
+  `Equipped`, `Hit`) in the `Update` slot before ticks; cleared on read or after the next tick.
+- Activation: scripts statically marked `activation = "script"` consume `Activated`; their
+  `Activate` call runs the default action (door travel, pick-up) afterwards.
+- `GetButtonPressed`: the pending choice per instance lives in its variables' hidden slot, so
+  it survives saves and hot reloads (ui-adapter.md).
+
+### Dialogue results
+
+Translated and compiled for the whole corpus in M5 (compile coverage). They execute only when
+`mw_rpg` runs dialogue (Phase 2.4, `rpg-adapter.md`); in M5 the dev console can run one against an actor for testing.
+
+## What M5 needs from M7, and the M5 slice
+
+Each function gets a status. **Stubs return neutral values** so scripts take their
+"not applicable" branch (example: the temple shrine script asks the player's Temple rank; the
+stub returns −1, so it charges the non-member donation and proceeds).
+
+| Family | M5 status | Needs |
+|---|---|---|
+| Control flow, locals, globals, `Return`, `Random` | live | — |
+| `MenuMode`, `GetSecondsPassed`, `GetPCCell`, `GetInterior` | live | UI layer state, clock |
+| `OnActivate`, `Activate`, door activation, `Lock`/`Unlock`/`GetLocked` | live | generic `Activated` message (from the M4 P11 interaction work or a small `sf_interaction` task in M5); lock state in the placement overlay |
+| `Enable`/`Disable`/`GetDisabled`, `Position`/`PositionCell`/`SetPos`/`GetPos`/`SetAngle`/`GetAngle`/`Rotate`, `PlaceAtPC`/`PlaceItem`, `GetDistance` | live | placement overlay + physics hooks (physics-adapter.md "Scripts") |
+| `MessageBox`, `GetButtonPressed`, `FadeIn`/`FadeOut`, `Enable*Menu` flags | live | UI slice message box, fade overlay |
+| `StartScript`/`StopScript`/`ScriptRunning`, start scripts | live | — |
+| `Journal`/`SetJournalIndex`/`GetJournalIndex`/`AddTopic` | live (state only) | **minimal quest store** (`sf_rpg`: quest → index, entries list, known topics; plain data, saved). Journal UI is M7 |
+| `AddItem`/`RemoveItem`/`GetItemCount` | live | **minimal inventory stacks** (`sf_rpg`: record id → count per actor/container). The M5 inventory screen shows the player's real stacks |
+| `PlayGroup`/`LoopGroup` | live | animation slots (animation.md "Slots and montages") |
+| `GetDeadCount` | live (returns 0 until deaths exist) | death counter store; fed by M4 ragdoll death if present |
+| `PlaySound`, `Say`, `StreamMusic` | stub (logged) | audio system (not scheduled) |
+| `AIWander` | optional live via `mw_ai` `PathWalkScaffold` | — |
+| `AITravel`/`AIFollow`/`AIEscort`/`StartCombat`/`StopCombat`, `OnDeath`, `OnPCHitMe`, `OnKnockout`, `OnMurder` | stub / never fires | M7 AI, M10 combat |
+| Stats, skills, `ModHealth` etc., magic (`Cast`, `AddSpell`, `GetEffect`, disease checks), factions (`GetPCRank` → −1), disposition, reputation, crime | stub (neutral) | M7 |
+| `ForceGreeting`, `Choice`, `Goodbye`, `ShowMap` | stub | M7 dialogue, map |
+| Weather (`ChangeWeather`, `ModRegion`, `GetCurrentWeather`) | live if `sf_weather` exists, else stub | M6 (weather-adapter.md) |
+
+The minimal quest store and inventory stacks are the first durable pieces of `sf_rpg`'s data
+model (ARCHITECTURE §5.3): plain records-and-overlay data with no rules. M7 extends them; it
+doesn't replace them. Everything else waits for M7.
+
+**Coverage report** (W2 output): per function, call sites in the corpus and status, so the
+roadmap shows how much of the content's script logic is live (by call sites, the live set above
+covers the largest families: journal, enable/disable, message boxes, menu guards, distances,
+items, activation, timers).
+
+**Demonstrable without M7**: activators, doors, shrines, levers and start-script logic that only
+use the live families; quest *state* advancing from scripts (visible in a dev journal-state
+overlay, not the journal UI).
+
+Moved to [history](scripting-adapter-history.md#as-built-w1-2026-10-13-m5-w1).
+
+## Verification
+
+- **Corpus (real install)**: every vanilla script and dialogue result parses (failures listed by
+  rule with counts; target 0 unrecoverable), translates, and compiles under Luau; leniency rule
+  counts reported. Asserts counts only: vanilla text and translations are never committed
+  (Bethesda content), goldens use our own fixtures.
+- **Translation speed**: the whole corpus (scripts + dialogue) translated and compiled ≤ 2 s on
+  the reference laptop across cores (bake gate share), single script ≤ 1 ms.
+- **Behaviour (fixtures + fake world)**: `OnActivate` once and default suppression, `Activate`
+  passthrough, message-box state machine with `GetButtonPressed`, `GetSecondsPassed` timers,
+  `short` wrap and `float` rounding, `id.var` access, `StartScript`/`StopScript`, save/restore
+  of instance variables, hot reload of one script keeping variables.
+- **Black-box oracle**: a handful of fixtures run in OpenMW and ours with the same inputs,
+  comparing variable traces (no code read).
+- **In game**: Balmora for 5 minutes with all vanilla start scripts and local scripts active:
+  0 runtime errors (or each listed with a reason), legacy script time ≤ 0.3 ms per frame.
+- **Owner scenes**: MS-4 (shrine of St. Rilm, `Balmora, Temple`), MS-5 (a door with a
+  confirmation script), ROADMAP "M5".
+
+## Industry comparison
+
+2026-10-13; "unverified" marks memory not re-read this session.
+
+| Technique | Industry | Ours | Verdict |
+|---|---|---|---|
+| Legacy script execution | OpenMW: own compiler to bytecode at load + interpreter; compile-all switches report failures (black box); MWSE: extends the original engine's interpreter (unverified) | translator to Luau, cached bake product, one VM | **differ**: same observable lessons (compile all, report, never crash), less machinery |
+| Script language → bytecode VM | Skyrim/Fallout 4 Papyrus: source compiled to `.pex` bytecode ahead of time, run by the Papyrus VM | MWScript compiled ahead of time to Luau bytecode | **match** (ahead-of-time compile) |
+| Source-to-source translation of a scripting layer at cook time | UE4 Blueprint nativization (Blueprint → C++ at cook; removed in UE5, unverified reason: maintenance and edge-case bugs) | MWScript → Luau, but targeting the same sandboxed VM, not native code, and reversible (source maps) | **match** in shape; avoids nativization's problem (two semantics) because Luau is the only runtime |
+| Interop between legacy and modern scripts | OpenMW Lua can read/write mwscript variables of objects (unverified API name); MWSE-Lua shares the original engine's variables | native Luau mods read/write MWScript locals and globals through `@mw/script` | **match** |
+| Active-cell scripting | Morrowind/OpenMW: local scripts run in active cells only | same rule, independent of render streaming | **match** |
+
+
+## Open questions
+
+1. Integer division and comparison quirks between `short`/`float`: settle with the oracle in W1
+   and record the rule here.
+2. Non-unique explicit references (`"id"->Disable` with several instances): nearest active
+   first is our rule; confirm against the oracle on a known vanilla case.
+3. Whether to make `AIWander` live through the M3 scaffold in M5 or leave AI entirely to M7.
+4. Scripts on objects in the player's inventory (equip scripts, `OnPCEquip`) need inventory
+   instances with state; M5 keeps them inert unless the inventory slice needs one.

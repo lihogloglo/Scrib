@@ -222,6 +222,7 @@ unless noted; `hearing_mul` is per-actor data, not a tunable.
 | storm `weather_mask` / `weather_sight_mul` | 0.6 / 0.6 | 0-1 |
 | `notify_speed_mps` / `notify_react_s` / `notify_confidence_mul` / `notify_max_hops` (gossip, decision 8) | 6 / 0.8 / 0.7 / 3 | 0.5-50, 0-5, 0-1, 0-8 |
 | `asleep_wake_m` / `groggy_s` | 12 / 4 | 0-100, 0-30 |
+| `distraction_ttl_s` / `alert_alertness` (gain mul from Suspicious up) / `groggy_alertness` (AI8a) | 10 / 1.5 / 0.5 | 0-60, 0-4, 0-1 |
 | `light_search_m` / `light_rays` / `dark_threshold` | 15 / 2 / 0.15 | 1-60, 0-4, 0-1 |
 | `sight_period_s` / `tier1_period_s` / `sight_cache_s` / `cache_move_m` | 0.1 / 1.0 / 0.25 / 0.5 | 0.02-10, 0-5 |
 | `max_rays_per_tick` Floor / Medium / High / Ultra / Dedicated (group `sim.cpu_tier`) | 24 / 32 / 48 / 64 / 96 | 4-512 |

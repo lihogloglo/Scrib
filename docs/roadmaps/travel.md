@@ -48,7 +48,7 @@ formula), no ambushes, exploration-only reveal; operators are replaced here too 
    collides in that frame, leaves with the point velocity. Drawing, camera, saves, replication are base-relative.
 5. **Seats = attach + IK** (spec (c) `SeatLink`; RDR2 mount by side; UE socket attach + Control Rig IK): mode
    `Sit | Stand | Astride`; pelvis to seat, feet to footrest/stirrup/deck, hands to rail/reins; leave by a dismount
-   spot or jump off with the point velocity, anywhere (owner Q2). Land vehicles wait (tunable), boats sail on (Q6).
+   spot or jump off with the point velocity, anywhere (owner Q2). Land vehicles wait (tunable); boats slow down and stop, wait, then go on (Q6).
 6. **Mounts steer like RDR2 horses** (owner Q5): a `MoverParams` profile (speed, slow acceleration, momentum, turn
    rate falling with speed, gait ladder on sprint taps); `RiderToMount` maps the rider's `Command` (Unreal possession)
    for players, remote players and NPC riders. Legs: N-leg foot placement over the creature's own gaits, pelvis/spine
@@ -123,7 +123,7 @@ formula), no ambushes, exploration-only reveal; operators are replaced here too 
 | TV3 | Strider routes from `large`-class paths between stops | `mw_bake` | TV2, TV0c | log built/failed, ms |
 | TV4 | Ride runtime: kinematic deck on `FixedUpdate`, depart/arrive, hold-to-skip, off-ring progress | `sf_travel_bevy` | TV1, IN11 | same arrival at 30/144 fps; skip delta exact |
 | TV6 | Modern presenter: "Board", stand or sit on the strider, followers aboard, skip, arrive | `mw_rpg_bevy`, `bevyrrowind` | A4, TV3, TV4, IN7, IN21, IN24 | owner TV-2 (Seyda Neen to Balmora); hitches/min |
-| TV8 | Leave any vehicle anywhere (Q2): land vehicles wait then go on, boats sail on; re-board at a stop | `sf_travel_bevy` | TV4, IN7, IN11 | exit on navmesh or water; vehicle resumes |
+| TV8 | Leave any vehicle anywhere (Q2): land vehicles wait then go on, boats slow down, stop, wait, then go on (Q6); re-board at a stop | `sf_travel_bevy` | TV4, IN7, IN11 | exit on navmesh or water; vehicle resumes |
 | TV12 | Water-route bake on the water mask with coast clearance | `sf_travel`, `mw_bake` | TV2 | exact synthetic island; log |
 | TV13 | Boats as walk-on decks: ridden routes, tick-pure bob/roll, crew on deck nav | `mw_rpg(_bevy)` | TV12, TV6, IN22 | owner TV-3 (Ebonheart to Sadrith Mora) |
 
@@ -198,3 +198,5 @@ ride camera. **Dropped (owner 2026-11-25):** the standing-idle strider passenger
    slice lands, travel is an instant teleport (fade, game time spent)." Applied in sections 3-4; bond stays "Later".
 6. **Leaving a boat at sea: does it sail on or come about for you?** Recommended: sails on to its stop (fare spent);
    land vehicles wait a short while, then go on.
+   **Answered (owner 2026-11-25):** the boat slows down and eventually stops (Sea of Thieves); after a while the crew
+   loses patience and goes on, like land vehicles (wait time = a tunable).
