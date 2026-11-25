@@ -437,6 +437,19 @@ would_claim)` (the closure carries user, tags and priority; built from the new `
 freezes only an existing target; with none (or it vanished) the best is taken at once; a challenger must beat
 current × (1 + `focus_switch_margin`) for `focus_switch_s`. `cook` is identity for now.
 
+## As built (IN31a, 2026-11-26)
+
+`superfargoth/crates/sf_interaction_bevy` (`lib.rs`, `tests.rs`; 6 headless tests). `InteractionPlugin`; resources
+`InteractionSettings`, `InteractionClaims`, `InteractionIndex` (`PointIndex<Entity>`), `InteractionTick`; messages in
+`ClaimRequest(Request)`, `InvalidateClaims`, `IndexChange::{Insert, Move, Remove}`; out `ClaimChanged(InteractionEvent)`
+and `ClaimAnswered` (callers need refusals back: the AI picks another slot on `QueueFull`). One `FixedUpdate` run in
+`InteractionSystems::Apply`: tick + 1, index changes (sorted by placement), invalidations (sorted), one `apply_batch`,
+lease `tick`, answers and events out; send order never matters. `tick_hz` from `Time<Fixed>`; 13 `interact.*`
+tunables live. A claim on a slot not in the index is refused `Disabled` in the shell. Not hosted yet (IN31b/IN32):
+`Claims::owner_moved` (needs the owner frame at claim time); re-inserting a placement doesn't invalidate claims on
+now-disabled slots (send `InvalidateClaims { Slot, SlotDisabled }`). Hosts write requests `.before(Apply)`, read
+events `.after(Apply)`.
+
 ## Owner questions
 
 1. Destruction scope: every crate and barrel, or only some ("fragile" list per material)? Which weapons break what

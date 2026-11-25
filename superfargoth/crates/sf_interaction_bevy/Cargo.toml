@@ -1,0 +1,29 @@
+[package]
+name = "sf_interaction_bevy"
+description = "Bevy shell for sf_interaction (interaction.md): hosts the Claims table and the slot PointIndex on the fixed tick (request messages applied as one sorted batch, leases, InteractionEvent messages) and binds the interact.* tunables live; focus and activation follow in IN31b"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6, build-perf.md rule 1: a thin shell over the Bevy-free core).
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+bevy_ecs = { workspace = true, features = ["std"] }
+# `Time<Fixed>`: the tick rate leases count in.
+bevy_time = { workspace = true, features = ["std"] }
+sf_interaction.workspace = true
+sf_tunables.workspace = true
+sf_tunables_bevy.workspace = true
+# `PlacementId`: what index changes name.
+sf_world.workspace = true
+smallvec.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+# `ActorKey`, `PlayerKey`, `RecordId`: test users and the test def.
+sf_ids.workspace = true
+sf_records.workspace = true
+
+[lints]
+workspace = true

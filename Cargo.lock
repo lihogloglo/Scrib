@@ -8433,6 +8433,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sf_interaction_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_time",
+ "sf_ids",
+ "sf_interaction",
+ "sf_records",
+ "sf_tunables",
+ "sf_tunables_bevy",
+ "sf_world",
+ "smallvec",
+ "workspace-hack",
+]
+
+[[package]]
 name = "sf_level"
 version = "0.1.0"
 dependencies = [
