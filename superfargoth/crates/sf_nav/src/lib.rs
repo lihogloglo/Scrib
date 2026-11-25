@@ -23,9 +23,16 @@
 //!   the next tick boundary in id order, `Partial` at the ring edge ([`NavCoverage`]), and an
 //!   inline mode. `sf_nav_bevy` runs it on the fixed tick.
 //! - [`grid`]: [`GridBackend`], an exact-A* 2.5D grid implementing [`NavBackend`] for tests.
+//! - [`world_graph`] (NV11b): [`WorldGraph`], worldspaces joined by door links (approach point per
+//!   end, [`LinkFlags`] from the host), and [`WorldGraph::route`], A* over link exits in walking
+//!   time filtered by [`DoorState`] and [`RouteRules`], giving a saveable [`WorldRoute`].
+//! - [`portal_query`] (NV11c): the shared through-door query on the [`WorldGraph`]: [`map`] a
+//!   point through a link, [`WorldGraph::path_distance`] (hearing: metres through opening
+//!   centres, closed doors counted) and [`WorldGraph::line_of_sight`] (through one open seamless
+//!   link, rays via the host's [`LosProvider`]).
 //!
 //! Later slices add to the trait: corridor and local boundary (NV7-NV8), `TileCache` obstacles
-//! (NV10); the worldspace graph and `portal_query` (NV11), the coarse graph (NV12). The navmesh-rs
+//! (NV10), the coarse graph (NV12). The navmesh-rs
 //! backend is `sf_nav_recast` (NV2).
 
 pub mod backend;
@@ -33,10 +40,12 @@ pub mod baked;
 pub mod corridor;
 pub mod filter;
 pub mod grid;
+pub mod portal_query;
 pub mod query;
 pub mod ring;
 pub mod service;
 pub mod types;
+pub mod world_graph;
 
 pub use backend::{
     AreaVolume, BlobPoly, BlobTile, BuildConfig, DebugEdge, DebugPoly, DebugTri, NavBackend,
@@ -52,6 +61,7 @@ pub use corridor::{
 };
 pub use filter::QueryFilter;
 pub use grid::{GridBackend, GridCell, GridConfig};
+pub use portal_query::{Los, LosProvider, PathRules, PortalLinks, PortalPath, map, map_direction};
 pub use query::{
     DEFAULT_EXTENT, Goal, JobState, NavRay, PathJob, PathQuery, PathResult, PathStatus, SliceBudget,
 };
@@ -67,12 +77,20 @@ pub use types::{
     NavDoorId, NavLinkId, NavPoint, OffMeshLink, PolyFlags, PolyRef, PolyState, TileKey, TileRef,
     TraverseKind,
 };
+pub use world_graph::{
+    DoorState, FADE_TRAVERSE_S, GraphExit, GraphLink, LinkFlags, LinkKind, LinkSide, RouteLeg,
+    RouteRules, SEAMLESS_TRAVERSE_S, TraverseTimes, WorldGraph, WorldRoute,
+};
 
 #[cfg(test)]
 mod corridor_tests;
+#[cfg(test)]
+mod portal_query_tests;
 #[cfg(test)]
 mod ring_tests;
 #[cfg(test)]
 mod service_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod world_graph_tests;

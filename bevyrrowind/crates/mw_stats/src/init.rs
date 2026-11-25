@@ -17,7 +17,7 @@ use sf_records::{RecordDb, RecordId};
 use sf_stats::{
     ApplyCtx, Cause, CauseKind, Inputs, Rules, Settle, Sheet, StatKey, StatOp, StatOwner,
 };
-use tes3::esp::{AttributeId, Class, Creature, Npc, NpcFlags, Race, SkillId, Specialization};
+use tes3::esp::{AiData, AttributeId, Class, Creature, Npc, NpcFlags, Race, SkillId, Specialization};
 
 use crate::derived::{fatigue_max, magicka_max};
 use crate::gmst::MwGmst;
@@ -202,6 +202,15 @@ pub fn class_ops(t: &MwTable, class: &ClassInfo) -> Vec<StatOp> {
     out
 }
 
+/// The AI settings' base values from the record's AIDT (`npc.cpp:367-370`, `creature.cpp:144-147`
+/// @ 5f3aafb). `tes3` reads the fields signed; the ESM types are `uint16` Hello and `uint8`
+/// Fight/Flee/Alarm (`components/esm3/aipackage.hpp:17-18`), so they are read back unsigned.
+fn push_ai_settings(t: &MwTable, out: &mut Vec<StatOp>, ai: &AiData) {
+    #[allow(clippy::cast_sign_loss)]
+    let values = [f32::from(ai.hello as u16), f32::from(ai.fight as u8), f32::from(ai.flee as u8), f32::from(ai.alarm as u8)];
+    out.extend(t.idx.ai_settings.iter().zip(values).map(|(&i, v)| set(i, v)));
+}
+
 fn push_values(t: &MwTable, out: &mut Vec<StatOp>, attributes: &[f32; 8], skills: &[f32; 27]) {
     out.extend(t.idx.attributes.iter().zip(attributes).map(|(&i, &v)| set(i, v)));
     out.extend(t.idx.skills.iter().zip(skills).map(|(&i, &v)| set(i, v)));
@@ -244,8 +253,9 @@ pub fn is_autocalc(npc: &Npc) -> bool {
 
 /// An NPC's init ops from its record (`Npc::ensureCustomData`).
 pub fn npc_ops(t: &MwTable, g: &MwGmst, db: &RecordDb, npc: &Npc) -> Result<Vec<StatOp>, InitError> {
-    let mut out = Vec::with_capacity(48);
+    let mut out = Vec::with_capacity(52);
     push_character(t, g, &mut out, npc);
+    push_ai_settings(t, &mut out, &npc.ai_data);
     if let Some(stats) = npc.data.stats.as_ref().filter(|_| !is_autocalc(npc)) {
         let attributes = stats.attributes.map(f32::from);
         push_values(t, &mut out, &attributes, &stats.skills.map(f32::from));
@@ -275,7 +285,7 @@ pub fn npc_ops(t: &MwTable, g: &MwGmst, db: &RecordDb, npc: &Npc) -> Result<Vec<
     Ok(out)
 }
 
-/// A creature's init ops from CREA: attributes, health, magicka, fatigue, level; every skill of
+/// A creature's init ops from CREA: attributes, health, magicka, fatigue, level, AI settings; every skill of
 /// a specialization takes the record's combat, magic or stealth value (`Creature::getSkill`).
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
@@ -285,9 +295,10 @@ pub fn creature_ops(t: &MwTable, g: &MwGmst, creature: &Creature) -> Vec<StatOp>
         [d.strength, d.intelligence, d.willpower, d.agility, d.speed, d.endurance, d.personality, d.luck].map(|v| v as f32);
     let by_spec = [d.combat, d.magic, d.stealth].map(|v| v as f32);
     let skills: [f32; 27] = std::array::from_fn(|s| by_spec[t.skills[s].specialization]);
-    let mut out = Vec::with_capacity(44);
+    let mut out = Vec::with_capacity(48);
     out.push(counter(t.idx.level, d.level as f32));
     out.push(counter(t.idx.creature, 1.0));
+    push_ai_settings(t, &mut out, &creature.ai_data);
     push_values(t, &mut out, &attributes, &skills);
     push_record_pools(t, g, &mut out, &attributes, [d.health, d.magicka, d.fatigue].map(|v| v as f32));
     out

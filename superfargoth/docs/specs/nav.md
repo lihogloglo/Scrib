@@ -294,7 +294,7 @@ One deliverable plus its test per slice; research and building are separate.
 | **NV8** corridor (**built 2026-11-18**) | `PathCorridor` feeding `PathFollower`; repair after a push | headless walk around a pillar and through a door frame, nothing stuck |
 | **NV9** links + areas | off-mesh links (jump, drop, ladder, pathgrid) and area costs per class | path takes the cheaper area; link traversal events in order |
 | **NV10** runtime patches | door poly state (area/flags); opt-in TileCache carving (`carves_nav`, at rest), rebuild budget | shut door raises cost with zero rebuilds, locked blocks except for an admitted agent; carve rebuilds per tick ≤ budget |
-| **NV11** worldspace graph | `LinkId`, `WorldGraph`, `portal_query` (supersedes seamless SI13) | exact routes on a synthetic 3-space graph; LOS through an open seamless opening, none through fade links |
+| **NV11** worldspace graph (split a-d 2026-11-26, owner unparked: built headless before portals) | `LinkId` (a, done), `WorldGraph` (b), `portal_query` (c), Bevy resource built from `DoorLinks` (d1), hearing propagation through it (d2 = AI8c3) (supersedes seamless SI13) | exact routes on a synthetic 3-space graph; LOS through an open seamless opening, none through fade links |
 | **NV12** coarse graph | HPA* legs, travel time for tier 0 | coarse cost within the measured band of Detour path length on test levels |
 | **NVM** measurement | Floor and High sweep: bake time and MiB per class, query and ORCA ms at 60 Hz (Balmora, Vivec canton, Census Office); stuck counts near props | owner runs; numbers into "Budgets"; class or carving revisits |
 
@@ -323,6 +323,39 @@ trimming, periodic topology optimization, visibility shortcutting, string-pulled
 and `GridBackend` implementations; `sf_controller::PathFollower::set_corridor_corners` preserves spring state across
 ticks; `sf_nav_bevy::corridor::NavCorridorPlugin` (`NavCorridor`, `NavSystems::Corridor` in `FixedUpdate` inside
 `ControllerSystems::Drive`, `.before(NavSystems::Queries)` (`NavSystems::Publish` runs earlier, in `FixedFirst`, so the `.after(Publish)` in code is a no-op), tunables `ai.nav.corridor.*`).
+
+**NV11a** (2026-11-26): `sf_world::LinkId(u64)` (`records.rs`; serde hex text / u64 binary like `PlacementId`),
+`DoorLink::id()`: blake3 (64-bit cut) over tag `sf.door_link.id/1`, `two_way`, each end's length-prefixed worldspace,
+position quantised to 1 mm (absolute f64), normalised quaternion to 1e-4 with sign canonical (q == -q); two-way ends
+sorted, one-way kept in order; arrival, door and extent excluded (retuning keeps the id). Golden `49e3c99d02b35c8f`.
+`DoorLink::find(&[DoorLink], id)` / `DoorLinks::get` are linear (NV11b's graph builds the index).
+
+**NV11b** (2026-11-26): `sf_nav::world_graph`: `WorldGraph::build(links, approach, flags)` (adapter gives approach
+points and `LinkFlags` SEAMLESS / FADE_ONLY / ONE_WAY; links without an approach end or duplicate ids are skipped and
+counted), `route(from, to, door_state, &RouteRules { speed_mps, traverse, unlock })` -> `WorldRoute { links, cost_s,
+legs, final_walk_s }` (serde). Cost = seconds: straight walk to each departure approach point + traverse
+(`SEAMLESS_TRAVERSE_S` 3, `FADE_TRAVERSE_S` 1, Guess, overridable) + straight walk to the goal; A* with heuristic 0
+outside the goal's space (admissible, not consistent: re-expansion on improvement); ties by `(LinkId, side)`; locked
+refused unless `unlock`, closed passable; one-way leaves only from `a`. Same-space route empty. Door state is per link,
+not per side; fade-only visibility is the traverse step's (AI12); straight in-space costs until NV12.
+
+**NV11c** (2026-11-26): `sf_nav::portal_query`: `map(loc, link, from: LinkSide)` / `map_direction` (side explicit:
+both ends may share a worldspace); `WorldGraph::path_distance(a, b, &PathRules { max_hops, closed_door_m, door_state })`
+-> `PortalPath { metres, links, closed_doors }` (straight legs through opening centres, every link carries sound, a
+non-open link counts in `closed_doors` and costs `closed_door_m` when choosing, not in `metres`; hop-bounded Dijkstra);
+`WorldGraph::line_of_sight(a, b, door_state, &impl LosProvider)` -> `Los::{Clear, Blocked, BlockedByLink}`: across
+spaces only through one seamless open link joining them directly, aimed at the point where the line crosses the door
+plane (must lie inside the opening), then viewer -> point and mapped point -> target. `DoorState::openness()` (Open 1).
+`GraphLink` keeps its `DoorLink`; `WorldGraph::door_link(id)` is the index. Gaps: sight crosses one link; the LOS
+provider must ignore the door leaf at the plane; `PortalPath` doesn't name the opening; `Cost::Walk` waits NV12.
+
+**NV11d1** (2026-11-26): `sf_nav_bevy::world_graph`: `NavWorldGraph`, `NavWorldGraphStats`, `NavLinkRules` (boxed
+`approach` / `flags`; defaults `arrival_approach` = the end's `arrival.pos`, `classic_flags` = FADE_ONLY, + ONE_WAY when
+not two-way), `NavDoorStates` (unreported link = Closed: routes pass, sight blocked), `NavWorldGraphPlugin<R>` reading
+any host links resource through an accessor (`NavWorldGraphPlugin::new(|l: &DoorLinks| &l.0)`: no `sf_world_bevy`
+edge into the thin shell); rebuild in `Update` set `NavSystems::WorldGraph` only on change, logs `nav: world graph N
+links (M skipped)`; console `nav.links`. The game adds the plugin (not part of `NavPlugin`); game approach points
+(pathgrid nodes) and seamless flags are a later adapter slice (MA21).
 
 ## Open questions
 

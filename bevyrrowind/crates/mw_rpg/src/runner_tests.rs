@@ -286,21 +286,21 @@ fn ui_session_and_sound_effects() {
 #[test]
 fn unhandled_functions_are_reported_once() {
     let mut f = Fixture::new();
-    let effects = f.run("SetFight 30\nif ( GetDisposition < 60 )\nGoodbye\nendif");
+    let effects = f.run("SetResistFire 30\nif ( GetDisposition < 60 )\nGoodbye\nendif");
     assert_eq!(
         effects,
         [ResultEffect::Goodbye],
         "GetDisposition reads its stub 50"
     );
-    f.run_as("other", "SetFight 10").unwrap();
+    f.run_as("other", "SetResistFire 10").unwrap();
     assert_eq!(
         f.results.drain_reports(),
         [
-            ResultReport::Unhandled("SetFight".into()),
+            ResultReport::Unhandled("SetResistFire".into()),
             ResultReport::Unhandled("GetDisposition".into())
         ]
     );
-    f.run("SetFight 20");
+    f.run("SetResistFire 20");
     assert!(f.results.drain_reports().is_empty());
 }
 

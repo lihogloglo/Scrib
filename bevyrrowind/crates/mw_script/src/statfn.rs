@@ -44,6 +44,9 @@ pub const SKILLS: [&str; 27] = [
     "HandToHand",
 ];
 
+/// The four AI settings in `OpenMW`'s `AiSetting` order (`functions.txt` `$AISTATS`).
+pub const AI_STATS: [&str; 4] = ["Hello", "Fight", "Flee", "Alarm"];
+
 /// A dynamic stat (`functions.txt` `$DYN`, `OpenMW`'s dynamic index 0-2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Dynamic {
@@ -64,8 +67,8 @@ impl Dynamic {
     }
 }
 
-/// One stat, faction or crime function. Attribute and skill indices are ESM order
-/// ([`ATTRIBUTES`], [`SKILLS`]). "Pc" functions act on the context player whatever the target;
+/// One stat, faction or crime function. Attribute, skill and AI setting indices are ESM order
+/// ([`ATTRIBUTES`], [`SKILLS`], [`AI_STATS`]). "Pc" functions act on the context player whatever the target;
 /// the target picks the faction when the faction argument is omitted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum StatFn {
@@ -81,6 +84,10 @@ pub enum StatFn {
     ModCurrentDynamic(Dynamic),
     /// `Get<Dyn>GetRatio`.
     GetDynamicRatio(Dynamic),
+    /// `Get{Hello,Fight,Flee,Alarm}` (`aiextensions.cpp`).
+    GetAiSetting(u8),
+    SetAiSetting(u8),
+    ModAiSetting(u8),
     GetLevel,
     SetLevel,
     /// The target's own reputation (`dialogueextensions.cpp`), not a faction reputation.
@@ -133,6 +140,11 @@ impl StatFn {
             out.push((format!("ModCurrent{n}"), StatFn::ModCurrentDynamic(d)));
             out.push((format!("Get{n}GetRatio"), StatFn::GetDynamicRatio(d)));
         }
+        for (i, a) in (0u8..).zip(AI_STATS) {
+            out.push((format!("Get{a}"), StatFn::GetAiSetting(i)));
+            out.push((format!("Set{a}"), StatFn::SetAiSetting(i)));
+            out.push((format!("Mod{a}"), StatFn::ModAiSetting(i)));
+        }
         let named = [
             ("GetLevel", StatFn::GetLevel),
             ("SetLevel", StatFn::SetLevel),
@@ -170,6 +182,8 @@ impl StatFn {
             | F::SetDynamic(_)
             | F::ModDynamic(_)
             | F::ModCurrentDynamic(_)
+            | F::SetAiSetting(_)
+            | F::ModAiSetting(_)
             | F::SetLevel
             | F::SetReputation
             | F::ModReputation

@@ -21,6 +21,7 @@ use crate::ast::{
 };
 use crate::functions::{Function, FunctionTable, Returns};
 use crate::lexer::CmpOp;
+use crate::aifn::{AiCall, AiFn};
 use crate::statfn::{StatCall, StatFn};
 use sf_tunables::{AnyDef, Def, Lifetime, Net, Scope, Source, Unit, def};
 
@@ -105,13 +106,17 @@ impl Builtin {
 }
 
 /// How the interpreter runs a function: the dispatch [`Interpreter::new`] builds and the call
-/// path follows (stat functions first, then builtins, then [`Host::unhandled`]). The DQ-2
+/// path follows (stat functions first, then AI package functions, then builtins, then
+/// [`Host::unhandled`]). The DQ-2
 /// coverage report counts a call site as bound when its function is not [`Binding::Unbound`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Binding {
     /// A stat, faction or crime function, sent to [`Host::stat`] (falls to
     /// [`Host::unhandled`] only when the host answers `None`).
     Stat(StatFn),
+    /// An AI package function, sent to [`Host::ai`] (falls to [`Host::unhandled`] only when
+    /// the host answers `None`).
+    Ai(AiFn),
     /// A typed [`Host`] method.
     Builtin(Builtin),
     /// No binding: [`Host::unhandled`], the neutral value.
@@ -123,6 +128,9 @@ impl Binding {
     pub fn of(name: &str) -> Binding {
         if let Some(s) = StatFn::from_name(name) {
             return Binding::Stat(s);
+        }
+        if let Some(a) = AiFn::from_name(name) {
+            return Binding::Ai(a);
         }
         Builtin::ALL
             .into_iter()
@@ -191,6 +199,15 @@ pub trait Host {
     /// value (ignored for void functions). `None`: this host doesn't run stats, and the call
     /// goes to [`Host::unhandled`] like any other function. Default: `None`.
     fn stat(&mut self, target: &Target, call: &StatCall) -> Option<f64> {
+        let _ = (target, call);
+        None
+    }
+
+    /// An AI package function ([`AiCall`]) on `target`: a push (`AIWander`, `AITravel`,
+    /// `AIEscort[Cell]`, `AIFollow[Cell]`) or a read (`GetAIPackageDone`,
+    /// `GetCurrentAIPackage`); the call reads the returned value (reads only). `None`: this host
+    /// doesn't run AI, and the call goes to [`Host::unhandled`]. Default: `None`.
+    fn ai(&mut self, target: &Target, call: &AiCall) -> Option<f64> {
         let _ = (target, call);
         None
     }
@@ -284,6 +301,8 @@ pub struct Interpreter<'t> {
     builtins: Vec<Option<Builtin>>,
     /// The table's stat, faction and crime functions, by function id.
     stat_fns: Vec<Option<StatFn>>,
+    /// The table's AI package functions, by function id.
+    ai_fns: Vec<Option<AiFn>>,
     pub step_limit: u32,
 }
 
@@ -305,6 +324,7 @@ impl<'t> Interpreter<'t> {
     pub fn new(table: &'t FunctionTable) -> Self {
         let mut builtins = Vec::with_capacity(table.functions.len());
         let mut stat_fns = Vec::with_capacity(table.functions.len());
+        let mut ai_fns = Vec::with_capacity(table.functions.len());
         for f in &table.functions {
             let binding = Binding::of(&f.name);
             builtins.push(match binding {
@@ -315,11 +335,16 @@ impl<'t> Interpreter<'t> {
                 Binding::Stat(s) => Some(s),
                 _ => None,
             });
+            ai_fns.push(match binding {
+                Binding::Ai(a) => Some(a),
+                _ => None,
+            });
         }
         Self {
             table,
             builtins,
             stat_fns,
+            ai_fns,
             step_limit: STEP_LIMIT.default_value(),
         }
     }
@@ -483,10 +508,30 @@ impl Run<'_, '_> {
         if f.returns == Returns::Void { 0.0 } else { value }
     }
 
+    /// An AI package function's call: arguments read as `OpenMW` reads them
+    /// ([`crate::aifn`]), then [`Host::ai`], else [`Host::unhandled`]; only the reads have a
+    /// value.
+    fn ai_call(&mut self, function: AiFn, call: &Call) -> f64 {
+        let id = |i: usize| match call.args.get(i) {
+            Some(Arg::Id(id)) => id.clone(),
+            Some(Arg::Str(s)) => Ident::new(s),
+            _ => Ident::new(""),
+        };
+        let ai = crate::aifn::decode(function, &call.args, &mut |i| self.num(call, i), &id);
+        let value = match self.host.ai(&call.target, &ai) {
+            Some(v) => v,
+            None => self.host.unhandled(self.interp.table.function(call.function), call),
+        };
+        if ai.is_read() { value } else { 0.0 }
+    }
+
     /// Calls the function and returns its value (0 for void functions).
     fn call(&mut self, call: &Call) -> f64 {
         if let Some(function) = self.interp.stat_fns[usize::from(call.function.0)] {
             return self.stat_call(function, call);
+        }
+        if let Some(function) = self.interp.ai_fns[usize::from(call.function.0)] {
+            return self.ai_call(function, call);
         }
         let Some(builtin) = self.interp.builtins[usize::from(call.function.0)] else {
             for a in &call.args {

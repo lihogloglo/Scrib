@@ -6,15 +6,18 @@
 //! One chain in `FixedUpdate`, before `ControllerSystems::Drive` (it reads the movers' positions of
 //! the last step), set [`AiPerceptionSystems::Sight`]:
 //!
-//! 1. `begin_tick`: [`AiPerceptClock`] advances, fresh [`AiSightTimer`]s start counting, the
-//!    globals' resolve is cached for actors without a profile.
+//! 1. `begin_tick`: [`AiPerceptClock`] advances, fresh [`AiSightTimer`]s start counting (and so
+//!    does a timer whose [`AiTier`] changed: its next check falls on its own stagger over the new
+//!    tier's period, a pending force kept), the globals' resolve is cached for actors without a
+//!    profile.
 //! 2. `resolve_profiles`: [`AiEffectivePerception`] rebuilt where the profile or states changed,
 //!    a state expired (`needs_rebuild`), the state records or a tunable changed; dropped when the
 //!    actor has neither.
 //! 3. `sample_light` ([`crate::light`], `AI8d2`): each due target's [`AiLightExposure`] from the
 //!    host's [`crate::AiLightInputs`] (absent: no target is lit, visibility stays the identity).
-//! 4. `queue_sight`: each due observer (`SightTimer::poll`, staggered by `ActorKey` over
-//!    `sight_period_s`) takes the targets of a uniform XZ grid within its reach (cell = the global
+//! 4. `queue_sight`: each due observer (`SightTimer::poll`, staggered by `ActorKey` over its tier's
+//!    period: `sight_period_s` at tier 2 or with no [`AiTier`], `tier1_period_s` at tier 1; tier 0
+//!    observers never check, their meters only decay in `apply_sight`) takes the targets of a uniform XZ grid within its reach (cell = the global
 //!    lose-sight range), skips itself, computes `sight_gain` (visibility: crime's
 //!    [`AiDetectionRules`] over light, [`AiVisibilityFactors`], speed and facing, `LW4b1`, in
 //!    [`crate::detection`]), then reads the [`AiSightCache`] or queues a sight request
@@ -26,9 +29,7 @@
 //!    `AwarenessMeter::update` on every observer.
 //!
 //! Not modelled yet: the target's and observer's stat views and `StealthState` in the `DetectIn`
-//! (`sf_crime_bevy`; `MA18` fills [`AiVisibilityFactors`] from sneak mode), tier 1 checks (the `AI9`
-//! allocator picks tiers; everyone is tier 2),
-//! worldspace and interior spaces (every spawned mover is taken to share the active worldspace,
+//! (`sf_crime_bevy`; `MA18` fills [`AiVisibilityFactors`] from sneak mode), worldspace and interior spaces (every spawned mover is taken to share the active worldspace,
 //! as the ground probe does), `sim.cpu_tier` groups for `max_rays_per_tick` (the Floor value).
 
 use std::collections::HashMap;
@@ -41,13 +42,14 @@ use glam::Vec3;
 use sf_ai::{
     ActorKey, AwarenessMeter, EffectivePerception, LineOfSight, LosRay, PerceptClock, PerceptTarget,
     PerceptionProfile, PerceptionStates, RayKind, RayQueue, RayRequest, RayResult, RaySubject, RayTickStats,
-    SightCache, SightCheck, SightTimer, Stimulus, VisibilityFactors, resolve, sight_gain,
+    SightCache, SightCheck, SightTimer, Stimulus, Tier, VisibilityFactors, resolve, sight_gain,
 };
 use sf_controller::{GroundHit, GroundProbe, ProbeQuery, forward};
 use sf_controller_bevy::{ControllerSystems, Dormant, Mover};
 use sf_coords::WorldPos;
 
 use crate::AiActor;
+use crate::alloc::AiTier;
 use crate::detection::{AiDetectionRules, AiVisibilityFactors, check_visibility};
 use crate::light::{AiLightExposure, LightScratch, sample_light};
 use crate::perception::{
@@ -286,19 +288,27 @@ impl<G: GroundProbe + Resource> Plugin for AiSightPlugin<G> {
 
 // --- Systems ----------------------------------------------------------------------------------
 
+/// Timers that start counting this tick: fresh, or their actor's tier changed.
+type RestartedTimers<'w, 's> = Query<'w, 's, &'static mut AiSightTimer, Or<(Added<AiSightTimer>, Changed<AiTier>)>>;
+
 fn begin_tick(
     fixed: Option<Res<Time<Fixed>>>,
     settings: Res<AiPerceptionSettings>,
     mut clock: ResMut<AiPerceptClock>,
     mut scratch: ResMut<SightScratch>,
-    mut timers: Query<&mut AiSightTimer, Added<AiSightTimer>>,
+    mut timers: RestartedTimers,
 ) {
     clock.tick += 1;
     if let Some(fixed) = fixed {
         clock.tick_s = fixed.timestep().as_secs_f32();
     }
+    // Fresh or re-tiered: count from now; the next check is the new period's stagger.
     for mut t in &mut timers {
+        let forced = t.0.is_forced();
         t.0 = SightTimer::starting_at(clock.tick);
+        if forced {
+            t.0.force();
+        }
     }
     scratch.global = global_perception(&settings, clock.tick);
 }
@@ -373,7 +383,16 @@ fn queue_sight(
         Option<&AiVisibilityFactors>,
     )>,
     mut observers: Query<
-        (Entity, &AiActor, &AiObserver, &Mover, &AiAwareness, &mut AiSightTimer, Option<&AiEffectivePerception>),
+        (
+            Entity,
+            &AiActor,
+            &AiObserver,
+            &Mover,
+            &AiAwareness,
+            &mut AiSightTimer,
+            Option<&AiEffectivePerception>,
+            Option<&AiTier>,
+        ),
         Without<Dormant>,
     >,
 ) {
@@ -381,7 +400,8 @@ fn queue_sight(
     let now = clock.clock();
     let tick = clock.tick;
     let cell_m = f64::from(s.sight.lose_sight_range_m.max(s.sight.sight_range_m).max(1.0));
-    let period = s.budget.sight_period_ticks(clock.tick_s);
+    let full_period = s.budget.sight_period_ticks(clock.tick_s);
+    let reduced_period = s.budget.tier1_period_ticks(clock.tick_s);
     let SightScratch { global, targets: snaps, pending, hits, .. } = &mut *scratch;
     rays.refused = 0;
 
@@ -405,7 +425,12 @@ fn queue_sight(
     }
     snaps.sort_unstable_by_key(|t| (t.cell, t.target));
 
-    for (entity, actor, obs, mover, meter, mut timer, eff) in &mut observers {
+    for (entity, actor, obs, mover, meter, mut timer, eff, tier) in &mut observers {
+        let period = match tier.map(|t| t.tier) {
+            Some(Tier::Logical) => continue,
+            Some(Tier::Reduced) => reduced_period,
+            Some(Tier::Full) | None => full_period,
+        };
         let Some(elapsed) = timer.0.poll(actor.0, tick, period) else { continue };
         let dt = elapsed as f32 * clock.tick_s;
         let eff = eff.map_or(&*global, |e| &e.0);

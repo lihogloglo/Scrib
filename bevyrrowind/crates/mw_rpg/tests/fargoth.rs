@@ -274,6 +274,7 @@ impl Host<'_> {
             ResultEffect::Journal { .. } => unreachable!("handled by the caller"),
             // No sheets in this host: stat functions never write.
             ResultEffect::Stats { .. } => unreachable!("no sheets"),
+            ResultEffect::Ai { .. } => unreachable!("no AI package functions in these results"),
         }
     }
 }

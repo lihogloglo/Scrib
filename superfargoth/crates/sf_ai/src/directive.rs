@@ -110,7 +110,8 @@ pub enum Limit {
 pub struct DirectiveSpec {
     pub kind: DirectiveKind,
     pub source: DirectiveSource,
-    /// Within a source under [`ModernPolicy`]; the whole order under Morrowind's.
+    /// Within a source under [`ModernPolicy`]. A game's [`StackPolicy`] may ignore it and rank by
+    /// kind instead (a classic-rules adapter does).
     pub priority: u8,
     /// Push a fresh instance when this one completes or its [`Limit::For`] runs out.
     pub repeat: bool,

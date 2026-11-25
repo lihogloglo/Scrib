@@ -17,6 +17,7 @@
 //! recursive-descent parser with per-line recovery is the standard choice
 //! for lenient legacy front ends.
 
+pub mod aifn;
 pub mod ast;
 pub mod coverage;
 pub mod diag;
@@ -47,7 +48,8 @@ pub use interp::{
     ScriptOp,
 };
 pub use resolve::{Env, MemberLookup, NoEnv};
-pub use statfn::{Dynamic, StatCall, StatFn};
+pub use aifn::{AiCall, AiFn};
+pub use statfn::{AI_STATS, Dynamic, StatCall, StatFn};
 
 /// A parsed script and everything reported on the way.
 #[derive(Clone, Debug)]

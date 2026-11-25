@@ -3,6 +3,55 @@
 Moved here to keep [ai.md](ai.md) inside its size budget. Newest slice first; the module docs in
 `superfargoth/crates/sf_ai/src/` are the detailed reference.
 
+## AI9d: `sim.cpu_tier = auto` (2026-11-26)
+
+`auto` (default) resolves on every read through `auto_cpu_tier(logical_threads, headless)`: <= 8 Floor, <= 12 Medium,
+<= 16 High, > 16 Ultra (`AUTO_TIER_MAX_THREADS`, from the reference rows above), headless Dedicated. Threads from std
+`available_parallelism` (1 if unknown); a CPU without SMT reads one row low (explicit choice fixes it). Headless is a
+host flag (`AiAllocSettings.host.headless`, default false). An explicit choice wins; `AiAllocStats.cpu_tier` shows the
+resolved tier.
+
+## AI9e: tiers on sight and hearing (2026-11-26)
+
+`queue_sight`: Full (and no `AiTier`) checks every `sight_period_s`, Reduced every `tier1_period_s` (also its
+`seen_recently`), Logical never (its meter still decays). A tier change restarts the `SightTimer` at that tick; the
+first check lands on the timer's own stagger `due(key, tick, period)` (not `first_decide_tick`, which spreads over
+the decide period). Hearing skips Logical listeners. AI9f: Reduced listeners hear by straight-line distance (no
+`NoisePropagation` query, no door penalty), only in the noise's space (`same_space`: rejects when both the noise's
+space and the listener's `AiExecutor.worldspace` are known and differ). `exec.tier` mirrors `AiTier`
+(2/1/0) for traces. Tests `tier_tests.rs` (5).
+
+## AI9b: allocator system `sf_ai_bevy::alloc` (2026-11-26)
+
+`AiAllocPlugin` (added by `AiPlugin`), set `AiAllocSystems::Allocate` in `FixedUpdate` before sight and the
+controller drive; `allocate_tiers` ranks every `AiActor` with a `Mover` (not `Dormant`) against `Perceivable` players
+(`Mover` or `PerceivablePose`; plain distance: `WorldPos` has no worldspace). Writes `AiTier { tier, first_decide_tick }`
+(own tick counter, same numbering as `AiPerceptClock`), removes it when the actor leaves the set. Host-written inputs:
+`AiInView`, `AiPin(Pin)`. `AiAllocSettings` (cpu tier, caps table, config), `AiAllocStats` (+ `allocate_us` with
+timings on). 15 tunables `ALLOC_TUNABLES` (`sim.cpu_tier` choice, `ai.alloc.caps_<tier>_{full,reduced}`, margins,
+decide periods), in the game CATALOG. Nothing reads tiers yet (AI9e). Cost: 2000 actors 555 µs mean / 918 µs max per
+allocate (release), over the Floor AI budget -> AI9c. AI9c (core only): key-sorted `Vec` + reused buffers, one packed
+`u128` rank key per actor, `select_nth_unstable` per band, in-view holds without a sort; 64 µs mean / 155 µs max per
+allocate, 161 µs per tick for the whole system (~0.03 µs/actor); a differential test vs the old code (300 runs x 40
+ticks) matched exactly (removed after). No allocate period needed.
+
+## AI9a: tier allocator core `sf_ai::alloc` (2026-11-26)
+
+`Allocator::allocate(inputs, caps, config, tick, tick_s) -> Allocation { tiers, changes, removed, stats }` (all in
+`ActorKey` order; pure, no clock). Rank: pin, then visible, then distance to the nearest player, then `ActorKey`; an
+actor already in a band ranks as if `full_margin_m` (5 m) / `reduced_margin_m` (10 m) nearer (hysteresis; Guess); NaN
+ranks farthest; duplicates count once. `CpuTier::caps()` = the table above (`ai.alloc.caps_*`). `TierChange` carries
+`first_decide_tick` = `sight::stagger_phase(key) % period` (`full_decide_s` 0.15, `reduced_decide_s` 1.0). Pins exceed
+caps (`over_cap_full` counts pins only). AI9a2: Full takes the pins, then the top `cap - pins` by rank (hysteresis
+kept, no in-view holds); Reduced keeps visible incumbents (former Full included) past its cap (`held_in_view`,
+`over_cap_reduced`); a visible actor never drops to Logical (decision below). Tunables are declared as
+bound-later consts (AI9b binds them). Tests `tests_alloc.rs` (9).
+
+**Decision (2026-11-26, industry standard, UE MassLOD / significance manager):** caps are hard between Full and
+Reduced: when over cap, the lowest-ranked visible actors drop to Reduced (it only lowers decide rate and foot probes, a
+small visible change). "Demotion only out of view" protects the step to Logical (tier 0 has no body): a visible actor
+never drops to Logical, so Reduced may exceed its cap by in-view holds (reported).
+
 ## AI26: perception gizmos `sf_ai_bevy` (feature `debug`, 2026-11-25)
 
 `perception_gizmos.rs` + tests (7). Console var `ai.perception` (off by default). Every non-dormant observer within 50 m

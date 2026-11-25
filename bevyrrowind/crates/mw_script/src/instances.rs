@@ -27,6 +27,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 
+use crate::aifn::AiCall;
 use crate::ast::{Call, Ident, Script, Target, VarRef, VarType};
 use crate::functions::{Function, FunctionTable};
 use crate::interp::{Host, Interpreter, Locals, MessageArg, RunError, ScriptOp, store};
@@ -556,6 +557,9 @@ impl<H: Host + ?Sized> Host for Scoped<'_, H> {
     }
     fn stat(&mut self, target: &Target, call: &StatCall) -> Option<f64> {
         self.inner.stat(target, call)
+    }
+    fn ai(&mut self, target: &Target, call: &AiCall) -> Option<f64> {
+        self.inner.ai(target, call)
     }
     fn script(&mut self, target: &Target, op: ScriptOp, script: &Ident) -> Option<f64> {
         let id = script.key.clone();

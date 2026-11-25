@@ -12,7 +12,7 @@ use mw_script::ast::{Call, Ident, Target as AstTarget, VarRef, VarType};
 use mw_script::functions::Function;
 use mw_script::interp::{Host, Interpreter, Locals, MessageArg};
 use mw_script::{
-    Env, FunctionTable, MemberLookup, Parsed, SourceKind, StatCall, parse_and_resolve,
+    AiCall, Env, FunctionTable, MemberLookup, Parsed, SourceKind, StatCall, parse_and_resolve,
 };
 use mw_ui::message::MessageArg as UiArg;
 use sf_records::RecordId;
@@ -306,6 +306,10 @@ impl Host for RunHost<'_> {
 
     fn stat(&mut self, target: &AstTarget, call: &StatCall) -> Option<f64> {
         Some(self.run.stat(&api::target(target), call))
+    }
+
+    fn ai(&mut self, target: &AstTarget, call: &AiCall) -> Option<f64> {
+        Some(self.run.ai(&api::target(target), call))
     }
 
     fn unhandled(&mut self, function: &Function, _call: &Call) -> f64 {

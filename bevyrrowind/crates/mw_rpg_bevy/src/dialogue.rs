@@ -25,8 +25,10 @@ use bevy_log::prelude::*;
 use bevy_enhanced_input::prelude::EnhancedInputPlugin;
 use mw_rpg::{
     ActorFacts, AiNudge, BoundItems, DispositionExtras, DispositionInput, GlobalNumber, MwDialogue, MwDialogueRules, MwResults, MwSheets, MwSlot,
-    MwView, MwWorld, NoSheets, NpcStates, PersuasionSession, ResultCall, ResultEffect, ResultRunner, ResultState, ScriptVar, Target, VarType, clothing_value, rank_name, record_clothing_value,
+    MwAi, MwView, MwWorld, NoSheets, NpcStates, PersuasionSession, ResultCall, ResultEffect, ResultRunner, ResultState, ScriptVar, Target, VarType, clothing_value, rank_name, record_clothing_value,
 };
+use mw_walkers_bevy::script_ai::{AiPackageKind, AiRuns, ScriptAiPush};
+use mw_script::aifn::package_type;
 use serde::{Deserialize, Serialize};
 use sf_character_bevy::{Character, CharacterPlacement};
 use sf_records::{RecordDb, RecordFormat, RecordId, apply_record_file};
@@ -207,6 +209,9 @@ struct Content {
     bound: BoundItems,
     /// The CONT base of every container reference ([`crate::inventory::container_refs`]).
     containers: HashMap<ActorKey, RecordId>,
+    /// What the AI script reads see (`GetAIPackageDone`, `GetCurrentAIPackage`): the walkers'
+    /// [`AiRuns`] as of the last [`sync_ai_runs`].
+    ai_runs: AiRuns,
 }
 
 /// One conversation (host side).
@@ -228,6 +233,9 @@ pub struct Rpg {
     /// Sheet changes result scripts asked for (stats.md S7), sent as `StatCommand`s by
     /// `send_stat_commands`; the next fixed tick applies them.
     stat_commands: Vec<StatCommand>,
+    /// AI package pushes scripts made (`MA2c2`), sent as [`ScriptAiPush`] messages by
+    /// `send_ai_pushes`; the walkers stack them on the next fixed tick.
+    ai_pushes: Vec<ScriptAiPush>,
     /// Base Fight and Flee persuasion changed (Intimidate, Taunt), by actor; the record's
     /// otherwise. TODO(AI settings, ROADMAP Phase 3 AI): no per-actor AI settings exist yet; move
     /// these into them (saved, read by the AI) when they land. Unsaved until then.
@@ -433,6 +441,10 @@ impl MwWorld for View<'_> {
         self.sheets
     }
 
+    fn ai(&self) -> &dyn MwAi {
+        self
+    }
+
     fn actor(&self, ctx: &ConversationCtx, target: &Target) -> Option<ActorKey> {
         self.target(ctx, target)
     }
@@ -440,6 +452,24 @@ impl MwWorld for View<'_> {
     fn facts(&self, ctx: &ConversationCtx, target: &Target) -> Option<&ActorFacts> {
         let key = self.target(ctx, target)?;
         self.c.actors.get(&key).map(|a| &a.facts)
+    }
+}
+
+/// The AI reads from the walkers' [`AiRuns`] (`mw_walkers_bevy::script_ai`: `OpenMW`'s
+/// `isPackageDone` and `getLastRunTypeId`); the player and unknown targets read not done, -1.
+impl MwAi for View<'_> {
+    fn package_done(&self, ctx: &ConversationCtx, target: &Target) -> bool {
+        self.target(ctx, target).is_some_and(|k| self.c.ai_runs.get(k).done)
+    }
+
+    fn current_package(&self, ctx: &ConversationCtx, target: &Target) -> i32 {
+        self.target(ctx, target).and_then(|k| self.c.ai_runs.get(k).last).map_or(package_type::NONE, |kind| match kind {
+            AiPackageKind::Wander => package_type::WANDER,
+            AiPackageKind::Travel => package_type::TRAVEL,
+            AiPackageKind::Escort => package_type::ESCORT,
+            AiPackageKind::Follow => package_type::FOLLOW,
+            AiPackageKind::Activate => package_type::ACTIVATE,
+        })
     }
 }
 
@@ -529,11 +559,13 @@ impl Rpg {
                 gmst,
                 bound,
                 containers,
+                ai_runs: AiRuns::default(),
             },
             state: RpgState::default(),
             results: MwResults::new(),
             events: Vec::new(),
             stat_commands: Vec::new(),
+            ai_pushes: Vec::new(),
             ai_settings: HashMap::new(),
             services: WorldServices::default(),
             sessions: ServiceSessions::new(),
@@ -743,7 +775,8 @@ impl Rpg {
                 | ResultEffect::ModDisposition { target, .. }
                 | ResultEffect::SetDisposition { target, .. }
                 | ResultEffect::SetLocal { target, .. }
-                | ResultEffect::Stats { target, .. } = &mut effect
+                | ResultEffect::Stats { target, .. }
+                | ResultEffect::Ai { target, .. } = &mut effect
                 && *target == Target::Speaker
             {
                 *target = Target::Player;
@@ -969,6 +1002,14 @@ impl Rpg {
                     debug!("result scripts: stats of {target:?} have no sheet owner");
                 }
             }
+            // The actor's directive stack, by its key (the walkers stack it: `send_ai_pushes`).
+            ResultEffect::Ai { target, push } => {
+                if let Some(actor) = target_key(self, &target) {
+                    self.ai_pushes.push(ScriptAiPush { actor, package: push.package() });
+                } else {
+                    debug!("result scripts: AI push {push:?} on {target:?} names no actor");
+                }
+            }
         }
         events
     }
@@ -1060,6 +1101,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, open_ui: Option<String>) {
     app.add_plugins((SfUiPlugin, UiTextPlugin, SfScreensPlugin, JournalUiPlugin::<Rpg>::default()))
         .add_message::<ActivationOutcome>()
         .add_message::<ServiceEventMessage>()
+        .add_message::<ScriptAiPush>()
         .insert_resource(UiRegistryRes(registry()))
         .insert_resource(rpg)
         .init_resource::<JournalSeenStore>()
@@ -1072,11 +1114,13 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, open_ui: Option<String>) {
             Update,
             (
                 services::sync_clock,
+                sync_ai_runs,
                 host_dialogue,
                 end_closed_talk,
                 keep_journal_seen,
                 show_events,
                 send_stat_commands,
+                send_ai_pushes,
                 services::relist_services,
                 services::send_service_events,
                 services::advance_sky,
@@ -1463,6 +1507,27 @@ fn send_stat_commands(mut rpg: ResMut<Rpg>, mut commands: Commands) {
     }
     for command in std::mem::take(&mut rpg.stat_commands) {
         commands.write_message(command);
+    }
+}
+
+/// Sends the AI pushes scripts made ([`Rpg::apply`]) to the walkers (`mw_walkers_bevy::script_ai`).
+fn send_ai_pushes(mut rpg: ResMut<Rpg>, mut commands: Commands) {
+    if rpg.ai_pushes.is_empty() {
+        return;
+    }
+    for push in std::mem::take(&mut rpg.ai_pushes) {
+        commands.write_message(push);
+    }
+}
+
+/// Copies the walkers' [`AiRuns`] for the AI script reads when they changed (before the
+/// dialogue on `Update` and the scripts on `FixedUpdate`).
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn sync_ai_runs(runs: Option<Res<AiRuns>>, mut rpg: ResMut<Rpg>) {
+    if let Some(runs) = runs
+        && runs.is_changed()
+    {
+        rpg.content.ai_runs.clone_from(&runs);
     }
 }
 

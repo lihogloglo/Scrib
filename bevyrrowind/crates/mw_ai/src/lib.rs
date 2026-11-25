@@ -6,9 +6,17 @@
 //!   `OpenMW`'s idle roll, and the wander goal planner.
 //! - [`methods`]: [`WanderVocabulary`] and [`WanderDriver`], the HTN wander/idle
 //!   method set on `sf_ai` (`MA3`, replacing `PathWalkScaffold`).
+//! - [`packages`]: record AI packages (`AI_W`/`AI_T`/`AI_E`/`AI_F`/`AI_A`) as `sf_ai`
+//!   directives (`MA2a`).
+//! - [`policy`]: `OpenMW`'s `AiSequence` stack rules as [`MorrowindPolicy`] (`MA2b`).
+//! - [`settings`]: AI settings considerations: the Fight / aggression rating (`MA4d`) and the Flee
+//!   rating and flee decision (`MA4f`), the greeting state machine (`MA4c1`).
 
 pub mod methods;
+pub mod packages;
 pub mod pathgrid;
+pub mod policy;
+pub mod settings;
 pub mod wander;
 
 pub use methods::{
@@ -18,9 +26,16 @@ pub use methods::{
     WanderDriver, WanderKeys, WanderOutput, WanderTuning, WanderVocabulary, wander_library,
 };
 pub use pathgrid::{CellKey, PathGraph, PathGridError, PathGrids};
+pub use policy::{MorrowindPolicy, Options, is_actual_package, options};
 pub use wander::{
     Wander, WanderPlanner, WanderStep, gmst_float, roll_idle, roll_idle_with, walk_speed,
 };
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_packages;
+#[cfg(test)]
+mod tests_policy;
+#[cfg(test)]
+mod tests_settings;

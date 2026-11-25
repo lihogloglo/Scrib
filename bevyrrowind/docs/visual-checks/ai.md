@@ -63,7 +63,7 @@ Log: `ai: N wanderers on navmesh, M on pathgrid fallback (since start: X navmesh
   with a gap; the LKP marker stays at the gap. Hearing: cross the 4/8/14 m stripes: run heard at 4 and 8 not 14,
   sneak never, sprint at 14, walk 4 only; rings show each step's reach; hearing alone tops out at Curious.
 - Search (AI47b, 2026-11-25): the level now has a navmesh; the search guard should leave its post and walk around the boxes. Log: `nav: level tiles 60 in X ms`. Impacts make no noise yet (IN18).
-- Status: owner 2026-11-25 "worked, too early to tell": keep for re-check after AI47b (level navmesh) and sneak concealment (LW4/MA5).
+- Status: owner 2026-11-25 "worked, too early to tell"; owner 2026-11-26 (after AI47b, AI8i, AI8h2, MA18): "all good": OK.
 
 ### AI-12: sneaking hides you from sight (MA18 + LW4, owner request 2026-11-25)
 - Kind: level, dev build. `owner_launch.sh scene level-perception-light` (hour 23, clear, gizmos on). F11 drops the player.
@@ -72,3 +72,4 @@ Log: `ai: N wanderers on navmesh, M on pathgrid fallback (since start: X navmesh
   sneaking still slows it, less. Sprinting gives you away (fast movement reveals). Behind him you stay hidden longer.
 - Weights are Guess tunables `crime.stealth.*`, live since LW4b2 (e.g. `--set crime.stealth.crouched_concealment=60`). Morrowind's sneak skill formula is MA5.
 - Status: owner 2026-11-25 "seems to work but no guard is ever moving": Curious/Suspicious reactions never built (AI8h1/h2), search guard didn't search (AI47c diagnosis). AI8h2 + AI8i done 2026-11-25: re-check: a guard at Curious turns to face you, at Suspicious walks ~3 m toward where he saw you and stands facing it, then walks back to his post when the band drops.
+- Verdict owner 2026-11-26: OK ("when they are suspicious they step toward me, look around and walk back"). Alerted guards stand still: expected, Alerted response = AI29 (warn, pursue) and combat (MA4d, MA10).

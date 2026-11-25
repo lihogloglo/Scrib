@@ -4,10 +4,11 @@
 
 use std::collections::HashMap;
 
-use mw_stats::{MwGmst, MwTable, SkillInfo, openmw_rules};
+use mw_stats::{MwGmst, MwTable, SkillInfo, creature_ops, npc_ops, openmw_rules};
 use sf_records::RecordId;
 use sf_rpg::{ActorKey, CharacterRpg, ConversationCtx, PlayerId, WorldRpg};
 use sf_stats::{ApplyCtx, Cause, CauseKind, Inputs, PlayerKey, Rules, Sheet, StatOp, StatOwner};
+use tes3::esp::{AiData, Creature, Npc, NpcData, NpcStats};
 
 use crate::script_stats::mod_stat;
 use crate::{
@@ -32,6 +33,21 @@ fn table() -> MwTable {
     .unwrap()
 }
 
+/// The speaker's AIDT (Hello, Fight, Flee, Alarm) and the rat's.
+const SPEAKER_AIDT: [i8; 4] = [30, 40, 10, 90];
+const RAT_AIDT: [i8; 4] = [0, 70, 20, 0];
+
+fn aidt(v: [i8; 4]) -> AiData {
+    AiData { hello: i16::from(v[0]), fight: v[1], flee: v[2], alarm: v[3], ..AiData::default() }
+}
+
+/// The AI setting ops a record's init emits (`mw_stats` `npc_ops` / `creature_ops`, the AIDT path).
+fn ai_setting_ops(t: &MwTable, ops: Vec<StatOp>) -> Vec<StatOp> {
+    ops.into_iter()
+        .filter(|op| matches!(op, StatOp::SetBase { stat, .. } if t.idx.ai_settings.contains(stat)))
+        .collect()
+}
+
 fn sheet(t: &MwTable, rules: &Rules, owner: StatOwner, is_player: bool, ops: &[StatOp]) -> Sheet {
     let inputs = Inputs { is_player, ..Inputs::default() };
     let (sheet, rejected) = mw_stats::new_sheet(t, rules, owner, &inputs, ops);
@@ -41,7 +57,7 @@ fn sheet(t: &MwTable, rules: &Rules, owner: StatOwner, is_player: bool, ops: &[S
 
 /// Player: Strength 50, Long Blade 40, health 60 / 80, Fighters Guild rank 3, bounty 0.
 /// Speaker (an NPC of the Fighters Guild at record rank 1, no rank on its sheet): Strength 40,
-/// level 5. Rat (a creature): Strength 30.
+/// level 5, AIDT [`SPEAKER_AIDT`]. Rat (a creature): Strength 30, AIDT [`RAT_AIDT`].
 struct Sheets {
     table: MwTable,
     rules: Rules,
@@ -66,14 +82,25 @@ impl Sheets {
         let inputs = Inputs { is_player: true, ..Inputs::default() };
         let ctx = ApplyCtx { owner, cause: Cause { kind: CauseKind::Combat, source: None, tick: 0 }, inputs: &inputs };
         assert_eq!(sf_stats::apply(&t.table, &rules, &mut player, &hurt, &ctx, &mut Vec::new()), 0);
-        let speaker = sheet(&t, &rules, StatOwner::Actor(SPEAKER), false, &[
+        let g = MwGmst::vanilla();
+        let npc = Npc {
+            ai_data: aidt(SPEAKER_AIDT),
+            data: NpcData { stats: Some(NpcStats::default()), ..NpcData::default() },
+            ..Npc::default()
+        };
+        let mut ops = ai_setting_ops(&t, npc_ops(&t, &g, &sf_records::RecordDb::new(), &npc).unwrap());
+        ops.extend([
             StatOp::SetBase { stat: i.attributes[0], value: 40.0 },
             StatOp::CounterSet { stat: i.level, value: 5.0 },
         ]);
-        let rat = sheet(&t, &rules, StatOwner::Actor(RAT), false, &[
+        let speaker = sheet(&t, &rules, StatOwner::Actor(SPEAKER), false, &ops);
+        let crea = Creature { id: "rat".into(), ai_data: aidt(RAT_AIDT), ..Creature::default() };
+        let mut ops = ai_setting_ops(&t, creature_ops(&t, &g, &crea));
+        ops.extend([
             StatOp::CounterSet { stat: i.creature, value: 1.0 },
             StatOp::SetBase { stat: i.attributes[0], value: 30.0 },
         ]);
+        let rat = sheet(&t, &rules, StatOwner::Actor(RAT), false, &ops);
         Self { table: t, rules, player, speaker, rat }
     }
 }
@@ -415,4 +442,66 @@ fn creatures_and_missing_sheets() {
         .run(ResultCall { ctx: &ctx, topic: &topic, response: &response, script: "PCRaiseRank\nset a to GetPCRank" })
         .unwrap();
     assert_eq!(effects, [ResultEffect::SetLocal { target: Target::Speaker, name: id("a"), value: -1.0 }]);
+}
+
+/// `OpGet/Set/ModAiSetting` (`aiextensions.cpp`) per setting on the speaker NPC: Get reads the
+/// AIDT value, Set writes the base, Mod adds to the base (which may go below 0, as in `OpenMW`;
+/// the read floors at 0), and every read sees the run's earlier writes.
+#[test]
+fn ai_settings_get_set_mod_on_an_npc() {
+    let w = World::new();
+    for (k, name) in mw_script::AI_STATS.iter().enumerate() {
+        let stat = w.sheets.table.idx.ai_settings[k];
+        let r = run(
+            &w,
+            &format!(
+                "set a to Get{name}
+Set{name} 50
+set b to Get{name}
+Set{name} 30
+Mod{name} -80
+                 set c to Get{name}
+Mod{name} 60
+set d to Get{name}"
+            ),
+        );
+        assert_eq!(
+            (r.local("a"), r.local("b"), r.local("c"), r.local("d")),
+            (f32::from(SPEAKER_AIDT[k]), 50.0, 0.0, 10.0),
+            "{name}: AIDT, Set 50, Mod -80 on 30 (base -50, read 0), Mod 60 (base 10)"
+        );
+        let set = |value: f32| (Target::Speaker, vec![StatOp::SetBase { stat, value }]);
+        assert_eq!(r.stats, [set(50.0), set(30.0), set(-50.0), set(10.0)], "{name}");
+    }
+}
+
+/// The AI setting functions act on every actor: creatures and the player too (`isActor`); a
+/// target without a sheet reads 0 and takes no write.
+#[test]
+fn ai_settings_on_creatures_the_player_and_missing_sheets() {
+    let w = World::new();
+    let fight = w.sheets.table.idx.ai_settings[1];
+    let flee = w.sheets.table.idx.ai_settings[2];
+    let r = run(
+        &w,
+        "set a to \"rat\"->GetFight
+\"rat\"->ModFight 15
+set b to \"rat\"->GetFight
+         set c to player->GetFlee
+player->SetFlee 20
+set d to player->GetFlee
+         \"nobody\"->SetHello 40
+set e to \"nobody\"->GetHello",
+    );
+    assert_eq!(
+        (r.local("a"), r.local("b"), r.local("c"), r.local("d"), r.local("e")),
+        (f32::from(RAT_AIDT[1]), f32::from(RAT_AIDT[1]) + 15.0, 0.0, 20.0, 0.0)
+    );
+    assert_eq!(
+        r.stats,
+        [
+            (Target::Actor(id("rat")), vec![StatOp::SetBase { stat: fight, value: 85.0 }]),
+            (Target::Player, vec![StatOp::SetBase { stat: flee, value: 20.0 }]),
+        ]
+    );
 }

@@ -19,6 +19,8 @@ sf_coords.workspace = true
 sf_ids.workspace = true
 # `Location` and `WorldspaceId`.
 sf_world.workspace = true
+# `PortalPath::links` (portal_query).
+smallvec.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

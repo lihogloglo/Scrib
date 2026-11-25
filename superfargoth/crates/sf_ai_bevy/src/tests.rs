@@ -4,10 +4,13 @@
 use std::sync::{Mutex, Once};
 
 use bevy::MinimalPlugins;
+use bevy::time::{Time, Virtual};
+use bevy_app::FixedUpdate;
+use glam::Vec3;
 use serde_json::json;
 use sf_ai::{
-    MethodChoice, OperatorState, OperatorStatus, Operators, Plan, PlanOutcome, PlanStep, StateKeys, TraceEntry,
-    register_kinds,
+    CpuTier, MethodChoice, OperatorState, OperatorStatus, Operators, Plan, PlanOutcome, PlanStep, StateKeys, TierCaps,
+    TraceEntry, register_kinds,
 };
 use sf_console_bevy::sf_console::Level;
 use sf_console_bevy::{ConsolePlugin, ConsoleSubmit, DevConsole};
@@ -110,9 +113,13 @@ fn ai_trace_prints_the_selected_actors_steps_with_names() {
             "#11 t1 scheduled drive - via t40:m41 rej - plan kept_not_better op - path -",
         ]
     );
+    // A host without the allocator: `ai.tiers` falls back to the traces (virtual time paused, so
+    // the allocator system never runs without its resource).
+    app.world_mut().resource_mut::<Time<Virtual>>().pause();
+    app.world_mut().remove_resource::<AiAllocStats>();
     assert_eq!(
         info(&run(&mut app, "ai.tiers")),
-        ["tiers (provisional: each traced actor's last step; no allocator before AI9): t2 0, t1 1, t0 0 (1 traced)"]
+        ["tiers (no allocator: each traced actor's last step): t2 0, t1 1, t0 0 (1 traced)"]
     );
     assert_eq!(
         info(&run(&mut app, "ai.stats")),
@@ -127,6 +134,39 @@ fn ai_trace_prints_the_selected_actors_steps_with_names() {
     assert!(errors.last().unwrap().1.contains("no actor selected"), "{errors:?}");
     let errors = run(&mut app, "ai.trace 3 nothex");
     assert!(errors.last().unwrap().1.contains("bad actor key \"nothex\""), "{errors:?}");
+}
+
+#[test]
+fn ai_tiers_and_stats_read_the_allocator() {
+    let mut app = app(LIBRARY);
+    app.world_mut().resource_mut::<Time<Virtual>>().pause();
+    {
+        let mut settings = app.world_mut().resource_mut::<AiAllocSettings>();
+        settings.cpu_tier_choice = Some(CpuTier::Floor);
+        settings.set_caps(TierCaps { full: 2, reduced: 2 });
+    }
+    for i in 1..=5u8 {
+        let at = Vec3::new(10.0 * f32::from(i), 0.0, 0.0);
+        app.world_mut().spawn((AiActor(ActorKey(u128::from(i))), sight_tests::mover(at, 0.0)));
+    }
+    app.world_mut().run_schedule(FixedUpdate);
+    assert_eq!(
+        info(&run(&mut app, "ai.tiers")),
+        [
+            "tiers: full 2/2, reduced 2/2, logical 1; pinned 0, over cap full 0 reduced 0, held in view 0; \
+             cpu tier floor (set)"
+        ]
+    );
+    assert_eq!(
+        info(&run(&mut app, "ai.stats")),
+        [
+            "traces on, admit tier2, timings off: 0 traced of cap 256, 0 watched; library 3 tasks, 1 methods, 0 load errors",
+            "alloc: tick 1, timings off",
+        ]
+    );
+    // Back to auto: the line says so.
+    app.world_mut().resource_mut::<AiAllocSettings>().cpu_tier_choice = None;
+    assert!(info(&run(&mut app, "ai.tiers"))[0].ends_with(" (auto)"));
 }
 
 #[test]

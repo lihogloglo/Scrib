@@ -31,7 +31,7 @@ pub use progression::{
     OpenMwLeveling, OpenMwSkillUse, levelup_attribute_multiplier, openmw_rules, skill_progress_requirement,
 };
 pub use table::{
-    ATTRIBUTES, MAGNITUDE_STATS, MwIdx, MwTable, MwTableError, SKILLS, SPECIALIZATIONS, SkillInfo, attr, class_skill,
+    AI_SETTINGS, ATTRIBUTES, MAGNITUDE_STATS, MwIdx, MwTable, MwTableError, SKILLS, SPECIALIZATIONS, SkillInfo, attr, class_skill,
     defs, roles,
 };
 

@@ -10,7 +10,7 @@ use glam::Vec3;
 use sf_ai::{
     ExecConfig, ExecContext, ExecGait, ExecOutput, KeySet, NavCommand, NavMoveState,
     OperatorBindings, OperatorId, OperatorKind, OperatorStatus, PathState, PlanRunner, StateKey,
-    StateKeys, TaskId, TraceEntry, WorldState,
+    StateKeys, TaskId, Tier, TraceEntry, WorldState,
 };
 use sf_controller::{Gait, LocomotionIntent};
 use sf_controller_bevy::{ControllerSettings, ControllerSystems, Dormant, Held, MoveIntent, Mover};
@@ -19,6 +19,7 @@ use sf_tunables::{AnyDef, Def, Lifetime, Net, Scope, Source, Unit, def};
 use sf_tunables_bevy::TunablesAppExt;
 use sf_world::{Location, WorldspaceId};
 
+use crate::alloc::AiTier;
 use crate::{AiActor, AiLibrary, AiTraces};
 
 /// `ai.exec.stuck_timeout_s`: [`ExecConfig::stuck_timeout_s`] (`ai.md` "Executors": 3 s without progress).
@@ -118,6 +119,8 @@ pub struct AiExecutor {
     pub world_state: WorldState,
     pub bindings: OperatorBindings,
     pub worldspace: WorldspaceId,
+    /// The tier traces show: the allocator's [`AiTier`] (2 full, 1 reduced, 0 logical) when the
+    /// actor has one, else 2.
     pub tier: u8,
     pub idle_variant: Option<u8>,
     pub last_output: Option<ExecOutput>,
@@ -296,6 +299,7 @@ fn drive_executors(
         &mut AiExecutor,
         Has<Dormant>,
         Has<Held>,
+        Option<&AiTier>,
     )>,
 ) {
     tick.0 += 1;
@@ -308,7 +312,11 @@ fn drive_executors(
     };
     let dt = ctrl.map_or(raw_dt, |c| raw_dt.min(c.max_dt));
 
-    for (actor, mover, mut intent, mut corridor, mut exec, dormant, held) in &mut actors {
+    for (actor, mover, mut intent, mut corridor, mut exec, dormant, held, tier) in &mut actors {
+        // The allocator's tier when there is one (traces show it); hosts without it keep 2.
+        if let Some(t) = tier {
+            exec.tier = tier_index(t.tier);
+        }
         if dormant || held {
             continue;
         }
@@ -325,6 +333,15 @@ fn drive_executors(
             traces.as_deref_mut(),
             queries.as_deref_mut(),
         );
+    }
+}
+
+/// The tier's number in traces (`ai.md` "Tiers and budget": 0 logical, 1 reduced, 2 full).
+fn tier_index(tier: Tier) -> u8 {
+    match tier {
+        Tier::Logical => 0,
+        Tier::Reduced => 1,
+        Tier::Full => 2,
     }
 }
 

@@ -17,6 +17,10 @@
 //!   (the NPC's own rank, from its record rank the first time; no-op on the player).
 //! - `apps/openmw/mwscript/dialogueextensions.cpp`: `OpGet/Set/ModReputation` (the NPC's own),
 //!   through `NpcStats::setReputation` (`mwmechanics/npcstats.cpp`: clamped to 0..=255).
+//! - `apps/openmw/mwscript/aiextensions.cpp` (`OpenMW` @ `5f3aafb`) `OpGetAiSetting` (:254, the
+//!   modified value, `getModified(false)`), `OpSetAiSetting` (:301, the integer argument as the
+//!   new base) and `OpModAiSetting` (:275, base + argument as the new base), on every actor:
+//!   NPCs, creatures and the player alike (`isActor`), so Hello, Fight, Flee and Alarm.
 //! - `apps/openmw/mwmechanics/npcstats.cpp` `setFactionRank`: members only; below 0 leaves the
 //!   faction ([`StatOp::Leave`]); a rank past the faction's 10 rank slots is ignored.
 //!
@@ -29,6 +33,10 @@
 //!   none, and checks that a named faction exists; the call is skipped here and the run goes on.
 //! - `OpModDynamic`'s `dagoth_ur_1` workaround (an unloaded remote target) is the general rule
 //!   here: a target without a sheet is skipped.
+//! - `OpSet/ModAiSetting` also overwrite the base record (`setBaseAISetting`, every reference of
+//!   that id, the value cast to `unsigned char`); ours writes this actor's sheet only. Their base
+//!   may go below 0 as in `OpenMW`, but a read floors at 0 (the sheet's `Value { min: 0 }`) where
+//!   `getModified(false)` would return the negative value.
 //! - Not ported yet: the `PCExpell` message box (`sExpelledMessage`), the fatigue knockdown of
 //!   `ModCurrentFatigue` (combat wires fatigue knockdowns, combat-adapter.md), `recordCrimeId`
 //!   when the bounty reaches 0 (crime spec).
@@ -313,6 +321,12 @@ fn step(
             #[allow(clippy::float_cmp)]
             let empty = max == 0.0;
             Step::Read(if empty { 1.0 } else { s.current(p) / max })
+        }
+        F::GetAiSetting(a) => Step::Read(s.modified(i.ai_settings[usize::from(a)])),
+        F::SetAiSetting(a) => write(StatOp::SetBase { stat: i.ai_settings[usize::from(a)], value: int(value) as f32 }),
+        F::ModAiSetting(a) => {
+            let stat = i.ai_settings[usize::from(a)];
+            write(StatOp::SetBase { stat, value: (s.base(stat) as i32).saturating_add(int(value)) as f32 })
         }
         F::GetLevel => Step::Read(s.modified(i.level)),
         F::SetLevel => write(StatOp::CounterSet { stat: i.level, value: int(value) as f32 }),

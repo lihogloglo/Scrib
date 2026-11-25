@@ -4,12 +4,14 @@
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
-use sf_ai::{ActorKey, TRACE_LEN};
+use sf_ai::{ActorKey, CpuTier, TRACE_LEN};
 use sf_console_bevy::ConsoleAppExt;
 use sf_console_bevy::sf_console::{ArgKind, CommandSpec, Param};
 
+use crate::alloc::CPU_TIER_CHOICES;
 use crate::{
-    AiLibrary, AiSelected, AiTraces, DEFAULT_TRACE_LINES, actor_hex, directives_text, parse_actor, trace_text,
+    AiAllocSettings, AiAllocStats, AiLibrary, AiSelected, AiTraces, DEFAULT_TRACE_LINES, actor_hex, directives_text,
+    parse_actor, trace_text,
 };
 
 const NO_ACTOR: &str = "no actor selected: `ai.select <id>`, or click one with the console open and `ai.select`";
@@ -93,30 +95,23 @@ pub(crate) fn register(app: &mut App) {
 /// `ai.tiers` and `ai.stats`.
 fn register_summaries(app: &mut App) {
     app.add_console_command(
-        CommandSpec::new("ai.tiers")
-            .help("Traced actors per AI tier (provisional: from the traces, until the AI9 allocator)"),
+        CommandSpec::new("ai.tiers").help(
+            "Actors per AI tier from the last allocation, against the caps, with pins, over-cap \
+             actors, in-view holds and the CPU tier (from the traces on hosts without the allocator)",
+        ),
         |inv| {
-            let store = inv.ctx.resource::<AiTraces>();
-            let mut counts = [0usize; 3];
-            let mut traced = 0;
-            for (_, trace) in store.iter() {
-                if let Some(e) = trace.last() {
-                    traced += 1;
-                    if let Some(c) = counts.get_mut(usize::from(e.tier)) {
-                        *c += 1;
-                    }
-                }
-            }
-            inv.log.info(&format!(
-                "tiers (provisional: each traced actor's last step; no allocator before AI9): \
-                 t2 {}, t1 {}, t0 {} ({traced} traced)",
-                counts[2], counts[1], counts[0]
-            ));
+            let world = &*inv.ctx;
+            let text = match (world.get_resource::<AiAllocStats>(), world.get_resource::<AiAllocSettings>()) {
+                (Some(stats), Some(settings)) => tiers_text(stats, settings),
+                _ => traced_tiers_text(world.resource::<AiTraces>()),
+            };
+            inv.log.info(&text);
             Ok(())
         },
     )
     .add_console_command(
-        CommandSpec::new("ai.stats").help("Trace store settings and counts, HTN library size and load errors"),
+        CommandSpec::new("ai.stats")
+            .help("Trace store settings and counts, HTN library size and load errors, the allocator's tick and cost"),
         |inv| {
             let traces = inv.ctx.resource::<AiTraces>();
             let lib = inv.ctx.resource::<AiLibrary>();
@@ -134,9 +129,51 @@ fn register_summaries(app: &mut App) {
                 lib.library.method_count(),
                 lib.report.as_ref().map_or(0, |r| r.errors.len()),
             ));
+            if let Some(alloc) = inv.ctx.get_resource::<AiAllocStats>() {
+                inv.log.info(&match alloc.allocate_us {
+                    Some(us) => format!("alloc: tick {}, allocate {us:.1} µs", alloc.tick),
+                    None => format!("alloc: tick {}, timings off", alloc.tick),
+                });
+            }
             Ok(())
         },
     );
+}
+
+/// The `ai.tiers` line from the allocator's last run.
+fn tiers_text(alloc: &AiAllocStats, settings: &AiAllocSettings) -> String {
+    let (s, caps) = (&alloc.stats, alloc.caps);
+    let tier = CpuTier::ALL
+        .iter()
+        .position(|&t| t == alloc.cpu_tier)
+        .and_then(|i| CPU_TIER_CHOICES.get(i + 1))
+        .copied()
+        .unwrap_or("?");
+    let how = if settings.cpu_tier_choice.is_some() { "set" } else { "auto" };
+    format!(
+        "tiers: full {}/{}, reduced {}/{}, logical {}; pinned {}, over cap full {} reduced {}, \
+         held in view {}; cpu tier {tier} ({how})",
+        s.full, caps.full, s.reduced, caps.reduced, s.logical, s.pinned, s.over_cap_full, s.over_cap_reduced,
+        s.held_in_view,
+    )
+}
+
+/// The `ai.tiers` line without the allocator: each traced actor's last step.
+fn traced_tiers_text(store: &AiTraces) -> String {
+    let mut counts = [0usize; 3];
+    let mut traced = 0;
+    for (_, trace) in store.iter() {
+        if let Some(e) = trace.last() {
+            traced += 1;
+            if let Some(c) = counts.get_mut(usize::from(e.tier)) {
+                *c += 1;
+            }
+        }
+    }
+    format!(
+        "tiers (no allocator: each traced actor's last step): t2 {}, t1 {}, t0 {} ({traced} traced)",
+        counts[2], counts[1], counts[0]
+    )
 }
 
 fn select(world: &mut World, key: ActorKey) -> String {

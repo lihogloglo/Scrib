@@ -23,6 +23,9 @@
 //!   Callers request through [`NavQueries`] and take replies published at the next tick boundary;
 //!   `nav.stats` shows the queue, running jobs and the last tick's run (`queue 3 (1 running), tick
 //!   0.04 ms (2 jobs, 256 nodes, 1 results)`).
+//! - `NV11d1`, [`NavWorldGraphPlugin`] (module [`world_graph`]): the worldspace graph
+//!   ([`NavWorldGraph`]) rebuilt from the host's door links when they or the adapter's
+//!   [`NavLinkRules`] change; the host writes [`NavDoorStates`]; `nav.links` prints the counts.
 
 use std::collections::BTreeMap;
 
@@ -40,6 +43,7 @@ pub mod corridor;
 mod gizmos;
 pub mod queries;
 pub mod residency;
+pub mod world_graph;
 
 #[cfg(test)]
 mod corridor_tests;
@@ -49,6 +53,8 @@ mod queries_tests;
 mod residency_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod world_graph_tests;
 
 pub use corridor::{
     CORRIDOR_LOOKAHEAD_POLYS, CORRIDOR_MAX_CORNERS, CORRIDOR_OPTIMIZE_RANGE_M,
@@ -60,12 +66,17 @@ pub use residency::{
     BakedNavRing, NavAnchor, NavRingPlugin, NavRingSettings, RING_LOAD_M, RING_TILES_PER_FRAME,
     RING_UNLOAD_M, RingStats,
 };
+pub use world_graph::{
+    NavDoorStates, NavLinkRules, NavWorldGraph, NavWorldGraphPlugin, NavWorldGraphStats,
+};
 
 /// The nav systems' sets, for hosts to order against: write [`NavAnchor`] before `Residency`
 /// (`Update`), [`NavDrawFrame`] before `Draw` (`PostUpdate`, feature `debug`); request paths
 /// before `Queries` (`FixedUpdate`) to have them planned that tick; replies are published in
 /// `Publish` (`FixedFirst`), before any `FixedUpdate` system; `Corridor` (`FixedUpdate`, inside
-/// `ControllerSystems::Drive`) steps [`NavCorridor`]s before `Queries`.
+/// `ControllerSystems::Drive`) steps [`NavCorridor`]s before `Queries`; `WorldGraph` (`Update`)
+/// rebuilds [`NavWorldGraph`] (write the door links and [`NavLinkRules`] before it to have the
+/// graph that frame).
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NavSystems {
     Residency,
@@ -73,6 +84,7 @@ pub enum NavSystems {
     Publish,
     Corridor,
     Queries,
+    WorldGraph,
 }
 
 /// The BRP method [`brp_stats_system`] answers.

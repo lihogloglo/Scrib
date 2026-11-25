@@ -32,7 +32,7 @@ use std::fmt;
 use mw_script::ast::{Call, Ident, Target as AstTarget, VarRef};
 use mw_script::functions::Function;
 use mw_script::interp::{Host, MessageArg, ScriptOp};
-use mw_script::{InstanceHost, LocalKey, StatCall};
+use mw_script::{AiCall, InstanceHost, LocalKey, StatCall};
 use mw_ui::message::MessageArg as UiArg;
 use sf_records::RecordId;
 
@@ -325,6 +325,14 @@ impl Host for ScriptHost<'_> {
             self.bind(target, &name)
                 .map_or(0.0, |t| self.run.stat(&t, call)),
         )
+    }
+
+    fn ai(&mut self, target: &AstTarget, call: &AiCall) -> Option<f64> {
+        // No self: nothing pushed, reads as no AI.
+        Some(self.bind(target, call.name()).map_or_else(
+            || if *call == AiCall::CurrentPackage { -1.0 } else { 0.0 },
+            |t| self.run.ai(&t, call),
+        ))
     }
 
     /// Script control belongs to the instance set; reached only outside a tick.

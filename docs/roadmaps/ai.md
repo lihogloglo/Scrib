@@ -98,7 +98,18 @@ Ends with: a Balmora guard spots a sneaking player in light, not in shadow, chec
 
 | ID | Deliverable | Crates | Depends | Verify |
 |---|---|---|---|---|
-| MA2 | AI_* records + MWScript AI functions to directives, OpenMW `StackPolicy` | `mw_ai` | AI4 | exact vs OpenMW cases |
+| MA2 | AI_* records + MWScript AI functions to directives, OpenMW `StackPolicy` (split a-d 2026-11-26) | `mw_ai` | AI4 | exact vs OpenMW cases |
+| MA2a | `mw_ai::packages`: AI_W/T/E/F/A records -> `DirectiveSpec` (priority, repeat, limit as OpenMW reads ESM packages) | `mw_ai` | AI4 | **done 2026-11-26** (9 exact tests; record packages priority 0) |
+| MA2b | `mw_ai::policy`: OpenMW `AiSequence::stack` as a `StackPolicy` (priority insert, cancel rules, repeat to the end) | `mw_ai` | MA2a | **done 2026-11-26** (10 exact tests; mw_ai 34) |
+| MA2c | MWScript `AIWander/AITravel/AIEscort(Cell)/AIFollow(Cell)/AIActivate` push, `GetAIPackageDone`/`GetCurrentAIPackage` read the stack (split 1/2 2026-11-26) | `mw_rpg`, `mw_rpg_bevy` | MA2b, DQ-4 | script test per function |
+| MA2c1 | Bevy-free: the AI functions become script effects / host API calls (`mw_script` rows live, `mw_rpg` runner), reads through a host trait | `mw_script`, `mw_rpg` | MA2b | **done 2026-11-26** (`AiCall` / `Host::ai`, `GameOp::Ai { target, push }`, read trait `MwAi`; mw_rpg 133) |
+| MA2c2 | Game host applies them to `AiDirectives` (MorrowindPolicy) and answers `GetAIPackageDone`/`GetCurrentAIPackage` | `mw_rpg_bevy`, `mw_walkers_bevy` | MA2c1, MA2d2 | **done 2026-11-26** (3 walker + 1 host test: script AITravel cancels the wander, walks 8 m, reads not-done/Travel -> done/Travel -> done/none) |
+| MA2c3 | Script AI follow-ups: save `AiRuns` (OpenMW saves `mDone`/`mLastAiPackage`), a dead actor reads -1, pushes to unspawned actors land on their stored stack | `mw_walkers_bevy`, `mw_saves_bevy` | MA2c2 | exact per case; save round trip |
+| MA2d | Game: spawned NPCs get their record packages on their `DirectiveStack`; wander reads `StayNear` instead of the record (split 1/2 2026-11-26) | `mw_walkers_bevy` | MA2a | headless: Travel package NPC walks to its point |
+| MA2d1 | At walker spawn, build the actor's stack in `AiDirectives` from `mw_ai::packages` + `MorrowindPolicy` (a saved stack wins); no behaviour change | `mw_walkers_bevy` | MA2b | **done 2026-11-26** (3 headless tests; every actor gets a stack, empty if no packages) |
+| MA2d3 | Package target resolver: a player `ActorKey` convention (AI_F/AI_E player), AI_A placements through a placement index, retry targets that weren't spawned at seed time | `mw_walkers_bevy`, `sf_ai` | MA2d1 | headless: follow-the-player package seeds; late-spawned target resolves |
+| MA2d2 | The stack's top drives the routine: `StayNear` -> wander, `GoTo` -> walk there, finish + advance on arrival / `Limit` (`DirectiveStack::serve/finish/advance`) | `mw_walkers_bevy` | MA2d1 | **done 2026-11-26** (2 headless tests: GoTo 8 m finishes, stack 2 -> 1, wander resumes; record wander unchanged) |
+| MA2d4 | Directive drive follow-ups: StayNear home = where the package starts (OpenMW AiWander), `AiPackageExtras` survive a repeat's new id, one duration count (drop `WanderDriver`'s own AI_W timer), a StayNear actor without `Walker` gets one, an empty stack after a GoTo stands at the destination (OpenMW) instead of resuming the record wander at spawn | `mw_walkers_bevy` | MA2d2 | headless per case |
 | AI8a | Awareness core: meter, bands, `LastSeen`, bounded per-player entries, `Stimulus::Noise` | `sf_ai` | AI0b | exact curves, eviction, serde |
 | AI8g | Profile core: `PerceptionProfile`, timed `PerceptionStates`, `EffectivePerception` resolve | `sf_ai` | AI0g | **done 2026-11-25** (13 exact tests) |
 | AI8b1 | Sight maths core: gain terms, cone and range from `EffectivePerception`, stagger, ray queue with cap, cache rule | `sf_ai` | AI8g | **done 2026-11-25** (14 exact tests) |
@@ -107,7 +118,8 @@ Ends with: a Balmora guard spots a sneaking player in light, not in shadow, chec
 | MA15 | Forced sight checks (`SightTimer::force`) on damage taken and on `Notify` arrival | `mw_ai`, `mw_walkers_bevy` | MA14, MA10 (NPCs take no damage before it), AI8c (Notify arrives by hearing) | headless: hit from behind turns the NPC's check due this tick |
 | AI8c1 | Hearing system: `NoiseEvent` message, listener prefilter by reach, `NoisePropagation` seam (default straight line + door penalty from the host, UE AIPerception), delivery as `HeardNoise` + `Notify` | `sf_ai_bevy` | AI8a, AI8e | **done 2026-11-25** (9 headless tests) |
 | AI8c2 | Player emitters in the game: gameplay stride footsteps by gait, landing (surface/gear seam ×1; NPC steps, action `noise: Loud` later) | `mw_walkers_bevy` | AI8c1 | **done 2026-11-25** (7 tests; run 12 m, sneak 2 m reach) |
-| AI8c3 | Propagation by `portal_query::path_distance` (doors counted) | `sf_ai_bevy`, `sf_nav` | AI8c1, NV11 | exact through a door |
+| AI8c3 | Propagation by `portal_query::path_distance` (doors counted): `NoisePropagation` over `NavWorldGraph` (NV11a-d1 done 2026-11-26) | `sf_ai_bevy`, `sf_nav` | AI8c1, NV11 | exact through a door |
+| MA21 | Game adds `NavWorldGraphPlugin` over `DoorLinks`, approach points from pathgrid nodes in front of each door, seamless/fade flags from `world.doors`, door states from the door objects | `mw_walkers_bevy` or `mw_exterior_bevy` | NV11d1 | headless: Seyda Neen census door route; log line count |
 | AI8d1 | Light core: `VisibilityFactors`, pure `LightExposure` (sky term + strongest sources, LOS callback, roof ray), `darkness` term | `sf_ai` | AI8a | **done 2026-11-25** (14 exact tests) |
 | AI8d2 | Light system: one sample per player per tick, host source list + sky resource (until IN19 `Lit`), roof ray, feeds sight in place of `VISIBILITY_UNMODELLED` | `sf_ai_bevy` | AI8d1, MA14 | **done 2026-11-25** (9 headless tests; inert until a host inserts `AiLightInputs`) |
 | MA16 | Light inputs in the game: sky level from clock/weather/interior, Morrowind lamps (LIGH placements, carried torches) as sources | `mw_walkers_bevy` | AI8d2 | **done 2026-11-25** (2 tests; lit lamp at 1 m 0.7244, noon 1, midnight 0) |
@@ -124,7 +136,15 @@ Ends with: a Balmora guard spots a sneaking player in light, not in shadow, chec
 | AI8i | Perception reactions independent of wander: search (and AI8h2 reactions) drive any `AiActor` with a `NavCorridor`, pre-empting its routine (wander, stand, level path) and returning it to its post after; stationary (AI_W 0) NPCs and level actors get it; level path actors stop fighting the corridor over `MoveIntent` | `mw_walkers_bevy`, `mw_exterior_bevy` | AI47c | **done 2026-11-25** (AI47c test passes; stationary NPC back within 0.01 m / 0 rad; path actor intent fight fixed) |
 | AI8j | Reaction walks for stationary and level actors use ORCA avoidance (no `Avoider` today); measure the per-tick cost of idle corridors + `react` on distance-0 NPCs (headless counter, Balmora-sized crowd) | `mw_walkers_bevy` | AI8i | headless: two reacting guards don't overlap; µs/tick printed |
 | MA5 | `awarenessCheck` port as Classic gain | `mw_ai` | AI8a | exact vs formula |
-| MA4 | Hello/Fight/Flee/Alarm considerations; greeting via AI8 | `mw_ai` | AI7, AI8b | exact vs OpenMW |
+| MA4 | Hello/Fight/Flee/Alarm considerations; greeting via AI8 (split a-d 2026-11-26) | `mw_ai` | AI7, AI8b | exact vs OpenMW |
+| MA4a | Hello/Fight/Flee/Alarm stats on the sheet from AIDT (appended defs) | `mw_stats` | - | **done 2026-11-26** (indices 140-143, `MwIdx::ai_settings`; floor 0, no cap as OpenMW) |
+| MA4b | `Get/Set/Mod{Hello,Fight,Flee,Alarm}` script functions on the sheet | `mw_script`, `mw_rpg` | MA4a | **done 2026-11-26** (2 script tests; mw_rpg 129) |
+| MA4e | Persuasion reads Fight/Flee from the sheet, not the record (`mw_rpg_bevy/src/dialogue.rs:662` reads `ai_data`), so script Set/Mod reach it | `mw_rpg_bevy` | MA4b | exact: ModFight changes the persuasion nudge |
+| MA4c | Greeting consideration (`updateGreetingState`: Hello x `iGreetDistanceMultiplier`, LOS, awareness) + game turn/look-at (split 1/2 2026-11-26) | `mw_ai`, `mw_walkers_bevy` | MA4a, AI8b | exact vs OpenMW; headless greet |
+| MA4c1 | Pure greeting state machine `mw_ai::settings::greeting_step` (OpenMW `updateGreetingState`) | `mw_ai` | MA4a | **done 2026-11-26** (14 exact tests; GMSTs 6 / 4 / 512 confirmed) |
+| MA4c2 | Game: NPCs turn/look at and greet the player (Greeting bark via dialogue) from MA4c1 | `mw_walkers_bevy`, `mw_rpg_bevy` | MA4c1, AI8b | headless greet |
+| MA4d | Fight rating: `isAggressive` (Fight + disposition + `getFightDistanceBias`), pure | `mw_ai` | MA4a | **done 2026-11-26** (11 exact tests; + `engages_on_sight` gates) |
+| MA4f | Flee rating: `vanillaRateFlee` + `updateFleeing` thresholds, pure | `mw_ai` | MA4a | **done 2026-11-26** (15 exact tests; vanilla never flees below Flee 100 or without a werewolf) |
 | AI26 | Perception gizmos (cone, meter, LKP), `ai.perception` | `sf_ai_bevy` | AI8b | **done 2026-11-25** (7 tests; `ai.perception`; dev enables `sf_ai_bevy/debug`); owner **AI-3** |
 | AI47 | Perception test scene (owner 2026-11-25, after AI8c/d/f, AI26, IN18): reuse the arena, AI26 gizmos plus NPC state labels and noise/impact rings, scripted light, cover and throw cases | `bevyrrowind` (`level:`) | AI26, AI8c, AI8d, AI8f, IN18 | **done 2026-11-25** (`levels/perception-lab.ron`, 6 scenes; impacts wait for IN18); owner **AI-11** |
 | AI47b | Level navmesh from the level's own geometry, so level actors wander/search (search can't walk in `level:` scenes today) | `mw_exterior_bevy`, `sf_nav_bevy` | AI47 | **done 2026-11-25** (path test; 60 tiles ~80 ms cold debug; guard search in game: owner AI-11) |
@@ -136,7 +156,17 @@ Ends with: Balmora runs dawn to night and through a 3 h wait; lamps lit at dusk;
 
 | ID | Deliverable | Crates | Depends | Verify |
 |---|---|---|---|---|
-| AI9 | Allocator: tiers 2/1, `sim.cpu_tier` caps, pins, staggered first update | `sf_ai`, `sf_ai_bevy` | AI7 | exact + hysteresis; cost line |
+| AI9 | Allocator: tiers 2/1, `sim.cpu_tier` caps, pins, staggered first update (split a/b 2026-11-26) | `sf_ai`, `sf_ai_bevy` | AI7 | exact + hysteresis; cost line |
+| AI9a | Bevy-free allocator core `sf_ai::alloc` | `sf_ai` | AI7 | **done 2026-11-26** (9 exact tests; sf_ai 158) |
+| AI9a2 | Hard caps Full/Reduced: over cap, the lowest-ranked visible actors drop to Reduced; in-view hold only protects Reduced -> Logical (decision ai-as-built AI9a) | `sf_ai` | AI9a | **done 2026-11-26** (11 alloc tests; sf_ai 160) |
+| AI9b | `sf_ai_bevy` system: inputs from players/visibility/pins, tunables `sim.cpu_tier` + caps + margins, tier component, cost line | `sf_ai_bevy` | AI9a | **done 2026-11-26** (6 headless tests; 2000 actors 555 µs/allocate release: too slow -> AI9c) |
+| AI9c | Allocator cost: Vec-based core (one partial select per band, no BTreeMaps, reuse buffers) and an allocate period `ai.alloc.period_s` (tier changes are rare; MassLOD/significance-manager style) | `sf_ai`, `sf_ai_bevy` | AI9b | **done 2026-11-26** (2000 actors: 557 -> 64 µs mean, 902 -> 155 max; system 679 -> 161 µs/tick; no period needed) |
+| AI9d | `sim.cpu_tier = auto` (default): pick the tier from physical core count + headless (Dedicated), the spec's reference rows | `sf_ai_bevy` | AI9b | **done 2026-11-26** (3 tests; threads <=8/12/16/>16 -> Floor/Medium/High/Ultra, headless host flag -> Dedicated) |
+| AI9h | `ai.stats` / `ai.tiers` console lines (counts per tier, over-cap, held in view, allocate µs) | `sf_ai_bevy` | AI9b | **done 2026-11-26** (console test; `ai.tiers` from `AiAllocStats`, `ai.stats` alloc line) |
+| AI9e | Tiers take effect on sight: observer sight period from `AiTier` (Full `sight_period_s`, Reduced `tier1_period_s`, Logical no sight and no hearing), first check at `first_decide_tick`; exec trace tier from `AiTier` | `sf_ai_bevy` | AI9c | **done 2026-11-26** (5 headless tests: checks over 600 ticks none/Full/Reduced/Logical = 100/100/10/0) |
+| MA20 | Game writes the allocator inputs: `AiInView` (camera frustum or any player's view, the animation LOD's visibility source if one exists) and `AiPin` (dialogue partner, combat, scripted scene) | `mw_walkers_bevy` | AI9b | headless: the dialogue partner is pinned Full; an NPC behind the camera loses `AiInView` |
+| AI9f | Tier 1 hearing by straight-line distance only (no `NoisePropagation` query) | `sf_ai_bevy` | AI9e | **done 2026-11-26** (1 headless test; same-space rule via `AiExecutor.worldspace`) |
+| AI9g | Decide period by tier for the drive/HTN decide step once drives run in the game (Full `full_decide_s` from `first_decide_tick`, Reduced `reduced_decide_s`) | `sf_ai_bevy` | AI9e, drives in game | headless: Reduced decides ~1 Hz |
 | AI10 | Tier 0 state machine, queued promotion resolve, `fast_forward` | `sf_ai` | AI9, NV11, NV12 | tier invariance; no in-view promotion |
 | AI12 | Doors: `Traverse`, fade-only unseen rule | `sf_ai`, `mw_ai` | NV11, AI6 | follower through both door modes |
 | AI14 | `UseSlot` + fragments (= interaction IN8), claim priority | `sf_ai`, `sf_interaction` | IN0, IN2, IN3 | deterministic claims; IN-8 |

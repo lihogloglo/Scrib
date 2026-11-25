@@ -78,28 +78,115 @@ Records' AI_W/AI_T/AI_E/AI_F/AI_A (with CNDT cells) and the MWScript functions p
 | `StartCombat` / Fight | *Combat* drive target | C6 operators | `StopCombat`, death, target lost |
 | Pursue (guards), AvoidDoor, Face, Cast, Breathe | operators or drives (`aipursue.cpp`, `aiavoiddoor.cpp`, `aiface.cpp`, `aicast.cpp`, `aibreathe.cpp`) | modern | as OpenMW |
 
+As built (MA2a, 2026-11-26): `mw_ai::packages::directives(&[AiPackage], &PackageCtx) -> PackageDirectives`
+(`RecordDirective { index, spec, extra }` in record order + `skipped` with reasons). `PackageCtx` = origin record id,
+spawn `home`, a `PackageResolver` (actor, placement). AI_W -> `StayNear` (idle table in `PackageExtra`, from
+`Wander::from_package`), AI_T -> `GoTo`, AI_E -> `Escort`, AI_F -> `Follow` (+ `FollowUntil` end point), AI_A -> `Use`;
+coordinates via `mw_world::convert::world_pos`, a CNDT cell -> `mw_world::ids::interior`. OpenMW @ 5f3aafb: record
+packages are priority 0 (`aipackage.hpp:39`, `typedaipackage.hpp:16-19`), repeat from the flag (`aisequence.cpp`
+`fill` 492-534); a positive duration (game hours, int16) -> `Limit::For`, zero or negative = none (`aiwander.cpp` 160,
+378; `aiescort.cpp` 82-90; `aifollow.cpp` 159-171). An escort with FLT_MAX coordinates is skipped (`NoDestination`;
+OpenMW ends it once in range); a no-destination follow runs until its duration ends.
+
 **Stack policy** (`mw_ai::policy`): `AiSequence::stack` (`aisequence.cpp` 386) inserts by `getPriority()`, honours
 `shouldCancelPreviousAi`/`canCancel`, sends repeating packages back to the end, keeps the combat/pursue counters;
 `execute` (249) and the `Options` in `aipackage.hpp` (priority, repeat, canCancel, sideWithTarget,
 followTargetThroughDoors, alwaysActive) map to `Directive` fields and `ParamBag`. `mDone` → `Directive::done`.
 
+As built (MA2b, 2026-11-26): `mw_ai::MorrowindPolicy` (`policy.rs`), `options(&DirectiveKind) -> Options` (OpenMW
+`aipackage.hpp` 37-46 + each package's `makeDefaultOptions` @ 5f3aafb). Priority comes from the kind as in OpenMW
+(combat 1, packages 0), so `DirectiveSpec::priority` is ignored. `stack` (386-477): an actual package (wander, travel,
+escort, follow, activate) first cancels every `Fight` (`stopCombat`), then `shouldCancelPreviousAi` cancels what
+`canCancel`; insert before the first entry of lower or equal priority (newest on top among equals, no source rank).
+Record pushes (`fill` 492-534) append in order and cancel nothing. `execute` 346-366: a finished repeating actual
+package goes to the bottom (a `Limit::For` running out counts as finished; cancelled never returns). Not expressible
+yet (no kinds or one actor's stack only): Pursue/Cast/Face/AvoidDoor/Breathe/InternalTravel, the return-travel push
+under combat (408-430: our wander resumes below the fight instead), Cast replacing Cast, follow/escort ending allies'
+fights, follow resetting packages below (MA2d executor), combat target rotation (Combat drive), combat counters.
+
+As built (MA2d1, 2026-11-26): `mw_walkers_bevy/src/directives.rs` `seed_directives` (Update, after `attach`, on
+`Added<AiActor>`): base record (same levelled pick as `setup_of`), home = `ActorSpace` + spawn feet, packages pushed in
+record order through `MorrowindPolicy`; a stack already in `AiDirectives` (save, earlier spawn) is never replaced;
+every actor gets one (empty = seeded, no packages). Resolver: `actor(id)` = lowest spawned placement of that base;
+the player and AI_A objects resolve to `None` (skipped, `info!` count per batch; no retry) -> MA2d3. Extras
+(`AiPackageExtras`, wander idles, follow end) re-mapped by kind order for kept stacks. Clock: `sf_sky_bevy::GameClock`.
+
 **MWScript** (`mw_script/src/functions.txt`: "AI, combat" block, `Get/Set/Mod{$AISTATS}` 188-190, `GetLineOfSight`
 90; "later" or "stub" today): `AIWander`, `AITravel`, `AIEscort(Cell)`, `AIFollow(Cell)`, `AIActivate` push
 directives; `GetAIPackageDone`, `GetCurrentAIPackage` read the stack (MA2); `StartCombat`/`StopCombat`, `GetTarget`,
 `GetAttacked`, `Face` (MA2/MA10); `GetDetected` (awareness) and `GetLineOfSight` (perception via `portal_query`)
-(MA5); `Get/Set/ModHello|Fight|Flee|Alarm` on the sheet (MA4); crime's `PayFine`, `PayFineThief`, `GoToJail` (crime-adapter A3; MA6 only routes guards).
+(MA5); `Get/Set/ModHello|Fight|Flee|Alarm` on the sheet (MA4; as built MA4b 2026-11-26: Get = modified, Set/Mod write
+this actor's base only, not the record as OpenMW's `setBaseAISetting` does; a negative base reads 0); crime's `PayFine`, `PayFineThief`, `GoToJail` (crime-adapter A3; MA6 only routes guards).
+
+As built (MA2d2, 2026-11-26): `mw_walkers_bevy/src/directive_drive.rs` `drive_directives` (FixedUpdate, after
+`ReactionSystems::React`, before `walkers::drive` and `NavSystems::Corridor`): `advance(now, &MorrowindPolicy)` on
+`GameClock`, then the serving directive. `walkers::drive` skips while `reaction.owns() || DirectiveDrive::owns()`;
+a reaction keeps priority (the stack still advances; a GoTo restarts from where the reaction left the actor).
+StayNear copies home/radius/idles into the walker planner only when they differ (record-seeded wander untouched).
+GoTo walks an `OpRunner` `MoveTo` over the corridor and finishes on arrival or on OpenMW's end rule (planar distance
+minus half height within max(64 units, speed x dt) for 2 s; `aitravel.cpp` 101-123 @ 5f3aafb); beyond 7168 units it
+stands (`isWithinMaxRange` 23-29). Tunables `mw.ai.travel.{end_tolerance_m, finish_s, max_range_m}` (OpenMW) +
+`retry_s` (Guess 2 s). Follow/Escort/Use/Fight/Custom, GoTo into another worldspace or off the navmesh: routine as
+today (debug log). Gaps -> MA2d4.
+
+As built (MA2c1, 2026-11-26): `mw_script::aifn` (`AiFn`, `AiCall` Wander/Travel/Escort/Follow/PackageDone/
+CurrentPackage, OpenMW type ids), `Host::ai(target, &AiCall) -> Option<f64>` (`None` = unhandled), rows live.
+`mw_rpg::script_ai`: `GameOp::Ai { target, push: AiPush }`, `AiPush::package()` rebuilds the exact `tes3` record
+struct so the host maps it with `mw_ai::packages::directive` (+ `DirectiveSource::Script`): mw_rpg doesn't depend on
+mw_ai (the spec needs world data: escorted key, worldspace, home). Reads through `MwAi` (`NoAi`: done 0, current -1);
+reads ignore the run's own pushes (OpenMW `getLastRunTypeId`). OpenMW `aiextensions.cpp` @ 5f3aafb: any optional arg
+makes travel/escort/follow repeat; escort hours truncated, follow hours float (kept in `AiPush::Follow.hours`);
+AIWander drops the first optional (Idle chance), Idle2-9 clamped 0-255, next = reset; pushes on the player or an
+item do nothing; AIEscortCell with an empty cell does nothing. The game host applies pushes in MA2c2.
+
+As built (MA2c2, 2026-11-26): every script kind goes through `Rpg::apply` (`mw_rpg_bevy/src/dialogue.rs`): target ->
+actor key, queued `ScriptAiPush { actor, package }`, sent as a message by `send_ai_pushes` (Update). The walker side
+(`mw_walkers_bevy/src/script_ai.rs`) `apply_script_pushes` (FixedUpdate, before `drive_directives`) maps with
+`mw_ai::packages::directive` (home = current position/worldspace, spawn resolver `SpawnedActors::of`), Script source,
+pushes through `MorrowindPolicy`. Reads: `drive_directives` records each stack's served package before advancing;
+`record_runs` keeps `AiRuns` (OpenMW `aisequence.cpp` 258-372: empty stack -> last none, done kept; a served actual
+package becomes last; done true when it finishes/expires that tick; cancel never sets done; Fight/Custom leave last
+alone); `sync_ai_runs` copies it into the RPG host; `impl MwAi for View`. Fixed: `mw_script` `Scoped` host
+(`instances.rs`) didn't forward `ai()` (global/local scripts pushed nothing). `mw_rpg_bevy` now depends on
+`mw_walkers_bevy` directly (already reachable through `mw_scripts_bevy`). Gaps -> MA2c3, MA2d4.
 
 ## AI settings (stats + considerations)
 
 Hello, Fight, Flee, Alarm (`aisetting.hpp`) are magnitude stats on the sheet (`sf_stats`, stats-adapter naming),
-initialised from the NPC/creature AIDT. Considerations in `mw_ai::settings`:
+initialised from the NPC/creature AIDT. As built (MA4a, 2026-11-26): `mw_stats` defs `hello`/`fight`/`flee`/`alarm`
+(indices 140-143, `MwIdx::ai_settings`, appended after the magnitudes), AIDT read unsigned, floor 0 and no cap (OpenMW
+`stat.cpp` 22-28: Hello is a distance and may pass 100). Considerations in `mw_ai::settings`:
 - **Greeting** (React drive): every 0.25 s, target within `Hello × iGreetDistanceMultiplier`, LOS and awareness
   (`actors.cpp` `updateGreetingState` 481-560); turn, look-at, Greeting bark from dialogue.
+  As built (MA4c1, 2026-11-26): `mw_ai::settings::greeting_step(&mut GreetState, &GreetInput, &GreetGmst) ->
+  GreetAction { say_hello, play_idle2, hold_still, turn_to }` (OpenMW @ 5f3aafb `actors.cpp` `updateGreetingState`
+  500-596, `turnActorToFacePlayer` 598-619, the shared 0.25 s `HelloTimer` 241/1556/1674/1706; `steering.cpp` 16-43
+  5-degree check only). Combat, swimming or a package other than Wander/Travel/none clears the state every frame; the
+  count rises only on full updates (LOS, awareness (caller rolls), live player, not hidden, not paralysed); at 2 it says
+  hello (or Done with no line), faces the player `iGreetDuration / 0.25` updates, then Done; re-arms at
+  `fGreetDistanceReset`. Kept quirk: the count never decays out of range. GMSTs `iGreetDistanceMultiplier` 6,
+  `iGreetDuration` 4, `fGreetDistanceReset` 512 (confirmed). `greet_geometry` converts to game units + heading.
 - **Aggression** (Combat drive): `engageCombat` and `isAggressive` (Fight + disposition + `getFightDistanceBias`;
   `actors.cpp` 618-760, `mechanicsmanagerimp.cpp` 1429); allies side with allies.
-- **Flee** (Flee drive): `vanillaRateFlee` (`aicombataction.cpp` 457-492), `updateFleeing` (`aicombat.cpp` 149-250),
+  As built (MA4d, 2026-11-26): `mw_ai::settings` `fight_rating`/`is_aggressive` (OpenMW @ 5f3aafb `combat.cpp`:
+  `getFightTerm` 556-565 = Fight + trunc(distance bias + disposition bias); disposition `(50 - disp) x fFightDispMult`
+  (creature observers 50) 567-575; distance `iFightDistanceBase - fFightDistanceMultiplier x d`, `getAggroDistance`
+  ignores height for swimmers/flyers 577-603; `isAggressive` 623-647: in combat = true, immobile/calmed = false,
+  `iWerewolfFightMod` vs a known werewolf, aggressive at >= 100). GMSTs via `FightGmst::from_db` (vanilla fallbacks 20,
+  0.005, 0.2; `iWerewolfFightMod` is a Bloodmoon GMST, fallback 100 unverified). `engages_on_sight` + `EngageGates` =
+  the aggression branch of `actors.cpp` `engageCombat` (dead, hidden/unreachable, player followers, LOS + awareness);
+  ally-siding, guards and processing range are the caller's.
+- **Flee** (Flee drive): `vanillaRateFlee` (`aicombataction.cpp` 457-488 @ 5f3aafb), `updateFleeing` (`aicombat.cpp` 378-482),
   intimidation raising Flee (`mechanicsmanagerimp.cpp` 664-708). The rating is ported; flee movement is modern (nav
   `Goal::Away`, toward allies or a door).
+  As built (MA4f, 2026-11-26): `mw_ai::settings` `flee_rating` (`vanillaRateFlee`: Flee >= 100 returns Flee; else
+  `(1 - health ratio) x fAIFleeHealthMult + Flee x fAIFleeFleeMult`, werewolf `iWereWolfFleeMod` below
+  `iWereWolfLevelToAttack`, + the Fight distance bias when non-zero), `wants_to_flee` (`makeFleeDecision` 490-503:
+  under 100 counts 0), `flee_step` (flee half of `AiCombat::execute`/`attack`, 139-353: 3 s `ActionFlee` cooldown,
+  start/keep/stop/end combat, immobile/paralysed gates), `flee_run_step` (`updateFleeing` modes, 378-482). GMSTs
+  confirmed in `defaultgmsts.cpp`: 7.0, 0.3, 20, 100, 3000. Vanilla never flees below Flee 100 (best case 56.7): this
+  is the Classic rule; the modern response (flee by temperament and danger) is AI49. Intimidation already lives in
+  `mw_rpg::persuasion`.
 - **Awareness** (`DetectionModel`): `awarenessCheck` (`mechanicsmanagerimp.cpp` 1603) with its sneak, attribute,
   fatigue, chameleon/invisibility and facing terms; light enters only through `VisibilityFactors` (AI8d, crime LW0b), never inside MA5.
 - **Perception profile** (`mw_ai::perception`, AI0g; ai.md "Perception profile"): presets and state records in

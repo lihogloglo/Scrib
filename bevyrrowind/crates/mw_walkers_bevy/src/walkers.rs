@@ -352,12 +352,12 @@ struct Pathgrids(PathGrids);
 
 /// Records and game settings the walkers read.
 #[derive(Resource)]
-struct WalkerContent {
-    db: Arc<RecordDb>,
-    min_walk: f32,
-    max_walk: f32,
+pub(crate) struct WalkerContent {
+    pub(crate) db: Arc<RecordDb>,
+    pub(crate) min_walk: f32,
+    pub(crate) max_walk: f32,
     /// `fIdleChanceMultiplier` (the `AI_W` idle roll gate, `mw_ai::roll_idle_with`).
-    idle_mult: f32,
+    pub(crate) idle_mult: f32,
 }
 
 /// A dressed character another layer moves (e.g. `mw_player_bevy`'s training dummy, under an
@@ -747,6 +747,7 @@ fn drive(
             &mut Avoider,
             Option<&mut NavCorridor>,
             &Reaction,
+            Option<&crate::directive_drive::DirectiveDrive>,
         ),
         Without<Dormant>,
     >,
@@ -771,11 +772,13 @@ fn drive(
         mut avoider,
         mut corridor,
         reaction,
+        directive,
     ) in &mut walkers
     {
         let walker = &mut *walker;
-        if reaction.owns() {
-            // AI8i: the reaction drives the actor; the wander stays paused where it was.
+        if reaction.owns() || directive.is_some_and(crate::directive_drive::DirectiveDrive::owns) {
+            // AI8i: the reaction drives the actor (MA2d2: or a directive's walk, a `GoTo`); the
+            // wander stays paused where it was.
             walker.held_intent = None;
             continue;
         }
@@ -1065,6 +1068,8 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest, p
             )
                 .chain(),
         )
+        // MA2d1: record AI packages onto the directive stack of each new `AiActor`.
+        .add_systems(Update, crate::directives::seed_directives.after(attach))
         // Gameplay on the fixed tick (NV7a): the physics step first (IN11b: characters ride the
         // bases it moved), then the player (its tick state is what the NPCs avoid), then the NPC
         // intents and their mover.
@@ -1107,6 +1112,8 @@ fn add_drive(app: &mut App, vocab: Arc<WanderVocabulary>) {
     .init_resource::<WanderSettings>()
     .init_resource::<AiExecTick>()
     .init_resource::<WanderModes>()
+    .init_resource::<crate::script_ai::AiRuns>()
+    .add_message::<crate::script_ai::ScriptAiPush>()
     .insert_resource(GiveUps {
         trace: std::env::var_os("BEVYRROWIND_STRIDE_TRACE").is_some(),
         ..GiveUps::default()
@@ -1114,6 +1121,15 @@ fn add_drive(app: &mut App, vocab: Arc<WanderVocabulary>) {
     .add_systems(
         FixedUpdate,
         (
+            // MA2c2: script AI pushes onto the stacks, before the drive serves them.
+            crate::script_ai::apply_script_pushes.before(crate::directive_drive::drive_directives),
+            // MA2d2: the directive stack's serving directive, between the reactions and the wander.
+            crate::directive_drive::drive_directives
+                .in_set(ControllerSystems::Drive)
+                .after(NavSystems::Publish)
+                .after(crate::reaction::ReactionSystems::React)
+                .before(drive)
+                .before(NavSystems::Corridor),
             drive
                 .in_set(ControllerSystems::Drive)
                 .after(NavSystems::Publish)
@@ -1133,6 +1149,7 @@ fn add_drive(app: &mut App, vocab: Arc<WanderVocabulary>) {
         add_exec_tunables(app);
     }
     add_wander_tunables(app);
+    crate::directive_drive::add_travel_tunables(app);
 }
 
 /// `mw.ai.wander.walk_backstop_mult`: [`WanderTuning::walk_backstop_mult`].
@@ -1187,13 +1204,18 @@ pub const WANDER_GIVE_UP_PAUSE_JITTER_S: Def<f32> =
     .net(Net::Gameplay)
     .lifetime(Lifetime::Live);
 
-/// The wander drive's live tunables (`mw.ai.wander.*`).
+/// The wander drive's live tunables (`mw.ai.wander.*`) and its `GoTo` executor's (`mw.ai.travel.*`).
 pub const TUNABLES: &[&dyn AnyDef] = &[
     &WANDER_WALK_BACKSTOP_MULT,
     &WANDER_WALK_SLACK_S,
     &WANDER_SAME_GOAL_M,
     &WANDER_GIVE_UP_PAUSE_MIN_S,
     &WANDER_GIVE_UP_PAUSE_JITTER_S,
+    // MA2d2: the `GoTo` executor (`crate::directive_drive`).
+    &crate::directive_drive::TRAVEL_END_TOLERANCE_M,
+    &crate::directive_drive::TRAVEL_FINISH_S,
+    &crate::directive_drive::TRAVEL_MAX_RANGE_M,
+    &crate::directive_drive::TRAVEL_RETRY_S,
 ];
 
 /// Live wander feel values bound from [`TUNABLES`]; [`drive`] copies them into every
@@ -1709,3 +1731,11 @@ mod sight_tests;
 #[cfg(test)]
 #[path = "search_tests.rs"]
 mod search_tests;
+
+#[cfg(test)]
+#[path = "directive_drive_tests.rs"]
+mod directive_drive_tests;
+
+#[cfg(test)]
+#[path = "script_ai_tests.rs"]
+mod script_ai_tests;

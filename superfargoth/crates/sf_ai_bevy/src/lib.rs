@@ -22,6 +22,9 @@
 //!   from the host's [`AiLightInputs`] in [`light`]; the target's visibility from crime's
 //!   [`AiDetectionRules`] and its [`AiVisibilityFactors`] (`LW4b1`) in [`detection`]; hearing (`AI8c1`): [`NoiseEvent`]s to the
 //!   listeners' meters through the host's [`NoisePropagation`], in [`hearing`].
+//! - Tiers (AI9b): [`AiAllocPlugin`] (added by [`AiPlugin`]) runs the `sf_ai` tier allocator on the
+//!   fixed tick over the simulated set and writes each actor's [`AiTier`] and [`AiAllocStats`];
+//!   the host writes [`AiInView`] and [`AiPin`]; tunables `sim.cpu_tier`, `ai.alloc.*` in [`alloc`].
 //! - BRP: [`brp_trace`] answers [`BRP_TRACE_METHOD`] with the store as JSON. This crate doesn't add
 //!   `bevy_remote` (one `RemotePlugin` per app, owned by the game's dev tools, and hakari keeps its
 //!   HTTP server out of every other build): the app registers [`brp_trace_system`] (see its docs).
@@ -44,6 +47,7 @@ use sf_ai::{
 };
 use sf_records::RecordDb;
 
+pub mod alloc;
 mod console;
 pub mod detection;
 pub mod exec;
@@ -56,6 +60,10 @@ pub mod perception;
 mod perception_gizmos;
 pub mod sight;
 
+pub use alloc::{
+    ALLOC_TUNABLES, AiAllocPlugin, AiAllocSettings, AiAllocStats, AiAllocSystems, AiInView, AiPin, AiTier,
+    add_alloc_tunables,
+};
 pub use exec::{
     AiExecPlugin, AiExecSettings, AiExecTick, AiExecutor, AiSystems, EXEC_ARRIVE_DIST_M,
     EXEC_FACE_TOLERANCE_RAD, EXEC_PROGRESS_MIN_M, EXEC_STUCK_TIMEOUT_S, add_exec_tunables,
@@ -79,6 +87,8 @@ pub use sight::{
 };
 
 #[cfg(test)]
+mod alloc_tests;
+#[cfg(test)]
 mod detection_tests;
 #[cfg(test)]
 mod exec_tests;
@@ -92,6 +102,8 @@ mod perception_gizmos_tests;
 mod sight_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tier_tests;
 
 /// The BRP method [`brp_trace`] answers.
 pub const BRP_TRACE_METHOD: &str = "sf_ai/trace";
@@ -122,6 +134,9 @@ impl Plugin for AiPlugin {
             .init_resource::<AiLibrary>()
             .init_resource::<AiSelected>()
             .init_resource::<AiDirectives>();
+        if !app.is_plugin_added::<AiAllocPlugin>() {
+            app.add_plugins(AiAllocPlugin { timings: self.timings });
+        }
         console::register(app);
         #[cfg(feature = "debug")]
         gizmos::add(app);

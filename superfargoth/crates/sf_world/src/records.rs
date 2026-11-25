@@ -237,10 +237,110 @@ impl DoorLink {
         WorldTransform { pos: to.frame.pos.offset(out.as_vec3()), rotation, scale: pose.scale }
     }
 
+    /// This link's stable identity: what routes, saves and the wire name it
+    /// by. Hashes both ends' worldspace and frame (see [`LinkId`]); arrival
+    /// poses, doors and extents don't take part, so retuning them keeps
+    /// saved routes valid.
+    pub fn id(&self) -> LinkId {
+        let (a, b) = (end_key(&self.a), end_key(&self.b));
+        // A two-way link has no direction: order its ends canonically.
+        let (first, second) = if self.two_way && b < a { (b, a) } else { (a, b) };
+        let mut h = blake3::Hasher::new();
+        h.update(LINK_ID_DOMAIN);
+        h.update(&[u8::from(self.two_way)]);
+        h.update(&first);
+        h.update(&second);
+        let bytes: [u8; 8] = h.finalize().as_bytes()[..8].try_into().expect("8-byte prefix");
+        LinkId(u64::from_le_bytes(bytes))
+    }
+
+    /// The link named `id` in `links`: a linear scan hashing each link, fine
+    /// for occasional lookups (route resolve, save load); keep an index (the
+    /// world graph's) for anything per tick.
+    pub fn find(links: &[DoorLink], id: LinkId) -> Option<&DoorLink> {
+        links.iter().find(|link| link.id() == id)
+    }
+
     /// [`DoorLink::cross`] for a direction (velocity, view direction).
     pub fn cross_direction(from: &LinkEnd, to: &LinkEnd, dir: Vec3) -> Vec3 {
         to.frame.rotation * (half_turn() * (from.frame.rotation.inverse() * dir))
     }
+}
+
+/// A door link's stable identity: blake3 over both ends' worldspace id and
+/// portal frame, truncated to 64 bits. Frames are quantised first (position
+/// to [`LINK_ID_POS_STEP`] in absolute coordinates, rotation to
+/// [`LINK_ID_ROT_STEP`] per unit-quaternion component, sign canonical), so
+/// float noise from a re-bake keeps the id. A two-way link's id ignores the
+/// order of its ends; a one-way link's doesn't. The ids are part of the save
+/// and wire formats: changing the hash or the steps changes every id.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct LinkId(pub u64);
+
+/// Position quantum of [`LinkId`], meters (1 mm). Format, not a tunable.
+pub const LINK_ID_POS_STEP: f64 = 1.0e-3;
+/// Rotation quantum of [`LinkId`], per quaternion component. Format, not a
+/// tunable.
+pub const LINK_ID_ROT_STEP: f64 = 1.0e-4;
+/// Domain tag, so a link id never equals another hash of the same bytes.
+const LINK_ID_DOMAIN: &[u8] = b"sf.door_link.id/1";
+
+impl fmt::Debug for LinkId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:016x}", self.0)
+    }
+}
+
+impl fmt::Display for LinkId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
+}
+
+/// Hex string in text formats (like [`PlacementId`]), a plain `u64` in
+/// binary ones.
+impl Serialize for LinkId {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        if s.is_human_readable() { s.collect_str(self) } else { s.serialize_u64(self.0) }
+    }
+}
+
+impl<'de> Deserialize<'de> for LinkId {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        if d.is_human_readable() {
+            let s = String::deserialize(d)?;
+            u64::from_str_radix(&s, 16).map(Self).map_err(serde::de::Error::custom)
+        } else {
+            u64::deserialize(d).map(Self)
+        }
+    }
+}
+
+/// One end's hashed bytes: length-prefixed worldspace id, then the quantised
+/// position (3 × i64) and rotation (4 × i64, w x y z), little-endian.
+fn end_key(end: &LinkEnd) -> Vec<u8> {
+    let name = end.worldspace.as_str().as_bytes();
+    let mut out = Vec::with_capacity(8 + name.len() + 7 * 8);
+    out.extend_from_slice(&(name.len() as u64).to_le_bytes());
+    out.extend_from_slice(name);
+    for v in end.frame.pos.to_f64().to_array() {
+        out.extend_from_slice(&quantise(v, LINK_ID_POS_STEP).to_le_bytes());
+    }
+    let q = end.frame.rotation.as_dquat().normalize();
+    let mut r = [q.w, q.x, q.y, q.z].map(|c| quantise(c, LINK_ID_ROT_STEP));
+    // q and -q are one rotation: make the first non-zero component positive.
+    if r.iter().find(|&&c| c != 0).is_some_and(|&c| c < 0) {
+        r = r.map(|c| -c);
+    }
+    for c in r {
+        out.extend_from_slice(&c.to_le_bytes());
+    }
+    out
+}
+
+#[allow(clippy::cast_possible_truncation)] // world coordinates / step fit an i64
+fn quantise(v: f64, step: f64) -> i64 {
+    (v / step).round() as i64
 }
 
 fn half_turn() -> glam::Quat {

@@ -173,8 +173,8 @@ LK-1 | owner: issues (submenus overlap) | [player-ui](visual-checks/player-ui.md
 LK-2 | owner: issues (Continue style) | [player-ui](visual-checks/player-ui.md) | Look pass L2: title menu as OpenMW image buttons, version text
 FG-10 | known bug | [weather-sky](visual-checks/weather-sky.md) | No visible god rays at sunrise in fog (2026-11-02)
 FG-12 | confirmed 2026-11-23 (cost pending): A1-A3 per-pixel sun visibility (LSO, AS, bloom now off; earlier: AS blocky, LSO dark disc, bloom shimmering) | [weather-sky](visual-checks/weather-sky.md) | Sun glow shows through terrain (low sun behind a ridge, 2026-11-22)
-AI-11 | owner: works, re-check later | [ai](visual-checks/ai.md) | perception lab: light vs dark lane, cover wall gaps, hearing stripes 4/8/14 m, scenes `level-perception*` (2026-11-25)
-AI-12 | awaiting owner re-check (AI8h2 reactions built) | [ai](visual-checks/ai.md) | sneaking (Ctrl) hides you: dark lane upright vs sneak, lit lane, sprint, behind; scene `level-perception-light` (2026-11-25)
+AI-11 | owner 2026-11-26: OK | [ai](visual-checks/ai.md) | perception lab: light vs dark lane, cover wall gaps, hearing stripes 4/8/14 m, scenes `level-perception*` (2026-11-25)
+AI-12 | owner 2026-11-26: OK (Suspicious steps, looks, walks back; Alerted static = expected until AI29/combat) | [ai](visual-checks/ai.md) | sneaking (Ctrl) hides you: dark lane upright vs sneak, lit lane, sprint, behind; scene `level-perception-light` (2026-11-25)
 AI-3 | awaiting owner | [ai](visual-checks/ai.md) | perception gizmos (cones, bands, LKP, light, noise rings) + NPCs noticing and searching, Seyda Neen noon and 23:00 (2026-11-25)
 AI-1 | awaiting owner | [ai](visual-checks/ai.md) | AI debug overlay (`ai.select`, `ai.trace`, plan gizmos) on a synthetic trace, example `ai_overlay` (2026-11-09)
 NV-1 | confirmed by owner 2026-11-18 (Balmora: `nav.stats` good, `nav.draw tiles` streams and follows terrain after detail-mesh + terrain-origin fixes) | [ai](visual-checks/ai.md) | Baked navmesh tiles over Seyda Neen (`nav.draw tiles`, `nav.stats`), slice NV4c (2026-11-17)
@@ -285,3 +285,4 @@ MF-1 | confirmed 2026-11-23 (owner: works fine) | [player-ui](visual-checks/play
 FS-1 | confirmed 2026-11-23 (owner: works fine; per-feature costs not reported yet) | [rendering](visual-checks/rendering.md) | Features panel (Ctrl+F3): live feature switches, flip delta, quick A/B
 CB-6 | confirmed 2026-11-25 (owner: "roll is good") | [combat](visual-checks/combat.md) | Spammable roll: mashing chains every ~0.58 s, press during a move rolls at once, tap/hold sprint kept (scene level-sparring, 2026-11-25)
 PL-10 | confirmed 2026-11-25 (owner round 2: "slope thing is all good") | [player-ui](visual-checks/player-ui.md) | Slope lean small and only while moving, head level, arms hang forward (scene level-flat-slopes, 2026-11-25)
+ANIM-4 | awaiting owner | [anim](visual-checks/anim.md) | NPCs turn chest/neck/head to you within range, let go at the side or unseen, no flip behind (scenes census, wk-balmora)

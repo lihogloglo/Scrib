@@ -10,7 +10,7 @@ use sf_stats::{
     StatOwner, TestModel,
 };
 use tes3::esp::{
-    AttributeId, Class, ClassData, Creature, CreatureData, Npc, NpcData, NpcFlags, NpcStats, Race, RaceData,
+    AiData, AttributeId, Class, ClassData, Creature, CreatureData, Npc, NpcData, NpcFlags, NpcStats, Race, RaceData,
     SkillBonuses, SkillId, Specialization,
 };
 
@@ -168,7 +168,7 @@ fn skill(t: &MwTable, s: &sf_stats::Sheet, id: SkillId) -> f32 {
 #[test]
 fn table_has_the_format_stats_and_roles() {
     let t = table();
-    assert_eq!(t.table.len(), 8 + 27 + 1 + 3 + 4 + 27 + 8 + 3 + 1 + 3 + 27 + 1 + 3 + 24);
+    assert_eq!(t.table.len(), 8 + 27 + 1 + 3 + 4 + 27 + 8 + 3 + 1 + 3 + 27 + 1 + 3 + 24 + 4);
     for (i, a) in ATTRIBUTES.iter().enumerate() {
         assert_eq!(t.table.find(a), Some(t.idx.attributes[i]));
         assert_eq!(usize::from(t.idx.attributes[i].0), i);
@@ -206,6 +206,56 @@ fn magnitude_stats_are_appended_after_the_older_indices() {
         assert!(matches!(def.kind, sf_stats::StatKind::Value { min, cap: None } if min == 0.0), "{key}");
     }
     assert_eq!(t.table.find("ResistFire"), Some(i.magnitudes[12]));
+}
+
+/// The 4 AI settings (2026-11-26) are appended after the magnitude stats: the older
+/// indices stay put (the first and last magnitude keep 116 and 139), each setting is a base-0
+/// `Value` in `ai`.
+#[test]
+fn ai_settings_are_appended_after_the_magnitude_stats() {
+    let t = table();
+    let pos = |s: sf_stats::StatIdx| usize::from(s.0);
+    assert_eq!((pos(t.idx.attributes[0]), pos(t.idx.fatigue_term)), (0, 115));
+    assert_eq!((pos(t.idx.magnitudes[0]), pos(t.idx.magnitudes[23])), (116, 139));
+    for (n, key) in AI_SETTINGS.iter().enumerate() {
+        let s = t.table.find(key).unwrap_or_else(|| panic!("{key} not in MwTable"));
+        assert_eq!((s, pos(s)), (t.idx.ai_settings[n], 140 + n), "{key}");
+        let def = t.table.def(s);
+        assert_eq!((def.group.as_str(), def.label.as_str(), def.public), ("ai", "", false), "{key}");
+        assert!(matches!(def.kind, sf_stats::StatKind::Value { min, cap: None } if min == 0.0), "{key}");
+    }
+    assert_eq!(t.table.find("Fight"), Some(t.idx.ai_settings[1]));
+}
+
+fn aidt() -> AiData {
+    AiData { hello: 30, fight: 20, flee: 10, alarm: 90, ..Default::default() }
+}
+
+fn ai_bases(t: &MwTable, s: &sf_stats::Sheet) -> [f32; 4] {
+    t.idx.ai_settings.map(|i| s.view(&t.table).base(i))
+}
+
+/// AIDT Hello 30 / Fight 20 / Flee 10 / Alarm 90 are the base values on a fresh sheet, for a
+/// stored NPC, an autocalc NPC and a creature (`npc.cpp:367-370`, `creature.cpp:144-147`).
+#[test]
+fn aidt_sets_the_ai_setting_bases() {
+    let t = table();
+    let g = MwGmst::vanilla();
+    let stored = Npc { ai_data: aidt(), ..stored_npc() };
+    let s = sheet(&t, &npc_ops(&t, &g, &RecordDb::new(), &stored).unwrap(), false);
+    assert_eq!(ai_bases(&t, &s), [30.0, 20.0, 10.0, 90.0]);
+    let auto = Npc { ai_data: aidt(), ..autocalc_npc(5) };
+    let s = sheet(&t, &npc_ops(&t, &g, &db(), &auto).unwrap(), false);
+    assert_eq!(ai_bases(&t, &s), [30.0, 20.0, 10.0, 90.0]);
+    let c = Creature { id: "guar".into(), ai_data: aidt(), ..Default::default() };
+    let s = sheet(&t, &creature_ops(&t, &g, &c), false);
+    assert_eq!(ai_bases(&t, &s), [30.0, 20.0, 10.0, 90.0]);
+    // The ESM fields are unsigned: Hello 300 and Fight 100 survive `tes3`'s signed reads.
+    #[allow(clippy::cast_possible_wrap)]
+    let wide = AiData { hello: 300, fight: 100, flee: 0, alarm: 200u8 as i8, ..Default::default() };
+    let c = Creature { id: "guar".into(), ai_data: wide, ..Default::default() };
+    let s = sheet(&t, &creature_ops(&t, &g, &c), false);
+    assert_eq!(ai_bases(&t, &s), [300.0, 100.0, 0.0, 200.0]);
 }
 
 #[test]

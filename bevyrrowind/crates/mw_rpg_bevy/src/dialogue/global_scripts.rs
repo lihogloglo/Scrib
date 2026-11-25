@@ -498,7 +498,7 @@ fn set_slot(set: &ScriptSet, instances: &mut GlobalInstances, id: &str, slot: us
 pub fn add(app: &mut App, rpg: &mut Rpg) {
     app.insert_resource(GlobalScripts::new_game(rpg))
         .init_resource::<ScriptRegion>()
-        .add_systems(FixedUpdate, (track_script_region, tick_global_scripts).chain());
+        .add_systems(FixedUpdate, (track_script_region, super::sync_ai_runs, tick_global_scripts).chain());
 }
 
 fn tick_global_scripts(
@@ -660,5 +660,73 @@ mod tests {
         assert_eq!(seen(&rpg), Some(0.0), "dq_start set done = 1 earlier in the same tick: not seen yet");
         scripts.tick(&mut rpg, &NoSheets);
         assert_eq!(seen(&rpg), Some(1.0), "seen from the next tick");
+    }
+
+    /// `dq_go` (on the start list) sends `dq_npc` to a point once, then copies its AI reads into
+    /// `dq_seen` (`GetAIPackageDone`) and `dq_pkg` (`GetCurrentAIPackage`) every tick; `dq_npc` a
+    /// registered NPC.
+    fn ai_fixture() -> RecordDb {
+        let mut db = RecordDb::new();
+        mw_records::register_kinds(&mut db).unwrap();
+        let src = db.add_source("test", &[]);
+        for name in ["dq_seen", "dq_pkg"] {
+            let g = GlobalVariable { id: name.into(), value: GlobalValue::Short(0), ..Default::default() };
+            db.define(src, id(name), g).unwrap();
+        }
+        let npc = tes3::esp::Npc { id: "dq_npc".into(), name: "Dee".into(), ..Default::default() };
+        db.define(src, id("dq_npc"), npc).unwrap();
+        let text = concat!(
+            "Begin dq_go\nshort sent\nif ( sent == 0 )\n\t\"dq_npc\"->AITravel 100 200 0\n\tset sent to 1\nendif\n",
+            "set dq_seen to \"dq_npc\"->GetAIPackageDone\nset dq_pkg to \"dq_npc\"->GetCurrentAIPackage\nEnd\n",
+        );
+        let script = Script { id: "dq_go".into(), text: text.into(), ..Default::default() };
+        db.define(src, id("dq_go"), script).unwrap();
+        let start = StartScript { id: "0".into(), script: "dq_go".into(), ..Default::default() };
+        db.define(src, id("0"), start).unwrap();
+        db
+    }
+
+    /// `MA2c2`, the host side: a global's `"npc"->AITravel` reaches the walkers as one
+    /// [`ScriptAiPush`] for the NPC's key, carrying the travel package, and its AI reads answer
+    /// from the walkers' [`AiRuns`] (copied each fixed tick before the scripts run).
+    #[test]
+    fn a_global_scripts_ai_push_reaches_the_walkers_and_its_reads_follow_their_runs() {
+        use mw_walkers_bevy::script_ai::{AiPackageKind, AiRun, AiRuns, ScriptAiPush};
+        use tes3::esp::{AiPackage, AiTravelPackage};
+        const NPC: ActorKey = ActorKey(5);
+        #[derive(Resource, Default)]
+        struct Sent(Vec<ScriptAiPush>);
+        fn collect(mut pushes: MessageReader<ScriptAiPush>, mut sent: ResMut<Sent>) {
+            sent.0.extend(pushes.read().cloned());
+        }
+        let mut rpg = Rpg::new(Arc::new(ai_fixture())).unwrap();
+        assert!(rpg.add_actor(NPC, &id("dq_npc"), "Balmora"));
+        let mut app = App::new();
+        app.add_plugins(TimePlugin)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)))
+            .insert_resource(Time::<Fixed>::from_hz(60.0))
+            .init_resource::<AiRuns>()
+            .add_message::<ScriptAiPush>()
+            .init_resource::<Sent>()
+            .add_systems(Update, (super::super::send_ai_pushes, collect).chain());
+        add(&mut app, &mut rpg);
+        app.insert_resource(rpg);
+        let global = |app: &App, name: &str| app.world().resource::<Rpg>().state.globals.get(&id(name)).copied();
+        for _ in 0..3 {
+            app.update();
+        }
+        let pushes = &app.world().resource::<Sent>().0;
+        let travel = AiPackage::Travel(AiTravelPackage { location: [100.0, 200.0, 0.0], reset: 0 });
+        assert_eq!(*pushes, [ScriptAiPush { actor: NPC, package: travel }], "one push, once");
+        assert_eq!((global(&app, "dq_seen"), global(&app, "dq_pkg")), (Some(0.0), Some(-1.0)), "no AI ran yet");
+
+        let walking = AiRun { done: false, last: Some(AiPackageKind::Travel) };
+        app.world_mut().resource_mut::<AiRuns>().0.insert(NPC, walking);
+        app.update();
+        assert_eq!((global(&app, "dq_seen"), global(&app, "dq_pkg")), (Some(0.0), Some(1.0)), "walking: Travel");
+        let arrived = AiRun { done: true, last: None };
+        app.world_mut().resource_mut::<AiRuns>().0.insert(NPC, arrived);
+        app.update();
+        assert_eq!((global(&app, "dq_seen"), global(&app, "dq_pkg")), (Some(1.0), Some(-1.0)), "arrived: done");
     }
 }

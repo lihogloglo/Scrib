@@ -208,6 +208,14 @@ pub struct WorldspaceRecords(pub BTreeMap<WorldspaceId, Worldspace>);
 #[derive(Resource, Clone, Default)]
 pub struct DoorLinks(pub Vec<DoorLink>);
 
+impl DoorLinks {
+    /// The link named `id` ([`DoorLink::find`]: a linear scan, for
+    /// occasional lookups).
+    pub fn get(&self, id: sf_world::LinkId) -> Option<&DoorLink> {
+        DoorLink::find(&self.0, id)
+    }
+}
+
 /// The player's worldspace: the only one that simulates (M2), and the one
 /// the world-origin uniform follows.
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]

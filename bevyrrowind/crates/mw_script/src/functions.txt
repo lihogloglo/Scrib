@@ -185,9 +185,9 @@ Get{$DYN}GetRatio       -                   float  stats       live     r
 Get{$EFFECTS}           -                   int    stats       stub     r
 Set{$EFFECTS}           num                 void   stats       stub     r
 Mod{$EFFECTS}           num                 void   stats       stub     r
-Get{$AISTATS}           -                   int    ai          stub     r
-Set{$AISTATS}           num                 void   ai          stub     r
-Mod{$AISTATS}           num                 void   ai          stub     r
+Get{$AISTATS}           -                   int    ai          live     r
+Set{$AISTATS}           num                 void   ai          live     r
+Mod{$AISTATS}           num                 void   ai          live     r
 GetLevel                -                   int    stats       live     r
 SetLevel                num                 void   stats       live     r
 GetDisposition          -                   int    disposition stub=50  r
@@ -225,14 +225,14 @@ GetPCInJail             -                   int    crime       stub     -
 
 # --- AI, combat -----------------------------------------------------------------------------
 AIActivate              id,num?             void   ai          later    r
-AIEscort                id,num,num,num,num,num* void   ai          later    r
-AIEscortCell            id,id,num,num,num,num,num* void   ai          later    r
-AIFollow                id,num,num,num,num,num* void   ai          later    r
-AIFollowCell            id,id,num,num,num,num,num* void   ai          later    r
-AITravel                num,num,num,num?    void   ai          later    r
-AIWander                num,num,num,num*    void   ai          later    r
-GetAIPackageDone        -                   int    ai          later    r
-GetCurrentAIPackage     -                   int    ai          later    r
+AIEscort                id,num,num,num,num,num* void   ai          live     r
+AIEscortCell            id,id,num,num,num,num,num* void   ai          live     r
+AIFollow                id,num,num,num,num,num* void   ai          live     r
+AIFollowCell            id,id,num,num,num,num,num* void   ai          live     r
+AITravel                num,num,num,num?    void   ai          live     r
+AIWander                num,num,num,num*    void   ai          live     r
+GetAIPackageDone        -                   int    ai          live     r
+GetCurrentAIPackage     -                   int    ai          live     r
 GetTarget               id                  int    combat      stub     r
 GetDetected             id                  int    ai          stub     r
 GetAttacked             -                   int    combat      stub     r

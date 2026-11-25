@@ -32,10 +32,13 @@
 //!   position, its [`SearchGoal`]s for the move executors, and [`OP_SEARCH`].
 //! - `AI8h1` (band reactions core): [`react`], the Curious / Suspicious [`ReactState`] (double
 //!   take, held goal, spent placement) and its [`ReactGoal`]s for the move executors.
+//! - `AI9a` (tier allocator core): [`alloc`], the [`Allocator`] of tiers 2/1/0 under the fixed
+//!   [`CpuTier`] caps (pins, visibility, nearest-player distance, hysteresis, staggered first decide).
 //!
 //! The console command `ai.trace` and BRP live in `sf_ai_bevy` (AI3): actor references and the
 //! console context are the shell's.
 
+pub mod alloc;
 pub mod directive;
 pub mod drive;
 pub mod exec;
@@ -51,6 +54,10 @@ pub mod sight;
 pub mod state;
 pub mod trace;
 
+pub use alloc::{
+    AllocConfig, AllocInput, AllocStats, Allocation, Allocator, CpuTier, Pin, Tier, TierCaps, TierChange,
+    first_decide_after,
+};
 pub use directive::{
     Directive, DirectiveDone, DirectiveEnd, DirectiveKind, DirectiveSource, DirectiveSpec, DirectiveStack, DirectiveStatus,
     Limit, MAX_REACTIONS, ModernPolicy, SavedStack, Serving, StackEdit, StackError, StackPolicy, format_directives,
@@ -104,6 +111,8 @@ pub use trace::{
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_alloc;
 #[cfg(test)]
 mod tests_directive;
 #[cfg(test)]

@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use crate::ast::{Call, Ident, Target, VarRef, VarType};
 use crate::functions::Function;
 use crate::interp::{Host, Interpreter, Locals, MessageArg, RunError, ScriptOp, store};
+use crate::aifn::AiCall;
 use crate::statfn::StatCall;
 use crate::{Env, FunctionTable, MemberLookup, SourceKind, parse_and_resolve};
 
@@ -123,6 +124,14 @@ impl Host for Recorder {
             call.value
         ));
         Some(7.0)
+    }
+    /// Answers AI functions when `stats` is on (logged; reads value 3), like `stat`.
+    fn ai(&mut self, target: &Target, call: &AiCall) -> Option<f64> {
+        if !self.stats {
+            return None;
+        }
+        self.log.push(format!("ai {} {call:?}", who(target)));
+        Some(3.0)
     }
     /// Answers script control when `stats` is on (logged, value 1), like `stat`.
     fn script(&mut self, target: &Target, op: ScriptOp, script: &Ident) -> Option<f64> {
@@ -454,7 +463,63 @@ fn every_stat_function_is_a_live_table_function() {
     let mut names: Vec<String> = all.iter().map(|(n, _)| n.to_lowercase()).collect();
     names.sort();
     names.dedup();
-    assert_eq!(names.len(), 140, "8 x 3 attribute + 27 x 3 skill + 3 x 5 dynamic + 20 others");
+    assert_eq!(names.len(), 152, "8 x 3 attribute + 27 x 3 skill + 3 x 5 dynamic + 4 x 3 AI setting + 20 others");
+}
+
+#[test]
+fn every_ai_function_is_a_live_table_function() {
+    let t = FunctionTable::vanilla();
+    for a in crate::AiFn::ALL {
+        let f = t.function(t.get(a.name()).unwrap_or_else(|| panic!("{a:?}")));
+        assert_eq!(
+            (f.name.as_str(), f.status, crate::AiFn::from_name(&f.name)),
+            (a.name(), crate::Status::Live, Some(a)),
+            "functions.txt status column"
+        );
+    }
+}
+
+/// `OpenMW`'s argument reading (`aiextensions.cpp`): the reset argument's presence makes a
+/// package repeat, escort hours truncate, wander drops the `Idle` chance, clamps
+/// `Idle2`-`Idle9` and takes the argument after them as reset; reads return the host's value.
+#[test]
+fn ai_functions_reach_the_host_typed() {
+    let mut host = recorder();
+    host.stats = true;
+    run_as(
+        "AITravel 100 -200.5 30
+player->AITravel 1 2 3 1
+         AIEscort \"fargoth\" 5.9 10 20 30
+AIEscortCell fargoth \"Seyda Neen\" 2 1 2 3 0
+         AIFollow player 1.5 0 0 0
+AIFollowCell player \"Balmora\" 0 4 5 6
+         AIWander 512 5 0
+AIWander 128 0 6 99 40 300 -3
+         AIWander 64 1 2 0 10 20 30 40 50 60 70 80 0 77
+         set state to GetAIPackageDone
+set state to state + GetCurrentAIPackage",
+        SourceKind::DialogueResult,
+        &mut host,
+    )
+    .unwrap();
+    let ai = |s: &str| format!("ai {s}");
+    assert_eq!(
+        host.log,
+        [
+            ai("self Travel { to: [100.0, -200.5, 30.0], repeat: false }"),
+            ai("player Travel { to: [1.0, 2.0, 3.0], repeat: true }"),
+            ai(r#"self Escort { actor: Ident { key: "fargoth", text: "fargoth" }, cell: None, hours: 5, to: [10.0, 20.0, 30.0], repeat: false }"#),
+            ai(r#"self Escort { actor: Ident { key: "fargoth", text: "fargoth" }, cell: Some(Ident { key: "seyda neen", text: "Seyda Neen" }), hours: 2, to: [1.0, 2.0, 3.0], repeat: true }"#),
+            ai(r#"self Follow { actor: Ident { key: "player", text: "player" }, cell: None, hours: 1.5, to: [0.0, 0.0, 0.0], repeat: false }"#),
+            ai(r#"self Follow { actor: Ident { key: "player", text: "player" }, cell: Some(Ident { key: "balmora", text: "Balmora" }), hours: 0.0, to: [4.0, 5.0, 6.0], repeat: false }"#),
+            ai("self Wander { range: 512, hours: 5, hour: 0, idles: [], repeat: false }"),
+            ai("self Wander { range: 128, hours: 0, hour: 6, idles: [40, 255, 0], repeat: true }"),
+            ai("self Wander { range: 64, hours: 1, hour: 2, idles: [10, 20, 30, 40, 50, 60, 70, 80], repeat: false }"),
+            ai("self PackageDone"),
+            ai("self CurrentPackage"),
+        ]
+    );
+    assert!((host.speaker["state"].1 - 6.0).abs() < f64::EPSILON, "reads return the host's value");
 }
 
 #[test]
@@ -510,9 +575,16 @@ fn binding_matches_the_dispatch_for_every_function() {
         {
             assert!(host.log.first().is_some_and(|e| e.starts_with("script ")), "{}", f.name);
         }
+        if let Binding::Ai(_) = binding {
+            assert!(host.log.first().is_some_and(|e| e.starts_with("ai ")), "{}", f.name);
+        }
         bound += usize::from(binding.is_bound());
     }
-    assert_eq!(bound, 140 + crate::Builtin::ALL.len(), "stat functions + builtins");
+    assert_eq!(
+        bound,
+        152 + crate::AiFn::ALL.len() + crate::Builtin::ALL.len(),
+        "stat functions + AI package functions + builtins"
+    );
 }
 
 /// DQ-2 counts: bound / total by family and origin from parsed fixtures.

@@ -5745,6 +5745,7 @@ dependencies = [
  "mw_scripts_bevy",
  "mw_stats",
  "mw_vfs",
+ "mw_walkers_bevy",
  "mw_world",
  "postcard",
  "serde",
@@ -8583,6 +8584,7 @@ dependencies = [
  "sf_coords",
  "sf_ids",
  "sf_world",
+ "smallvec",
  "thiserror 2.0.21",
 ]
 

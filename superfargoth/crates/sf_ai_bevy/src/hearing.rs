@@ -16,11 +16,16 @@
 //! update settles entries to `now` (no time passes until the next tick), and queued notifies carry
 //! their own due tick.
 //!
-//! Listeners: entities with [`AiObserver`] + [`AiAwareness`] and a `Mover`, not `Dormant` (the
-//! actors sight polls), ears at the observer's eye height; the noise's own source actor is skipped.
+//! Listeners: entities with [`AiObserver`] + [`AiAwareness`] and a `Mover`, not `Dormant` and not
+//! tier 0 ([`AiTier`] `Logical`; the actors sight polls), ears at the observer's eye height; the noise's own source actor is skipped.
 //! Prefilter per listener: the straight line to the ears beyond its reach is unheard (a path is never
-//! shorter than the straight line), so only listeners in reach ask [`NoisePropagation`]. A heard
-//! noise forces the listener's sight check next tick (ai.md "Cost and budget").
+//! shorter than the straight line), so only listeners in reach ask [`NoisePropagation`]. Tier 1
+//! ([`AiTier`] `Reduced`, ai.md "Tiers and budget": "distance + same space") never asks it: it hears
+//! by the straight line, no doors, when it is in the noise's space (the listener's space is its
+//! [`AiExecutor`] worldspace; a noise in the active worldspace (`space: None`) or a listener without
+//! an executor counts as the same space, as sight takes every mover to share it). Tier 2 and
+//! listeners without [`AiTier`] ask the propagation. A heard noise forces the listener's sight check
+//! next tick (ai.md "Cost and budget").
 //!
 //! Emitters write [`NoiseEvent`]s on the fixed tick before [`AiPerceptionSystems::Hearing`] (heard
 //! the same tick) or anywhere else (heard on the next perception tick; Bevy keeps messages until
@@ -29,19 +34,21 @@
 //!
 //! Not modelled yet: paths through the navmesh and doors (`AI8c3` swaps [`NoisePropagation`] for
 //! `portal_query::path_distance`); the default is straight line, no doors (UE `AIPerception` hearing);
-//! spaces (the default ignores [`NoiseEvent::space`], as sight takes every mover to share the active
-//! worldspace); tier 1 hearing by distance only (`AI9`); relaying a delivered notify (the receiver's
-//! behaviour decides, `Notify::relay`).
+//! spaces in the default propagation (it ignores [`NoiseEvent::space`], as sight takes every mover to
+//! share the active worldspace); relaying a delivered notify (the receiver's behaviour decides,
+//! `Notify::relay`).
 
 use bevy_app::{App, FixedUpdate};
 use bevy_ecs::prelude::*;
 use glam::Vec3;
-use sf_ai::{HeardNoise, NoiseKindId, Notify, PerceptTarget, Stimulus, StimulusOutcome};
+use sf_ai::{HeardNoise, NoiseKindId, Notify, PerceptTarget, Stimulus, StimulusOutcome, Tier};
 use sf_controller_bevy::{ControllerSystems, Dormant, Mover};
 use sf_coords::WorldPos;
 use sf_world::WorldspaceId;
 
 use crate::AiActor;
+use crate::alloc::AiTier;
+use crate::exec::AiExecutor;
 use crate::perception::{AiAwareness, AiEffectivePerception, AiObserver, AiPerceptionSettings, AiSightTimer};
 use crate::sight::{AiPerceptClock, AiPerceptionSystems};
 
@@ -157,7 +164,16 @@ fn hear_noise(
     weather: Option<Res<AiWeatherMask>>,
     mut noises: MessageReader<NoiseEvent>,
     mut listeners: Query<
-        (&AiActor, &AiObserver, &Mover, &mut AiAwareness, &mut AiSightTimer, Option<&AiEffectivePerception>),
+        (
+            &AiActor,
+            &AiObserver,
+            &Mover,
+            &mut AiAwareness,
+            &mut AiSightTimer,
+            Option<&AiEffectivePerception>,
+            Option<&AiTier>,
+            Option<&AiExecutor>,
+        ),
         Without<Dormant>,
     >,
 ) {
@@ -165,8 +181,9 @@ fn hear_noise(
     let mask = weather.map_or(AiWeatherMask::default().0, |w| w.0);
     let door_m = settings.hearing.closed_door_m;
     for ev in noises.read() {
-        for (actor, obs, mover, mut meter, mut timer, eff) in &mut listeners {
-            if ev.source == Some(PerceptTarget::Actor(actor.0)) {
+        for (actor, obs, mover, mut meter, mut timer, eff, tier, exec) in &mut listeners {
+            // Tier 0 hears nothing (events only, ai.md "Tiers and budget").
+            if ev.source == Some(PerceptTarget::Actor(actor.0)) || tier.is_some_and(|t| t.tier == Tier::Logical) {
                 continue;
             }
             // An actor without a profile or states reads the globals (hearing × 1).
@@ -178,7 +195,17 @@ fn hear_noise(
             if straight > reach || reach.is_nan() {
                 continue;
             }
-            let Some(path) = propagation.0.distance(ev.at, ears, ev.space.as_ref()) else { continue };
+            let path = if tier.is_some_and(|t| t.tier == Tier::Reduced) {
+                // Tier 1: distance + same space, no path query.
+                if !same_space(ev.space.as_ref(), exec.map(|x| &x.worldspace)) {
+                    continue;
+                }
+                // tunables: const (no door on a straight line)
+                NoisePath { path_m: straight, closed_doors: 0 }
+            } else {
+                let Some(path) = propagation.0.distance(ev.at, ears, ev.space.as_ref()) else { continue };
+                path
+            };
             let noise = HeardNoise {
                 source: ev.source,
                 reveals_source: ev.reveals_source,
@@ -194,5 +221,14 @@ fn hear_noise(
                 timer.0.force();
             }
         }
+    }
+}
+
+/// Whether a noise in `noise` reaches a listener in `listener` (tier 1's space test): different only
+/// when both are known and differ (`None`: the active worldspace, or a listener without an executor).
+fn same_space(noise: Option<&WorldspaceId>, listener: Option<&WorldspaceId>) -> bool {
+    match (noise, listener) {
+        (Some(a), Some(b)) => a == b,
+        _ => true,
     }
 }

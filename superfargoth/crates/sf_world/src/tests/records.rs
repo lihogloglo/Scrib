@@ -191,3 +191,83 @@ fn ray_tracing_variants_only_where_traced() {
     assert_eq!(RayTracedWorldspaces::All.variant_lod(exterior, 2), Some(2));
     assert_eq!(RayTracedWorldspaces::default(), RayTracedWorldspaces::None);
 }
+
+/// A two-way link between an exterior door far from the origin and an
+/// interior one; positions sit 0.2 mm off a millimetre so 0.1 mm stays put.
+fn id_link() -> DoorLink {
+    DoorLink {
+        a: end("outside", DVec3::new(123_456.789_2, 31.250_2, -98_765.432_2), 0.3),
+        b: end("inside", DVec3::new(5.000_2, 0.000_2, 7.000_2), -1.1),
+        two_way: true,
+    }
+}
+
+fn moved(mut link: DoorLink, d: Vec3) -> DoorLink {
+    link.a.frame.pos = link.a.frame.pos.offset(d);
+    link
+}
+
+#[test]
+fn link_id_is_stable_and_order_rules_follow_direction() {
+    let link = id_link();
+    assert_eq!(link.id(), id_link().id());
+    // Arrival, door and extent don't take part.
+    let mut retuned = id_link();
+    retuned.a.arrival.pos = retuned.a.arrival.pos.offset(Vec3::new(0.5, 0.0, 0.5));
+    retuned.b.door = Some(PlacementId(42));
+    retuned.b.extent = Vec2::new(3.0, 3.0);
+    assert_eq!(retuned.id(), link.id());
+    // q and -q are the same frame.
+    let mut flipped = id_link();
+    flipped.b.frame.rotation = -flipped.b.frame.rotation;
+    assert_eq!(flipped.id(), link.id());
+
+    let swapped = DoorLink { a: link.b.clone(), b: link.a.clone(), two_way: true };
+    assert_eq!(swapped.id(), link.id());
+    let one_way = DoorLink { two_way: false, ..id_link() };
+    let one_way_back = DoorLink { a: link.b.clone(), b: link.a.clone(), two_way: false };
+    assert_ne!(one_way.id(), one_way_back.id());
+    assert_ne!(one_way.id(), link.id());
+}
+
+#[test]
+fn link_id_quantises_frames() {
+    let link = id_link();
+    assert_eq!(moved(id_link(), Vec3::new(1.0e-4, -1.0e-4, 1.0e-4)).id(), link.id());
+    assert_ne!(moved(id_link(), Vec3::new(0.02, 0.0, 0.0)).id(), link.id());
+    let mut turned = id_link();
+    turned.a.frame.rotation = Quat::from_rotation_y(0.3 + 1.0e-6);
+    assert_eq!(turned.id(), link.id());
+    turned.a.frame.rotation = Quat::from_rotation_y(0.31);
+    assert_ne!(turned.id(), link.id());
+
+    let mut elsewhere = id_link();
+    elsewhere.b.worldspace = ws("inside2");
+    assert_ne!(elsewhere.id(), link.id());
+    // The worldspace id is length-prefixed: no ambiguity at the seam.
+    let mut a = id_link();
+    a.a.worldspace = ws("ab");
+    a.b.worldspace = ws("c");
+    let mut b = a.clone();
+    b.a.worldspace = ws("a");
+    b.b.worldspace = ws("bc");
+    assert_ne!(a.id(), b.id());
+}
+
+#[test]
+fn link_id_serde_golden_and_find() {
+    let id = id_link().id();
+    // Golden: a change of hash, quantum or byte layout breaks saves.
+    assert_eq!(format!("{id:?}"), "49e3c99d02b35c8f");
+    let text = serde_json::to_string(&id).unwrap();
+    assert_eq!(text, format!("\"{id}\""));
+    assert_eq!(serde_json::from_str::<LinkId>(&text).unwrap(), id);
+    let bytes = postcard::to_allocvec(&id).unwrap();
+    assert_eq!(postcard::from_bytes::<LinkId>(&bytes).unwrap(), id);
+
+    let other = moved(id_link(), Vec3::new(1.0, 0.0, 0.0));
+    let links = vec![other.clone(), id_link()];
+    assert_eq!(DoorLink::find(&links, id), Some(&links[1]));
+    assert_eq!(DoorLink::find(&links, other.id()), Some(&links[0]));
+    assert_eq!(DoorLink::find(&links, LinkId(id.0 ^ 1)), None);
+}

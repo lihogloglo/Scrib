@@ -333,7 +333,8 @@ mod tests {
         assert_eq!(status("GetJournalIndex"), Status::Live);
         assert_eq!(status("GetPCRank"), Status::Live);
         assert_eq!(status("GetDisposition"), Status::Stub(50));
-        assert_eq!(status("AITravel"), Status::Later);
+        assert_eq!(status("AITravel"), Status::Live);
+        assert_eq!(status("AIActivate"), Status::Later);
         let name = |n: &str| t.function(t.get(n).unwrap()).luau_name();
         assert_eq!(name("GetPCCell"), "get_pc_cell");
         assert_eq!(name("AIWander"), "ai_wander");

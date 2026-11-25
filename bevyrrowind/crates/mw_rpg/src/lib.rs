@@ -17,6 +17,7 @@ mod levelled;
 mod persuasion;
 mod result;
 mod runner;
+mod script_ai;
 mod script_host;
 mod script_stats;
 mod services;
@@ -49,6 +50,7 @@ pub use persuasion::{
 pub use result::{ResultCall, ResultEffect, ResultError, ResultRunner, Target};
 pub use api::{Checkpoint, GameOp, GameRun, GameView, MwWorld, ScriptVar};
 pub use runner::{MwResultRunner, MwResults, ResultReport, ResultState, WorldEnv};
+pub use script_ai::{AiPush, MwAi, NoAi};
 pub use script_host::{ScriptHost, ScriptReport, ScriptReports};
 pub use services::{
     BarterPriceIn, BarterTerms, EffectiveValueIn, FollowerPricing, HaggleIn, HaggleOut, PartyTerms, RULE_BARTER_HAGGLE,
@@ -84,6 +86,8 @@ mod tests_levelled;
 mod tests_script_host;
 #[cfg(test)]
 mod tests_script_stats;
+#[cfg(test)]
+mod tests_script_ai;
 #[cfg(test)]
 mod tests_services;
 #[cfg(test)]

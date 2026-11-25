@@ -516,7 +516,8 @@ impl<'w> Bot<'w> {
             ResultEffect::Stats { .. } => self.stats.stat_effects += 1,
             ResultEffect::Journal { .. }
             | ResultEffect::MessageBox { .. }
-            | ResultEffect::PlaySound(_) => {}
+            | ResultEffect::PlaySound(_)
+            | ResultEffect::Ai { .. } => {}
         }
     }
 

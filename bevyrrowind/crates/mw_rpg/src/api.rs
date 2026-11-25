@@ -17,7 +17,7 @@
 
 use std::collections::HashMap;
 
-use mw_script::StatCall;
+use mw_script::{AiCall, StatCall};
 use mw_script::ast::{Ident, Target as AstTarget, VarRef, VarType};
 use mw_script::interp::store;
 use mw_ui::message::{MessageArg, message_box_from_args};
@@ -27,6 +27,7 @@ use sf_rpg::{ActorKey, CharacterRpg, Choice, ConversationCtx, WorldRpg};
 use sf_stats::StatOp;
 
 use crate::filter::ActorFacts;
+use crate::script_ai::{AiPush, MwAi, NoAi, pushes_to};
 use crate::script_stats::StatOverlay;
 use crate::stats::{MwSheets, NoSheets};
 use crate::text::GlobalNumber;
@@ -114,6 +115,13 @@ pub enum GameOp {
         target: Target,
         ops: Vec<StatOp>,
     },
+    /// An AI package function's push onto `target`'s AI (never the player or an inventory
+    /// item, `script_ai.rs`). The host maps [`AiPush::package`] through
+    /// `mw_ai::packages::directive` with a script source and stacks it.
+    Ai {
+        target: Target,
+        push: AiPush,
+    },
 }
 
 /// A script variable and its declared type.
@@ -139,6 +147,12 @@ pub trait MwWorld {
     /// so every stat read is neutral and writes are dropped.
     fn sheets(&self) -> &dyn MwSheets {
         &NoSheets
+    }
+
+    /// What the AI reads (`GetAIPackageDone`, `GetCurrentAIPackage`) see. Default: no AI, so
+    /// nothing is done and no package runs (-1).
+    fn ai(&self) -> &dyn MwAi {
+        &NoAi
     }
 
     /// The actor `target` names (`None`: the player, or no such actor). Default: the speaker.
@@ -440,6 +454,27 @@ impl<'a> GameRun<'a> {
         self.overlay
             .stats
             .call(self.view.ctx, self.view.env, target, call, &mut self.ops)
+    }
+
+    // AI packages (`script_ai`).
+
+    /// Runs an AI package function on `target`: a read returns the world's answer
+    /// ([`MwWorld::ai`]: `GetAIPackageDone` 1 or 0, `GetCurrentAIPackage` the type id or -1); a
+    /// push appends its [`GameOp::Ai`] and returns 0.
+    pub fn ai(&mut self, target: &Target, call: &AiCall) -> f64 {
+        let ai = self.view.env.ai();
+        match call {
+            AiCall::PackageDone => f64::from(u8::from(ai.package_done(self.view.ctx, target))),
+            AiCall::CurrentPackage => f64::from(ai.current_package(self.view.ctx, target)),
+            _ => {
+                if let Some(push) = AiPush::from_call(call)
+                    && pushes_to(target, &push)
+                {
+                    self.ops.push(GameOp::Ai { target: target.clone(), push });
+                }
+                0.0
+            }
+        }
     }
 }
 

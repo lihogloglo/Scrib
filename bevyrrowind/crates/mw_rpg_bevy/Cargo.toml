@@ -27,6 +27,9 @@ mw_scripts_bevy.workspace = true
 # Character stats (`stats`): Morrowind's table, init and OpenMW rules.
 mw_stats.workspace = true
 mw_world.workspace = true
+# Script AI pushes onto the actors' directive stacks and the AI reads (`script_ai`, MA2c2); already
+# in the graph through `mw_scripts_bevy` -> `mw_player_bevy`.
+mw_walkers_bevy.workspace = true
 # Overlay `stats` blobs (`stats`).
 postcard.workspace = true
 serde.workspace = true

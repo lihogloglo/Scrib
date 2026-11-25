@@ -200,6 +200,8 @@ pub struct MwIdx {
     pub fatigue_term: StatIdx,
     /// The [`MAGNITUDE_STATS`], in that order.
     pub magnitudes: [StatIdx; 24],
+    /// The [`AI_SETTINGS`] (Hello, Fight, Flee, Alarm), in that order.
+    pub ai_settings: [StatIdx; 4],
 }
 
 /// The Morrowind stat table with its indices and the SKIL data.
@@ -218,11 +220,21 @@ const fn counter(min: f32, max: f32) -> StatKind {
     StatKind::Counter { min, max }
 }
 
+/// The AI settings (ai-adapter.md "AI settings"), in `OpenMW`'s `AiSetting` order
+/// (`apps/openmw/mwmechanics/aisetting.hpp:6-12` @ 5f3aafb): Hello, Fight, Flee, Alarm. Base
+/// values come from the NPC/creature AIDT (`npc.cpp:367-370`, `creature.cpp:144-147`). They are
+/// [`VALUE`] stats: `OpenMW` keeps a `Stat<int>` whose modified value is floored at 0 and has no
+/// upper cap (`stat.cpp:22-28` `getModified(capped = true)`), so effects (Frenzy, Calm, Rally,
+/// Demoralize) can push Fight/Flee past 100 and Hello (a `uint16` greeting distance,
+/// `components/esm3/aipackage.hpp:17-18`) is not a 0-100 value. No GMST names them (label "").
+pub const AI_SETTINGS: [&str; 4] = ["hello", "fight", "flee", "alarm"];
+
 /// Attributes, skills and magnitudes: `min 0`, no cap (stats-adapter.md "Stat table").
 const VALUE: StatKind = StatKind::Value { min: 0.0, cap: None };
 
 /// The definitions, in index order: attributes, skills, Fortify Maximum Magicka, pools, counters,
-/// derived, then the [`MAGNITUDE_STATS`] (appended last, 2026-11-08: earlier indices unchanged).
+/// derived, the [`MAGNITUDE_STATS`] (appended 2026-11-08), then the [`AI_SETTINGS`] (appended
+/// 2026-11-26); each append left the earlier indices unchanged.
 #[must_use]
 pub fn defs() -> Vec<StatDef> {
     let mut d = Vec::with_capacity(140);
@@ -276,6 +288,10 @@ pub fn defs() -> Vec<StatDef> {
     // New defs go after this point only: indices are positional in `MwIdx`.
     for (key, label) in MAGNITUDE_STATS {
         d.push(def(key, VALUE, "magnitude", false, label));
+    }
+    // Appended 2026-11-26 (MA4a), after every older def so their indices and keyed saves stay put.
+    for key in AI_SETTINGS {
+        d.push(def(key, VALUE, "ai", false, ""));
     }
     d
 }
@@ -349,6 +365,7 @@ impl MwTable {
             encumbrance: at("encumbrance"),
             fatigue_term: at("fatigue.term"),
             magnitudes: MAGNITUDE_STATS.map(|(key, _)| at(key)),
+            ai_settings: AI_SETTINGS.map(at),
         };
         Ok(Self { table, idx, skills })
     }

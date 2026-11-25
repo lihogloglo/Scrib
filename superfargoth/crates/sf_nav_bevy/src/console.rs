@@ -1,10 +1,11 @@
-//! The `nav.*` console commands (nav.md "Debug draw", console.md): `nav.stats` and `nav.draw`.
+//! The `nav.*` console commands (nav.md "Debug draw", console.md): `nav.stats`, `nav.draw` and
+//! `nav.links` (the worldspace graph's last rebuild).
 
 use bevy_app::App;
 use sf_console_bevy::ConsoleAppExt;
 use sf_console_bevy::sf_console::{ArgKind, CommandSpec, Param};
 
-use crate::{NavDebugPaths, NavDraw, NavMeshes, NavStats, PathLayer};
+use crate::{NavDebugPaths, NavDraw, NavMeshes, NavStats, NavWorldGraphStats, PathLayer};
 
 /// Every `nav.draw` layer, then `off`.
 const LAYERS: [&str; 9] = [
@@ -46,6 +47,18 @@ pub(crate) fn register(app: &mut App) {
         ),
         |inv| {
             let line = NavStats::of(inv.ctx).line();
+            inv.log.info(&line);
+            Ok(())
+        },
+    )
+    .add_console_command(
+        CommandSpec::new("nav.links")
+            .help("Worldspace graph: door links, links skipped at build, exits per worldspace"),
+        |inv| {
+            let line = inv.ctx.get_resource::<NavWorldGraphStats>().map_or_else(
+                || "nav: no world graph (NavWorldGraphPlugin not added)".to_owned(),
+                NavWorldGraphStats::line,
+            );
             inv.log.info(&line);
             Ok(())
         },
