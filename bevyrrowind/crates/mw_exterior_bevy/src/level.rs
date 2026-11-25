@@ -34,6 +34,7 @@ use sf_app_bevy::bevy_state::prelude::OnEnter;
 use sf_world_bevy::{Streaming, WorldIndexSource, WorldspaceRegistry, to_grid};
 
 pub mod actors;
+pub mod nav;
 pub mod rock_lab;
 pub mod texture_lab;
 
@@ -149,9 +150,11 @@ impl IndexReader for LevelIndex {
 #[derive(Resource)]
 struct ActiveLevel(LevelSetup);
 
-/// Adds the level to the viewer; call after `WorldIndexSource` is inserted.
-pub fn add(app: &mut App, setup: LevelSetup) {
+/// Adds the level to the viewer; call after `WorldIndexSource` is inserted and after the game's
+/// navmesh (`mw_walkers_bevy::nav::add`): the level's tiles are built from `store` into it (slice `AI47b`).
+pub fn add(app: &mut App, setup: LevelSetup, store: &sf_bake::Store) {
     let base = app.world().resource::<WorldIndexSource>().0.clone();
+    nav::add(app, &setup.level, &setup.worldspace, store);
     let mut placements = actors::placements(&setup.level, &setup.actors);
     placements.extend(setup.placed.iter().cloned());
     actors::add(app, Arc::clone(&setup.actors));

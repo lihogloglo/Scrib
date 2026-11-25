@@ -62,5 +62,13 @@ Log: `ai: N wanderers on navmesh, M on pathgrid fallback (since start: X navmesh
   never; "light N%" higher in the lit lane. Cover: walk the white line: band stays down behind the wall, rises in line
   with a gap; the LKP marker stays at the gap. Hearing: cross the 4/8/14 m stripes: run heard at 4 and 8 not 14,
   sneak never, sprint at 14, walk 4 only; rings show each step's reach; hearing alone tops out at Curious.
-- Known: search does not walk in levels (no level navmesh: AI47b); impacts make no noise yet (IN18).
+- Search (AI47b, 2026-11-25): the level now has a navmesh; the search guard should leave its post and walk around the boxes. Log: `nav: level tiles 60 in X ms`. Impacts make no noise yet (IN18).
 - Status: owner 2026-11-25 "worked, too early to tell": keep for re-check after AI47b (level navmesh) and sneak concealment (LW4/MA5).
+
+### AI-12: sneaking hides you from sight (MA18 + LW4, owner request 2026-11-25)
+- Kind: level, dev build. `owner_launch.sh scene level-perception-light` (hour 23, clear, gizmos on). F11 drops the player.
+- Dark lane (x -72, guard-dark): walk north to the guard upright, then again holding Ctrl. Sneaking: his meter fills
+  clearly slower and he notices you much later (headless: 1.00 vs 0.24 at 90 ticks in 0.40 light). Lit lane (x -48):
+  sneaking still slows it, less. Sprinting gives you away (fast movement reveals). Behind him you stay hidden longer.
+- Weights are Guess tunables `crime.stealth.*` (not live yet: LW4b2). Morrowind's sneak skill formula is MA5.
+- Status: awaiting owner (gameplay-roadmaps-5).

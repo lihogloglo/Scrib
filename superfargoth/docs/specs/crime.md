@@ -232,6 +232,22 @@ Superseded 2026-11-25: `DetectIn.light`/`roll`, Classic as default. Pickpocket t
 9): `Timer` (KCD2 hold-to-search, risk from victim awareness, LW18) or `Roll` = `PickpocketRules::caught(&PickIn,
 roll) -> bool` (Classic and "auto").
 
+**As built (LW4a, 2026-11-25):** `sf_crime/src/stealth.rs`. `DetectionRules: Send + Sync`; `TargetView { stats: StatView,
+stealth: StealthState }`, `ObserverView { stats }` (`StatView`: 8 inline `(StatId, f32)`); `Speed { Still, Walk, Run,
+Sprint }` (own data, not `sf_controller::Gait`). `StandardDetection` (modern default) = `light_concealment × (1 − light)` +
+stance (crouched 30, prone 50) + `behind_concealment × behind(angle)` (0 within ±`facing_front_rad`, 1 straight behind) −
+`min(speed_reveal_per_mps × max(0, speed − speed_free_mps), speed_reveal_max)`, clamped to 0..`max_concealment`; it
+ignores distance (sf_ai `f_dist`), size, noise, disguise and `modifiers`. Defaults keep upright/still/in-front equal to
+the light-only visibility. `visibility_from_concealment(c) = clamp(1 − c/100, 0, 1)`. Tunables `crime.stealth.*`
+(`StandardDetectionConfig`, bound in `sf_crime_bevy`).
+
+**As built (LW4b1, 2026-11-25):** `sf_ai_bevy/src/detection.rs`: `AiDetectionRules(Arc<dyn DetectionRules>)` resource
+(default `StandardDetection`, replaceable), optional target component `AiVisibilityFactors { stance, size, disguise,
+modifiers }` (absent = upright). `queue_sight` builds one `DetectIn` per check on the stack: light after the observer's
+darkness (`VISIBILITY_UNMODELLED` without a sample), speed = |velocity|, distance and angle eye to chest; visibility =
+`visibility_from_concealment(concealment)`. Views (stats, `StealthState`) stay default until `sf_crime_bevy` fills them.
+`light_only_visibility` removed. Meter only; Classic with MA5.
+
 ### Locks and traps
 
 ```rust

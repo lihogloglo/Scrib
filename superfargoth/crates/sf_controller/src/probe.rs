@@ -3,7 +3,7 @@
 
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
-use sf_coords::WorldPos;
+use sf_coords::{WorldPos, WorldTransform};
 
 /// Surface material of a hit (stone, wood, sand…), for footsteps and foot
 /// placement. Values are adapter-defined; 0 is the default surface.
@@ -88,12 +88,19 @@ pub struct GroundHit {
     /// Angular velocity of the ground body, rad/s, world axes (zero for static).
     #[serde(skip)]
     pub angular_velocity: Vec3,
+    /// The body's pose when the hit was taken, if the probe knows it (UE's `OldBaseLocation`
+    /// / `OldBaseQuat`): the physics layer turns the base's pose delta since then into the
+    /// tick's ride (`sf_physics_bevy::refresh_base_motion`, `IN11c2b`), so a tick whose
+    /// physics step was skipped rides nothing and one that stepped twice rides both. Runtime
+    /// only, like the velocities.
+    #[serde(skip)]
+    pub base_pose: Option<WorldTransform>,
 }
 
 impl GroundHit {
     /// A hit on static ground: no body, no velocity.
     pub fn new(point: WorldPos, normal: Vec3, distance: f32, surface: SurfaceId) -> Self {
-        Self { point, normal, distance, surface, body: None, velocity: Vec3::ZERO, angular_velocity: Vec3::ZERO }
+        Self { point, normal, distance, surface, body: None, velocity: Vec3::ZERO, angular_velocity: Vec3::ZERO, base_pose: None }
     }
 
     /// The same hit on `body`, moving with point velocity `velocity` (m/s) and
@@ -101,6 +108,12 @@ impl GroundHit {
     #[must_use]
     pub fn on_body(self, body: GroundBody, velocity: Vec3, angular_velocity: Vec3) -> Self {
         Self { body: Some(body), velocity, angular_velocity, ..self }
+    }
+
+    /// The same hit, taken with its body at `pose` ([`Self::base_pose`]).
+    #[must_use]
+    pub fn at_base_pose(self, pose: WorldTransform) -> Self {
+        Self { base_pose: Some(pose), ..self }
     }
 
     /// Walkable for a mover whose slope limit has this cosine. Walkability

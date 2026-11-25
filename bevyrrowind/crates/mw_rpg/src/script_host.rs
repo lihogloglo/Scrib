@@ -16,9 +16,10 @@
 //!   nothing (reads 0). `GameView::ctx` supplies the context player; its speaker is unused.
 //! - **Local runs** (DQ-5b): [`InstanceHost::begin_local_run`] of a placement makes that exact
 //!   reference the run's self ([`Target::Ref`]), so a self-targeted call never reaches another
-//!   reference of the same base; an inventory stack has no self yet (DQ-5b2). A global a local
-//!   run starts without `ref->` takes the reference's base id as its target (saved targets are
-//!   record ids), from [`ScriptHost::with_ref_bases`]; without it, none.
+//!   reference of the same base; an inventory stack's run has that stack ([`Target::Stack`],
+//!   DQ-5b3). A global a local run starts without `ref->` takes the object's base id as its
+//!   target (saved targets are record ids: the reference's base, the stack's item), from
+//!   [`ScriptHost::with_ref_bases`]; without it, none.
 //! - `StartScript` / `StopScript` / `ScriptRunning` never reach this host inside a tick: the
 //!   instance set takes them (`mw_script::instances`, its `Scoped` host). Outside a tick they
 //!   read as unhandled.
@@ -95,8 +96,8 @@ pub struct ScriptHost<'a> {
     self_target: Option<Target>,
     /// Where the running script's writes start.
     checkpoint: Option<Checkpoint>,
-    /// A placement's base record id (a local's implicit `StartScript` target).
-    ref_bases: Option<&'a dyn Fn(u128) -> Option<String>>,
+    /// A local instance's base record id (its implicit `StartScript` target).
+    ref_bases: Option<&'a dyn Fn(LocalKey) -> Option<String>>,
 }
 
 impl<'a> ScriptHost<'a> {
@@ -111,10 +112,10 @@ impl<'a> ScriptHost<'a> {
         }
     }
 
-    /// Local runs' implicit `StartScript` target: the base record id of a placement (module
-    /// docs).
+    /// Local runs' implicit `StartScript` target: the base record id of a placement, or the
+    /// item of an inventory stack (module docs).
     #[must_use]
-    pub fn with_ref_bases(mut self, bases: &'a dyn Fn(u128) -> Option<String>) -> Self {
+    pub fn with_ref_bases(mut self, bases: &'a dyn Fn(LocalKey) -> Option<String>) -> Self {
         self.ref_bases = Some(bases);
         self
     }
@@ -195,16 +196,13 @@ impl InstanceHost for ScriptHost<'_> {
         script.clone_into(&mut self.script);
         self.self_target = match key {
             LocalKey::Placement(p) => Some(Target::Ref(p)),
-            LocalKey::Stack { .. } => None,
+            LocalKey::Stack { holder, stack } => Some(Target::Stack { holder, stack }),
         };
         self.checkpoint = Some(self.run.checkpoint());
     }
 
     fn local_self(&mut self, key: LocalKey) -> Option<String> {
-        match key {
-            LocalKey::Placement(p) => self.ref_bases.and_then(|bases| bases(p)),
-            LocalKey::Stack { .. } => None,
-        }
+        self.ref_bases.and_then(|bases| bases(key))
     }
 
     fn end_run(&mut self, _script: &str, committed: bool) {

@@ -247,6 +247,13 @@ the impact speed; teleports and non-ground modes emit nothing; `surface_gear_mul
 `ActionSystems::Move`, before `AiPerceptionSystems::Hearing`. Tunables `mw.ai.noise.*` (12). Not yet: NPC steps,
 surface/gear, action `noise: Loud`, IN18 object noises.
 
+As built (MA18, 2026-11-25): `mw_walkers_bevy/src/visibility.rs` writes the player body's `AiVisibilityFactors` each
+fixed tick (after `ActionSystems::Move`, before `AiPerceptionSystems::Sight`) from the action state's mode: `Mode::Sneak`
+= `Stance::Crouched` (+30 concealment under `StandardDetection`), `Normal`/`FreeRun` = `Upright`; written only on
+change. Modifiers from the host sheet (`StatIdx` as `StatId`): `sneak` always, `chameleon` when the table has it (not
+yet: MA19); `StandardDetection` ignores both, MA5 reads them. Measured (light 0.40, guard 10 m facing): awareness at
+90 ticks 1.00 standing vs 0.24 sneaking; sneaking reaches 0.77 at 240.
+
 ## Open questions
 
 None open. Decided 2026-11-08 (owner-delegated; `superfargoth/docs/research/ai-nav-decisions-2026-11-08.md` (e), (f),

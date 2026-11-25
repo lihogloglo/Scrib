@@ -47,6 +47,7 @@ workspace-members = [
     "sf_console",
     "sf_controller",
     "sf_coords",
+    "sf_crime",
     "sf_diag",
     "sf_effects",
     "sf_ids",

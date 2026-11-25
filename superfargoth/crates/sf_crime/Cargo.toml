@@ -1,0 +1,16 @@
+[package]
+name = "sf_crime"
+description = "Bevy-free crime core for superfargoth (crime.md): the stealth detection rules seam (`DetectionRules::concealment`) and the framework's modern default rules (`StandardDetection`); ownership, offences, locks and traps follow in later slices"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Bevy-free core (build-perf.md rule 1): in hakari's final-excludes.
+[dependencies]
+serde.workspace = true
+# `VisibilityFactors`, `Stance`, `StatId`: the sight inputs crime turns into concealment (crime.md decision 6).
+sf_ai.workspace = true
+
+[lints]
+workspace = true

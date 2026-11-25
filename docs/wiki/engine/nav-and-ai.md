@@ -19,6 +19,10 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
 - **Morrowind adapter** (`mw_bake/src/nav.rs`): `MwNavSource` feeds the cooked collision and baked terrain heights;
   `bake_nav` (`:960`) runs inside `bevyrrowind bake` (`mw_boot_bevy/src/bake.rs:73`). Water is a flat swim-level quad,
   as in OpenMW.
+- **Test levels** (`mw_exterior_bevy/src/level/nav.rs`, AI47b): `level:` scenes bake their own tiles at load from the
+  level's static colliders (props and `collide: false` left out) through the same `nav.tiles` step: one region at the
+  origin, humanoid only, no links, cached in `<store>/level-nav` keyed by the geometry digest; log `nav: level tiles N
+  in X ms` (perception lab 60 tiles, ~80 ms cold in debug). The level's `placed` Morrowind records are not in it.
 - **Nav runtime shell** (`sf_nav_bevy`): `NavMeshes` resource, `nav.stats`, `nav.draw tiles|paths` debug layers, and
   `NavRingPlugin` (`residency.rs:158`): `sf_nav::ring::NavRing` (`ring.rs:209`) keeps the tiles within
   `ai.nav.ring.load_m` (256 m) of `NavAnchor` resident, drops them past `unload_m` (320 m), reads at most
@@ -70,7 +74,7 @@ per worldspace. `ai.select`, `ai.trace`, `ai.tiers`, `ai.stats` and `ai.gizmos` 
 One anchor (the player), humanoid class only, synchronous store reads: portals and the large class wait for
 NV5 ([ledger](../../ledger/nav.md)). Only `AI_W` wander and search run on `sf_ai` so far; packages (`MA2`), drives
 (`MA4`), Classic awareness (`MA5`) are next. No game noise emitters yet (AI8c2); pitch dark hides fully from sight
-(light-only visibility until crime LW4); Alerted NPCs do nothing yet. See `docs/ROADMAP.md` 3.9/3.10.
+(visibility from crime's `DetectionRules` via `AiDetectionRules`, default `StandardDetection`: light, stance, speed, facing; `sf_ai_bevy/src/detection.rs`, LW4b1; the player's sneak mode sets `Stance::Crouched` there, `mw_walkers_bevy/src/visibility.rs`, MA18); Alerted NPCs do nothing yet. See `docs/ROADMAP.md` 3.9/3.10.
 
 ## Specs
 `superfargoth/docs/specs/nav.md`, `ai.md`, `ai-as-built.md`, `orca.md`; `bevyrrowind/docs/specs/ai-adapter.md`,

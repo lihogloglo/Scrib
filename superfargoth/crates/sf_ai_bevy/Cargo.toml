@@ -33,6 +33,8 @@ sf_console_bevy.workspace = true
 sf_controller.workspace = true
 sf_controller_bevy.workspace = true
 sf_coords.workspace = true
+# `DetectionRules` + `StandardDetection`: the target's sight visibility (LW4b1, crime.md decision 6).
+sf_crime.workspace = true
 sf_ids.workspace = true
 sf_nav.workspace = true
 sf_nav_bevy.workspace = true

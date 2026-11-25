@@ -23,7 +23,7 @@ spawners, Active cells queue `Fixed` colliders (one shared mesh per model, built
 Characters: `character.rs` (order since IN11b, `:104`: `PhysicsSystems::Step` before `ControllerSystems::Drive`, the
 game also before `ActionSystems::Sample`, as UE/Jolt tick the base first; `base_velocities` / `refresh_base_velocity`
 re-read the ground body's point velocity after the step; capsules target the feet plus the tick's mover motion;
-`TickView` written after the movers; `CharacterFellOut`, safety net). Moving contacts (IN11c2a): `PhysicsProbe::contacts`
+`TickView` written after the movers; `CharacterFellOut`, safety net). Riding (IN11c2b): `refresh_base_motion` (`character.rs:126`) turns the base's pose change since the ground cast (`GroundHit::base_pose`) into the tick's twist, so a dropped physics step rides nothing and a doubled one rides both. Moving contacts (IN11c2a): `PhysicsProbe::contacts`
 (`sf_physics/src/probe.rs:272`) finds awake kinematic bodies near each capsule (broad phase grown by this step's reach),
 relative shape cast from `c + v·dt` back along -v for the entry face and separation; dynamic bodies never push (the
 solver and `PhysicsEvent::Hit` own them). Proxies: `proxies.rs`. Carry: `carry.rs`.

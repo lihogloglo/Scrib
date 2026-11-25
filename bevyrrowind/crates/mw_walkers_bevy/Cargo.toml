@@ -31,6 +31,8 @@ mw_game_core.workspace = true
 mw_graphs.workspace = true
 mw_physics.workspace = true
 mw_world.workspace = true
+# `visibility` (MA18): the action state's `Mode` (sneak).
+sf_action.workspace = true
 sf_action_bevy.workspace = true
 sf_ai.workspace = true
 sf_ai_bevy.workspace = true
@@ -57,6 +59,8 @@ sf_ragdoll.workspace = true
 sf_records.workspace = true
 # `light_inputs` (MA16): `CurrentSky`, the sky state from clock and weather NPC light perception reads.
 sf_sky_bevy.workspace = true
+# `visibility` (MA18): the player's sheet (Sneak skill, Chameleon) for sight's stat modifiers.
+sf_stats_bevy.workspace = true
 sf_terrain_bevy.workspace = true
 # `mw.ai.wander.*` tunables (MA3 wander feel) and the `ai.exec.*` binding the wander drive reads.
 sf_tunables_bevy.workspace = true
@@ -69,8 +73,6 @@ workspace-hack.workspace = true
 # The knockdown routing test: an animator on the fixture biped (a compiled one-clip graph).
 sf_anim.workspace = true
 sf_anim_graph = { workspace = true, features = ["bake"] }
-# The noise emitter tests: the player body's chooser (`ActionCharacter`) needs its state and params.
-sf_action.workspace = true
 
 [lints]
 workspace = true

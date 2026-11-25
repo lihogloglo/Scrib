@@ -5314,12 +5314,14 @@ dependencies = [
  "mw_records",
  "mw_rpg_bevy",
  "mw_script",
+ "mw_walkers_bevy",
  "mw_weather",
  "mw_world",
  "schemars",
  "serde",
  "serde_json",
  "sf_action_bevy",
+ "sf_ai_bevy",
  "sf_atmos_bevy",
  "sf_calendar",
  "sf_camera_bevy",
@@ -5494,6 +5496,10 @@ dependencies = [
  "sf_model",
  "sf_model_bevy",
  "sf_mods",
+ "sf_nav",
+ "sf_nav_bake",
+ "sf_nav_bevy",
+ "sf_nav_recast",
  "sf_physics",
  "sf_physics_bevy",
  "sf_records",
@@ -5520,6 +5526,7 @@ dependencies = [
  "sf_world",
  "sf_world_bevy",
  "sf_worldgen",
+ "tempfile",
  "tes3",
  "workspace-hack",
 ]
@@ -5975,6 +5982,7 @@ dependencies = [
  "sf_ragdoll",
  "sf_records",
  "sf_sky_bevy",
+ "sf_stats_bevy",
  "sf_terrain_bevy",
  "sf_tunables_bevy",
  "sf_world",
@@ -7838,6 +7846,7 @@ dependencies = [
  "sf_controller",
  "sf_controller_bevy",
  "sf_coords",
+ "sf_crime",
  "sf_ids",
  "sf_nav",
  "sf_nav_bevy",
@@ -8227,6 +8236,14 @@ dependencies = [
  "postcard",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "sf_crime"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "sf_ai",
 ]
 
 [[package]]

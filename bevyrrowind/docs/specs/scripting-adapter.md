@@ -276,7 +276,7 @@ schedules them. Reference OpenMW `apps/openmw/mwscript/globalscripts.cpp`, `mwwo
   changes (take = parked with locals, return = restore). `GlobalScripts::tick` syncs, ticks locals then globals through
   one `ScriptHost`. Self = `Target::Ref(u128)` (exact placement; `Content::target` maps it to `ActorKey(p)`); a global
   started by a local without `ref->` gets the base id. Tunable `mw.script.active_radius` (1-3, default 1; store not
-  bound yet). Not yet: `ref.var` of locals (DQ-5b2), inventory stacks (DQ-5b3).
+  bound yet). Not yet: NPC/container inventories (DQ-5b4).
 - **Save (DQ-5c):** `mw/scripts` v2 = `ScriptsSave { globals, locals, parked }` (parked = taken instances, key order);
   v1 → v2 typed step (globals kept, locals empty). Load re-syncs the region next tick: live-outside gets parked,
   parked-inside resumes, nothing zeroed; a key in both lists = live wins; unknown scripts: one report per instance.
@@ -286,6 +286,19 @@ schedules them. Reference OpenMW `apps/openmw/mwscript/globalscripts.cpp`, `mwwo
   instance; `state.locals` remains for unscripted keys; a new instance is seeded from chargen locals then moved-out
   `state.locals` entries. Parked instances read and take writes (OpenMW keeps locals in `RefData`); a write to a
   never-run reference creates it parked. Same-tick visibility as DQ-4b2c.
+- **One base-id resolver (DQ-5e):** rule 7 (`ObjectLocals::resolve` via `ScriptLocals::resolve_base`) serves `id.var`
+  and every `Content::target(Target::Actor(base))` (disposition, items, stats, facts). `ScriptRefs` also indexes
+  unscripted NPC, creature and container references by base (no instance, not in the region cells). Live = a scripted
+  instance unparked, or an unscripted reference in the last synced region. A base with no placed reference falls back to
+  the registered actor of that base with the lowest key; a base-id container goes through `container_store` (seeded
+  first). OpenMW `World::searchPtr` @ 4e718b50, made deterministic. Gaps: DQ-5f.
+- **Inventory stacks (DQ-5b3):** each scripted stack in the player's inventory has an instance keyed `LocalKey::Stack {
+  holder: PLAYER_HOLDER (= HOST_KEY), stack }`; placements tick first, then stacks by (holder, stack). `LocalScripts::
+  sync_stacks` diffs the inventory every tick (no region check): new stack = zeroed locals, a stack that leaves loses
+  its instance (locals into the world ref = DQ-6); the first sync after a load keeps loaded locals. Self =
+  `mw_rpg::Target::Stack` (`ref.var` through `ObjectLocals`, now keyed by `LocalKey`; item/stat/disposition ops on it do
+  nothing); a global it starts without `ref->` takes the item's id. Saved in `ScriptsSave.locals`, no format change.
+  OpenMW `ContainerStore::add`/`remove` @ 4e718b50 as a deterministic diff. Gaps: DQ-5b4.
 - **Time and menus** (rule 6). `GetSecondsPassed` = the fixed-tick dt. The step also runs while a menu is open
   (`MenuMode` 1) even when game time is paused; what `GetSecondsPassed` returns then is checked in DQ-8.
 - **Randomness.** `Random` draws from a generator seeded by host tick and instance key (deterministic, net-ready).

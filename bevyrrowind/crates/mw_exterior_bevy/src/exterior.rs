@@ -412,7 +412,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     .insert_resource(StreamingDebug { enabled: options.rings, ..StreamingDebug::default() })
     .insert_resource(options.calibration);
     if let Some(level) = options.level {
-        crate::level::add(&mut app, level);
+        crate::level::add(&mut app, level, &options.store);
     }
     if let Some(w) = &options.worldgen {
         crate::worldgen::add(&mut app, &ext, w, &options.store, &manifest);

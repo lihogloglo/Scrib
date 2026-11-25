@@ -36,8 +36,8 @@ pub const VISIBILITY_MODIFIERS_CAPACITY: usize = 4;
 // tunables: const (capacity: ai.md caps light_rays at 4; the tunable is LightConfig.light_rays)
 pub const MAX_LIGHT_RAYS: usize = 4;
 
-/// The target's posture as the eye sees it (crime.md `DetectionRules` reads it; the framework
-/// assigns no concealment to it).
+/// The target's posture as the eye sees it (crime.md `DetectionRules` reads it; `sf_ai` assigns
+/// no concealment to it, `sf_crime`'s `StandardDetection` does).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Stance {
     #[default]

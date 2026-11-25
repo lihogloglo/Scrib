@@ -81,7 +81,12 @@ impl PhysicsProbe<'_> {
         }
         let body = w.id_of_collider(collider)?;
         let hit = GroundHit::new(w.to_world(point), normal, distance, surface);
-        Some((body, self.moving(body, point).map_or(hit, |(v, angular)| hit.on_body(body.into(), v, angular))))
+        // A moving body's hit carries its pose at the cast: the ride follows the pose delta (IN11c2b).
+        let moving = |(v, angular)| {
+            let hit = hit.on_body(body.into(), v, angular);
+            w.pose(body).map_or(hit, |pose| hit.at_base_pose(pose))
+        };
+        Some((body, self.moving(body, point).map_or(hit, moving)))
     }
 
     /// Point velocity at `point` (engine frame) and angular velocity of the

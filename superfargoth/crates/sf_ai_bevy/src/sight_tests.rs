@@ -121,6 +121,11 @@ fn band(app: &App, e: Entity) -> AwarenessBand {
 
 /// The gain the next tick's check should give `obs` toward [`PLAYER`] at `tgt`, from the core maths.
 fn expected_gain(app: &App, obs: Entity, obs_at: Vec3, tgt_at: Vec3) -> Option<f32> {
+    expected_gain_seen(app, obs, obs_at, tgt_at, 1.0)
+}
+
+/// [`expected_gain`] for a target of `visibility` (a default-profile observer facing +Z).
+pub(crate) fn expected_gain_seen(app: &App, obs: Entity, obs_at: Vec3, tgt_at: Vec3, visibility: f32) -> Option<f32> {
     let s = *app.world().resource::<AiPerceptionSettings>();
     let clock = *app.world().resource::<AiPerceptClock>();
     let tick = clock.tick + 1;
@@ -134,7 +139,7 @@ fn expected_gain(app: &App, obs: Entity, obs_at: Vec3, tgt_at: Vec3) -> Option<f
         facing: sf_controller::forward(0.0),
         target: wpos(tgt_at).offset(Vec3::Y * CHEST),
         seen_before: seen_recently(meter, PLAYER, tick, period),
-        visibility: 1.0,
+        visibility,
         alertness: meter.alertness(&eff.cfg, PLAYER, now),
     };
     sight_gain(&eff.sight, &s.sight, &s.budget, &check, tick_s)

@@ -16,8 +16,9 @@
 //!   its capsule height.
 //!
 //! Not covered: profiles and states (`AiPerceptionProfile`/`States`, no adapter yet), NPCs seeing
-//! each other (targets are flagged actors only, ai.md "Stimuli"), sneak visibility (`AI8d`). Light exposure's
-//! inputs: [`crate::light_inputs`] (`MA16`).
+//! each other (targets are flagged actors only, ai.md "Stimuli"). Light exposure's inputs:
+//! [`crate::light_inputs`] (`MA16`); the player's sneak stance and stealth stats:
+//! [`crate::visibility`] (`MA18`).
 
 use bevy_app::{App, FixedUpdate};
 use bevy_ecs::prelude::*;
@@ -38,8 +39,8 @@ pub const CHEST_RATIO: f32 = 0.720;
 pub const HEAD_RATIO: f32 = EYE_RATIO;
 
 /// Adds the sight system on ground `G` (the walkers' mover ground) and the player target's
-/// systems, the light inputs ([`crate::light_inputs`]) and the player's noise
-/// ([`crate::noise_emitters`]). Idempotent for the plugin only.
+/// systems, the light inputs ([`crate::light_inputs`]), the player's noise
+/// ([`crate::noise_emitters`]) and visibility ([`crate::visibility`]). Idempotent for the plugin only.
 pub fn add<G: GroundProbe + Resource>(app: &mut App) {
     if !app.is_plugin_added::<AiSightPlugin<G>>() {
         app.add_plugins(AiSightPlugin::<G>::default());
@@ -55,6 +56,8 @@ pub fn add<G: GroundProbe + Resource>(app: &mut App) {
     crate::light_inputs::add(app);
     // The player's footsteps and landings as noise NPCs hear (AI8c2).
     crate::noise_emitters::add(app);
+    // The player's sneak stance and stealth stats as sight reads them (MA18).
+    crate::visibility::add(app);
 }
 
 /// The observer of an actor whose standing height is `height_m` (feet to crown, meters).

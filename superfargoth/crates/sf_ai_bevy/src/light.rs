@@ -1,7 +1,7 @@
 //! The light exposure system (slice `AI8d2`; `docs/specs/ai.md` "Light exposure (from game state,
 //! never the GPU)"): each [`Perceivable`] target's light level from the host's [`AiLightInputs`],
 //! sampled on the fixed tick with [`sf_ai::light_exposure`] and kept in its [`AiLightExposure`],
-//! which `queue_sight` turns into the check's visibility ([`crate::sight::light_only_visibility`]).
+//! which `queue_sight` turns into the check's visibility (through crime's rules, [`crate::detection`]).
 //! Rendered light never enters (net rule 3), so the result is the same at 30 and 144 Hz.
 //!
 //! - **Off until the host writes it.** [`crate::AiSightPlugin`] does not insert [`AiLightInputs`]:

@@ -245,7 +245,7 @@ impl View<'_> {
         match target {
             Target::Speaker => Some(ctx.speaker),
             Target::Actor(a) => self.w.by_base.get(a).map(|&i| key(i)),
-            Target::Player | Target::Ref(_) => None,
+            Target::Player | Target::Ref(_) | Target::Stack { .. } => None,
         }
     }
 }
@@ -444,7 +444,7 @@ impl<'w> Bot<'w> {
         let target_key = |t: &Target| match t {
             Target::Speaker => Some(ctx.speaker),
             Target::Actor(a) => self.w.by_base.get(a).map(|&i| key(i)),
-            Target::Player | Target::Ref(_) => None,
+            Target::Player | Target::Ref(_) | Target::Stack { .. } => None,
         };
         match effect {
             ResultEffect::AddTopic(t) => {

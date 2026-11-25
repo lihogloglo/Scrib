@@ -505,14 +505,16 @@ fn attach_holder(
     }
 }
 
-/// Action-driven bodies standing on a body re-read its velocity after the physics step
-/// (`sf_physics_bevy::refresh_base_velocity`; the movers get it from the framework).
+/// Action-driven bodies standing on a body re-read its motion since the ground cast after the
+/// physics step (`sf_physics_bevy::refresh_base_motion`, this tick's dt; the movers get it from
+/// the framework).
 #[allow(clippy::needless_pass_by_value)]
-fn action_bases(physics: Res<Physics>, mut bodies: Query<&mut ActionBody>) {
+fn action_bases(physics: Res<Physics>, time: Res<Time>, mut bodies: Query<&mut ActionBody>) {
     let Some(w) = physics.worlds.active_world() else { return };
+    let dt = time.delta_secs();
     for mut body in &mut bodies {
         if body.loco.grounded.is_some_and(|g| g.body.is_some()) {
-            sf_physics_bevy::refresh_base_velocity(w, &mut body.loco);
+            sf_physics_bevy::refresh_base_motion(w, &mut body.loco, dt);
         }
     }
 }

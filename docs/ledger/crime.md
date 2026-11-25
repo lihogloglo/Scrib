@@ -1,0 +1,6 @@
+# Ledger: crime, law, stealth, locks and traps
+
+Format: `date | tried | result | verdict | commit or doc`. Newest first. Owner checks are LW- ids in `bevyrrowind/docs/visual-checks.md`.
+
+2026-11-25 | LW4b1 sight seam (`sf_ai_bevy` detection.rs: `AiDetectionRules` resource, `AiVisibilityFactors` target component, one stack `DetectIn` per check; `light_only_visibility` removed) | 4 tests: upright/still/front gain exactly the light-only maths over 40 ticks; crouched > 0 and < upright; rules=100 never seen; pre-inserted rules kept. sf_ai_bevy 41 pass | kept; nothing writes the factors until MA18 | sf_ai_bevy detection.rs, sight.rs
+2026-11-25 | LW4a `sf_crime` stealth seam (Bevy-free; `DetectionRules::concealment`, `DetectIn`, stats-only views, `StealthState`, `StandardDetection`: light × 100 + crouched 30 / prone 50 + behind 40 − speed reveal above 1.5 m/s, clamp 0..200; 9 `crime.stealth.*` tunables, 8 Guess) | 10 exact tests; upright + still + in front = today's light-only visibility exactly (no change until LW4b wires it and the target crouches, runs or is behind) | kept | superfargoth/crates/sf_crime/src/stealth.rs

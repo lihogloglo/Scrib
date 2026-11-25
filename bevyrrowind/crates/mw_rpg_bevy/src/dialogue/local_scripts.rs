@@ -6,7 +6,9 @@
 //!   reference (deleted ones skipped) whose base record (any kind with a script field) names a
 //!   script, keyed by its `PlacementId` (`mw_world::ids::placement_id`, the world source's id)
 //!   and grouped by its cell: an exterior reference by its cell's grid (or its `moved_cell`
-//!   destination, as the world source delivers it), an interior one by the cell name.
+//!   destination, as the world source delivers it), an interior one by the cell name. The same
+//!   pass indexes, by base, the unscripted references a script can name by base id (NPCs,
+//!   creatures, containers: rule 7's candidates, [`ObjectLocals::resolve`]); they get no instance.
 //! - **The region** (semantics rule 2): the exterior cells within `mw.script.active_radius`
 //!   ([`mw_script::ACTIVE_RADIUS`], the tunable's default until the store binds it) of the
 //!   player's cell, or the player's interior cell, computed from the player's cell
@@ -34,7 +36,26 @@
 //!   timing: [`ObjectLocals`]). A fresh instance starts with the values the NPC dialogue store or
 //!   the skipped chargen left for its reference ([`super::GlobalScripts`]).
 //!
-//! Not yet: inventory-stack instances (DQ-5b3); spawned references.
+//! - **Carried items** (DQ-5b3): every stack of the player's inventory whose item (any carryable
+//!   kind, [`ScriptRefs`]'s item index) has a script gets an instance, key
+//!   [`LocalKey::Stack`] `{ holder: PLAYER_HOLDER, stack: StackId }` ([`PLAYER_HOLDER`] = the host
+//!   player's persistent `PlayerKey`, `HOST_KEY`; an NPC or container holder will be its
+//!   `ActorKey`). The key is its own enum variant, so it never collides with a `PlacementId`, and
+//!   `LocalKey`'s derived order puts every placement before every stack: the spec's tick order
+//!   (placed references first, then inventory stacks by holder, then stack id). Carried items run
+//!   wherever the player is (no region). [`LocalScripts::sync_stacks`] diffs the inventory's
+//!   scripted stacks against the last sync every tick (one item-index lookup per stack; work only
+//!   on a change): a new stack starts zeroed, a stack that left the inventory (moved to a
+//!   container, sold, removed) loses its instance and locals (handing them to the world reference
+//!   it becomes is DQ-6). Its self is the stack ([`mw_rpg::Target::Stack`]): `ref.var` reaches its
+//!   locals; item, sheet and disposition ops on it do nothing; a global it starts without `ref->`
+//!   takes the item's id. As `OpenMW` `ContainerStore::add` / `remove`
+//!   (`apps/openmw/mwworld/containerstore.cpp` @ 4e718b50: an item with a script entering the
+//!   player's store is `LocalScripts::add`ed, removed with it; `localscripts.cpp` `addCell` adds
+//!   the items of active containers, later slices), made a deterministic per-tick diff. Saved in
+//!   the live locals like any instance; the inventory's `StackId`s are stable across saves.
+//!
+//! Not yet: NPC and container inventories; spawned references.
 //!
 //! [`GlobalScripts`]: super::GlobalScripts
 
@@ -47,6 +68,7 @@ use mw_script::ast::VarType;
 use mw_script::{LoadReport, LocalInstances, LocalKey, LocalsSnapshot, SavedLocalInstance, ScriptSet};
 use mw_world::convert::{CELL_UNITS, UNIT_METERS_F64};
 use sf_records::{RecordDb, RecordId};
+use sf_rpg::StackId;
 use sf_world_bevy::WorldPosOf;
 use tes3::esp::{
     Activator, Alchemy, Apparatus, Armor, Book, Cell, Clothing, Container, Creature, Door, Ingredient, Light, Lockpick,
@@ -74,6 +96,18 @@ impl RegionCell {
         let cell = |units: f64| (units / CELL_UNITS).floor() as i32;
         Self::Exterior(cell(x / UNIT_METERS_F64), cell(-z / UNIT_METERS_F64))
     }
+
+    /// Is this cell inside the region of `radius` cells around `centre` (rule 2: the centre's
+    /// interior only, or the exterior square)?
+    fn within(&self, centre: &RegionCell, radius: u32) -> bool {
+        match (self, centre) {
+            (Self::Interior(a), Self::Interior(b)) => a == b,
+            (&Self::Exterior(x, y), &Self::Exterior(cx, cy)) => {
+                x.abs_diff(cx) <= radius && y.abs_diff(cy) <= radius
+            }
+            _ => false,
+        }
+    }
 }
 
 /// The player's cell, the centre of the script-active region (`None`: not known yet). Written by
@@ -88,23 +122,33 @@ pub struct ScriptRegion {
     pub player: Option<[f64; 3]>,
 }
 
-/// A scripted reference: its base record id and script id (both lower-cased), and where it is
-/// placed (engine metres, from the `CELL` record).
+/// A placed reference a script can name: its base record id and script id (both lower-cased;
+/// no script: an unscripted actor or container), its cell, and where it is placed (engine
+/// metres, from the `CELL` record).
 #[derive(Clone, Debug)]
 struct ScriptRef {
     base: String,
-    script: String,
+    script: Option<String>,
+    cell: RegionCell,
     pos: [f64; 3],
 }
 
-/// Every placed reference whose base has a script, by cell and by base (see the module docs).
+/// Every placed reference whose base has a script, by cell, and every reference a script can
+/// target by base id (the scripted ones, NPCs, creatures, containers), by base (see the module
+/// docs).
 #[derive(Default)]
 pub(super) struct ScriptRefs {
+    /// Scripted placements by cell.
     cells: HashMap<RegionCell, Vec<u128>>,
     refs: HashMap<u128, ScriptRef>,
-    /// Scripted placements by base id, ascending (rule 7's tie-break order).
+    /// Placements by base id, ascending (rule 7's tie-break order).
     by_base: HashMap<String, Vec<u128>>,
+    /// Every carryable item record with a script: item id -> script id (both lower-cased).
+    items: HashMap<String, String>,
 }
+
+/// The holder id of the host player's inventory in [`LocalKey::Stack`] (module docs).
+pub const PLAYER_HOLDER: u128 = mw_game_core::player::HOST_KEY.0;
 
 /// The script id of base record `id` (lower-cased; `None`: no such base, or no script).
 fn base_script(db: &RecordDb, id: &RecordId) -> Option<String> {
@@ -123,11 +167,18 @@ fn base_script(db: &RecordDb, id: &RecordId) -> Option<String> {
     None
 }
 
+/// Can a script name base `id`'s references by base id without a script on it (rule 7 targets:
+/// `"id"->ModDisposition`, `"id"->AddItem`)? NPCs, creatures, containers.
+fn base_targetable(db: &RecordDb, id: &RecordId) -> bool {
+    db.get::<Npc>(id).is_some() || db.get::<Creature>(id).is_some() || db.get::<Container>(id).is_some()
+}
+
 impl ScriptRefs {
     /// One pass over every cell's references (bases resolved once each).
     pub(super) fn build(db: &RecordDb) -> Self {
         let files: Vec<String> = db.sources().iter().map(|s| s.name.to_ascii_lowercase()).collect();
-        let mut scripts: HashMap<RecordId, Option<String>> = HashMap::new();
+        // Per base: its script, and whether it is indexed at all.
+        let mut bases: HashMap<RecordId, (Option<String>, bool)> = HashMap::new();
         let mut out = Self::default();
         for (_, cell) in db.iter::<Cell>() {
             for (&(source, refr_index), reference) in &cell.references {
@@ -135,8 +186,12 @@ impl ScriptRefs {
                     continue;
                 }
                 let base = RecordId::new(&reference.id);
-                let script = scripts.entry(base.clone()).or_insert_with(|| base_script(db, &base));
-                let (Some(script), Some(file)) = (script.clone(), files.get(source as usize)) else { continue };
+                let (script, indexed) = bases.entry(base.clone()).or_insert_with(|| {
+                    let script = base_script(db, &base);
+                    let indexed = script.is_some() || base_targetable(db, &base);
+                    (script, indexed)
+                });
+                let (true, Some(file)) = (*indexed, files.get(source as usize)) else { continue };
                 let region = if cell.is_interior() {
                     RegionCell::interior(&cell.name)
                 } else {
@@ -144,30 +199,49 @@ impl ScriptRefs {
                     RegionCell::Exterior(x, y)
                 };
                 let placement = mw_world::ids::placement_id(file, refr_index).0;
-                out.cells.entry(region).or_default().push(placement);
+                if script.is_some() {
+                    out.cells.entry(region.clone()).or_default().push(placement);
+                }
                 out.by_base.entry(base.as_str().to_owned()).or_default().push(placement);
                 let pos = mw_world::convert::engine_f64(reference.translation).to_array();
-                out.refs.insert(placement, ScriptRef { base: base.as_str().to_owned(), script, pos });
+                let r = ScriptRef { base: base.as_str().to_owned(), script: script.clone(), cell: region, pos };
+                out.refs.insert(placement, r);
             }
         }
         for placements in out.by_base.values_mut() {
             placements.sort_unstable();
             placements.dedup();
         }
+        macro_rules! items {
+            ($($ty:ty),*) => {
+                $(for (key, record) in db.iter::<$ty>() {
+                    let script = record.script.trim();
+                    if !script.is_empty() {
+                        out.items.insert(key.as_str().to_ascii_lowercase(), script.to_ascii_lowercase());
+                    }
+                })*
+            };
+        }
+        items!(MiscItem, Weapon, Armor, Clothing, Book, Alchemy, Apparatus, Ingredient, Lockpick, Probe, RepairItem, Light);
         out
     }
 
-    /// The base record id of scripted reference `placement`.
+    /// The script of carryable item `item` (lower-cased).
+    fn item_script(&self, item: &str) -> Option<&str> {
+        self.items.get(item).map(String::as_str)
+    }
+
+    /// The base record id of indexed reference `placement`.
     pub(super) fn base(&self, placement: u128) -> Option<String> {
         self.refs.get(&placement).map(|r| r.base.clone())
     }
 
     /// The script id of scripted reference `placement`.
     fn script(&self, placement: u128) -> Option<&str> {
-        self.refs.get(&placement).map(|r| r.script.as_str())
+        self.refs.get(&placement).and_then(|r| r.script.as_deref())
     }
 
-    /// The scripted placements of base `base` (lower-cased), ascending.
+    /// The indexed placements of base `base` (lower-cased), ascending.
     fn placements(&self, base: &str) -> &[u128] {
         self.by_base.get(base).map_or(&[], Vec::as_slice)
     }
@@ -177,8 +251,8 @@ impl ScriptRefs {
         let mut out = BTreeMap::new();
         let mut add = |cell: &RegionCell| {
             for p in self.cells.get(cell).into_iter().flatten() {
-                if let Some(r) = self.refs.get(p) {
-                    out.insert(*p, r.script.as_str());
+                if let Some(script) = self.script(*p) {
+                    out.insert(*p, script);
                 }
             }
         };
@@ -216,9 +290,15 @@ pub(super) type Declared = HashMap<String, HashMap<String, (usize, VarType)>>;
 ///   locals and a write updates them, as `OpenMW` keeps them in `RefData` whatever the cell's
 ///   state; a scripted reference that never had an instance reads 0 and a write creates its
 ///   instance, parked, which the region restores like any other.
-/// - **`id.var` by base** (semantics rule 7, [`Self::resolve`]): the nearest live instance to
-///   the player (by the reference's placed position; lowest `PlacementId` on a tie or without a
-///   player position), else the lowest `PlacementId` of the base.
+/// - **A base id names one reference** (semantics rule 7, [`Self::resolve`]), for `id.var` and
+///   for every other script target by base (`"id"->ModDisposition`, `"id"->AddItem`, stats:
+///   `Content::target` asks here first): the nearest live reference to the player (by its
+///   `CELL` position; lowest `PlacementId` on a tie or without a player position), else the
+///   lowest `PlacementId` of the base. Live: a scripted reference's instance is live (not
+///   parked); an unscripted one (actor, container) stands in the script-active region the
+///   instances were last synced to. As `OpenMW` `World::searchPtr`
+///   (`apps/openmw/mwworld/worldimp.cpp` @ 4e718b50: the active cells first, then every cell),
+///   made deterministic by distance and id where `OpenMW` takes the first match.
 /// - **Timing**, as the globals' copy: a write lands here at once and in the instance at the
 ///   next tick start (after that tick's ops for a write the tick made, overriding what the
 ///   instance wrote to itself in that tick); scripts of a tick read the tick-start values plus
@@ -226,11 +306,14 @@ pub(super) type Declared = HashMap<String, HashMap<String, (usize, VarType)>>;
 #[derive(Default)]
 pub(super) struct ObjectLocals {
     refs: Arc<ScriptRefs>,
-    /// Every live and parked instance's script and slot values, by placement, as last published
-    /// plus the writes since.
-    values: HashMap<u128, ObjectValues>,
+    /// Every live and parked instance's script and slot values, by key, as last published plus
+    /// the writes since.
+    values: HashMap<LocalKey, ObjectValues>,
     /// The player's position (engine metres) at the last publish, for rule 7.
     player: Option<[f64; 3]>,
+    /// The region (centre, radius) the instances were synced to at the last publish: where an
+    /// unscripted reference is live for rule 7.
+    region: Option<(RegionCell, u32)>,
     /// Writes not yet in the instances, in call order.
     pub(super) writes: Vec<ObjectWrite>,
 }
@@ -245,7 +328,7 @@ struct ObjectValues {
 
 /// A queued `set ref.var` (value already converted).
 pub(super) struct ObjectWrite {
-    pub(super) placement: u128,
+    pub(super) key: LocalKey,
     pub(super) script: String,
     pub(super) slot: usize,
     pub(super) value: f64,
@@ -256,14 +339,18 @@ impl ObjectLocals {
         Self { refs, ..Self::default() }
     }
 
-    /// The script of `placement`'s instance, else of its scripted reference.
-    fn script(&self, placement: u128) -> Option<&str> {
-        self.values.get(&placement).map(|v| v.script.as_str()).or_else(|| self.refs.script(placement))
+    /// The script of `key`'s instance, else of its scripted reference (a stack has one only
+    /// while its instance exists).
+    fn script(&self, key: LocalKey) -> Option<&str> {
+        self.values.get(&key).map(|v| v.script.as_str()).or_else(|| match key {
+            LocalKey::Placement(p) => self.refs.script(p),
+            LocalKey::Stack { .. } => None,
+        })
     }
 
-    /// Are `placement`'s locals kept here (see the type docs)?
-    pub(super) fn addresses(&self, placement: u128) -> bool {
-        self.script(placement).is_some()
+    /// Are `key`'s locals kept here (see the type docs)?
+    pub(super) fn addresses(&self, key: LocalKey) -> bool {
+        self.script(key).is_some()
     }
 
     /// The base record id of scripted reference `placement` (lower-cased).
@@ -271,47 +358,54 @@ impl ObjectLocals {
         self.refs.refs.get(&placement).map(|r| r.base.as_str())
     }
 
-    /// Rule 7 for `id.var`: the placement base `base` (lower-cased) names (type docs); `None`:
-    /// the base has no scripted reference.
+    /// Rule 7: the placement base `base` (lower-cased) names (type docs); `None`: no indexed
+    /// reference has that base.
     pub(super) fn resolve(&self, base: &str) -> Option<u128> {
         let all = self.refs.placements(base);
         let dist = |p: u128| match (self.player, self.refs.refs.get(&p)) {
             (Some(a), Some(r)) => (0..3).map(|i| (a[i] - r.pos[i]).powi(2)).sum::<f64>(),
             _ => 0.0,
         };
+        let live = |p: u128| match self.values.get(&LocalKey::Placement(p)) {
+            Some(v) => v.live,
+            None => match (&self.region, self.refs.refs.get(&p)) {
+                (Some((centre, radius)), Some(r)) => r.script.is_none() && r.cell.within(centre, *radius),
+                _ => false,
+            },
+        };
         all.iter()
             .copied()
-            .filter(|p| self.values.get(p).is_some_and(|v| v.live))
+            .filter(|&p| live(p))
             .min_by(|&a, &b| dist(a).total_cmp(&dist(b)).then(a.cmp(&b)))
             .or_else(|| all.first().copied())
     }
 
-    /// `placement.name`'s type and value; `None`: its script declares no such local.
+    /// `key.name`'s type and value; `None`: its script declares no such local.
     #[allow(clippy::cast_possible_truncation)] // locals are stored converted (`f32` holds them)
-    pub(super) fn get(&self, declared: &Declared, placement: u128, name: &str) -> Option<(VarType, f32)> {
-        let script = self.script(placement)?;
+    pub(super) fn get(&self, declared: &Declared, key: LocalKey, name: &str) -> Option<(VarType, f32)> {
+        let script = self.script(key)?;
         let &(slot, ty) = declared.get(script)?.get(name)?;
-        let value = self.values.get(&placement).and_then(|v| v.locals.get(slot)).copied().unwrap_or(0.0);
+        let value = self.values.get(&key).and_then(|v| v.locals.get(slot)).copied().unwrap_or(0.0);
         Some((ty, value as f32))
     }
 
-    /// Writes `placement.name`, converted to its type, and queues it; `false`: its script
-    /// declares no such local.
-    pub(super) fn set(&mut self, declared: &Declared, placement: u128, name: &str, value: f32) -> bool {
-        let Some(script) = self.script(placement).map(str::to_owned) else { return false };
+    /// Writes `key.name`, converted to its type, and queues it; `false`: its script declares no
+    /// such local.
+    pub(super) fn set(&mut self, declared: &Declared, key: LocalKey, name: &str, value: f32) -> bool {
+        let Some(script) = self.script(key).map(str::to_owned) else { return false };
         let Some(locals) = declared.get(&script) else { return false };
         let Some(&(slot, ty)) = locals.get(name) else { return false };
         let value = mw_script::interp::store(ty, f64::from(value));
         let len = locals.len();
         let entry = self
             .values
-            .entry(placement)
+            .entry(key)
             .or_insert_with(|| ObjectValues { script: script.clone(), live: false, locals: Vec::new() });
         if entry.locals.len() < len {
             entry.locals.resize(len, 0.0);
         }
         entry.locals[slot] = value;
-        self.writes.push(ObjectWrite { placement, script, slot, value });
+        self.writes.push(ObjectWrite { key, script, slot, value });
         true
     }
 }
@@ -328,6 +422,11 @@ pub(super) struct LocalScripts {
     left: Vec<LocalKey>,
     /// Instances [`Self::sync`] started zeroed since the last [`Self::take_fresh`].
     fresh: Vec<LocalKey>,
+    /// Per holder, its scripted stacks and their scripts at the last [`Self::sync_stacks`]
+    /// (absent: not synced since a clear or load).
+    stacks: HashMap<u128, BTreeMap<LocalKey, String>>,
+    /// Stack instances removed since the last [`Self::publish`].
+    gone: Vec<LocalKey>,
     /// The centre and radius the instances were last synced to.
     synced: Option<(RegionCell, u32)>,
     /// `mw.script.active_radius`, in cells.
@@ -342,6 +441,8 @@ impl LocalScripts {
             parked: BTreeMap::new(),
             left: Vec::new(),
             fresh: Vec::new(),
+            stacks: HashMap::new(),
+            gone: Vec::new(),
             synced: None,
             radius: mw_script::ACTIVE_RADIUS.default_value(),
         }
@@ -353,6 +454,8 @@ impl LocalScripts {
         self.parked.clear();
         self.left.clear();
         self.fresh.clear();
+        self.stacks.clear();
+        self.gone.clear();
         self.synced = None;
     }
 
@@ -372,6 +475,8 @@ impl LocalScripts {
         self.parked.clear();
         self.left.clear();
         self.fresh.clear();
+        self.stacks.clear();
+        self.gone.clear();
         self.synced = None;
         let mut scratch = LocalInstances::default();
         for saved in parked.locals.iter().filter(|s| self.instances.get(s.key).is_none()) {
@@ -397,7 +502,7 @@ impl LocalScripts {
             .instances
             .iter()
             .map(|(k, _)| k)
-            .filter(|k| !matches!(k, LocalKey::Placement(p) if wanted.contains_key(p)))
+            .filter(|k| matches!(k, LocalKey::Placement(p) if !wanted.contains_key(p)))
             .collect();
         for key in leaving {
             if let Some(saved) = self.instances.take(set, key) {
@@ -425,6 +530,40 @@ impl LocalScripts {
         reports
     }
 
+    /// The instances of `holder`'s scripted stacks matched to its inventory `stacks` (module
+    /// docs): a stack new since the last call starts zeroed, one gone since (or whose script
+    /// changed) loses its instance. The first call after a clear or load diffs against the
+    /// instances, so loaded stack instances keep their locals.
+    pub(super) fn sync_stacks<'a>(&mut self, set: &ScriptSet, holder: u128, stacks: impl IntoIterator<Item = (StackId, &'a RecordId)>) {
+        let refs = &self.refs;
+        let wanted: BTreeMap<LocalKey, &str> = stacks
+            .into_iter()
+            .filter_map(|(id, item)| Some((LocalKey::Stack { holder, stack: u64::from(id.0) }, refs.item_script(item.as_str())?)))
+            .collect();
+        let instances = &self.instances;
+        let previous = self.stacks.entry(holder).or_insert_with(|| {
+            instances
+                .iter()
+                .filter(|(k, _)| matches!(k, LocalKey::Stack { holder: h, .. } if *h == holder))
+                .map(|(k, i)| (k, i.script.clone()))
+                .collect()
+        });
+        if previous.len() == wanted.len() && previous.iter().zip(&wanted).all(|((a, s), (b, t))| a == b && s == t) {
+            return;
+        }
+        for (key, script) in previous.iter() {
+            if wanted.get(key) != Some(&script.as_str()) && self.instances.remove(*key) {
+                self.gone.push(*key);
+            }
+        }
+        for (&key, &script) in &wanted {
+            if previous.get(&key).map(String::as_str) != Some(script) {
+                self.instances.insert(set, key, script);
+            }
+        }
+        *previous = wanted.into_iter().map(|(k, s)| (k, s.to_owned())).collect();
+    }
+
     /// The instances [`Self::sync`] started zeroed since the last call, for the caller to seed.
     pub(super) fn take_fresh(&mut self) -> Vec<LocalKey> {
         std::mem::take(&mut self.fresh)
@@ -450,13 +589,16 @@ impl LocalScripts {
         self.instances.get(key).is_some() || self.parked.contains_key(&key)
     }
 
-    /// One local of `write.placement`'s instance by slot (`value` already converted): the live
+    /// One local of `write.key`'s instance by slot (`value` already converted): the live
     /// instance, else the parked one (by name), else a new parked instance of `write.script`
     /// with `seeds` (name, value) set first ([`ObjectLocals`]). Nothing for a slot the instance's
-    /// script lacks.
+    /// script lacks, nor for a stack without a live instance (it left the inventory).
     pub(super) fn write(&mut self, set: &ScriptSet, write: &ObjectWrite, seeds: &[(String, f64)]) {
-        let key = LocalKey::Placement(write.placement);
+        let key = write.key;
         let live = self.instances.get(key).map(|i| i.script.clone());
+        if live.is_none() && matches!(key, LocalKey::Stack { .. }) {
+            return;
+        }
         let parked = self.parked.get(&key).map(|s| s.script.to_lowercase());
         let script = live.clone().or(parked).unwrap_or_else(|| write.script.clone());
         let Some(name) = set.get(&script).and_then(|s| s.locals.get(write.slot)).map(|l| l.name.key.clone()) else {
@@ -487,27 +629,29 @@ impl LocalScripts {
     /// everything rebuilt, parked ones from their saved locals.
     pub(super) fn publish(&mut self, set: &ScriptSet, objects: &mut ObjectLocals, full: bool, player: Option<[f64; 3]>) {
         objects.player = player;
+        objects.region.clone_from(&self.synced);
         let values = &mut objects.values;
         if full {
             values.clear();
-            for (key, saved) in &self.parked {
-                let (LocalKey::Placement(p), Some(script)) = (*key, set.get(&saved.script)) else { continue };
+            self.gone.clear();
+            for (&key, saved) in &self.parked {
+                let Some(script) = set.get(&saved.script) else { continue };
                 let by_name = |name: &str| saved.locals.iter().find(|s| s.name.eq_ignore_ascii_case(name)).map_or(0.0, |s| s.value);
                 let locals = script.locals.iter().map(|l| by_name(&l.name.key)).collect();
-                values.insert(p, ObjectValues { script: saved.script.to_lowercase(), live: false, locals });
+                values.insert(key, ObjectValues { script: saved.script.to_lowercase(), live: false, locals });
             }
         }
+        for key in self.gone.drain(..) {
+            values.remove(&key);
+        }
         for key in self.left.drain(..) {
-            if let LocalKey::Placement(p) = key
-                && let Some(v) = values.get_mut(&p)
-            {
+            if let Some(v) = values.get_mut(&key) {
                 v.live = false;
             }
         }
         for (key, instance) in self.instances.iter() {
-            let LocalKey::Placement(p) = key else { continue };
             let v = values
-                .entry(p)
+                .entry(key)
                 .or_insert_with(|| ObjectValues { script: instance.script.clone(), live: true, locals: Vec::new() });
             if v.script != instance.script {
                 v.script.clone_from(&instance.script);
@@ -651,7 +795,9 @@ mod tests {
     #[test]
     fn only_scripted_references_are_indexed_by_their_cell() {
         let refs = ScriptRefs::build(&records());
-        assert_eq!(refs.refs.len(), 3, "the unscripted chest is left out");
+        assert_eq!(refs.refs.len(), 4, "the unscripted chest too (a rule 7 target by base)");
+        assert_eq!(refs.script(placement(9)), None, "with no script");
+        assert_eq!(refs.cells.values().flatten().count(), 3, "and in no cell: it never runs");
         assert_eq!(refs.base(placement(NEAR)).as_deref(), Some("dq_chest"));
         assert_eq!(refs.region(&RegionCell::Exterior(1, -1), 1).keys().copied().collect::<Vec<_>>(), [placement(NEAR)]);
         assert!(refs.region(&RegionCell::Exterior(2, 0), 1).is_empty(), "two cells away: outside radius 1");
@@ -947,5 +1093,203 @@ mod tests {
         assert_eq!(open(&mut rpg, TAKEN), [1, 1, 0], "removed from the seeded contents");
         items(&mut rpg, Target::Ref(placement(TAKEN)), "dq_ring", 5, false);
         assert_eq!(open(&mut rpg, TAKEN), [1, 0, 0], "at most what it holds");
+    }
+
+    // ------------------------------------------------------------ DQ-5e: one rule 7 resolver
+
+    /// The second `dq_npc` and the second `dq_plain`, both in (1, 0) at [`EAST_AT`].
+    const NPC2: u32 = 6;
+    const PLAIN2: u32 = 7;
+    /// Morrowind units, inside cell (1, 0).
+    const EAST_AT: [f32; 3] = [8300.0, 100.0, 0.0];
+
+    /// [`fixture`]`(true)` plus a second reference of the NPC `dq_npc` and of the unscripted
+    /// container `dq_plain` in cell (1, 0), the first ones standing at the origin of (0, 0).
+    fn two_of_each() -> RecordDb {
+        let mut db = fixture(true);
+        let src = db.add_source("test2", &[]);
+        let east = [(NPC2, "dq_npc"), (PLAIN2, "dq_plain")].map(|(r, base)| Reference { translation: EAST_AT, ..reference(r, base) });
+        exterior(&mut db, src, (1, 0), east.into());
+        db
+    }
+
+    /// The player body at Morrowind position `p`, then one tick with the region on (0, 0).
+    fn player_at(rpg: &mut Rpg, scripts: &mut GlobalScripts, p: [f32; 3]) {
+        scripts.set_player_position(Some(mw_world::convert::engine_f64(p).to_array()));
+        tick_at(rpg, scripts, RegionCell::Exterior(0, 0));
+    }
+
+    #[test]
+    fn a_base_ids_local_and_its_disposition_hit_the_same_nearest_reference() {
+        let (mut rpg, mut scripts) = new_game_with(two_of_each());
+        let (west, east) = (placement(NPC), placement(NPC2));
+        for p in [west, east] {
+            assert!(rpg.add_actor(ActorKey(p), &id("dq_npc"), ""));
+        }
+        tick_at(&mut rpg, &mut scripts, RegionCell::Exterior(0, 0));
+        set(&mut rpg, 0, Target::Ref(west), "said", 10.0);
+        set(&mut rpg, 0, Target::Ref(east), "said", 20.0);
+        let base = Target::Actor(id("dq_npc"));
+        let disposition = |rpg: &mut Rpg, delta| {
+            let _ = rpg.apply(None, &ctx(0), mw_rpg::ResultEffect::ModDisposition { target: base.clone(), delta }, &NoSheets);
+        };
+        let modifiers = |rpg: &Rpg| (rpg.state.npcs.modifier(ActorKey(west)), rpg.state.npcs.modifier(ActorKey(east)));
+
+        player_at(&mut rpg, &mut scripts, [8200.0, 100.0, 0.0]);
+        assert_eq!(var(&rpg, 0, &base, "said"), Some(20.0), "`dq_npc.said`: the nearest reference's");
+        disposition(&mut rpg, 5);
+        assert_eq!(modifiers(&rpg), (0, 5), "`\"dq_npc\"->ModDisposition`: the same one");
+
+        player_at(&mut rpg, &mut scripts, [10.0, 10.0, 0.0]);
+        assert_eq!(var(&rpg, 0, &base, "said"), Some(10.0), "now the first one is nearer");
+        disposition(&mut rpg, 3);
+        assert_eq!(modifiers(&rpg), (3, 5), "and the disposition follows it");
+    }
+
+    #[test]
+    fn a_container_base_ids_add_item_lands_in_its_nearest_placement() {
+        let (mut rpg, mut scripts) = new_game_with(two_of_each());
+        let gold = |rpg: &Rpg, refr_index: u32| {
+            rpg.state.inventories.get(&ActorKey(placement(refr_index))).map_or(0, |inv| inv.loadout.count(&id("gold_001")))
+        };
+
+        player_at(&mut rpg, &mut scripts, [8200.0, 100.0, 0.0]);
+        assert!(console(&mut rpg, "\"dq_plain\"->AddItem \"gold_001\" 3").is_empty());
+        assert_eq!((gold(&rpg, 9), gold(&rpg, PLAIN2)), (0, 3), "the nearest placement of the container");
+
+        player_at(&mut rpg, &mut scripts, [10.0, 10.0, 0.0]);
+        console(&mut rpg, "\"dq_plain\"->AddItem \"gold_001\" 2");
+        assert_eq!((gold(&rpg, 9), gold(&rpg, PLAIN2)), (2, 3), "now the one at the origin");
+
+        tick_at(&mut rpg, &mut scripts, RegionCell::Exterior(5, 5));
+        console(&mut rpg, "\"dq_plain\"->AddItem \"gold_001\" 1");
+        let lowest = if placement(9) < placement(PLAIN2) { (3, 3) } else { (2, 4) };
+        assert_eq!((gold(&rpg, 9), gold(&rpg, PLAIN2)), lowest, "none in the region: the lowest PlacementId");
+    }
+
+    // ------------------------------------------------------------ DQ-5b3: carried items
+
+    /// The unscripted container holding the ring (any key: it needs no `CELL` reference).
+    const BOX: u32 = 30;
+
+    /// [`records`] plus the MISC item `dq_ring`, scripted `dq_carry` (counts its runs in `c`,
+    /// copies `dq_count` to `dq_seen` every run, starts the global `dq_held` on its first run),
+    /// in the unscripted container `dq_box`.
+    fn carried() -> RecordDb {
+        let mut db = records();
+        let src = db.add_source("test2", &[]);
+        let text =
+            "Begin dq_carry\nshort c\nset c to c + 1\nset dq_seen to dq_count\nif ( c == 1 )\n\tStartScript dq_held\nendif\nEnd\n";
+        db.define(src, id("dq_carry"), Script { id: "dq_carry".into(), text: text.into(), ..Default::default() }).unwrap();
+        let text = "Begin dq_held\nEnd\n";
+        db.define(src, id("dq_held"), Script { id: "dq_held".into(), text: text.into(), ..Default::default() }).unwrap();
+        let ring = MiscItem { id: "dq_ring".into(), script: "dq_carry".into(), ..Default::default() };
+        db.define(src, id("dq_ring"), ring).unwrap();
+        let boxed = Container { id: "dq_box".into(), inventory: vec![(1, tes3::esp::FixedString("dq_ring".into()))], ..Default::default() };
+        db.define(src, id("dq_box"), boxed).unwrap();
+        db
+    }
+
+    fn the_box() -> sf_rpg::Holder {
+        sf_rpg::Holder::Actor(ActorKey(placement(BOX)))
+    }
+
+    /// The container window's take of the ring from [`BOX`]: the ring's stack in the player's
+    /// inventory, as its local key.
+    fn pick_up(rpg: &mut Rpg) -> LocalKey {
+        let key = ActorKey(placement(BOX));
+        let store = crate::inventory::container_store(&mut rpg.state, &rpg.content.records, key, &id("dq_box"));
+        let stack = store.loadout.inventory().stacks()[0].id;
+        let player = sf_rpg::Holder::Player(sf_rpg::PlayerId::HOST);
+        crate::inventory::move_stack(&mut rpg.state, the_box(), player, stack, 1).expect("the ring moves");
+        let ring = rpg.state.pc.loadout.inventory().stacks().iter().find(|s| s.item == id("dq_ring")).expect("carried");
+        LocalKey::Stack { holder: PLAYER_HOLDER, stack: u64::from(ring.id.0) }
+    }
+
+    fn c(scripts: &GlobalScripts, key: LocalKey) -> Option<f64> {
+        scripts.locals().get(key).map(|i| i.locals.0[0])
+    }
+
+    fn stack_target(key: LocalKey) -> Target {
+        let LocalKey::Stack { holder, stack } = key else { panic!("a stack key") };
+        Target::Stack { holder, stack }
+    }
+
+    #[test]
+    fn a_carried_items_script_runs_every_tick_after_the_placed_references() {
+        let (mut rpg, mut scripts) = new_game_with(carried());
+        tick_at(&mut rpg, &mut scripts, RegionCell::Exterior(0, 0));
+        assert_eq!(scripts.locals().iter().count(), 1, "the chest only: the ring is in its box");
+        let ring = pick_up(&mut rpg);
+        assert!(ring > LocalKey::Placement(u128::MAX), "every stack key orders after every placement");
+        for tick in 1..=3 {
+            tick_at(&mut rpg, &mut scripts, RegionCell::Exterior(0, 0));
+            assert_eq!(c(&scripts, ring), Some(f64::from(tick)), "picked up: it runs from that tick, once a tick");
+            assert_eq!(global(&rpg, "dq_seen"), global(&rpg, "dq_count"), "it saw the chest's write of the same tick");
+        }
+        assert_eq!(global(&rpg, "dq_count"), 4.0);
+        tick_at(&mut rpg, &mut scripts, RegionCell::Exterior(5, 5));
+        assert_eq!(c(&scripts, ring), Some(4.0), "carried items run wherever the player is");
+        assert_eq!(n(&scripts, NEAR), None, "while the chest is parked");
+    }
+
+    #[test]
+    fn a_carried_items_self_is_its_stack() {
+        let (mut rpg, mut scripts) = new_game_with(carried());
+        let ring = pick_up(&mut rpg);
+        let me = stack_target(ring);
+        for _ in 0..2 {
+            tick_at(&mut rpg, &mut scripts, RegionCell::Exterior(0, 0));
+        }
+        let target = scripts.instances().get("dq_held").and_then(|g| g.target.clone());
+        assert_eq!(target.as_deref(), Some("dq_ring"), "a global it starts takes the item's id");
+        assert_eq!(var(&rpg, 0, &me, "c"), Some(2.0), "`ref.var` of the stack reads its instance");
+        assert_eq!(var(&rpg, 0, &me, "nope"), None);
+        set(&mut rpg, 0, me.clone(), "c", 10.0);
+        assert_eq!(var(&rpg, 0, &me, "c"), Some(10.0), "a write is seen at once");
+        tick_at(&mut rpg, &mut scripts, RegionCell::Exterior(0, 0));
+        assert_eq!(c(&scripts, ring), Some(11.0), "and reaches the instance at the next tick");
+        let other = stack_target(LocalKey::Stack { holder: PLAYER_HOLDER, stack: 999 });
+        assert_eq!(var(&rpg, 0, &other, "c"), None, "another stack id names nothing");
+    }
+
+    #[test]
+    fn an_item_leaving_the_inventory_drops_its_instance() {
+        let (mut rpg, mut scripts) = new_game_with(carried());
+        let ring = pick_up(&mut rpg);
+        tick_at(&mut rpg, &mut scripts, RegionCell::Exterior(0, 0));
+        assert_eq!(c(&scripts, ring), Some(1.0));
+        let LocalKey::Stack { stack, .. } = ring else { unreachable!() };
+        let player = sf_rpg::Holder::Player(sf_rpg::PlayerId::HOST);
+        let stack = StackId(u32::try_from(stack).unwrap());
+        crate::inventory::move_stack(&mut rpg.state, player, the_box(), stack, 1).expect("put back");
+        let seen = global(&rpg, "dq_seen");
+        tick_at(&mut rpg, &mut scripts, RegionCell::Exterior(0, 0));
+        assert_eq!(c(&scripts, ring), None, "put in the box: no instance");
+        assert_eq!(var(&rpg, 0, &stack_target(ring), "c"), None, "nor locals");
+        assert_eq!(global(&rpg, "dq_seen"), seen, "and no run");
+        let again = pick_up(&mut rpg);
+        tick_at(&mut rpg, &mut scripts, RegionCell::Exterior(0, 0));
+        assert_eq!(c(&scripts, again), Some(1.0), "taken again: a fresh instance");
+    }
+
+    #[test]
+    fn a_save_keeps_a_carried_items_locals() {
+        let (mut rpg, mut scripts) = new_game_with(carried());
+        let ring = pick_up(&mut rpg);
+        for _ in 0..3 {
+            tick_at(&mut rpg, &mut scripts, RegionCell::Exterior(0, 0));
+        }
+        let bytes = postcard::to_allocvec(&scripts.snapshot(&rpg)).unwrap();
+        let save: super::super::ScriptsSave = postcard::from_bytes(&bytes).unwrap();
+        assert!(save.locals.locals.iter().any(|s| s.key == ring), "in the live locals");
+
+        let (mut loaded, mut again) = new_game_with(carried());
+        loaded.state.pc = rpg.state.pc.clone();
+        again.load(&save, &mut loaded);
+        assert!(again.local_load_reports().is_empty());
+        assert_eq!(var(&loaded, 0, &stack_target(ring), "c"), Some(3.0), "readable before the first tick");
+        tick_at(&mut loaded, &mut again, RegionCell::Exterior(0, 0));
+        assert_eq!(c(&again, ring), Some(4.0), "the counter goes on");
     }
 }

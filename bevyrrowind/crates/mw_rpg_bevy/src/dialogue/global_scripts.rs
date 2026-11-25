@@ -48,7 +48,7 @@ use sf_records::RecordId;
 use sf_rpg::{ActorKey, ConversationCtx, PlayerId};
 use tes3::esp::{Script, StartScript};
 
-use super::local_scripts::{Declared, LocalScripts, ObjectLocals, RegionCell, ScriptRegion, track_script_region};
+use super::local_scripts::{Declared, LocalScripts, ObjectLocals, PLAYER_HOLDER, RegionCell, ScriptRegion, track_script_region};
 use super::{DialogueSheets, Rpg, View, id};
 
 /// The script `OpenMW` starts first at every new game, before the `SSCR` list.
@@ -121,31 +121,41 @@ impl ScriptLocals {
         true
     }
 
-    /// The placed object whose locals `target`'s `.var` names ([`ObjectLocals`]): the speaker or
-    /// the exact reference when its locals are kept there, an actor base by rule 7. `None`: the
-    /// NPC dialogue store's (the caller checks script ids first: they name globals).
-    pub(super) fn object_of(&self, ctx: &ConversationCtx, target: &Target) -> Option<u128> {
-        match target {
-            Target::Speaker => Some(ctx.speaker.0).filter(|&p| self.objects.addresses(p)),
-            Target::Ref(p) => Some(*p).filter(|&p| self.objects.addresses(p)),
-            Target::Actor(base) => self.objects.resolve(base.as_str()),
-            Target::Player => None,
-        }
+    /// The object whose locals `target`'s `.var` names ([`ObjectLocals`]): the speaker, the
+    /// exact reference, the base's reference by rule 7 ([`Self::resolve_base`]) or the exact
+    /// inventory stack, when its locals are kept there. `None`: the NPC dialogue store's (the
+    /// caller checks script ids first: they name globals).
+    pub(super) fn object_of(&self, ctx: &ConversationCtx, target: &Target) -> Option<LocalKey> {
+        let key = match target {
+            Target::Speaker => LocalKey::Placement(ctx.speaker.0),
+            Target::Ref(p) => LocalKey::Placement(*p),
+            Target::Actor(base) => LocalKey::Placement(self.resolve_base(base)?),
+            &Target::Stack { holder, stack } => LocalKey::Stack { holder, stack },
+            Target::Player => return None,
+        };
+        Some(key).filter(|&k| self.objects.addresses(k))
+    }
+
+    /// Semantics rule 7, the one resolver of a base-id script target (`id.var`,
+    /// `"id"->ModDisposition`, `"id"->AddItem`, ...): the placement it names
+    /// ([`ObjectLocals::resolve`]); `None`: no placed reference has base `base`.
+    pub(super) fn resolve_base(&self, base: &RecordId) -> Option<u128> {
+        self.objects.resolve(base.as_str())
     }
 
     /// Are `placement`'s locals an object instance's ([`ObjectLocals`])?
     pub(super) fn addresses(&self, placement: u128) -> bool {
-        self.objects.addresses(placement)
+        self.objects.addresses(LocalKey::Placement(placement))
     }
 
-    /// Object `placement`'s local `name`: type and value; `None`: its script declares none.
-    pub(super) fn object_local(&self, placement: u128, name: &RecordId) -> Option<(VarType, f32)> {
-        self.objects.get(&self.declared, placement, name.as_str())
+    /// Object `key`'s local `name`: type and value; `None`: its script declares none.
+    pub(super) fn object_local(&self, key: LocalKey, name: &RecordId) -> Option<(VarType, f32)> {
+        self.objects.get(&self.declared, key, name.as_str())
     }
 
-    /// Writes object `placement`'s local `name`; `false`: its script declares none.
-    pub(super) fn set_object_local(&mut self, placement: u128, name: &RecordId, value: f32) -> bool {
-        self.objects.set(&self.declared, placement, name.as_str(), value)
+    /// Writes object `key`'s local `name`; `false`: its script declares none.
+    pub(super) fn set_object_local(&mut self, key: LocalKey, name: &RecordId, value: f32) -> bool {
+        self.objects.set(&self.declared, key, name.as_str(), value)
     }
 }
 
@@ -258,8 +268,10 @@ impl GlobalScripts {
         } else {
             let mut locals = self.locals.clone();
             for write in object_writes {
-                let fresh = !locals.has(LocalKey::Placement(write.placement));
-                let seeds = if fresh { seeds(rpg, write.placement) } else { Vec::new() };
+                let seeds = match write.key {
+                    LocalKey::Placement(p) if !locals.has(write.key) => seeds(rpg, p),
+                    _ => Vec::new(),
+                };
                 locals.write(&self.set, write, &seeds);
             }
             locals.snapshot(&self.set)
@@ -355,6 +367,8 @@ impl GlobalScripts {
         for report in self.locals.sync(&self.set, self.centre.as_ref()) {
             warn!("local scripts: restore {report}");
         }
+        let carried = rpg.state.pc.loadout.inventory().stacks().iter().map(|s| (s.id, &s.item));
+        self.locals.sync_stacks(&self.set, PLAYER_HOLDER, carried);
         for key in self.locals.take_fresh() {
             let LocalKey::Placement(placement) = key else { continue };
             for (name, value) in take_seeds(rpg, placement) {
@@ -365,7 +379,14 @@ impl GlobalScripts {
             let view = View { c: &rpg.content, s: &rpg.state, g: &rpg.script_locals, sheets };
             let game = GameView { ctx: &ctx, world: &rpg.state.world, player: &rpg.state.pc, env: &view };
             let LocalScripts { refs, instances: locals, .. } = &mut self.locals;
-            let bases = |placement: u128| refs.base(placement);
+            let carried = rpg.state.pc.loadout.inventory().stacks();
+            let bases = |key: LocalKey| match key {
+                LocalKey::Placement(placement) => refs.base(placement),
+                LocalKey::Stack { holder, stack } => (holder == PLAYER_HOLDER)
+                    .then(|| carried.iter().find(|s| u64::from(s.id.0) == stack))
+                    .flatten()
+                    .map(|s| s.item.as_str().to_owned()),
+            };
             let mut host = ScriptHost::new(game, &mut self.reports).with_ref_bases(&bases);
             locals.tick(&self.set, &self.interp, &mut self.instances, &mut host);
             self.instances.tick(&self.set, &self.interp, &mut host);
@@ -386,8 +407,10 @@ impl GlobalScripts {
             set_slot(&self.set, &mut self.instances, &script, slot, value);
         }
         for write in std::mem::take(&mut rpg.script_locals.objects.writes) {
-            let fresh = !self.locals.has(LocalKey::Placement(write.placement));
-            let seeds = if fresh { take_seeds(rpg, write.placement) } else { Vec::new() };
+            let seeds = match write.key {
+                LocalKey::Placement(p) if !self.locals.has(write.key) => take_seeds(rpg, p),
+                _ => Vec::new(),
+            };
             self.locals.write(&self.set, &write, &seeds);
         }
     }

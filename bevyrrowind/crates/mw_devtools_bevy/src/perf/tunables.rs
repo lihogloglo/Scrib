@@ -57,6 +57,11 @@ pub const CATALOG: &[(&str, &[&dyn AnyDef])] = &[
     ("mw_environment_bevy::quality_tunables", mw_environment_bevy::quality_tunables::TUNABLES),
     ("mw_environment_bevy::worldgen_water", mw_environment_bevy::worldgen_water::TUNABLES),
     ("sf_tunables::presets", sf_tunables::presets::TUNABLES),
+    ("sf_ai_bevy::perception", sf_ai_bevy::perception::PERCEPTION_TUNABLES),
+    ("sf_ai_bevy::exec", sf_ai_bevy::exec::TUNABLES),
+    ("mw_walkers_bevy::light_inputs", mw_walkers_bevy::light_inputs::TUNABLES),
+    ("mw_walkers_bevy::noise_emitters", mw_walkers_bevy::noise_emitters::TUNABLES),
+    ("mw_walkers_bevy::walkers", mw_walkers_bevy::walkers::TUNABLES),
 ];
 
 /// Every [`CATALOG`] def registered in a fresh store (defaults only): the source of
@@ -294,6 +299,40 @@ mod tests {
         assert!(store.len() >= CATALOG.len());
         assert!(uncatalogued(&store).is_empty());
         assert_eq!(non_default_label(&store), "none");
+    }
+
+    /// AI48: the AI perception, light and noise tunables the game registers are catalogued.
+    #[test]
+    fn the_catalog_lists_the_ai_perception_light_and_noise_tunables() {
+        const PERCEPTION: &[&str] = &[
+            "sight_range_m", "lose_sight_range_m", "near_m", "central_half_deg", "peripheral_half_deg",
+            "peripheral_mul", "rate", "skip_gain", "sight_period_s", "tier1_period_s", "max_rays_per_tick",
+            "sight_cache_s", "cache_move_m", "search_ttl_s", "search_error_m", "search_widen_mps",
+            "search_ring_points", "search_look_half_deg", "search_uncertain_mul", "search_inner_frac",
+            "closed_door_m", "light_search_m", "light_rays", "dark_threshold", "roof_sky_mul", "light_falloff_exp",
+        ];
+        const AWARENESS: &[&str] = &[
+            "curious", "suspicious", "searching", "band_hysteresis", "alert_hold_s", "decay_delay_s",
+            "decay_curious", "decay_suspicious", "decay_searching", "noise_gain", "noise_cap", "noise_confidence",
+            "asleep_wake_m", "groggy_s", "max_entries", "distraction_ttl_s", "alert_alertness", "groggy_alertness",
+            "notify_speed_mps", "notify_react_s", "notify_confidence_mul", "notify_max_hops",
+        ];
+        const LIGHT: &[&str] = &["sky_dark_lux", "sky_day_lux", "interior_ambient_ref", "source_lift_m", "lamp_intensity"];
+        const NOISE: &[&str] = &[
+            "sneak_step_m", "walk_step_m", "run_step_m", "sprint_step_m", "sneak_stride_m", "walk_stride_m",
+            "run_stride_m", "sprint_stride_m", "land_min_drop_m", "land_base_m", "land_per_drop", "land_max_m",
+        ];
+        let store = catalog_store().unwrap();
+        let groups = [("ai.perception.", PERCEPTION), ("ai.awareness.", AWARENESS), ("mw.ai.light.", LIGHT), ("mw.ai.noise.", NOISE)];
+        for (prefix, keys) in groups {
+            for key in keys {
+                let name = format!("{prefix}{key}");
+                assert!(store.id(&name).is_some(), "{name} is not in CATALOG");
+            }
+        }
+        for name in ["ai.exec.stuck_timeout_s", "mw.ai.wander.walk_slack_s"] {
+            assert!(store.id(name).is_some(), "{name} is not in CATALOG");
+        }
     }
 
     #[test]

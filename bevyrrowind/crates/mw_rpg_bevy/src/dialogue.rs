@@ -279,20 +279,24 @@ impl Content {
         }
     }
 
-    /// The actor a result-script target names (`"arrille"->ModDisposition`): the first actor
-    /// met with that base record.
+    /// The registered actor with base record `base` and no placed reference (spawned by key,
+    /// not from a `CELL` placement): the lowest key, so the pick never depends on map order.
     fn by_base(&self, base: &RecordId) -> Option<ActorKey> {
-        self.actors.iter().find(|(_, a)| a.facts.id == *base).map(|(k, _)| *k)
+        self.actors.iter().filter(|(_, a)| a.facts.id == *base).map(|(k, _)| *k).min()
     }
 
-    fn target(&self, ctx: &ConversationCtx, target: &Target) -> Option<ActorKey> {
+    /// The key a script target names. A base id (`"arrille"->ModDisposition`, `"chest"->AddItem`)
+    /// names the placed reference semantics rule 7 picks ([`ScriptLocals::resolve_base`], the
+    /// same one `"arrille".var` reads), else a registered actor of that base ([`Self::by_base`]).
+    fn target(&self, ctx: &ConversationCtx, target: &Target, g: &ScriptLocals) -> Option<ActorKey> {
         match target {
             Target::Speaker => Some(ctx.speaker),
-            Target::Actor(base) => self.by_base(base),
+            Target::Actor(base) => g.resolve_base(base).map(ActorKey).or_else(|| self.by_base(base)),
             // A placed reference's key is its placement id ([`key`]), registered or not:
             // containers and activators hold items and locals under it too.
             Target::Ref(placement) => Some(ActorKey(*placement)),
-            Target::Player => None,
+            // A carried stack holds no items, sheet or disposition (only locals: `View::var`).
+            Target::Player | Target::Stack { .. } => None,
         }
     }
 }
@@ -323,14 +327,14 @@ impl View<'_> {
     /// dialogue store's (an actor not spawned from a scripted placement).
     fn actor_local(&self, actor: ActorKey, name: &RecordId) -> Option<(VarType, f32)> {
         if self.g.addresses(actor.0) {
-            return self.g.object_local(actor.0, name);
+            return self.g.object_local(LocalKey::Placement(actor.0), name);
         }
         let ty = *self.c.actors.get(&actor)?.declared.get(name)?;
         Some((ty, self.s.locals.get(&(actor, name.clone())).copied().unwrap_or(0.0)))
     }
 
     fn target(&self, ctx: &ConversationCtx, target: &Target) -> Option<ActorKey> {
-        self.c.target(ctx, target)
+        self.c.target(ctx, target, self.g)
     }
 }
 
@@ -856,7 +860,7 @@ impl Rpg {
         if *target == Target::Player {
             return Some((Holder::Player(PlayerId::HOST), &mut self.state.pc));
         }
-        let key = self.content.target(ctx, target)?;
+        let key = self.content.target(ctx, target, &self.script_locals)?;
         // A container is seeded from its record first (opening it later must not find an
         // empty store and skip the seed).
         if let Some(record) = self.content.containers.get(&key) {
@@ -872,7 +876,7 @@ impl Rpg {
     /// `talk`: the conversation (`None`: a console line, where `Choice` and `Goodbye` do nothing).
     fn apply(&mut self, talk: Option<&mut Talk>, ctx: &ConversationCtx, effect: ResultEffect, sheets: &dyn MwSheets) -> Vec<RpgEvent> {
         let mut events = Vec::new();
-        let target_key = |rpg: &Self, t: &Target| rpg.content.target(ctx, t);
+        let target_key = |rpg: &Self, t: &Target| rpg.content.target(ctx, t, &rpg.script_locals);
         match effect {
             // `Journal`: adds the stage's entry (text with macros expanded now) and sets the index.
             ResultEffect::Journal { quest, index } => {

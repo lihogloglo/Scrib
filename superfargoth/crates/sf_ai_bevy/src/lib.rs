@@ -19,7 +19,8 @@
 //!   `ai.facts` waits for AI13.
 //! - Perception (AI8b2): [`AiSightPlugin`] runs sight on the fixed tick over the app's ground probe
 //!   ([`sight`]); components, tunables and record kinds in [`perception`]; light exposure (`AI8d2`)
-//!   from the host's [`AiLightInputs`] in [`light`]; hearing (`AI8c1`): [`NoiseEvent`]s to the
+//!   from the host's [`AiLightInputs`] in [`light`]; the target's visibility from crime's
+//!   [`AiDetectionRules`] and its [`AiVisibilityFactors`] (`LW4b1`) in [`detection`]; hearing (`AI8c1`): [`NoiseEvent`]s to the
 //!   listeners' meters through the host's [`NoisePropagation`], in [`hearing`].
 //! - BRP: [`brp_trace`] answers [`BRP_TRACE_METHOD`] with the store as JSON. This crate doesn't add
 //!   `bevy_remote` (one `RemotePlugin` per app, owned by the game's dev tools, and hakari keeps its
@@ -44,6 +45,7 @@ use sf_ai::{
 use sf_records::RecordDb;
 
 mod console;
+pub mod detection;
 pub mod exec;
 #[cfg(feature = "debug")]
 mod gizmos;
@@ -63,6 +65,7 @@ pub use exec::{
 pub use gizmos::AiGizmoVar;
 #[cfg(feature = "debug")]
 pub use perception_gizmos::{AiPerceptionGizmoVar, RecentNoise, RecentNoises};
+pub use detection::{AiDetectionRules, AiVisibilityFactors};
 pub use hearing::{AiWeatherMask, HearingConfig, NoiseEvent, NoisePath, NoisePaths, NoisePropagation, StraightLine};
 pub use light::{AiLightExposure, AiLightInputs};
 pub use perception::{
@@ -72,9 +75,11 @@ pub use perception::{
 };
 pub use sight::{
     AiPerceptClock, AiPerceptionSystems, AiRays, AiSightCache, AiSightPlugin, LosScratch, ProbeLos, VISIBILITY_UNMODELLED,
-    light_only_visibility, seen_recently,
+    seen_recently,
 };
 
+#[cfg(test)]
+mod detection_tests;
 #[cfg(test)]
 mod exec_tests;
 #[cfg(test)]

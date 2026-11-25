@@ -59,30 +59,43 @@ use crate::{
 pub struct AiPerceptionGizmoVar(pub VarId);
 
 /// Observers and targets farther than this from the camera are not drawn, meters.
+// tunables: const (layout: dev-only perception overlay draw size/range, not gameplay)
 pub(crate) const DRAW_DISTANCE_M: f32 = 50.0;
 /// How long a noise ring stays (fading out), seconds.
+// tunables: const (layout: dev-only perception overlay draw size/range, not gameplay)
 pub(crate) const NOISE_WINDOW_S: f32 = 2.0;
 /// Most noises kept at once (the oldest is dropped first).
 pub(crate) const NOISE_CAPACITY: usize = 32;
 /// Arc segments for a full circle (fewer for a narrower cone, at least 2).
 const ARC_SEGMENTS_FULL: f32 = 48.0;
 /// Ground lines sit this far above the feet, meters (no z-fighting with the ground).
+// tunables: const (layout: dev-only perception overlay draw size/range, not gameplay)
 const GROUND_LIFT_M: f32 = 0.05;
 /// Text height and line spacing, meters (as `ai.gizmos`).
+// tunables: const (layout: dev-only perception overlay draw size/range, not gameplay)
 const TEXT_SIZE: f32 = 0.12;
+// tunables: const (layout: dev-only perception overlay draw size/range, not gameplay)
 const LINE_STEP: f32 = 0.17;
 /// Bottom text line above the feet, meters: above `ai.gizmos`' plan text (which stacks down from
 /// 2.1 m), so the two overlays never overlap.
 const TEXT_LIFT: f32 = 2.45;
+// tunables: const (layout: dev-only perception overlay draw size/range, not gameplay)
 const SELECTED_RING_M: f32 = 0.7;
+// tunables: const (layout: dev-only perception overlay draw size/range, not gameplay)
 const LKP_RADIUS_M: f32 = 0.2;
+// tunables: const (layout: dev-only perception overlay draw size/range, not gameplay)
 const HELD_RING_M: f32 = 1.0;
+// tunables: const (layout: dev-only perception overlay draw size/range, not gameplay)
 const GOAL_CROSS_M: f32 = 0.3;
 /// The light dot and text above the target's head, meters.
+// tunables: const (layout: dev-only perception overlay draw size/range, not gameplay)
 const LIGHT_ABOVE_HEAD_M: f32 = 0.35;
+// tunables: const (layout: dev-only perception overlay draw size/range, not gameplay)
 const LIGHT_DOT_M: f32 = 0.08;
+// tunables: const (layout: dev-only perception overlay draw size/range, not gameplay)
 const NOISE_SPOT_M: f32 = 0.3;
 /// Alpha of the faded parts (lose range, central edges, eye-to-LKP line).
+// tunables: const (layout: dev-only perception overlay draw size/range, not gameplay)
 const FADED: f32 = 0.45;
 const GOAL_COLOR: Color = Color::srgb(0.2, 0.85, 1.0);
 const NOISE_REVEALING: Color = Color::srgb(0.35, 0.6, 1.0);

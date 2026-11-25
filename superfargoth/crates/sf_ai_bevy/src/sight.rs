@@ -15,8 +15,9 @@
 //!    host's [`crate::AiLightInputs`] (absent: no target is lit, visibility stays the identity).
 //! 4. `queue_sight`: each due observer (`SightTimer::poll`, staggered by `ActorKey` over
 //!    `sight_period_s`) takes the targets of a uniform XZ grid within its reach (cell = the global
-//!    lose-sight range), skips itself, computes `sight_gain` (visibility:
-//!    [`light_only_visibility`]), then reads the [`AiSightCache`] or queues a sight request
+//!    lose-sight range), skips itself, computes `sight_gain` (visibility: crime's
+//!    [`AiDetectionRules`] over light, [`AiVisibilityFactors`], speed and facing, `LW4b1`, in
+//!    [`crate::detection`]), then reads the [`AiSightCache`] or queues a sight request
 //!    (chest, head if blocked) on the shared [`AiRays`] queue.
 //! 5. `cast_rays`: [`RayQueue::process`] with what `max_rays_per_tick` leaves after the light
 //!    rays, against the app's ground probe `G` (statics, props, terrain: the occluders; characters
@@ -24,8 +25,8 @@
 //! 6. `apply_sight`: every hit as a `Stimulus::Sight` in (`ActorKey`, target) order, then
 //!    `AwarenessMeter::update` on every observer.
 //!
-//! Not modelled yet: the rest of the target's visibility (crime's `DetectionRules::concealment`,
-//! `LW4`: stance, speed, disguise; until then [`light_only_visibility`]), tier 1 checks (the `AI9`
+//! Not modelled yet: the target's and observer's stat views and `StealthState` in the `DetectIn`
+//! (`sf_crime_bevy`; `MA18` fills [`AiVisibilityFactors`] from sneak mode), tier 1 checks (the `AI9`
 //! allocator picks tiers; everyone is tier 2),
 //! worldspace and interior spaces (every spawned mover is taken to share the active worldspace,
 //! as the ground probe does), `sim.cpu_tier` groups for `max_rays_per_tick` (the Floor value).
@@ -40,30 +41,24 @@ use glam::Vec3;
 use sf_ai::{
     ActorKey, AwarenessMeter, EffectivePerception, LineOfSight, LosRay, PerceptClock, PerceptTarget,
     PerceptionProfile, PerceptionStates, RayKind, RayQueue, RayRequest, RayResult, RaySubject, RayTickStats,
-    SightCache, SightCheck, SightTimer, Stimulus, apply_darkness, resolve, sight_gain,
+    SightCache, SightCheck, SightTimer, Stimulus, VisibilityFactors, resolve, sight_gain,
 };
 use sf_controller::{GroundHit, GroundProbe, ProbeQuery, forward};
 use sf_controller_bevy::{ControllerSystems, Dormant, Mover};
 use sf_coords::WorldPos;
 
 use crate::AiActor;
+use crate::detection::{AiDetectionRules, AiVisibilityFactors, check_visibility};
 use crate::light::{AiLightExposure, LightScratch, sample_light};
 use crate::perception::{
     AiAwareness, AiEffectivePerception, AiObserver, AiPerceptionProfile, AiPerceptionSettings,
     AiPerceptionStateDefs, AiPerceptionStates, AiSightTimer, Perceivable, PerceivablePose, add_perception_tunables,
 };
 
-/// The visibility of a target without a light sample (no [`crate::AiLightInputs`]): fully visible.
+/// The light a target without a sample (no [`crate::AiLightInputs`]) shows the detection rules:
+/// fully lit.
 // tunables: const (maths: the identity of the visibility factor)
 pub const VISIBILITY_UNMODELLED: f32 = 1.0;
-
-/// The framework's default sight visibility, light only (`AI8d2`): the target's light exposure
-/// through the observer's `darkness` ([`sf_ai::apply_darkness`]); [`VISIBILITY_UNMODELLED`]
-/// without a sample. The seam crime's `DetectionRules::concealment` (`LW4`) replaces: it reads the
-/// same light in its `VisibilityFactors` with stance, speed and disguise.
-pub fn light_only_visibility(light: Option<f32>, darkness: f32) -> f32 {
-    light.map_or(VISIBILITY_UNMODELLED, |l| apply_darkness(l, darkness))
-}
 
 // tunables: const (capacity: fixed-size request queue, ~10x the 48-actor tier-2 load; overflow refuses)
 pub const RAY_QUEUE_CAPACITY: usize = 1024;
@@ -150,6 +145,8 @@ struct TargetSnap {
     velocity: Vec3,
     /// Its light exposure sample, if any.
     light: Option<f32>,
+    /// Its look without light and speed ([`AiVisibilityFactors::factors`]).
+    factors: VisibilityFactors,
 }
 
 /// A queued sight check waiting for its ray: the gain it integrates (summed if a later check
@@ -274,6 +271,7 @@ impl<G: GroundProbe + Resource> Plugin for AiSightPlugin<G> {
             .init_resource::<AiPerceptionStateDefs>()
             .init_resource::<SightScratch>()
             .init_resource::<LightScratch>()
+            .init_resource::<AiDetectionRules>()
             .configure_sets(FixedUpdate, AiPerceptionSystems::Sight.before(ControllerSystems::Drive))
             .add_systems(
                 FixedUpdate,
@@ -358,14 +356,22 @@ fn cell_of(p: WorldPos, cell_m: f64) -> (i64, i64) {
     ((v.x / cell_m).floor() as i64, (v.z / cell_m).floor() as i64)
 }
 
-#[allow(clippy::needless_pass_by_value, clippy::type_complexity, clippy::too_many_lines, clippy::cast_precision_loss)]
+#[allow(clippy::needless_pass_by_value, clippy::type_complexity, clippy::too_many_arguments, clippy::too_many_lines, clippy::cast_precision_loss)]
 fn queue_sight(
     settings: Res<AiPerceptionSettings>,
     clock: Res<AiPerceptClock>,
     mut rays: ResMut<AiRays>,
     cache: Res<AiSightCache>,
     mut scratch: ResMut<SightScratch>,
-    targets: Query<(Entity, &Perceivable, Option<&Mover>, Option<&PerceivablePose>, Option<&AiLightExposure>)>,
+    rules: Res<AiDetectionRules>,
+    targets: Query<(
+        Entity,
+        &Perceivable,
+        Option<&Mover>,
+        Option<&PerceivablePose>,
+        Option<&AiLightExposure>,
+        Option<&AiVisibilityFactors>,
+    )>,
     mut observers: Query<
         (Entity, &AiActor, &AiObserver, &Mover, &AiAwareness, &mut AiSightTimer, Option<&AiEffectivePerception>),
         Without<Dormant>,
@@ -381,7 +387,8 @@ fn queue_sight(
 
     // Grid prefilter: every target bucketed by XZ cell, sorted (cell, target) for a stable order.
     snaps.clear();
-    for (entity, p, mover, pose, light) in &targets {
+    let rules = &*rules.0;
+    for (entity, p, mover, pose, light, look) in &targets {
         let from_mover = mover.map(|m| (m.loco.position, m.loco.motion.velocity));
         let Some((feet, velocity)) = from_mover.or(pose.map(|q| (q.feet, q.velocity))) else { continue };
         snaps.push(TargetSnap {
@@ -393,6 +400,7 @@ fn queue_sight(
             head: feet.offset(Vec3::Y * p.head_m),
             velocity,
             light: light.map(|l| l.0),
+            factors: look.copied().unwrap_or_default().factors(),
         });
     }
     snaps.sort_unstable_by_key(|t| (t.cell, t.target));
@@ -422,7 +430,15 @@ fn queue_sight(
                         facing,
                         target: t.chest,
                         seen_before: seen_recently(&meter.0, t.target, tick, period),
-                        visibility: light_only_visibility(t.light, eff.sight.darkness),
+                        visibility: check_visibility(
+                            rules,
+                            &t.factors,
+                            t.light,
+                            t.velocity,
+                            facing,
+                            eye.delta_f32(t.chest),
+                            eff.sight.darkness,
+                        ),
                         alertness: meter.0.alertness(&eff.cfg, t.target, now),
                     };
                     let Some(gain) = sight_gain(&eff.sight, &s.sight, &s.budget, &check, dt) else { continue };

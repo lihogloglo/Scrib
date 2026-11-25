@@ -55,7 +55,7 @@ pub mod stream;
 mod tests;
 
 #[cfg(feature = "controller")]
-pub use character::{CharacterFellOut, CharacterPhysics, CharacterStats, ImpactOnCharacter, refresh_base_velocity};
+pub use character::{CharacterFellOut, CharacterPhysics, CharacterStats, ImpactOnCharacter, refresh_base_motion};
 #[cfg(feature = "controller")]
 pub use proxies::{BodyProxies, ProxyHolder, ProxyStats, ShapeCounters, ShapeSystems, ShapeWindow};
 #[cfg(feature = "debug")]

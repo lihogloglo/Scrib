@@ -112,6 +112,8 @@ Ends with: a Balmora guard spots a sneaking player in light, not in shadow, chec
 | AI8d2 | Light system: one sample per player per tick, host source list + sky resource (until IN19 `Lit`), roof ray, feeds sight in place of `VISIBILITY_UNMODELLED` | `sf_ai_bevy` | AI8d1, MA14 | **done 2026-11-25** (9 headless tests; inert until a host inserts `AiLightInputs`) |
 | MA16 | Light inputs in the game: sky level from clock/weather/interior, Morrowind lamps (LIGH placements, carried torches) as sources | `mw_walkers_bevy` | AI8d2 | **done 2026-11-25** (2 tests; lit lamp at 1 m 0.7244, noon 1, midnight 0) |
 | MA17 | Twilight term (sky reads 0 within ~0.5 h of sunset: no fill below the horizon), scripts switching lights, `level:` interiors | `mw_walkers_bevy`, `sf_sky` | MA16 | exact dusk curve |
+| MA18 | Player sneak in sight (owner 2026-11-25): `VisibilityFactors` from the game (stance Crouched in `Mode::Sneak`, speed, sneak skill and chameleon as modifiers), so Ctrl hides you as well as quietens steps | `mw_walkers_bevy` | LW4b1 | **done 2026-11-25** (4 tests; owner **AI-12**) |
+| MA19 | Rest of the target's visibility: Chameleon as a magnitude stat (`mw_stats::MAGNITUDE_STATS`, `mw_effects`), Invisibility as a sight gate, size from race height | `mw_walkers_bevy`, `mw_stats`, `mw_effects` | MA18 | exact per case |
 | AI8e | Shared knowledge: `Notify` from shouts and alarms | `sf_ai` | AI8a | **done 2026-11-25** (9 exact tests) |
 | AI8f1 | Search core: seeded search points around LKP (`error_m`, `widen_mps`), look/widen/give-up state on `ttl_s` from `EffectivePerception.search`, HTN operators/method registered | `sf_ai` | AI8a, AI6, AI8g | **done 2026-11-25** (12 exact tests) |
 | AI8f2 | Search in the Bevy layer and game: Searching band starts the method, NPC walks to LKP, looks, widens, quits | `sf_ai_bevy`, `mw_walkers_bevy` | AI8f1 | **done 2026-11-25** (3 headless tests; LKP at 5.4 s, give-up at ttl tick) |
@@ -120,8 +122,8 @@ Ends with: a Balmora guard spots a sneaking player in light, not in shadow, chec
 | MA4 | Hello/Fight/Flee/Alarm considerations; greeting via AI8 | `mw_ai` | AI7, AI8b | exact vs OpenMW |
 | AI26 | Perception gizmos (cone, meter, LKP), `ai.perception` | `sf_ai_bevy` | AI8b | **done 2026-11-25** (7 tests; `ai.perception`; dev enables `sf_ai_bevy/debug`); owner **AI-3** |
 | AI47 | Perception test scene (owner 2026-11-25, after AI8c/d/f, AI26, IN18): reuse the arena, AI26 gizmos plus NPC state labels and noise/impact rings, scripted light, cover and throw cases | `bevyrrowind` (`level:`) | AI26, AI8c, AI8d, AI8f, IN18 | **done 2026-11-25** (`levels/perception-lab.ron`, 6 scenes; impacts wait for IN18); owner **AI-11** |
-| AI47b | Level navmesh from the level's own geometry, so level actors wander/search (search can't walk in `level:` scenes today) | `mw_exterior_bevy`, `sf_nav_bevy` | AI47 | headless: a level guard searches |
-| AI48 | List the new perception tunables (`ai.perception.*`, `mw.ai.light.*`, `mw.ai.noise.*`) in `mw_devtools_bevy::perf::tunables::CATALOG` (the game warns once per key at start; `bevyrrowind tunables --md` misses them) | `mw_devtools_bevy` | AI47 | no CATALOG warning in last.log |
+| AI47b | Level navmesh from the level's own geometry, so level actors wander/search (search can't walk in `level:` scenes today) | `mw_exterior_bevy`, `sf_nav_bevy` | AI47 | **done 2026-11-25** (path test; 60 tiles ~80 ms cold debug; guard search in game: owner AI-11) |
+| AI48 | List the new perception tunables (`ai.perception.*`, `mw.ai.light.*`, `mw.ai.noise.*`) in `mw_devtools_bevy::perf::tunables::CATALOG` (the game warns once per key at start; `bevyrrowind tunables --md` misses them) | `mw_devtools_bevy` | AI47 | **done 2026-11-25** (74 defs catalogued incl. ai.exec + mw.ai.wander; test; tunables-index regen pending) |
 
 ### Stage 2: a day in town
 

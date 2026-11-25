@@ -3,17 +3,19 @@
 //! before the physics step; a mover-driven character (the NPC path, `ControllerSystems::Step`)
 //! and an action-driven body (the player path, `ActionSystems::Move`) stand idle on it. The
 //! physics step runs before both (`crate::character`), and their ground velocity is re-read
-//! after it ([`crate::refresh_base_velocity`]), so each keeps its platform-local spot through
+//! after it ([`crate::refresh_base_motion`]), so each keeps its platform-local spot through
 //! the base starting from rest, moving and reversing: no tick of lead or lag, no sinking into
-//! the lift, no hop off it. Run with `--nocapture` for the measured drift.
+//! the lift, no hop off it. `IN11c2b`: on a sliding and turning base, a tick whose physics step
+//! is dropped and one that steps twice leave them on their spot (the ride is the base's pose
+//! delta, [`crate::refresh_base_motion`]). Run with `--nocapture` for the measured drift.
 
 #![allow(clippy::cast_precision_loss)]
 
 use std::time::Duration;
 
-use bevy_app::{App, FixedPostUpdate, FixedUpdate};
+use bevy_app::{App, FixedPostUpdate, FixedUpdate, Last};
 use bevy_ecs::prelude::*;
-use bevy_math::{IVec3, Vec3};
+use bevy_math::{IVec3, Quat, Vec3};
 use bevy_time::{Fixed, Time, TimePlugin, TimeUpdateStrategy};
 use bevy_transform::components::Transform;
 use sf_action::{ActionState, BASE_RULES, CharacterId, CharacterParams, RuleKey, RuleSet, SlotInfo, SlotTable};
@@ -25,7 +27,7 @@ use sf_physics::{BodyDesc, BodyId, BodyKind, Layer, ShapeRef};
 use sf_world::WorldspaceId;
 use sf_world_bevy::ActiveWorldspace;
 
-use crate::{Physics, PhysicsPlugin, PhysicsSystems, refresh_base_velocity};
+use crate::{Physics, PhysicsPlugin, PhysicsSettings, PhysicsStats, PhysicsSystems, refresh_base_motion};
 
 const HZ: f64 = 60.0;
 /// The platform's half extents, m: its top is `HALF.y` above its centre.
@@ -55,36 +57,107 @@ fn lift(t: f32) -> Vec3 {
     Vec3::Y * LIFT * if s < LEG { s } else { 2.0 * LEG - s }
 }
 
+/// The platform's yaw at time `t` (s), radians.
+type Spin = fn(f32) -> f32;
+
+fn still(_: f32) -> f32 {
+    0.0
+}
+
+/// Turns at 0.6 rad/s after [`REST`].
+fn turn(t: f32) -> f32 {
+    0.6 * (t - REST).max(0.0)
+}
+
+/// How the platform moves, and the ticks (counted from 1) whose physics step is dropped or
+/// runs twice.
+#[derive(Clone, Copy)]
+struct Motion {
+    path: Path,
+    spin: Spin,
+    dropped: &'static [u32],
+    doubled: &'static [u32],
+}
+
+impl Motion {
+    fn along(path: Path) -> Self {
+        Self { path, spin: still, dropped: &[], doubled: &[] }
+    }
+
+    fn pose(&self, t: f32) -> WorldTransform {
+        WorldTransform { rotation: Quat::from_rotation_y((self.spin)(t)), ..WorldTransform::from_pos(centre().offset((self.path)(t))) }
+    }
+}
+
 #[derive(Resource)]
 struct Platform {
     ws: WorldspaceId,
     id: BodyId,
-    path: Path,
+    motion: Motion,
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn now(time: &Time<Fixed>) -> f32 {
+    time.elapsed_secs_f64() as f32
+}
+
+/// The tick being run, from 1.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn tick(time: &Time<Fixed>) -> u32 {
+    (time.elapsed_secs_f64() * HZ).round() as u32
 }
 
 /// The host's base driver: this step's end pose, before the step.
 #[allow(clippy::needless_pass_by_value)]
 fn drive(time: Res<Time<Fixed>>, platform: Res<Platform>, mut physics: ResMut<Physics>) {
-    #[allow(clippy::cast_possible_truncation)]
-    let t = time.elapsed_secs_f64() as f32;
     let w = physics.world_mut(&platform.ws).expect("world");
-    assert!(w.set_kinematic_target(platform.id, WorldTransform::from_pos(centre().offset((platform.path)(t)))));
+    assert!(w.set_kinematic_target(platform.id, platform.motion.pose(now(&time))));
+}
+
+/// A frame that already ran its steps: the plugin drops this tick's step (the movers run).
+#[allow(clippy::needless_pass_by_value)]
+fn drop_step(time: Res<Time<Fixed>>, platform: Res<Platform>, settings: Res<PhysicsSettings>, mut stats: ResMut<PhysicsStats>) {
+    if platform.motion.dropped.contains(&tick(&time)) {
+        stats.steps = settings.max_steps_per_frame;
+    }
+}
+
+/// Steps the plugin dropped, over the run (its stats are per frame).
+#[derive(Resource, Default)]
+struct Dropped(u32);
+
+#[allow(clippy::needless_pass_by_value)]
+fn count_dropped(stats: Res<PhysicsStats>, mut dropped: ResMut<Dropped>) {
+    dropped.0 += stats.dropped_steps;
+}
+
+/// A second step this tick, the base moving on to the next tick's pose (physics a tick ahead
+/// of the movers; the next tick's step then leaves it there).
+#[allow(clippy::needless_pass_by_value)]
+fn double_step(time: Res<Time<Fixed>>, platform: Res<Platform>, mut physics: ResMut<Physics>) {
+    if !platform.motion.doubled.contains(&tick(&time)) {
+        return;
+    }
+    let next = platform.motion.pose(now(&time) + time.delta_secs());
+    let w = physics.world_mut(&platform.ws).expect("world");
+    assert!(w.set_kinematic_target(platform.id, next));
+    w.step();
 }
 
 /// The host's part for action bodies (the framework refreshes the movers).
 #[allow(clippy::needless_pass_by_value)]
-fn action_bases(physics: Res<Physics>, mut bodies: Query<&mut ActionBody>) {
+fn action_bases(physics: Res<Physics>, time: Res<Time>, mut bodies: Query<&mut ActionBody>) {
     let Some(w) = physics.worlds.active_world() else { return };
     for mut b in &mut bodies {
         if b.loco.grounded.is_some_and(|g| g.body.is_some()) {
-            refresh_base_velocity(w, &mut b.loco);
+            refresh_base_motion(w, &mut b.loco, time.delta_secs());
         }
     }
 }
 
-/// One tick: time, the platform's top centre, the mover's and the action body's feet, and
-/// whether each stood on the platform.
-type Sample = (f32, WorldPos, [(WorldPos, bool); 2]);
+/// One tick: time, the platform's top centre and turn, the mover's and the action body's
+/// feet, and whether each stood on the platform.
+type Sample = (f32, WorldPos, Quat, [(WorldPos, bool); 2]);
 
 #[derive(Resource, Default)]
 struct Samples(Vec<Sample>);
@@ -109,9 +182,7 @@ fn record(
     let pose = physics.world(&platform.ws).and_then(|w| w.pose(platform.id)).expect("platform");
     let mover = on(&movers.get(who.0[0]).expect("mover").loco, platform.id);
     let body = on(&bodies.get(who.0[1]).expect("action body").loco, platform.id);
-    #[allow(clippy::cast_possible_truncation)]
-    let t = time.elapsed_secs_f64() as f32;
-    samples.0.push((t, pose.pos.offset(Vec3::Y * HALF.y), [mover, body]));
+    samples.0.push((now(&time), pose.pos.offset(pose.rotation * Vec3::Y * HALF.y), pose.rotation, [mover, body]));
 }
 
 fn rules() -> ActionRules {
@@ -124,8 +195,8 @@ fn rules() -> ActionRules {
     ActionRules { rules: RuleSet::from_ron(BASE_RULES).expect("base rules"), slots: Box::new(slots) }
 }
 
-/// Runs `seconds` with both characters idle on the platform following `path`.
-fn ride(path: Path, seconds: f32) -> Vec<Sample> {
+/// Runs `seconds` with both characters idle on the platform moving by `motion`.
+fn ride(motion: Motion, seconds: f32) -> Vec<Sample> {
     bevy_tasks::AsyncComputeTaskPool::get_or_init(bevy_tasks::TaskPool::new);
     let ws = WorldspaceId::new("platform");
     let mut app = App::new();
@@ -136,13 +207,16 @@ fn ride(path: Path, seconds: f32) -> Vec<Sample> {
         .init_resource::<Samples>()
         // The host's order for its action bodies (the movers' is the framework's).
         .configure_sets(FixedUpdate, PhysicsSystems::Step.before(ActionSystems::Sample))
-        .add_systems(FixedUpdate, drive.before(PhysicsSystems::Hands))
+        .add_systems(FixedUpdate, (drive, drop_step).chain().before(PhysicsSystems::Hands))
+        .add_systems(FixedUpdate, double_step.in_set(PhysicsSystems::Step).after(crate::step))
         .add_systems(FixedUpdate, action_bases.after(PhysicsSystems::Step).before(ActionSystems::Move))
         // At the tick's end, whatever the order inside it.
+        .init_resource::<Dropped>()
+        .add_systems(Last, count_dropped)
         .add_systems(FixedPostUpdate, record);
     let desc = BodyDesc::new(BodyKind::Kinematic, WorldTransform::from_pos(centre()), ShapeRef::Box(HALF), Layer::STATIC);
     let id = app.world_mut().resource_mut::<Physics>().insert(&ws, &desc);
-    app.insert_resource(Platform { ws, id, path });
+    app.insert_resource(Platform { ws, id, motion });
     let top = centre().offset(Vec3::Y * HALF.y);
     // Dropped from 5 cm onto opposite halves of the platform, facing different ways.
     let feet = |x: f32| top.offset(Vec3::new(x, 0.05, 0.5));
@@ -155,9 +229,12 @@ fn ride(path: Path, seconds: f32) -> Vec<Sample> {
     for _ in 0..(f64::from(seconds) * HZ).round() as usize {
         app.update();
     }
+    let dropped = app.world().resource::<Dropped>().0;
+    assert_eq!(dropped as usize, motion.dropped.len(), "dropped steps");
     let samples = std::mem::take(&mut app.world_mut().resource_mut::<Samples>().0);
-    let &(t, top, _) = samples.last().expect("ticks ran");
-    let want = centre().offset(path(t) + Vec3::Y * HALF.y);
+    let &(t, top, _, _) = samples.last().expect("ticks ran");
+    let want = motion.pose(t);
+    let want = want.pos.offset(want.rotation * Vec3::Y * HALF.y);
     assert!(top.delta_f32(want).length() < 1e-4, "the platform is {} m off its path", top.delta_f32(want));
     samples
 }
@@ -167,12 +244,12 @@ fn ride(path: Path, seconds: f32) -> Vec<Sample> {
 /// the top, from [`REST`] on, m.
 fn drift(samples: &[Sample]) -> [(f32, f32, f32, f32); 2] {
     let settled = samples.iter().rposition(|s| s.0 < REST - 0.05).expect("rest samples");
-    let (_, top0, ref0) = samples[settled];
+    let (_, top0, turn0, ref0) = samples[settled];
     let mut out = [(0.0_f32, 0.0_f32, f32::MAX, f32::MIN); 2];
-    for (t, top, chars) in &samples[settled..] {
+    for (t, top, turn, chars) in &samples[settled..] {
         for (i, (feet, on)) in chars.iter().enumerate() {
-            let local = top.delta_f32(*feet);
-            let local0 = top0.delta_f32(ref0[i].0);
+            let local = turn.inverse() * top.delta_f32(*feet);
+            let local0 = turn0.inverse() * top0.delta_f32(ref0[i].0);
             assert!(local.is_finite(), "t {t}: character {i} NaN");
             assert!(*on, "t {t}: character {i} not standing on the platform ({local})");
             let d = local - local0;
@@ -194,7 +271,7 @@ fn report(name: &str, d: &[(f32, f32, f32, f32); 2]) {
 /// off by one or two of those from the start on).
 #[test]
 fn idle_characters_keep_their_spot_on_a_sliding_platform() {
-    let samples = ride(slide, REST + 3.0);
+    let samples = ride(Motion::along(slide), REST + 3.0);
     let travel = slide(REST + 1.0 / 60.0).length();
     let d = drift(&samples);
     report("slide", &d);
@@ -208,7 +285,7 @@ fn idle_characters_keep_their_spot_on_a_sliding_platform() {
 /// the start, the turn or the stop, nor lifting off it when it drops.
 #[test]
 fn idle_characters_ride_a_lift_up_and_down() {
-    let samples = ride(lift, REST + 2.0 * LEG + 0.5);
+    let samples = ride(Motion::along(lift), REST + 2.0 * LEG + 0.5);
     let travel = LIFT / 60.0;
     let d = drift(&samples);
     report("lift", &d);
@@ -216,6 +293,22 @@ fn idle_characters_ride_a_lift_up_and_down() {
         assert!(*h < travel / 4.0, "character {i} slid {h} m on the lift");
         assert!(*lo > -travel / 2.0, "character {i} sank {lo} m into the lift (a tick of travel is {travel} m)");
         assert!(*hi < travel / 2.0, "character {i} left the lift by {hi} m");
+    }
+}
+
+/// `IN11c2b`: sliding at 2.2 m/s and turning at 0.6 rad/s from rest for 3 s, with two ticks
+/// whose physics step is dropped and two that step twice (one of each back to back): both
+/// characters keep their spot on the deck to the idle drift (riding the base's velocity, each
+/// such tick shifts them by a tick of travel, 3.7 cm, for good).
+#[test]
+fn idle_characters_keep_their_spot_through_dropped_and_doubled_steps() {
+    let motion = Motion { path: slide, spin: turn, dropped: &[60, 101], doubled: &[80, 100] };
+    let samples = ride(motion, REST + 3.0);
+    let d = drift(&samples);
+    report("slide + turn, dropped and doubled steps", &d);
+    for (i, (h, v, lo, _)) in d.iter().enumerate() {
+        assert!(*h <= 1e-4, "character {i} drifted {h} m on the deck");
+        assert!(*v <= 1e-4 && *lo > -1e-4, "character {i} off the deck: {v} m, lowest {lo} m");
     }
 }
 
@@ -280,7 +373,7 @@ fn walled(hz: f64, speed: f32, kinematic: bool, behind: f32, seconds: f32) -> Ve
     let ws = WorldspaceId::new("wall");
     #[allow(clippy::cast_possible_truncation)]
     let params = sf_physics::PhysicsParams { dt: (1.0 / hz) as f32, ..sf_physics::PhysicsParams::default() };
-    let settings = crate::PhysicsSettings { hz, ..crate::PhysicsSettings::default() };
+    let settings = PhysicsSettings { hz, ..PhysicsSettings::default() };
     let mut app = App::new();
     app.add_plugins((TimePlugin, PhysicsPlugin { params, settings }, SfControllerPlugin::<Physics>::default(), SfActionPlugin::<Physics>::default()))
         // The action plugin sets its own 60 Hz tick: one fixed step a frame at `hz` instead.

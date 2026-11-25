@@ -20,10 +20,11 @@
 //! base with the velocity its last ground cast saw (`Locomotion::ride_base`, `sf_controller`);
 //! run before the step, it casts against the base's pose of the tick before, so a lift would
 //! sink into the character by one tick of travel and every start or stop of a base would shift
-//! the character on it. Between the two, [`refresh_base_velocity`] re-reads each based mover's
-//! ground velocity from its body as this step left it (Jolt's
-//! `CharacterVirtual::UpdateGroundVelocity`), so the ride is this step's base motion, not the
-//! last cast's (one tick late when a base starts, stops or turns). A host with action-driven
+//! the character on it. Between the two, [`refresh_base_motion`] turns each based mover's base
+//! pose delta since its last cast into the tick's ride (Jolt's
+//! `CharacterVirtual::UpdateGroundVelocity`, UE's base transform delta), so the ride is the
+//! base motion of the steps this tick ran, not the last cast's velocity (one tick late when a
+//! base starts, stops or turns; a tick ahead or behind for each skipped or doubled step). A host with action-driven
 //! bodies calls it for them in the same place. The capsules (below) and the carry hands
 //! ([`crate::carry`]) are targeted after the movers, for the next tick's step.
 
@@ -107,29 +108,61 @@ pub(crate) fn add(app: &mut App) {
         .add_systems(Update, impacts.before(PhysicsSystems::WriteBack));
 }
 
-/// Re-reads the ground velocity of a character standing on a body (`grounded.body`) from the
-/// body as the last physics step left it: its point velocity at the ground point and its
-/// angular velocity, the motion `Locomotion::ride_base` applies in the mover step that follows
-/// (Jolt `CharacterVirtual::UpdateGroundVelocity`). Call after the physics step, before the
-/// mover. The ground point was cast before this step, on the body's pose at the step's start,
-/// so the velocity field is taken about the centre of mass there. Fixed ground, or a body gone
-/// from `world`: left as it is.
-pub fn refresh_base_velocity(world: &PhysicsWorld, loco: &mut Locomotion) {
+/// The ride of a character standing on a body (`grounded.body`) for the mover tick of `dt`
+/// seconds that follows: the motion `Locomotion::ride_base` applies, from the body's **pose
+/// delta** since the ground cast (`IN11c2b`; UE `MovementBase` rides by the base's transform
+/// change since `OldBaseLocation`/`OldBaseQuat`, Jolt `CharacterVirtual::UpdateGroundVelocity`
+/// per step). The delta's yaw and the ground point's displacement are written as the constant
+/// twist that moves the point there over `dt` (point velocity and angular velocity, rotation
+/// about the delta's fixed point), so the ride reproduces the delta exactly: a tick whose
+/// physics step was skipped (`PhysicsSettings::max_steps_per_frame`, no active world) rides
+/// nothing, one that stepped twice (or a physics rate apart from the movers') rides every step
+/// it ran. Call after the physics step, before the mover; calling it twice is the same as once
+/// (the hit keeps its cast pose). A hit without a cast pose ([`GroundHit::base_pose`]: another
+/// probe) rides the body's velocity after the step instead, as one physics step of `dt`. Fixed
+/// ground, or a body gone from `world`: left as it is.
+///
+/// [`GroundHit::base_pose`]: sf_controller::GroundHit::base_pose
+pub fn refresh_base_motion(world: &PhysicsWorld, loco: &mut Locomotion, dt: f32) {
     let Some(g) = loco.grounded.as_mut() else { return };
     let Some(id) = g.body.map(BodyId::from) else { return };
-    let (Some((v, w)), Some(pose), Some((com, _))) = (world.velocity(id), world.pose(id), world.mass_center(id)) else { return };
-    let start = pose.pos.offset(pose.rotation * com - v * world.params().dt);
-    g.velocity = v + w.cross(start.delta_f32(g.point));
-    g.angular_velocity = w;
+    let Some(pose) = world.pose(id) else { return };
+    let Some(then) = g.base_pose.filter(|_| dt > 0.0) else {
+        let (Some((linear, angular)), Some((com, _))) = (world.velocity(id), world.mass_center(id)) else { return };
+        // The ground point was cast on the body's pose at the step's start.
+        let start = pose.pos.offset(pose.rotation * com - linear * dt);
+        g.velocity = linear + angular.cross(start.delta_f32(g.point));
+        g.angular_velocity = angular;
+        return;
+    };
+    let rotation = pose.rotation * then.rotation.inverse();
+    // Where the base's motion took the ground point.
+    let delta = g.point.delta_f32(pose.pos.offset(rotation * then.pos.delta_f32(g.point)));
+    let turned = rotation.to_scaled_axis();
+    let (turn, chord) = (turned.y, delta.with_y(0.0));
+    let horizontal = if turn.abs() > 1e-6 {
+        // The point relative to the yaw's fixed point, `u`, solves `(R_y(turn) − I) u = chord`
+        // on the horizontal plane (`R_y` maps (x, z) to (x c + z s, z c − x s)); the twist's
+        // point velocity is `turn/dt · Y × u`.
+        let (s, half) = (turn.sin(), (0.5 * turn).sin());
+        let (c1, det) = (-2.0 * half * half, 4.0 * half * half);
+        let u = Vec3::new(c1 * chord.x - s * chord.z, 0.0, s * chord.x + c1 * chord.z) / det;
+        Vec3::Y.cross(u) * (turn / dt)
+    } else {
+        chord / dt
+    };
+    g.velocity = horizontal + Vec3::Y * (delta.y / dt);
+    g.angular_velocity = turned / dt;
 }
 
-/// [`refresh_base_velocity`] for the movers on a body, after the physics step.
+/// [`refresh_base_motion`] for the movers on a body, after the physics step, for this tick.
 #[allow(clippy::needless_pass_by_value)]
-fn base_velocities(physics: Res<Physics>, mut movers: Query<&mut Mover, Without<Dormant>>) {
+fn base_velocities(physics: Res<Physics>, time: Res<Time>, mut movers: Query<&mut Mover, Without<Dormant>>) {
     let Some(w) = physics.worlds.active_world() else { return };
+    let dt = time.delta_secs();
     for mut m in &mut movers {
         if m.loco.grounded.is_some_and(|g| g.body.is_some()) {
-            refresh_base_velocity(w, &mut m.loco);
+            refresh_base_motion(w, &mut m.loco, dt);
         }
     }
 }

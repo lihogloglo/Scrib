@@ -59,6 +59,11 @@ sf_lod_bevy.workspace = true
 sf_model.workspace = true
 sf_model_bevy.workspace = true
 sf_mods.workspace = true
+# `level/nav.rs` (AI47b): a level's navmesh tiles from its own geometry through the `nav.tiles` bake.
+sf_nav.workspace = true
+sf_nav_bake.workspace = true
+sf_nav_bevy.workspace = true
+sf_nav_recast.workspace = true
 sf_physics.workspace = true
 sf_physics_bevy.workspace = true
 sf_records.workspace = true
@@ -92,6 +97,10 @@ sf_world_bevy.workspace = true
 sf_worldgen.workspace = true
 tes3 = { workspace = true, features = ["esp"] }
 workspace-hack.workspace = true
+
+[dev-dependencies]
+# `level/nav.rs` tests: a throwaway bake store.
+tempfile.workspace = true
 
 [features]
 # Delirium active ragdoll takeovers on human NPCs (ROADMAP 3.2/3.2b; `mw_delirium_bevy`). Links delirium-physics,

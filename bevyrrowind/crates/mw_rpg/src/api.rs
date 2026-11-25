@@ -46,6 +46,10 @@ pub enum Target {
     /// self (DQ-5b), never resolved by base id, so other references of the same base are not
     /// touched.
     Ref(u128),
+    /// One stack in an inventory (`mw_script::LocalKey::Stack`: the holder's id and the
+    /// `StackId`): the self of a carried item's local script (DQ-5b3). Only its locals are
+    /// addressable; it holds no items, sheet or disposition, so those ops do nothing.
+    Stack { holder: u128, stack: u64 },
 }
 
 /// What a run asked for, in call order (also exported as `ResultEffect`). The host applies
@@ -520,5 +524,6 @@ pub(crate) fn unknown_name(owner: Option<&Target>, name: &Ident) -> String {
         Some(Target::Player) => format!("player.{}", name.key),
         Some(Target::Actor(a)) => format!("{a}.{}", name.key),
         Some(Target::Ref(p)) => format!("ref {p:032x}.{}", name.key),
+        Some(Target::Stack { holder, stack }) => format!("stack {holder:032x}/{stack}.{}", name.key),
     }
 }
