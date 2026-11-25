@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Claim and queue tunables, plus the fixed tick rate leases are counted in.
+/// Claim, queue and focus tunables, plus the fixed tick rate leases and dwells are counted in.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InteractParams {
     /// Ambient use priority (range 0-255).
@@ -26,6 +26,13 @@ pub struct InteractParams {
     pub ticket_lease_s: f32,
     /// Hand claims a user may hold while Occupied, count (range 0-4).
     pub hand_max: u8,
+    /// Hold of interact after which the focus lists every verb, s (range 0.1-1.5; a menu row).
+    pub focus_hold_s: f32,
+    /// Score lead, as a fraction of the focused target's score, a challenger needs to take focus,
+    /// ratio (range 0-1).
+    pub focus_switch_margin: f32,
+    /// How long a challenger must keep that lead before focus switches, s (range 0-1).
+    pub focus_switch_s: f32,
     /// Fixed simulation rate leases count in, ticks per second.
     pub tick_hz: f32,
 }
@@ -53,6 +60,12 @@ impl Default for InteractParams {
             ticket_lease_s: 30.0,
             // tunables: const (bound from interact.claim.hand_max in sf_interaction_bevy; Guess, two hands)
             hand_max: 2,
+            // tunables: const (bound from interact.focus.hold_s in sf_interaction_bevy; Guess, RDR2-style hold prompt)
+            focus_hold_s: 0.35,
+            // tunables: const (bound from interact.focus.switch_margin in sf_interaction_bevy; Guess, hysteresis against prompt flicker, gta6.md 2)
+            focus_switch_margin: 0.2,
+            // tunables: const (bound from interact.focus.switch_s in sf_interaction_bevy; Guess)
+            focus_switch_s: 0.15,
             // tunables: const (bound from the app's fixed timestep in sf_interaction_bevy; net.md 60 Hz tick)
             tick_hz: 60.0,
         }
@@ -75,5 +88,15 @@ impl InteractParams {
     #[must_use]
     pub fn ticket_lease_ticks(&self) -> u64 {
         self.ticks(self.ticket_lease_s)
+    }
+
+    #[must_use]
+    pub fn focus_hold_ticks(&self) -> u64 {
+        self.ticks(self.focus_hold_s)
+    }
+
+    #[must_use]
+    pub fn focus_switch_ticks(&self) -> u64 {
+        self.ticks(self.focus_switch_s)
     }
 }

@@ -98,7 +98,9 @@ pub struct SlotDef {
     pub control: Option<Control>,
     /// Who may use it (body type, size class, player/NPC, armed), UE user tags.
     pub users: TagFilter,
-    /// Slots of one object that exclude each other (a bench's middle vs its ends).
+    /// Exclusion groups as a bit mask: two slots of one object exclude each other when their masks
+    /// share a bit (a bench's middle `0b11` excludes both ends, `0b01` and `0b10`, which don't
+    /// exclude each other). `None` = excludes nothing.
     pub group: Option<u8>,
     /// Ticket capacity; `None` = the kind's default (door, workstation: `interact.queue.capacity`;
     /// others: no queue). `Some(0)` = no tickets.

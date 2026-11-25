@@ -42,6 +42,7 @@ pub struct SlotRef {
 /// adapter may switch a slot off: `enabled`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SlotTerms {
+    /// Exclusion group mask (see [`SlotDef::group`]).
     pub group: Option<u8>,
     /// Ticket capacity; `None` = no queue.
     pub queue: Option<u8>,
@@ -310,6 +311,40 @@ impl Claims {
         priority: u8,
         now: Tick,
     ) -> Result<(), Refusal> {
+        let preempt = self.check_claim(slot, terms, user, tags, priority)?;
+        for s in preempt {
+            self.preempt(s, now);
+        }
+        self.reserve(slot, terms.group, terms.queue, terms.reach, user, priority, now);
+        self.emit(now, user, slot, EventKind::Claimed);
+        Ok(())
+    }
+
+    /// Whether [`Self::claim`] would grant this request now, changing nothing (verb ranking and
+    /// focus prompts ask this). Same checks, same refusals.
+    ///
+    /// # Errors
+    /// Those of [`Self::claim`].
+    pub fn would_claim(
+        &self,
+        slot: SlotRef,
+        terms: &SlotTerms,
+        user: UserKey,
+        tags: &[TagId],
+        priority: u8,
+    ) -> Result<(), Refusal> {
+        self.check_claim(slot, terms, user, tags, priority).map(|_| ())
+    }
+
+    /// The claim checks; `Ok` carries the Reserved claims a grant would preempt.
+    fn check_claim(
+        &self,
+        slot: SlotRef,
+        terms: &SlotTerms,
+        user: UserKey,
+        tags: &[TagId],
+        priority: u8,
+    ) -> Result<SmallVec<[SlotRef; 4]>, Refusal> {
         if !terms.enabled {
             return Err(Refusal::Disabled);
         }
@@ -337,12 +372,7 @@ impl Claims {
                 preempt.push(s);
             }
         }
-        for s in preempt {
-            self.preempt(s, now);
-        }
-        self.reserve(slot, terms.group, terms.queue, terms.reach, user, priority, now);
-        self.emit(now, user, slot, EventKind::Claimed);
-        Ok(())
+        Ok(preempt)
     }
 
     /// Claim, or when the slot is taken take a ticket in its queue (NPCs only).
@@ -574,11 +604,11 @@ impl Claims {
         self.events.push(InteractionEvent { tick, user, slot, kind });
     }
 
-    /// Claims on the other slots of `slot`'s object in group `g`, in slot order.
+    /// Claims on the other slots of `slot`'s object whose group mask meets `g`, in slot order.
     fn group_claims(&self, slot: SlotRef, g: u8) -> Vec<(SlotRef, &Claim)> {
         self.by_slot
             .iter()
-            .filter(|(s, c)| s.placement == slot.placement && **s != slot && c.group == Some(g))
+            .filter(|(s, c)| s.placement == slot.placement && **s != slot && c.group.is_some_and(|cg| cg & g != 0))
             .map(|(s, c)| (*s, c))
             .collect()
     }
@@ -695,7 +725,7 @@ impl Claims {
             let others: Vec<SlotRef> = self
                 .queues
                 .iter()
-                .filter(|(s, q)| s.placement == slot.placement && **s != slot && q.group == Some(g))
+                .filter(|(s, q)| s.placement == slot.placement && **s != slot && q.group.is_some_and(|qg| qg & g != 0))
                 .map(|(s, _)| *s)
                 .collect();
             for s in others {

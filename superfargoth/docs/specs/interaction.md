@@ -22,7 +22,7 @@ objects", [action.md](action.md) (Interaction category, `Claim(point)`), [physic
 > On it: (a) carrying, one `HeldProp` link with two presentations (third person attach + clip for player and NPC,
 > first person the built spring), carry classes gate speed, sprint, roll; (b) destruction (stage swap first, Chaos-style
 > cluster chunks later, debris distance LOD, baked glass shards, loot and salvage, lock bashing; buildings parked);
-> (c) mounts and vehicles (TV0b). World rules (fire, `Lit`, noise) are "(d)" (IN28). Slices: "Build slices".
+> (c) mounts and vehicles (TV0b). World rules (fire, `Lit`, noise) are [(d)](interaction-world-rules.md) (IN28). Slices: "Build slices".
 <!-- /agent-summary -->
 
 ## Goal
@@ -146,7 +146,7 @@ pub enum SlotKind {
     Lever(LeverDef),                 // positions (2 = on/off), links: [(target placement, signal tag)]
     Ladder(LadderDef),               // bottom and top points (an edge chain), rung spacing, Bottom/Top entrances
     Workstation(WorkstationDef),     // jobs: TagFilter over job records; player_verb (the pack's menu)
-    Light,                           // snuff/relight a light-bearing object: see (d) World rules (IN28)
+    Light,                           // snuff/relight a light-bearing object: see [(d) World rules](interaction-world-rules.md) (IN28)
 }
 ```
 
@@ -184,7 +184,7 @@ pub enum SlotKind {
   (records or a `WorldChange`); dev builds hot-reload job files (a running loop finishes its step, then reads the
   new def); adding a job never recompiles. The queue keeps five NPCs off one stool.
 - **Light** (IN19): a slot whose verbs are snuff and relight, gated on the `Lit` state tag; one user at a time so
-  two NPCs don't relight one lamp. State, rules and `LightChanged`: see (d) World rules (IN28).
+  two NPCs don't relight one lamp. State, rules and `LightChanged`: see [(d) World rules](interaction-world-rules.md) (IN28).
 
 ### Point index and focus
 
@@ -297,7 +297,7 @@ Invalidated(reason) }` with `reason: Preempted | LeaseExpired | OwnerDestroyed |
 SlotDisabled | UserDied | UserKnockedDown | UserLeftWorldspace`, plus `DoorChanged`, `LeverChanged`, `Destroyed`,
 `Mounted`, `Dismounted` below. Scripts, audio, barks and crime read them. NPC reactions to changed objects read
 `WorldChange` events ([world-reactions.md](world-reactions.md), IN14-IN16). Noise from doors, drops, throws and
-breaks: see (d) World rules (IN28).
+breaks: see [(d) World rules](interaction-world-rules.md) (IN28).
 
 ### Tunables (tunables.md; framework values, a pack's base mod may override)
 
@@ -378,7 +378,7 @@ IN27-IN30 and TV0b are stage 0). IN5 is folded into IN9 (owner 2026-11-11). The 
 
 | Slice | Deliverable | Crate | Depends on | Verify |
 |---|---|---|---|---|
-| IN0 (IN0a done, IN0b) | Core, Bevy-free (`sf_ids`, `sf_coords`, `sf_world`, `sf_records`, serde; in hakari `final-excludes`): types `InteractableDef`, `SlotDef`, `SlotKind` (Pose, Door, Lever, Ladder, Workstation, Light; (c) kinds as data only), `VerbDef`, `Entrance`, `CarryDef`, `CarryClass`, `DestructibleDef`/`Stage` (types only), `InteractionEvent`; `PointIndex` + `find_slots`; `rank_verbs`; `Claims`: priority with preemption of Reserved only, queue tickets (order, capacity, promotion, ticket lease), lease + `renew`, exclusion groups, one body hold per user plus hand claims within `reach`, typed refusals, invalidation reasons, sorted same-tick batch; `pick_entrance` / `pick_exit`; the "Tunables" table declared; `interact.cook` stub (defs in = defs out) | `sf_interaction` | IN27 | headless exact: Free→Reserved→Occupied→Free and Reserved→Free (release, lease expiry; `renew` extends); only the holder occupies; higher priority preempts Reserved (old user re-queued at the head, or `Invalidated(Preempted)` without a queue), equal/lower refused, Occupied never preempted; group conflicts (and preempting across a group only when all are Reserved and lower); queue order (priority, since, `UserKey`), `QueueFull`, head promoted in the same tick on release and on each invalidation, ticket expiry; `UserBusy`; a hand claim only while Occupied and within `reach`, at most `hand_max`, all released with the body claim; a permuted same-tick batch gives the same result; each invalidation reason releases once, emits one event (move within tolerance keeps the claim); entrance nearest-valid, fallback, `None`, side-order ties; exit prefers the entry side; `rank_verbs` order and `requires` filter; defs serde round trip; tunables registered with ranges |
+| IN0 (IN0a, IN0b done) | Core, Bevy-free (`sf_ids`, `sf_coords`, `sf_world`, `sf_records`, serde; in hakari `final-excludes`): types `InteractableDef`, `SlotDef`, `SlotKind` (Pose, Door, Lever, Ladder, Workstation, Light; (c) kinds as data only), `VerbDef`, `Entrance`, `CarryDef`, `CarryClass`, `DestructibleDef`/`Stage` (types only), `InteractionEvent`; `PointIndex` + `find_slots`; `rank_verbs`; `Claims`: priority with preemption of Reserved only, queue tickets (order, capacity, promotion, ticket lease), lease + `renew`, exclusion groups, one body hold per user plus hand claims within `reach`, typed refusals, invalidation reasons, sorted same-tick batch; `pick_entrance` / `pick_exit`; the "Tunables" table declared; `interact.cook` stub (defs in = defs out) | `sf_interaction` | IN27 | headless exact: Free→Reserved→Occupied→Free and Reserved→Free (release, lease expiry; `renew` extends); only the holder occupies; higher priority preempts Reserved (old user re-queued at the head, or `Invalidated(Preempted)` without a queue), equal/lower refused, Occupied never preempted; group conflicts (and preempting across a group only when all are Reserved and lower); queue order (priority, since, `UserKey`), `QueueFull`, head promoted in the same tick on release and on each invalidation, ticket expiry; `UserBusy`; a hand claim only while Occupied and within `reach`, at most `hand_max`, all released with the body claim; a permuted same-tick batch gives the same result; each invalidation reason releases once, emits one event (move within tolerance keeps the claim); entrance nearest-valid, fallback, `None`, side-order ties; exit prefers the entry side; `rank_verbs` order and `requires` filter; defs serde round trip; tunables registered with ranges |
 | IN31 | Shell: index on cell load, claims on `FixedUpdate`, focus best verb + hold list with stable focus (switch margin + dwell, frozen while held), `Activate` → `Activated` (+ verb) → gates → default | `sf_interaction_bevy` | IN0 | headless: handled suppresses the default; gate refusal; script `Activate` runs gates + default once |
 | IN32 | Adapter defs (MG4 census) + each existing class's activation as a default verb, Classic switches | `mw_interaction` | IN31, IN29 | exact per class, behaviour unchanged; def counts |
 | IN2 | Player sits and stands: Interaction move, `Seated` owner, side entrances, Kimodo sit clips | `sf_interaction`, `sf_action` | IN31 | exact: claim/occupy/release via `step`; sanity: pelvis on the seat, no capsule through it; owner IN-2 |
@@ -389,13 +389,13 @@ IN27-IN30 and TV0b are stage 0). IN5 is folded into IN9 (owner 2026-11-11). The 
 | IN1 | Crates and barrels break, tier 1: prop targets, health, stages, spill with damage, loot/salvage, debris + LOD, `Destroyed`, overlay blob | `sf_interaction(_bevy)` | IN0, combat C2c/C3 | exact: stage math, LOD gate, save round trip, event; sanity: debris rests, no NaN; owner IN-1 |
 | IN38 | Adapter breakables (crates, barrels, urns, sacks, pottery), materials, `NoiseKind` | `mw_interaction` | IN1, IN29 | exact rows on game data |
 | IN4 | Impact damage (thrown items, falls) from `ContactForceEvent` thresholds | `sf_interaction_bevy` | IN1 | exact: threshold maps to damage; sanity; owner IN-4 |
-| IN18 | `NoiseEvent` emitters: impacts, breaks, doors, throws, drops, bashes, lock picks (crime LW13); see (d) | `sf_interaction_bevy` | IN4, IN33, AI8a | exact loudness per case |
+| IN18 | `NoiseEvent` emitters: impacts, breaks, doors, throws, drops, bashes, lock picks (crime LW13); see [(d)](interaction-world-rules.md) | `sf_interaction_bevy` | IN4, IN33, AI8a | exact loudness per case |
 | IN37 | Bash locks/doors: strength-scaled lock damage, contents risk, `Bashed`, `LockRequest::Force` + offence hook | `sf_interaction`, `mw_interaction` | IN1, IN33 | exact thresholds |
 | IN14 | `WorldChange` vocabulary + placement diff ([world-reactions.md](world-reactions.md)) | `sf_interaction` | IN1, IN6, IN33 | one event per transition |
 | IN15 | `ResetRules`, classes (+ `burnt`), ttl, cap, lazy reconcile, at-rest snap, holder link wins | `sf_interaction`, `sf/overlay` | IN1, IN30 | expiry, eviction, old saves load, mid-air save snaps |
 | IN36 | Thrown props hit people: damage/stagger by mass × speed (capped), assault when seen, Classic off | `sf_interaction_bevy`, `sf_combat` | IN4, Q2 | exact curve; owner IN-36 |
-| IN19 | `Lit`, snuff/relight verb, light follows, `LightChanged`; see (d) | `sf_interaction(_bevy)`, `mw_interaction` | IN31 | exact events; owner IN-19 |
-| IN17 | Rules core: `InteractionRules`, states + TTL, `Wet`, budgeted wind spread; see (d) | `sf_interaction` | IN28, IN1 | exact on a synthetic grid; rain stops it |
+| IN19 | `Lit`, snuff/relight verb, light follows, `LightChanged`; see [(d)](interaction-world-rules.md) | `sf_interaction(_bevy)`, `mw_interaction` | IN31 | exact events; owner IN-19 |
+| IN17 | Rules core: `InteractionRules`, states + TTL, `Wet`, budgeted wind spread; see [(d)](interaction-world-rules.md) | `sf_interaction` | IN28, IN1 | exact on a synthetic grid; rain stops it |
 | IN39 | Fire in game: effects (capped lights), charred stage, damage, extinguish | `sf_interaction_bevy`, `sf_effects` | IN17 | sanity; owner IN-39 |
 | IN40 | Ground burn grid: groundcover/terrain tint, fast regrow | `sf_interaction_bevy` | IN17 | exact regrow; owner IN-40 |
 | IN41 | Adapter: ignition sources, flammables, town rule (Q1), Classic off | `mw_interaction` | IN39, IN40 | exact rows; Classic ignites nothing |
@@ -425,6 +425,17 @@ ranks equal or higher is `Taken`. Extra refusals `NoQueue` (also for players), `
 `OutOfReach`, `HandsFull`, `NoHold`. Hand claims emit no events; `Exited` is the shell's. `SlotTerms::of(def, params)`
 fills default queue capacities; the shell (IN31) binds `InteractParams` from `interact.*` and `tick_hz` from the
 fixed step.
+
+## As built (IN0b, 2026-11-26)
+
+`index.rs`, `verbs.rs`, `entrance.rs`, `cook.rs`, `tests_queries.rs` (13 exact tests; crate total 39). Departures, kept:
+**one `PointIndex<O>` for all loaded cells** (border queries need no merge; the shell removes a cell's placements on
+unload), owner handle `O` and focus key `T` generic (Bevy-free); `find_slots` falloff is a caller function of metres,
+scores ≤ 0 dropped, an unadvertised need scores 0, no need scores 1; `rank_verbs(def, placement, state_tags,
+would_claim)` (the closure carries user, tags and priority; built from the new `Claims::would_claim`, same checks as
+`claim`); `pick_entrance`/`pick_exit` take the user position in the object frame (`to_local`). `FocusStabilizer`: hold
+freezes only an existing target; with none (or it vanished) the best is taken at once; a challenger must beat
+current × (1 + `focus_switch_margin`) for `focus_switch_s`. `cook` is identity for now.
 
 ## Owner questions
 

@@ -124,6 +124,9 @@ Each family: recipe against slot contact points and MG4 height bands, generation
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
 | AN25 | Spec: families, slot naming, contact constraints, variant axes | docs | IN27 | doccheck |
+| AN43 | Hub-pose rule (owner 2026-11-26: chains are assembled at runtime from pieces, never pre-generated): every interaction piece starts and ends on a listed hub pose (standing idle, seated idle, seated holding a cup...); hub list per family as data; runtime = warp + layers/masks + IK to contact points + inertialization | docs | AN25 | doccheck |
+| AN44 | Generator spike: the same 3 pieces (stand→sit, seated→reach cup, seated→stand) via Kimodo + keyframe constraints, ARDY (SOMA checkpoint, keyframe constraints) and Kimodo + MotionBricks links; hub error + foot slide per take | scrib-motiongen | AN43 | printed table; owner ranks takes |
+| AN45 | Bake hub snap + hub gate: blend the last frames into the exact hub pose, reject takes whose hub error exceeds a tunable (beside the foot-slide gate) | scrib-motiongen, `mw_graphs` bake | AN44 | exact: snapped ends equal the hub; rejects printed |
 | MG7b | Grip table + second-hand `FullBodyIk` | `mw_viewers_bevy`, data | MG7a | exact sockets |
 | MG8 | MotionBricks link worker (approach, loop seams, exit) | scrib-motiongen | AN13 | seams printed |
 | AN26 | Sit/stand (IN2): approach-turn-in, sit, idle loops, stand; stool/chair/bench/floor; sides; bands; old/heavy variant | generation | AN25, MG8 | grade; owner ANIM-9 |
