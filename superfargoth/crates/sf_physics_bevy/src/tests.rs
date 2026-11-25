@@ -831,3 +831,37 @@ mod carry_view {
         }
     }
 }
+
+/// `IN11c2f`: [`sf_physics::PhysicsParams::hz`] is the one physics rate. Changing it changes
+/// both `Time<Fixed>`'s step and the step the bodies integrate: a free-falling body
+/// (no damping) gains exactly `g * dt` per step, `dt = 1 / hz`.
+#[test]
+fn one_rate_sets_fixed_step_and_body_dt() {
+    use bevy_time::{Fixed, Time};
+    for hz in [30.0_f64, 120.0] {
+        let ws = WorldspaceId::new("rate");
+        let mut app = App::new();
+        let params = sf_physics::PhysicsParams { hz, ..sf_physics::PhysicsParams::default() };
+        app.add_plugins((TimePlugin, PhysicsPlugin { params, ..PhysicsPlugin::default() }))
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / hz)))
+            .insert_resource(ActiveWorldspace(Some(ws.clone())));
+        assert_eq!(app.world().resource::<Time<Fixed>>().timestep(), Duration::from_secs_f64(1.0 / hz), "{hz} Hz: fixed step");
+        let pose = WorldTransform::from_pos(WorldPos::new(IVec3::ZERO, Vec3::new(0.0, 100.0, 0.0)));
+        let desc = BodyDesc { damping: (0.0, 0.0), ..BodyDesc::new(BodyKind::Dynamic { asleep: false }, pose, ShapeRef::Box(Vec3::splat(0.5)), Layer::PROP) };
+        let id = app.world_mut().resource_mut::<Physics>().insert(&ws, &desc);
+        let mut steps = 0u32;
+        for _ in 0..20 {
+            app.update();
+            steps += app.world().resource::<PhysicsStats>().steps;
+        }
+        assert!(steps >= 10, "{hz} Hz: only {steps} steps ran");
+        let world = app.world().resource::<Physics>().world(&ws).expect("world");
+        #[allow(clippy::cast_possible_truncation)]
+        let dt = (1.0 / hz) as f32;
+        assert_eq!(world.params().dt().to_bits(), dt.to_bits(), "{hz} Hz: world dt");
+        let v = world.velocity(id).expect("body").0.y;
+        #[allow(clippy::cast_precision_loss)]
+        let expect = world.params().gravity.y * dt * steps as f32;
+        assert!((v - expect).abs() < 1e-4 * expect.abs(), "{hz} Hz: {steps} steps, vy {v} m/s, expected {expect}");
+    }
+}

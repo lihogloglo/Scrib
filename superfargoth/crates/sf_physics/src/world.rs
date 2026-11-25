@@ -179,7 +179,7 @@ impl PhysicsWorld {
     pub fn new(anchor: WorldPos, params: PhysicsParams) -> Self {
         let mut engine = Engine::new();
         engine.gravity = params.gravity;
-        engine.integration_parameters.dt = params.dt;
+        engine.integration_parameters.dt = params.dt();
         engine.integration_parameters.normalized_max_corrective_velocity = params.max_corrective_velocity;
         Self {
             engine,
@@ -679,17 +679,17 @@ impl PhysicsWorld {
         }
     }
 
-    /// Advances one fixed step of [`PhysicsParams::dt`].
+    /// Advances one fixed step of [`PhysicsParams::dt`] (`1 / hz`).
     pub fn step(&mut self) {
-        self.engine.integration_parameters.dt = self.params.dt;
-        let collector = Collector { inv_dt: 1.0 / self.params.dt.max(1e-6), ..Collector::default() };
+        self.engine.integration_parameters.dt = self.params.dt();
+        let collector = Collector { inv_dt: 1.0 / self.params.dt().max(1e-6), ..Collector::default() };
         self.engine.step_with_events(&PairFilter(&self.excluded), &collector);
         self.query_pending.clear();
         self.query_all = false;
         self.resist_rolling();
         let contacts = self.contact_reports();
         self.queries_dirty = false;
-        let dt = self.params.dt;
+        let dt = self.params.dt();
         for (c1, c2, force, point, normal) in collector.contacts.into_inner().expect("collector poisoned") {
             if let (Some(a), Some(b)) = (self.id_of_collider(c1), self.id_of_collider(c2)) {
                 let point = self.to_world(point);
@@ -775,7 +775,7 @@ impl PhysicsWorld {
 
     /// [`PhysicsParams::rolling_resistance`] on awake item bodies in contact.
     fn resist_rolling(&mut self) {
-        let decel = self.params.rolling_resistance * self.params.dt;
+        let decel = self.params.rolling_resistance * self.params.dt();
         if decel <= 0.0 {
             return;
         }

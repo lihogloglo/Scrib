@@ -572,11 +572,9 @@ fn walled(hz: f64, speed: f32, kinematic: bool, behind: f32, seconds: f32) -> Ve
 fn walled_into(hz: f64, speed: f32, kinematic: bool, behind: f32, travel: (f32, Option<f32>), seconds: f32) -> (Vec<WallSample>, Vec<(f32, usize, f32)>) {
     bevy_tasks::AsyncComputeTaskPool::get_or_init(bevy_tasks::TaskPool::new);
     let ws = WorldspaceId::new("wall");
-    #[allow(clippy::cast_possible_truncation)]
-    let params = sf_physics::PhysicsParams { dt: (1.0 / hz) as f32, ..sf_physics::PhysicsParams::default() };
-    let settings = PhysicsSettings { hz, ..PhysicsSettings::default() };
+    let params = sf_physics::PhysicsParams { hz, ..sf_physics::PhysicsParams::default() };
     let mut app = App::new();
-    app.add_plugins((TimePlugin, PhysicsPlugin { params, settings }, SfControllerPlugin::<Physics>::default(), SfActionPlugin::<Physics>::default()))
+    app.add_plugins((TimePlugin, PhysicsPlugin { params, ..PhysicsPlugin::default() }, SfControllerPlugin::<Physics>::default(), SfActionPlugin::<Physics>::default()))
         // The action plugin sets its own 60 Hz tick: one fixed step a frame at `hz` instead.
         .insert_resource(Time::<Fixed>::from_hz(hz))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / hz)))

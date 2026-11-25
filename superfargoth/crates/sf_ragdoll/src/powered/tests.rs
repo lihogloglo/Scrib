@@ -74,7 +74,7 @@ fn walk(n: usize, seconds: f32, on_floor: bool, params: &DriveParams) -> Trackin
     if on_floor {
         floor(&mut w, base());
     }
-    let dt = w.params().dt;
+    let dt = w.params().dt();
     let profile = StrengthProfile::uniform(&d, Drive::Powered { strength: 1.0 }, 1.0);
     let speed = 1.2;
     let lift = if on_floor { 0.0 } else { 1.0 };
@@ -185,7 +185,7 @@ fn knockdown_falls_and_rests_then_root_goes_under_the_pelvis() {
     let (s, d) = human();
     let mut w = PhysicsWorld::new(base(), PhysicsParams::default());
     floor(&mut w, base());
-    let dt = w.params().dt;
+    let dt = w.params().dt();
     let params = DriveParams::default();
     let rest = s.rest_model();
     let root = WorldTransform::from_pos(base());
@@ -331,7 +331,7 @@ fn fall_with(impulse: f32, mode: Mode, settings: &RagdollSettings) -> Fall {
     let (s, d) = human();
     let mut w = PhysicsWorld::new(base(), PhysicsParams::default());
     floor(&mut w, base());
-    let dt = w.params().dt;
+    let dt = w.params().dt();
     let params = DriveParams::default();
     let rest = s.rest_model();
     let root = WorldTransform::from_pos(base());

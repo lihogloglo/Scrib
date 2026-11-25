@@ -142,6 +142,11 @@ fn raise(app: &mut App, e: bevy_ecs::entity::Entity, band: AwarenessBand) {
     assert_eq!(meter.0.band(TARGET), band);
 }
 
+/// Clears `e`'s awareness (every band drops to Unaware at once).
+fn clear(app: &mut App, e: bevy_ecs::entity::Entity) {
+    *app.world_mut().get_mut::<AiAwareness>(e).unwrap() = AiAwareness::default();
+}
+
 fn planar(a: WorldPos, b: WorldPos) -> f32 {
     a.delta_f32(b).with_y(0.0).length()
 }
@@ -234,23 +239,35 @@ fn a_searching_walker_goes_to_the_lkp_looks_widens_and_gives_up_at_ttl() {
 }
 
 #[test]
-fn a_curious_walker_keeps_wandering() {
+fn a_curious_walker_looks_without_searching_then_wanders_once_the_band_clears() {
+    // AI8h2: Curious pauses the wander to turn toward the LKP (no search); a cleared band returns
+    // to the anchor and the wander resumes.
     let mut app = app(true);
     let e = spawn(&mut app);
     for _ in 0..30 {
         app.update();
     }
     raise(&mut app, e, AwarenessBand::Curious);
+    let mut reacted = false;
+    for tick in 0..(3 * HZ) {
+        app.update();
+        sane(&app, e, tick);
+        assert!(!app.world().get::<Searcher>(e).unwrap().is_searching(), "tick {tick}: a Curious walker searched");
+        reacted |= app.world().get::<Reaction>(e).unwrap().phase() == Phase::React;
+    }
+    assert!(reacted, "a Curious walker never reacted");
+    clear(&mut app, e);
     let before = app.world().get::<Walker>(e).unwrap().driver.arrival_count();
     for tick in 0..(30 * HZ) {
         app.update();
         sane(&app, e, tick);
-        assert!(!app.world().get::<Searcher>(e).unwrap().is_searching(), "tick {tick}: a Curious walker searched");
     }
     let world = app.world();
     let arrivals = world.get::<Walker>(e).unwrap().driver.arrival_count() - before;
+    let r = world.get::<Reaction>(e).unwrap();
     assert_eq!(world.get::<Searcher>(e).unwrap().stats.started, 0);
-    assert!(arrivals >= 1, "the wander stopped ({arrivals} arrivals in 30 s)");
+    assert_eq!((r.phase(), r.stats.returned), (Phase::Routine, 1), "{:?}", r.stats);
+    assert!(arrivals >= 1, "the wander did not resume ({arrivals} arrivals in 30 s)");
 }
 
 #[test]
@@ -385,4 +402,71 @@ fn a_stationary_npc_searches_then_walks_back_to_its_post_and_facing() {
     assert!(back <= 0.5, "{back:.2} m from the post");
     assert!(yaw_off <= tol + 0.02, "facing {yaw_off:.3} rad off the post's (tolerance {tol})");
     assert!(ep.drift_after < 0.1, "moved {:.3} m after the hand-back", ep.drift_after);
+}
+
+#[test]
+fn a_stationary_npc_faces_a_curious_stimulus_steps_toward_a_suspicious_one_then_returns() {
+    // AI8h2 (owner, perception lab: "no guard is ever moving"): Curious turns a guard on post
+    // toward the LKP without leaving it; Suspicious walks him one react_step_m toward the LKP and
+    // turns him to it; a cleared band walks him back to his post and facing.
+    let mut app = app(true);
+    // Facing away from the LKP (6 m east, yaw ~ +pi/2).
+    let e = spawn_stationary(&mut app, -1.5);
+    for _ in 0..30 {
+        app.update();
+    }
+    let mover = app.world().get::<Mover>(e).unwrap();
+    let post = (mover.loco.position, mover.loco.motion.yaw);
+    let tol = sf_ai::ExecConfig::default().face_tolerance_rad;
+    let step = app.world().resource::<AiPerceptionSettings>().react.step_m;
+    let facing_off = |pos: WorldPos, yaw: f32| wrap(yaw - sf_ai::yaw_toward(pos, lkp()).unwrap()).abs();
+
+    raise(&mut app, e, AwarenessBand::Curious);
+    let mut drift = 0.0_f32;
+    for tick in 0..(3 * HZ) {
+        app.update();
+        let (pos, _) = sane(&app, e, tick);
+        drift = drift.max(planar(pos, post.0));
+    }
+    let (pos, yaw) = sane(&app, e, 0);
+    let curious_off = facing_off(pos, yaw);
+    let phase = app.world().get::<Reaction>(e).unwrap().phase();
+
+    let d0 = planar(pos, lkp());
+    raise(&mut app, e, AwarenessBand::Suspicious);
+    for tick in 0..(6 * HZ) {
+        app.update();
+        sane(&app, e, tick);
+    }
+    let (pos, yaw) = sane(&app, e, 0);
+    let (d1, suspicious_off) = (planar(pos, lkp()), facing_off(pos, yaw));
+    let suspicious_phase = app.world().get::<Reaction>(e).unwrap().phase();
+
+    clear(&mut app, e);
+    for tick in 0..(15 * HZ) {
+        app.update();
+        sane(&app, e, tick);
+    }
+    let world = app.world();
+    let (mover, r) = (world.get::<Mover>(e).unwrap(), world.get::<Reaction>(e).unwrap());
+    let (back, yaw_off) = (planar(mover.loco.position, post.0), wrap(mover.loco.motion.yaw - post.1).abs());
+    let search = world.get::<Searcher>(e).unwrap().stats;
+    println!(
+        "AI8h2 stationary: Curious {curious_off:.3} rad off the LKP, drift {drift:.3} m ({phase:?}); Suspicious \
+         {d0:.2} -> {d1:.2} m from the LKP (step {step}), {suspicious_off:.3} rad off ({suspicious_phase:?}); \
+         back {back:.2} m / {yaw_off:.3} rad off the post, {:?}",
+        r.stats,
+    );
+    assert_eq!(phase, Phase::React, "Curious did not pre-empt the post");
+    assert!(curious_off <= tol + 0.02, "Curious: facing {curious_off:.3} rad off the LKP (tolerance {tol})");
+    assert!(drift < 0.3, "Curious left the post ({drift:.2} m)");
+    assert_eq!(suspicious_phase, Phase::React);
+    assert!((d0 - d1 - step).abs() <= 1.0, "Suspicious stepped {:.2} m toward the LKP (step {step})", d0 - d1);
+    assert!(suspicious_off <= tol + 0.02, "Suspicious: facing {suspicious_off:.3} rad off the LKP");
+    assert_eq!(search.started, 0, "a Curious / Suspicious NPC searched: {search:?}");
+    assert_eq!((r.stats.preempted, r.stats.returned, r.stats.return_failed), (1, 1, 0), "{:?}", r.stats);
+    assert!(r.stats.reacts >= 2, "{:?}", r.stats);
+    assert_eq!(r.phase(), Phase::Routine);
+    assert!(back <= 0.5, "{back:.2} m from the post");
+    assert!(yaw_off <= tol + 0.02, "facing {yaw_off:.3} rad off the post's (tolerance {tol})");
 }

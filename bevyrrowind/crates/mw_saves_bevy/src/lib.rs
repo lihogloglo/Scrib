@@ -697,7 +697,7 @@ mod tests {
 
         // Take the ring barrel, finish Fargoth's quest, take a loose item, move the clock.
         let mut rpg = Rpg::new(db.clone()).unwrap();
-        assert!(!mw_rpg_bevy::inventory::take_all(&mut rpg.state, &db, PlayerId::HOST, BARREL, &barrel).is_empty());
+        assert!(!mw_rpg_bevy::inventory::take_all(&mut rpg.state, &db, PlayerId::HOST, BARREL, &barrel, 1).is_empty());
         assert!(rpg.add_actor(FARGOTH, &RecordId::new("fargoth"), "Seyda Neen"));
         let (mut talk, mut view) = rpg.open(FARGOTH, &NoSheets).unwrap();
         rpg.request(&mut talk, &mut view, &DialogueRequest::Ask(RecordId::new("ring")), &NoSheets);
@@ -727,7 +727,7 @@ mod tests {
         assert_eq!(rpg.state, before, "the whole RPG state round-trips");
         assert_eq!(rpg.state.world.quests.stage(&quest), 100);
         assert!(rpg.state.world.journal.for_quest(&quest).next().is_some(), "journal entries are back");
-        assert!(mw_rpg_bevy::inventory::take_all(&mut rpg.state, &db, PlayerId::HOST, BARREL, &barrel).is_empty(), "the barrel stays empty");
+        assert!(mw_rpg_bevy::inventory::take_all(&mut rpg.state, &db, PlayerId::HOST, BARREL, &barrel, 1).is_empty(), "the barrel stays empty");
         assert!(app.world().resource::<WorldOverlay>().0.read().unwrap().is_removed(TAKEN));
         assert_eq!(app.world().resource::<GameClock>().now, sf_sky_bevy::GameInstant(3 * 86_400_000 + 64_800_000));
         let _ = std::fs::remove_dir_all(&root);

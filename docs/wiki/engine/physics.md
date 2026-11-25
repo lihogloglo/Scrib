@@ -15,7 +15,7 @@ character, projectile, `BODY_PROXY`), interpolated poses (`pose_at` `:444`), eve
 (`joint.rs`), floating origin by whole-cell `rebase`. `PhysicsProbe` answers the controller's ground queries. Carrying:
 `carry.rs` (hands as kinematic targets).
 
-**Bevy glue** (`sf_physics_bevy/src/lib.rs`): `PhysicsPlugin` steps the active worldspace's world at `PhysicsSettings::hz`
+**Bevy glue** (`sf_physics_bevy/src/lib.rs`): `PhysicsPlugin` steps the active worldspace's world at `PhysicsParams::hz` (the one rate: `Time<Fixed>` and the body `dt()` = 1/hz both come from it, IN11c2f)
 (`:74`), capped by `max_steps_per_frame` (time dilates beyond it). `PhysicsFocus` (the streaming anchor) drives rebases.
 `PhysicsBody` entities get interpolated pose written back. Streaming (`stream.rs`): `PhysicsHook` wraps placement
 spawners, Active cells queue `Fixed` colliders (one shared mesh per model, built on the task pool) under

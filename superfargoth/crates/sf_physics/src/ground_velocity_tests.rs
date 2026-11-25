@@ -26,7 +26,7 @@ fn probe_down(w: &PhysicsWorld, p: WorldPos) -> GroundHit {
 /// A deck-sized kinematic box translating at `v` and yawing at `yaw_rate`,
 /// stepped at `hz` for half a second through per-tick kinematic targets.
 fn turning_deck(hz: f32) {
-    let params = PhysicsParams { dt: 1.0 / hz, ..PhysicsParams::default() };
+    let params = PhysicsParams { hz: f64::from(hz), ..PhysicsParams::default() };
     let mut w = PhysicsWorld::new(WorldPos::ORIGIN, params);
     let start = WorldPos::ORIGIN.offset(Vec3::new(10.0, 1.0, 5.0));
     let deck = w.insert(&BodyDesc::new(BodyKind::Kinematic, at(start), ShapeRef::Box(Vec3::new(4.0, 0.25, 2.0)), Layer::STATIC));

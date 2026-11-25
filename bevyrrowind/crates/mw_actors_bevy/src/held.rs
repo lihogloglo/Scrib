@@ -29,7 +29,7 @@ use bevy_ecs::prelude::*;
 use bevy_math::prelude::*;
 use bevy_pbr::prelude::*;
 use bevy_transform::prelude::*;
-use mw_actors::held::{DayCycle, HeldContext, exterior_dark};
+use mw_actors::held::{DayCycle, HeldContext, LevelledSeed, exterior_dark};
 use mw_assets::LightCalibration;
 use mw_assets::lights::AnimatedLight;
 use bevy_light::NotShadowCaster;
@@ -218,7 +218,7 @@ fn held_override(rules: &MwCharacters, kind: &str, id: &sf_records::RecordId, da
     if !dark {
         return None;
     }
-    rules.actors().held(kind, id, HeldContext { dark, in_combat: false }).ok()
+    rules.actors().held(kind, id, HeldContext { dark, in_combat: false }, LevelledSeed::BY_RECORD).ok()
 }
 
 fn carry_lights_when_dark(

@@ -139,26 +139,26 @@ Found while reviewing; the migration slice of each system greps its own files fo
 Written by `node tools/tunables-census.mjs` (do not edit by hand; edit the rules table at the top of the script).
 Per system, then per crate: the T and ? rows in full, the C rows as one line. Paths are relative to the crate.
 
-Sources: 1600 consts, 858 `Default` fields, 225 shader consts (98 of them T: each needs a uniform before it can be live). Opt-outs (`// tunables: const (reason)`): 313.
+Sources: 1652 consts, 939 `Default` fields, 225 shader consts (98 of them T: each needs a uniform before it can be live). Opt-outs (`// tunables: const (reason)`): 438.
 
 | System | Candidates | T | C | ? |
 |---|---:|---:|---:|---:|
-| ai-nav | 77 | 22 | 41 | 14 |
-| animation-characters | 197 | 127 | 55 | 15 |
+| ai-nav | 176 | 22 | 138 | 16 |
+| animation-characters | 206 | 127 | 64 | 15 |
 | app-diag | 79 | 35 | 32 | 12 |
 | audio | 43 | 36 | 1 | 6 |
 | effects | 56 | 11 | 44 | 1 |
 | feel-camera-combat | 207 | 153 | 13 | 41 |
-| other | 350 | 72 | 210 | 68 |
+| other | 373 | 71 | 234 | 68 |
 | physics | 147 | 126 | 8 | 13 |
 | shadows-lights-gi | 50 | 35 | 12 | 3 |
-| sky-weather-surface | 658 | 306 | 177 | 175 |
+| sky-weather-surface | 660 | 306 | 179 | 175 |
 | statics-lod-farfield | 114 | 66 | 35 | 13 |
 | streaming-exterior | 293 | 93 | 178 | 22 |
 | terrain-water | 305 | 137 | 98 | 70 |
 | textures | 21 | 10 | 6 | 5 |
 | ui | 86 | 52 | 7 | 27 |
-| **total** | **2683** | **1281** | **917** | **485** |
+| **total** | **2816** | **1280** | **1049** | **487** |
 
 ## ai-nav
 
@@ -174,7 +174,7 @@ Sources: 1600 consts, 858 `Default` fields, 225 shader consts (98 of them T: eac
 
 Stays const: PRIORITY_WANDER_FACE (opt-out: HTN method priority ordering: face > idle > walk > stand), PRIORITY_WANDER_IDLE (opt-out: HTN method priority ordering: face > idle > walk > stand), PRIORITY_WANDER_WALK (opt-out: HTN method priority ordering: face > idle > walk > stand), PRIORITY_WANDER_STAND (opt-out: HTN method priority ordering: face > idle > walk > stand), WanderTuning.walk_backstop_mult (opt-out: bound from mw.ai.wander.walk_backstop_mult in mw_walkers_bevy), WanderTuning.walk_slack_s (opt-out: bound from mw.ai.wander.walk_slack_s in mw_walkers_bevy), WanderTuning.same_goal_m (opt-out: bound from mw.ai.wander.same_goal_m in mw_walkers_bevy), WanderTuning.give_up_pause_min_s (opt-out: bound from mw.ai.wander.give_up_pause_min_s in mw_walkers_bevy), WanderTuning.give_up_pause_jitter_s (opt-out: bound from mw.ai.wander.give_up_pause_jitter_s in mw_walkers_bevy), GOAL_TRIES (small index), BLOCKED_EDGES (small index).
 
-### sf_ai (12: T 3, C 8, ? 1)
+### sf_ai (84: T 3, C 80, ? 1)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -183,19 +183,21 @@ Stays const: PRIORITY_WANDER_FACE (opt-out: HTN method priority ordering: face >
 | src/htn.rs:66 | SEARCH_TRIES | `4096` | ? |  |
 | src/trace.rs:37 | DEFAULT_TRACE_CAP | `256` | T |  |
 
-Stays const: PLANAR_EPS_SQ (opt-out: degenerate zero-length planar vector epsilon), TIMER_EPS_S (opt-out: sub-microsecond timer epsilon for fixed-tick countdown), ExecConfig.stuck_timeout_s (opt-out: bound from ai.exec.stuck_timeout_s in sf_ai_bevy), ExecConfig.progress_min_m (opt-out: bound from ai.exec.progress_min_m in sf_ai_bevy), ExecConfig.face_tolerance_rad (opt-out: bound from ai.exec.face_tolerance_rad in sf_ai_bevy), ExecConfig.arrive_dist_m (opt-out: bound from ai.exec.arrive_dist_m in sf_ai_bevy), AI_VERSION (layout/math/id), TRACE_LEN (layout/math/id).
+Stays const: PLANAR_EPS_SQ (opt-out: degenerate zero-length planar vector epsilon), TIMER_EPS_S (opt-out: sub-microsecond timer epsilon for fixed-tick countdown), ExecConfig.stuck_timeout_s (opt-out: bound from ai.exec.stuck_timeout_s in sf_ai_bevy), ExecConfig.progress_min_m (opt-out: bound from ai.exec.progress_min_m in sf_ai_bevy), ExecConfig.face_tolerance_rad (opt-out: bound from ai.exec.face_tolerance_rad in sf_ai_bevy), ExecConfig.arrive_dist_m (opt-out: bound from ai.exec.arrive_dist_m in sf_ai_bevy), VISIBILITY_MODIFIERS_CAPACITY (layout/math/id), MAX_LIGHT_RAYS (opt-out: capacity: ai.md caps light_rays at 4; the tunable is LightConfig.light_rays), VisibilityFactors.light (opt-out: neutral input: full light, the target hides nothing), VisibilityFactors.speed_mps (opt-out: neutral input: standing still), VisibilityFactors.size (opt-out: identity ratio: a standard humanoid), VisibilityFactors.noise_mul (opt-out: identity ratio: unscaled noise), VisibilityFactors.disguise (opt-out: neutral input: no disguise), LightConfig.light_search_m (opt-out: bound from ai.perception.light_search_m in sf_ai_bevy; ai.md table), LightConfig.light_rays (opt-out: bound from ai.perception.light_rays in sf_ai_bevy; ai.md table), LightConfig.dark_threshold (opt-out: bound from ai.perception.dark_threshold in sf_ai_bevy; ai.md table), LightConfig.roof_sky_mul (opt-out: bound from ai.perception.roof_sky_mul in sf_ai_bevy; Guess: indirect skylight under an open-sided roof), LightConfig.light_falloff_exp (opt-out: bound from ai.perception.light_falloff_exp in sf_ai_bevy; Guess, UE4/Frostbite window uses 4), FULL (opt-out: ai.md: Alerted is level 1, the top of the 0..1 meter), CERTAIN (opt-out: ai.md: a sighting, touch or hit places the target exactly; confidence is 0..1), AwarenessConfig.curious (opt-out: bound from ai.awareness.curious in sf_ai_bevy), AwarenessConfig.suspicious (opt-out: bound from ai.awareness.suspicious in sf_ai_bevy), AwarenessConfig.searching (opt-out: bound from ai.awareness.searching in sf_ai_bevy), AwarenessConfig.band_hysteresis (opt-out: bound from ai.awareness.band_hysteresis in sf_ai_bevy), AwarenessConfig.alert_hold_s (opt-out: bound from ai.awareness.alert_hold_s in sf_ai_bevy), AwarenessConfig.decay_delay_s (opt-out: bound from ai.awareness.decay_delay_s in sf_ai_bevy), AwarenessConfig.decay_curious (opt-out: bound from ai.awareness.decay_curious in sf_ai_bevy), AwarenessConfig.decay_suspicious (opt-out: bound from ai.awareness.decay_suspicious in sf_ai_bevy), AwarenessConfig.decay_searching (opt-out: bound from ai.awareness.decay_searching in sf_ai_bevy), AwarenessConfig.noise_gain (opt-out: bound from ai.awareness.noise_gain in sf_ai_bevy), AwarenessConfig.noise_cap (opt-out: bound from ai.awareness.noise_cap in sf_ai_bevy), AwarenessConfig.noise_confidence (opt-out: bound from ai.awareness.noise_confidence in sf_ai_bevy), AwarenessConfig.asleep_wake_m (opt-out: bound from ai.awareness.asleep_wake_m in sf_ai_bevy), AwarenessConfig.groggy_s (opt-out: bound from ai.awareness.groggy_s in sf_ai_bevy), AwarenessConfig.max_entries (opt-out: bound from ai.awareness.max_entries in sf_ai_bevy), AwarenessConfig.distraction_ttl_s (opt-out: bound from ai.awareness.distraction_ttl_s in sf_ai_bevy; Guess), AwarenessConfig.alert_alertness (opt-out: bound from ai.awareness.alert_alertness in sf_ai_bevy; Guess), AwarenessConfig.groggy_alertness (opt-out: bound from ai.awareness.groggy_alertness in sf_ai_bevy; Guess), AwarenessConfig.notify_speed_mps (opt-out: bound from ai.awareness.notify_speed_mps in sf_ai_bevy; Guess), AwarenessConfig.notify_react_s (opt-out: bound from ai.awareness.notify_react_s in sf_ai_bevy; Guess), AwarenessConfig.notify_confidence_mul (opt-out: bound from ai.awareness.notify_confidence_mul in sf_ai_bevy; Guess), AwarenessConfig.notify_max_hops (opt-out: bound from ai.awareness.notify_max_hops in sf_ai_bevy; Guess), IDENTITY (opt-out: identity ratio: 1.0 leaves the global tunable unchanged, ai.md), MAX_HALF_DEG (opt-out: maths: a half-angle never exceeds a full circle's half, ai.md "≤ 180°"), PERCEPTION_STATES_CAPACITY (layout/math/id), SightConfig.sight_range_m (opt-out: bound from ai.perception.sight_range_m in sf_ai_bevy; Guess), SightConfig.lose_sight_range_m (opt-out: bound from ai.perception.lose_sight_range_m in sf_ai_bevy; Guess), SightConfig.near_m (opt-out: bound from ai.perception.near_m in sf_ai_bevy; Guess), SightConfig.central_half_deg (opt-out: bound from ai.perception.central_half_deg in sf_ai_bevy; Guess), SightConfig.peripheral_half_deg (opt-out: bound from ai.perception.peripheral_half_deg in sf_ai_bevy; Guess), SightConfig.peripheral_mul (opt-out: bound from ai.perception.peripheral_mul in sf_ai_bevy; Guess), SightConfig.rate (opt-out: bound from ai.perception.rate in sf_ai_bevy; Guess), SearchConfig.search_ttl_s (opt-out: bound from ai.perception.search_ttl_s in sf_ai_bevy; Guess), SearchConfig.search_error_m (opt-out: bound from ai.perception.search_error_m in sf_ai_bevy; Guess), SearchConfig.search_widen_mps (opt-out: bound from ai.perception.search_widen_mps in sf_ai_bevy; Guess), PLANAR_EPS_SQ (opt-out: maths: planar coincidence epsilon, as exec's PLANAR_EPS_SQ), ReactConfig.step_m (opt-out: bound from ai.perception.react_step_m in sf_ai_bevy; Guess: a few strides, AC/Hitman suspicious walk), ReactConfig.retarget_m (opt-out: bound from ai.perception.react_retarget_m in sf_ai_bevy; Guess: about one stride of target motion), ReactConfig.hold_s (opt-out: bound from ai.perception.react_hold_s in sf_ai_bevy; Guess: keeps the goal from flickering), ReactConfig.face_delay_s (opt-out: bound from ai.perception.react_face_delay_s in sf_ai_bevy; Guess: human reaction ~0.2-0.3 s), AI_VERSION (layout/math/id), SearchPatternConfig.ring_points (opt-out: bound from ai.perception.search_ring_points in sf_ai_bevy; Guess), SearchPatternConfig.look_half_deg (opt-out: bound from ai.perception.search_look_half_deg in sf_ai_bevy; Guess), SearchPatternConfig.uncertain_mul (opt-out: bound from ai.perception.search_uncertain_mul in sf_ai_bevy; Guess), SearchPatternConfig.inner_frac (opt-out: bound from ai.perception.search_inner_frac in sf_ai_bevy; Guess), LOOK_SALT (opt-out: format: hash salt separating look draws from ring draws), ROT_SALT (opt-out: format: hash salts separating the ring rotation from slot draws), SLOT_SALT (opt-out: format: hash salts separating the ring rotation from slot draws), BITS (opt-out: maths: f32 mantissa width), AT_EYE_M (opt-out: maths: below this distance the target sits at the eye, any direction counts as central), SightBudget.skip_gain (opt-out: bound from ai.perception.skip_gain in sf_ai_bevy; Guess), SightBudget.sight_period_s (opt-out: bound from ai.perception.sight_period_s in sf_ai_bevy; Guess), SightBudget.tier1_period_s (opt-out: bound from ai.perception.tier1_period_s in sf_ai_bevy; Guess), SightBudget.max_rays_per_tick (opt-out: bound from ai.perception.max_rays_per_tick in sf_ai_bevy, Floor tier; Guess), SightBudget.sight_cache_s (opt-out: bound from ai.perception.sight_cache_s in sf_ai_bevy; Guess), SightBudget.cache_move_m (opt-out: bound from ai.perception.cache_move_m in sf_ai_bevy; Guess), M1 (opt-out: maths: splitmix64 constants), M2 (opt-out: maths: splitmix64 constants), GOLDEN (opt-out: maths: splitmix64 golden-ratio increment), TRACE_LEN (layout/math/id).
 
-### sf_ai_bevy (6: T 3, C 1, ? 2)
+### sf_ai_bevy (33: T 3, C 26, ? 4)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/gizmos.rs:32 | TEXT_SIZE | `0.12` | T |  |
-| src/gizmos.rs:34 | LINE_STEP | `0.17` | T |  |
-| src/gizmos.rs:36 | TEXT_LIFT | `2.1` | ? |  |
-| src/gizmos.rs:37 | RING_RADIUS | `0.55` | T |  |
-| src/lib.rs:75 | AiPlugin.timings | `true` | ? | bool |
+| src/gizmos.rs:34 | TEXT_SIZE | `0.12` | T |  |
+| src/gizmos.rs:36 | LINE_STEP | `0.17` | T |  |
+| src/gizmos.rs:38 | TEXT_LIFT | `2.1` | ? |  |
+| src/gizmos.rs:39 | RING_RADIUS | `0.55` | T |  |
+| src/lib.rs:113 | AiPlugin.timings | `true` | ? | bool |
+| src/perception_gizmos.rs:70 | ARC_SEGMENTS_FULL | `48.0` | ? |  |
+| src/perception_gizmos.rs:81 | TEXT_LIFT | `2.45` | ? |  |
 
-Stays const: DEFAULT_TRACE_LINES (small index).
+Stays const: HearingConfig.closed_door_m (opt-out: bound from ai.perception.closed_door_m), DEFAULT_TRACE_LINES (small index), AiLightInputs.sky (opt-out: input default: full daylight, the identity until the host writes it), AiLightInputs.interior (opt-out: input default: full daylight, the identity until the host writes it), DRAW_DISTANCE_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), NOISE_WINDOW_S (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), NOISE_CAPACITY (layout/math/id), GROUND_LIFT_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), TEXT_SIZE (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), LINE_STEP (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), SELECTED_RING_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), LKP_RADIUS_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), HELD_RING_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), GOAL_CROSS_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), LIGHT_ABOVE_HEAD_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), LIGHT_DOT_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), NOISE_SPOT_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), FADED (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), VISIBILITY_UNMODELLED (opt-out: maths: the identity of the visibility factor), RAY_QUEUE_CAPACITY (opt-out: capacity: fixed-size request queue, ~10x the 48-actor tier-2 load; overflow refuses), SIGHT_CACHE_CAPACITY (opt-out: capacity: fixed-size (observer, target), RAY_BATCH_SCRATCH (opt-out: capacity: ray scratch per batch, the max_rays_per_tick range's top), MIN_RAY_M (opt-out: maths: a segment shorter than this reaches its end), AiRays.queue (opt-out: capacities, the consts above), AiRays.refused (opt-out: a counter's start), AiRays.light_cast (opt-out: a counter's start).
 
 ### sf_nav (19: T 3, C 15, ? 1)
 
@@ -244,16 +246,16 @@ Stays const: SURFACE_VISITED_CAP (opt-out: Detour dtPathCorridor movePosition vi
 
 ## animation-characters
 
-### mw_actors (33: T 2, C 29, ? 2)
+### mw_actors (35: T 2, C 31, ? 2)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
 | src/equip.rs:42 | SLOT_COUNT | `17` | T |  |
-| src/held.rs:247 | DayCycle.sunrise | `6.0` | ? |  |
-| src/held.rs:247 | DayCycle.night_start | `20.0` | ? |  |
+| src/held.rs:249 | DayCycle.sunrise | `6.0` | ? |  |
+| src/held.rs:249 | DayCycle.night_start | `20.0` | ? |  |
 | src/slots.rs:26 | PRT_COUNT | `27` | T |  |
 
-Stays const: HEAD (small index), HAIR (small index), NECK (small index), CUIRASS (small index), GROIN (small index), SKIRT (small index), R_HAND (small index), L_HAND (small index), R_WRIST (small index), L_WRIST (small index), SHIELD (small index), R_FOREARM (small index), L_FOREARM (small index), R_UPPER_ARM (small index), L_UPPER_ARM (small index), R_FOOT (small index), L_FOOT (small index), R_ANKLE (small index), L_ANKLE (small index), R_KNEE (small index), L_KNEE (small index), R_LEG (small index), L_LEG (small index), R_PAULDRON (small index), L_PAULDRON (small index), WEAPON (small index), TAIL (small index), FIRST_PERSON (layout/math/id), ActorConfig.first_person_fov_y_deg (layout/math/id).
+Stays const: BASIS (sentinel/derived), PRIME (sentinel/derived), HEAD (small index), HAIR (small index), NECK (small index), CUIRASS (small index), GROIN (small index), SKIRT (small index), R_HAND (small index), L_HAND (small index), R_WRIST (small index), L_WRIST (small index), SHIELD (small index), R_FOREARM (small index), L_FOREARM (small index), R_UPPER_ARM (small index), L_UPPER_ARM (small index), R_FOOT (small index), L_FOOT (small index), R_ANKLE (small index), L_ANKLE (small index), R_KNEE (small index), L_KNEE (small index), R_LEG (small index), L_LEG (small index), R_PAULDRON (small index), L_PAULDRON (small index), WEAPON (small index), TAIL (small index), FIRST_PERSON (layout/math/id), ActorConfig.first_person_fov_y_deg (layout/math/id).
 
 ### mw_actors_bevy (5: T 5, C 0, ? 0)
 
@@ -277,29 +279,29 @@ Stays const: HEAD (small index), HAIR (small index), NECK (small index), CUIRASS
 
 Stays const: EPSILON (layout/math/id), BIPED (sentinel/derived), SWIMS (sentinel/derived), FLIES (sentinel/derived), WALKS (sentinel/derived).
 
-### mw_walkers_bevy (19: T 15, C 2, ? 2)
+### mw_walkers_bevy (25: T 15, C 8, ? 2)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/physics.rs:145 | DEATH_HANDOFF | `0.4` | T |  |
-| src/physics.rs:266 | KNOCKDOWN_IMPULSE | `15.0` | T |  |
-| src/physics.rs:271 | HIT_REACT_IMPULSE | `1.0` | T |  |
-| src/physics.rs:274 | KNOCKDOWN_HANDOFF | `0.05` | T |  |
-| src/physics.rs:532 | TURN | `0.26` | ? |  |
-| src/physics.rs:688 | BALL_RADIUS | `0.12` | T |  |
-| src/physics.rs:689 | BALL_MASS | `3.0` | T |  |
-| src/physics.rs:690 | BALL_SPEED | `12.0` | T |  |
-| src/physics.rs:775 | STEP_BUDGET_MS | `0.3` | T |  |
-| src/physics.rs:776 | INSERT_BUDGET_MS | `0.5` | T |  |
-| src/physics.rs:858 | AUTO_FRAME_DELAY | `0.5` | T |  |
-| src/walkers.rs:83 | TIMESCALE | `30.0` | T |  |
-| src/walkers.rs:85 | FLY_HOVER | `1.5` | ? |  |
-| src/walkers.rs:89 | PROCESS_MARGIN | `4.0` | T |  |
-| src/walkers.rs:91 | DORMANT_SIGNIFICANCE | `0.25` | T |  |
-| src/walkers.rs:96 | AI_WAKE_RADIUS_M | `110.0` | T |  |
-| src/walkers.rs:98 | AI_SLEEP_RADIUS_M | `122.0` | T |  |
+| src/physics.rs:148 | DEATH_HANDOFF | `0.4` | T |  |
+| src/physics.rs:269 | KNOCKDOWN_IMPULSE | `15.0` | T |  |
+| src/physics.rs:274 | HIT_REACT_IMPULSE | `1.0` | T |  |
+| src/physics.rs:277 | KNOCKDOWN_HANDOFF | `0.05` | T |  |
+| src/physics.rs:549 | TURN | `0.26` | ? |  |
+| src/physics.rs:705 | BALL_RADIUS | `0.12` | T |  |
+| src/physics.rs:706 | BALL_MASS | `3.0` | T |  |
+| src/physics.rs:707 | BALL_SPEED | `12.0` | T |  |
+| src/physics.rs:792 | STEP_BUDGET_MS | `0.3` | T |  |
+| src/physics.rs:793 | INSERT_BUDGET_MS | `0.5` | T |  |
+| src/physics.rs:875 | AUTO_FRAME_DELAY | `0.5` | T |  |
+| src/walkers.rs:88 | TIMESCALE | `30.0` | T |  |
+| src/walkers.rs:90 | FLY_HOVER | `1.5` | ? |  |
+| src/walkers.rs:94 | PROCESS_MARGIN | `4.0` | T |  |
+| src/walkers.rs:96 | DORMANT_SIGNIFICANCE | `0.25` | T |  |
+| src/walkers.rs:101 | AI_WAKE_RADIUS_M | `110.0` | T |  |
+| src/walkers.rs:103 | AI_SLEEP_RADIUS_M | `122.0` | T |  |
 
-Stays const: BALLS_KEPT (small index), REPORT_INTERVAL_S (opt-out: log cadence only: how often the report lines re-check; gates no behaviour).
+Stays const: MISSING_AMBIENT (opt-out: data fallback: mirrors the renderer's missing-AMBI grey, not a trade-off), BALLS_KEPT (small index), MAX_TRANSITIONS (opt-out: loop bound: bounds the work per tick; a goal is at most two operators), MAX_TRANSITIONS (opt-out: loop bound: bounds the work per tick; a search step is at most two operators), EYE_RATIO (opt-out: anthropometry: a body proportion, not a trade-off; the body sets the height), CHEST_RATIO (opt-out: anthropometry: a body proportion, not a trade-off; the body sets the height), HEAD_RATIO (opt-out: anthropometry: the eye ratio again, not a trade-off), REPORT_INTERVAL_S (opt-out: log cadence only: how often the report lines re-check; gates no behaviour).
 
 ### sf_anim (67: T 53, C 6, ? 8)
 
@@ -382,7 +384,7 @@ Stays const: CLIP_FORMAT (layout/math/id), NO_JOINT (sentinel/derived), RIG_PROF
 
 Stays const: AnimBudget.predicted_us (runtime state), AnimBudget.demoted (runtime state).
 
-### sf_anim_graph (24: T 18, C 6, ? 0)
+### sf_anim_graph (25: T 18, C 7, ? 0)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -405,7 +407,7 @@ Stays const: AnimBudget.predicted_us (runtime state), AnimBudget.demoted (runtim
 | src/variety.rs:20 | DEFAULT_RATE_JITTER | `0.05` | T |  |
 | src/variety.rs:58 | Variety.rate | `1.0` | T |  |
 
-Stays const: EPS (layout/math/id), GRAPH_FORMAT (layout/math/id), EPS (layout/math/id), LATE_CLIP (sentinel/derived), LOOP_FOREVER (sentinel/derived), Variety.phase (runtime state).
+Stays const: EPS (layout/math/id), LEAN_COUNTER_MAX (opt-out: capacity of a stack scratch array), GRAPH_FORMAT (layout/math/id), EPS (layout/math/id), LATE_CLIP (sentinel/derived), LOOP_FOREVER (sentinel/derived), Variety.phase (runtime state).
 
 ### sf_character (25: T 20, C 4, ? 1)
 
@@ -699,7 +701,7 @@ Stays const: FIRST_DUMMY (layout/math/id).
 | src/brace.rs:93 | BRACE_CONFIRM | `(0.2, 0.08)` | ? |  |
 | src/brace.rs:95 | BRACE_MAX_NORMAL_Y | `0.3` | ? |  |
 | src/brace.rs:99 | PREFER | `Vec3::new(0.8, -1.0, 0.3)` | ? |  |
-| src/command.rs:352 | REPEAT_MISSING_TICKS | `6` | ? |  |
+| src/command.rs:394 | REPEAT_MISSING_TICKS | `6` | ? |  |
 | src/grip.rs:21 | GRIP_LATERAL | `(0.18, 0.32)` | ? |  |
 | src/grip.rs:23 | GRIP_INSET | `0.04` | ? |  |
 | src/grip.rs:25 | GRIP_RISE | `0.03` | ? |  |
@@ -719,7 +721,7 @@ Stays const: FIRST_DUMMY (layout/math/id).
 | src/step.rs:22 | MAX_SETTLE | `4` | T |  |
 | src/step.rs:25 | FORWARD_COS | `0.5` | T |  |
 | src/step.rs:31 | TRAVERSE_INPUT_COS | `0.422_618_27` | T |  |
-| src/step.rs:756 | VAULT_REACH_SLACK | `0.3` | T |  |
+| src/step.rs:761 | VAULT_REACH_SLACK | `0.3` | T |  |
 
 Stays const: BRACE_FINGERS_UP (layout/math/id), CLASSES (small index), LEFT (small index), RIGHT (layout/math/id), RATE_ONE (layout/math/id).
 
@@ -727,8 +729,8 @@ Stays const: BRACE_FINGERS_UP (layout/math/id), CLASSES (small index), LEFT (sma
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/lib.rs:279 | OBSTACLE_RANGE_M | `1.5` | T |  |
-| src/lib.rs:320 | SAME_FACE_COS | `0.985` | T |  |
+| src/lib.rs:281 | OBSTACLE_RANGE_M | `1.5` | T |  |
+| src/lib.rs:322 | SAME_FACE_COS | `0.985` | T |  |
 
 ### sf_camera (39: T 34, C 1, ? 4)
 
@@ -839,19 +841,19 @@ Stays const: FirstPersonParams.eye_forward (layout/math/id).
 | src/motion.rs:86 | SpringParams.halflife_facing | `0.27` | T |  |
 | src/motion.rs:134 | STILL_SPEED | `1e-3` | T |  |
 | src/motion.rs:138 | PREDICT_STEP | `1.0 / 60.0` | T |  |
-| src/mover.rs:26 | DEFLECT_FACING | `0.1` | T |  |
-| src/mover.rs:29 | SLIDE_STOP_S | `0.1` | T |  |
-| src/mover.rs:70 | MoverParams.halflife_height | `0.08` | T |  |
-| src/mover.rs:71 | MoverParams.radius | `0.3` | T |  |
-| src/mover.rs:72 | MoverParams.height | `1.8` | T |  |
-| src/mover.rs:74 | MoverParams.step_down | `0.45` | T |  |
-| src/mover.rs:75 | MoverParams.max_slope_deg | `46.0` | T |  |
-| src/mover.rs:76 | MoverParams.skin | `0.01` | T | settings default |
-| src/mover.rs:77 | MoverParams.wall_stop_deg | `30.0` | T |  |
-| src/mover.rs:78 | MoverParams.gravity | `9.81` | T |  |
-| src/mover.rs:79 | MoverParams.max_fall_speed | `50.0` | T |  |
-| src/mover.rs:80 | MoverParams.ground_radius | `0.0` | T |  |
-| src/mover.rs:81 | MoverParams.swim_depth | `1.35` | T |  |
+| src/mover.rs:27 | DEFLECT_FACING | `0.1` | T |  |
+| src/mover.rs:30 | SLIDE_STOP_S | `0.1` | T |  |
+| src/mover.rs:86 | MoverParams.halflife_height | `0.08` | T |  |
+| src/mover.rs:87 | MoverParams.radius | `0.3` | T |  |
+| src/mover.rs:88 | MoverParams.height | `1.8` | T |  |
+| src/mover.rs:90 | MoverParams.step_down | `0.45` | T |  |
+| src/mover.rs:91 | MoverParams.max_slope_deg | `46.0` | T |  |
+| src/mover.rs:92 | MoverParams.skin | `0.01` | T | settings default |
+| src/mover.rs:93 | MoverParams.wall_stop_deg | `30.0` | T |  |
+| src/mover.rs:94 | MoverParams.gravity | `9.81` | T |  |
+| src/mover.rs:95 | MoverParams.max_fall_speed | `50.0` | T |  |
+| src/mover.rs:96 | MoverParams.ground_radius | `0.0` | T |  |
+| src/mover.rs:97 | MoverParams.swim_depth | `1.35` | T |  |
 | src/path.rs:40 | ArrivalParams.walk_deceleration | `6.0` | T |  |
 | src/path.rs:40 | ArrivalParams.run_deceleration | `3.5` | T |  |
 | src/path.rs:40 | ArrivalParams.cutoff_speed | `0.1` | T |  |
@@ -865,17 +867,17 @@ Stays const: EPS (layout/math/id), COLUMN (small index), MoverParams.step_up (la
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/lib.rs:188 | MEASURE_HALFLIFE | `0.05` | T |  |
-| src/lib.rs:279 | Avoider.priority | `0.0` | T |  |
-| src/lib.rs:281 | Avoider.max_speed | `0.0` | T |  |
-| src/lib.rs:372 | ControllerSettings.enabled | `true` | T | settings default |
-| src/lib.rs:373 | ControllerSettings.avoidance | `true` | T | settings default |
-| src/lib.rs:375 | ControllerSettings.max_dt | `0.1` | T |  |
-| src/lib.rs:376 | ControllerSettings.moving_speed | `0.3` | T |  |
-| src/lib.rs:377 | ControllerSettings.idle_speed | `0.15` | T |  |
-| src/lib.rs:378 | ControllerSettings.stop_speed | `0.25` | T |  |
-| src/lib.rs:382 | ControllerSettings.foot_probe_down | `0.75` | T |  |
-| src/lib.rs:383 | ControllerSettings.foot_probes | `true` | T |  |
+| src/lib.rs:191 | MEASURE_HALFLIFE | `0.05` | T |  |
+| src/lib.rs:282 | Avoider.priority | `0.0` | T |  |
+| src/lib.rs:284 | Avoider.max_speed | `0.0` | T |  |
+| src/lib.rs:375 | ControllerSettings.enabled | `true` | T | settings default |
+| src/lib.rs:376 | ControllerSettings.avoidance | `true` | T | settings default |
+| src/lib.rs:378 | ControllerSettings.max_dt | `0.1` | T |  |
+| src/lib.rs:379 | ControllerSettings.moving_speed | `0.3` | T |  |
+| src/lib.rs:380 | ControllerSettings.idle_speed | `0.15` | T |  |
+| src/lib.rs:381 | ControllerSettings.stop_speed | `0.25` | T |  |
+| src/lib.rs:385 | ControllerSettings.foot_probe_down | `0.75` | T |  |
+| src/lib.rs:386 | ControllerSettings.foot_probes | `true` | T |  |
 
 Stays const: ControllerSettings.foot_probe_up (layout/math/id).
 
@@ -981,7 +983,7 @@ Stays const: GRAPH_RULES_VERSION (layout/math/id), VERSION (layout/math/id), VER
 
 Stays const: Timing.phase (runtime state), UNIT_METERS (unit/format), ANIM_FLAG_AUTO_PLAY (sentinel/derived), ANIM_FLAG_NOT_RANDOM (sentinel/derived), PARTICLE_FLAG_LOCAL_SPACE (sentinel/derived), BSP_ARRAY_FLAG_AT_NODE (sentinel/derived), BASE (small index), DARK (small index), DETAIL (small index), GLOW (small index).
 
-### mw_rpg (14: T 3, C 7, ? 4)
+### mw_rpg (16: T 3, C 9, ? 4)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -993,7 +995,7 @@ Stays const: Timing.phase (runtime state), UNIT_METERS (unit/format), ANIM_FLAG_
 | src/training.rs:46 | TRAINING_HOURS | `2` | T |  |
 | src/training.rs:61 | TrainingOptions.base_skill | `true` | T | settings default |
 
-Stays const: MERCANTILE (small index), PERSONALITY (small index), ActorFacts.id (layout/math/id), MERCANTILE (small index), SPEECHCRAFT (small index), SALT (sentinel/derived), TRAINER_SKILLS (small index).
+Stays const: MERCANTILE (small index), PERSONALITY (small index), ActorFacts.id (layout/math/id), MAX_DEPTH (opt-out: capacity: nesting guard against cyclic lists), SALT (sentinel/derived), MERCANTILE (small index), SPEECHCRAFT (small index), SALT (sentinel/derived), TRAINER_SKILLS (small index).
 
 ### mw_rpg_bevy (6: T 0, C 2, ? 4)
 
@@ -1006,15 +1008,11 @@ Stays const: MERCANTILE (small index), PERSONALITY (small index), ActorFacts.id 
 
 Stays const: EFFECTS_BLOB_VERSION (layout/math/id), STATS_BLOB_VERSION (layout/math/id).
 
-### mw_saves_bevy (2: T 0, C 2, ? 0)
+### mw_saves_bevy (3: T 0, C 3, ? 0)
 
-Stays const: RPG_VERSION (layout/math/id), PLAYER_EXT_VERSION (layout/math/id).
+Stays const: RPG_VERSION (layout/math/id), SCRIPTS_VERSION (layout/math/id), PLAYER_EXT_VERSION (layout/math/id).
 
-### mw_script (2: T 1, C 1, ? 0)
-
-| Where | Name | Value | Cls | Note |
-|---|---|---|---|---|
-| src/interp.rs:27 | DEFAULT_STEP_LIMIT | `100_000` | T |  |
+### mw_script (1: T 0, C 1, ? 0)
 
 Stays const: EMITTER_VERSION (layout/math/id).
 
@@ -1058,6 +1056,10 @@ Stays const: RECORD_HEADER (layout/math/id), RECORD_CHECK (small index), TRACE_F
 | src/lib.rs:25 | HALF_CELL | `GRID_CELL / 2.0` | ? |  |
 | src/lib.rs:26 | CELL_F64 | `GRID_CELL as f64` | ? |  |
 
+### sf_crime (10: T 0, C 10, ? 0)
+
+Stays const: STAT_VIEW_CAPACITY (opt-out: capacity: inline stat slots per view, not a quality/cost trade), CONCEALMENT_SCALE (opt-out: maths: the scale of the concealment-to-visibility map, fixed by ai.md and SightCheck::visibility), StandardDetectionConfig.light_concealment (opt-out: bound from crime.stealth.light_concealment in sf_crime_bevy; 100 keeps an upright still target's visibility = its light, the AI8d2 light-only sight), StandardDetectionConfig.crouched_concealment (opt-out: bound from crime.stealth.crouched_concealment in sf_crime_bevy; Guess: Skyrim/AC crouch hides about a third of a lit target), StandardDetectionConfig.prone_concealment (opt-out: bound from crime.stealth.prone_concealment in sf_crime_bevy; Guess: prone hides more than crouched, MGS/AC), StandardDetectionConfig.speed_free_mps (opt-out: bound from crime.stealth.speed_free_mps in sf_crime_bevy; Guess: a sneak walk reveals nothing), StandardDetectionConfig.speed_reveal_per_mps (opt-out: bound from crime.stealth.speed_reveal_per_mps in sf_crime_bevy; Guess: a 4 m/s run loses 25 points), StandardDetectionConfig.speed_reveal_max (opt-out: bound from crime.stealth.speed_reveal_max in sf_crime_bevy; Guess: a sprint cancels crouch and most darkness), StandardDetectionConfig.behind_concealment (opt-out: bound from crime.stealth.behind_concealment in sf_crime_bevy; Guess: behind hides less than darkness, more than crouch), StandardDetectionConfig.max_concealment (opt-out: bound from crime.stealth.max_concealment in sf_crime_bevy; crime.md range 0..~200).
+
 ### sf_groundcover (10: T 0, C 10, ? 0)
 
 Stays const: FNV_OFFSET (opt-out: FNV-1a 64 offset basis, a hash format constant), FNV_PRIME (opt-out: FNV-1a 64 prime, a hash format constant), GOLDEN_GAMMA (opt-out: SplitMix64 golden-ratio increment, a hash format constant), MIX_A (opt-out: SplitMix64 / Mix13 multiplier, a hash format constant), MIX_B (opt-out: SplitMix64 / Mix13 multiplier, a hash format constant), DOMAIN (opt-out: domain separator so tile (0, 0), MASK_INSIDE_MIN (opt-out: R8 format: a mask texel at or above half-scale counts as inside), MAX_CELLS_PER_AXIS (opt-out: format: cells per axis capped so `n²` cell indices fit a u32), ACCEPT_SCALE (opt-out: maths: 2³², the integer scale of the acceptance threshold), BYTES (layout/math/id).
@@ -1075,6 +1077,10 @@ Stays const: PRESS_CHANNEL (opt-out: format: the ring's channel layout, `sf_surf
 | src/clock.rs:19 | MS_PER_HOUR | `60 * MS_PER_MINUTE` | ? |  |
 | src/clock.rs:21 | MS_PER_HOUR_F64 | `3_600_000.0` | ? |  |
 | src/lib.rs:16 | MAX_PLAYERS | `4` | T |  |
+
+### sf_interaction (11: T 0, C 11, ? 0)
+
+Stays const: InteractParams.priority_ambient (opt-out: bound from interact.claim.priority_ambient in sf_interaction_bevy; Guess, order from UE Smart Objects), InteractParams.priority_schedule (opt-out: bound from interact.claim.priority_schedule in sf_interaction_bevy; Guess), InteractParams.priority_quest (opt-out: bound from interact.claim.priority_quest in sf_interaction_bevy; Guess, = player, roadmap decision 1), InteractParams.priority_player (opt-out: bound from interact.claim.priority_player in sf_interaction_bevy; Guess), InteractParams.lease_s (opt-out: bound from interact.claim.lease_s in sf_interaction_bevy; Guess, spec 2026-11-11), InteractParams.move_tolerance_m (opt-out: bound from interact.claim.move_tolerance_m in sf_interaction_bevy; Guess), InteractParams.move_tolerance_deg (opt-out: bound from interact.claim.move_tolerance_deg in sf_interaction_bevy; Guess), InteractParams.queue_capacity (opt-out: bound from interact.queue.capacity in sf_interaction_bevy; Guess), InteractParams.ticket_lease_s (opt-out: bound from interact.queue.ticket_lease_s in sf_interaction_bevy; Guess), InteractParams.hand_max (opt-out: bound from interact.claim.hand_max in sf_interaction_bevy; Guess, two hands), InteractParams.tick_hz (opt-out: bound from the app's fixed timestep in sf_interaction_bevy; net.md 60 Hz tick).
 
 ### sf_level (1: T 0, C 0, ? 1)
 
@@ -1245,22 +1251,23 @@ Stays const: RIGHT (layout/math/id).
 | src/lib.rs:40 | DEFAULT_STRENGTH | `50.0` | T |  |
 | src/lib.rs:118 | HUMANOID_MASS | `75.0` | T |  |
 
-### sf_physics (46: T 41, C 2, ? 3)
+### sf_physics (47: T 42, C 2, ? 3)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/body.rs:46 | ITEM_DAMPING | `(0.1, 1.5)` | T |  |
-| src/body.rs:202 | PhysicsParams.gravity | `Vec3::new(0.0, -9.81, 0.0)` | T |  |
-| src/body.rs:203 | PhysicsParams.rebase_distance | `512.0` | T |  |
-| src/body.rs:204 | PhysicsParams.mass_range | `(0.2, 60.0)` | T |  |
-| src/body.rs:205 | PhysicsParams.density | `1000.0` | T |  |
-| src/body.rs:206 | PhysicsParams.max_corrective_velocity | `0.5` | T |  |
-| src/body.rs:207 | PhysicsParams.thin_extent | `0.02` | T | settings default |
-| src/body.rs:208 | PhysicsParams.thin_skin | `0.004` | T | settings default |
-| src/body.rs:210 | PhysicsParams.contact_force_threshold | `200.0` | T |  |
-| src/body.rs:213 | PhysicsParams.contact_report_speed | `0.3` | T |  |
-| src/body.rs:215 | PhysicsParams.kill_margin | `10.0` | T |  |
-| src/body.rs:216 | PhysicsParams.rolling_resistance | `20.0` | T | settings default |
+| src/body.rs:66 | ITEM_DAMPING | `(0.1, 1.5)` | T |  |
+| src/body.rs:231 | PhysicsParams.hz | `60.0` | T | settings default |
+| src/body.rs:232 | PhysicsParams.gravity | `Vec3::new(0.0, -9.81, 0.0)` | T |  |
+| src/body.rs:233 | PhysicsParams.rebase_distance | `512.0` | T |  |
+| src/body.rs:234 | PhysicsParams.mass_range | `(0.2, 60.0)` | T |  |
+| src/body.rs:235 | PhysicsParams.density | `1000.0` | T |  |
+| src/body.rs:236 | PhysicsParams.max_corrective_velocity | `0.5` | T |  |
+| src/body.rs:237 | PhysicsParams.thin_extent | `0.02` | T | settings default |
+| src/body.rs:238 | PhysicsParams.thin_skin | `0.004` | T | settings default |
+| src/body.rs:240 | PhysicsParams.contact_force_threshold | `200.0` | T |  |
+| src/body.rs:243 | PhysicsParams.contact_report_speed | `0.3` | T |  |
+| src/body.rs:245 | PhysicsParams.kill_margin | `10.0` | T |  |
+| src/body.rs:246 | PhysicsParams.rolling_resistance | `20.0` | T | settings default |
 | src/carry.rs:58 | HolderLimits.carry_force | `240.0` | T |  |
 | src/carry.rs:58 | HolderLimits.carry_mass | `15.0` | T |  |
 | src/carry.rs:58 | HolderLimits.drag_mass | `120.0` | T |  |
@@ -1296,16 +1303,15 @@ Stays const: RIGHT (layout/math/id).
 
 Stays const: BODY_FORMAT (layout/math/id), ITEMS_FORMAT (layout/math/id).
 
-### sf_physics_bevy (26: T 23, C 2, ? 1)
+### sf_physics_bevy (25: T 22, C 2, ? 1)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/character.rs:39 | CharacterPhysics.impact_threshold | `1.0` | T |  |
-| src/character.rs:108 | TERRAIN_KILL_DEPTH | `2.0` | T |  |
+| src/character.rs:58 | CharacterPhysics.impact_threshold | `1.0` | T |  |
+| src/character.rs:227 | TERRAIN_KILL_DEPTH | `2.0` | T |  |
 | src/debug.rs:27 | PhysicsDebug.enabled | `false` | ? | bool |
 | src/debug.rs:27 | PhysicsDebug.radius | `40.0` | T |  |
 | src/debug.rs:27 | PhysicsDebug.max_lines | `400_000` | T |  |
-| src/lib.rs:102 | PhysicsSettings.hz | `60.0` | T | settings default |
 | src/lib.rs:103 | PhysicsSettings.max_steps_per_frame | `3` | T |  |
 | src/lib.rs:104 | PhysicsSettings.insert_budget_ms | `0.5` | T |  |
 | src/lib.rs:105 | PhysicsSettings.insert_batch | `16` | T |  |
@@ -1424,7 +1430,7 @@ Stays const: PI (layout/math/id), FLAG_SUN (layout/math/id), FLAG_BOUNCE (layout
 
 ## sky-weather-surface
 
-### mw_environment_bevy (7: T 5, C 1, ? 1)
+### mw_environment_bevy (9: T 5, C 3, ? 1)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -1435,7 +1441,7 @@ Stays const: PI (layout/math/id), FLAG_SUN (layout/math/id), FLAG_BOUNCE (layout
 | src/weather.rs:220 | RASTER_MARGIN | `4` | T |  |
 | src/weather.rs:232 | LIVE_HOLD_HOURS | `1.0e6` | T |  |
 
-Stays const: SEED (sentinel/derived).
+Stays const: SEED (sentinel/derived), MU_BED_DEPTH (opt-out: port: must match the bed Magna Urbis carved), JARRETT (opt-out: maths: the published regression's coefficients).
 
 ### mw_weather (29: T 17, C 7, ? 5)
 
@@ -2138,7 +2144,7 @@ Stays const: NON_INDEXED (sentinel/derived), SLOT_BYTES (layout/math/id), SLOT_L
 | src/exterior.rs:1551 | SUN_DEPTH_BIAS | `0.02` | T |  |
 | src/exterior.rs:1553 | SUN_NORMAL_BIAS | `0.8` | T |  |
 | src/gi_volume.rs:49 | INTERIOR_AMBIENT_SCALE | `0.1` | T |  |
-| src/level.rs:373 | SIZE | `128` | T |  |
+| src/level.rs:380 | SIZE | `128` | T |  |
 | src/trails.rs:40 | PLANTED | `0.5` | ? |  |
 | src/trails.rs:43 | DOWN_M | `0.12` | T |  |
 | src/trails.rs:45 | ON_TERRAIN_M | `0.4` | T |  |

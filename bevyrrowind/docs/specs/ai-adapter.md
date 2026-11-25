@@ -262,6 +262,15 @@ episode can pre-empt the return. Routines read `Reaction::owns` (wander and leve
 `apply_reaction_intent` keeps a standing reaction's facing; level path drives run after the corridor. Off the navmesh:
 no reaction. `ReactionStats` preempted / returns / returned / return_failed. Not yet: avoidance for non-wanderers (AI8j).
 
+As built (AI8h2, 2026-11-25): `Phase::React` in the same layer. `Reaction` keeps a `sf_ai::ReactState` (+ the revision its
+`OpRunner` started with); `ReactState::update` runs every tick for every actor with awareness and a perception setup, even
+during a search or off the navmesh (double take and no-re-react need every band change). Order per tick: Search (`Run`),
+a search that ended starts the Return, React (any phase but Search; pre-empts Routine or Return, records the anchor,
+restarts the operators on a new revision, Walk gait), then the Return steps. An idle goal (band dropped, hold over)
+returns to the anchor. Curious = face the stimulus; Suspicious walks one `react_step_m` toward the LKP and stands facing
+it (no creep). Tunables `ai.perception.react_{step_m,retarget_m,hold_s,face_delay_s}` bound into
+`AiPerceptionSettings.react` (`sf_ai_bevy/src/perception.rs`). A Curious wanderer now stops to look.
+
 ## Open questions
 
 None open. Decided 2026-11-08 (owner-delegated; `superfargoth/docs/research/ai-nav-decisions-2026-11-08.md` (e), (f),

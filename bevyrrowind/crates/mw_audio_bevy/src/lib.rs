@@ -323,7 +323,7 @@ struct Boots {
 #[cfg(feature = "dev")]
 impl Boots {
     /// What an NPC record wears on its feet: the same auto-equip pick that dresses it
-    /// (`MwActors::default_equipment`: leveled items resolved, beast races without boots).
+    /// (`MwActors::default_equipment`: levelled lists rolled by record, beast races without boots).
     fn of(&self, id: &RecordId) -> Footwear {
         use mw_actors::equip::{EquipSlot, Item, WeightClass, auto_equip, npc_skills};
         let Some(npc) = self.db.get::<tes3::esp::Npc>(id) else { return Footwear::Bare };
@@ -331,12 +331,9 @@ impl Boots {
             .db
             .get::<tes3::esp::Race>(&RecordId::new(&npc.race))
             .is_some_and(|r| r.data.flags.contains(tes3::esp::RaceFlags::BEAST_RACE));
-        let items = npc
-            .inventory
-            .iter()
-            .filter(|(count, _)| *count != 0)
-            .filter_map(|(_, item)| mw_actors::held::leveled_item_pick(&self.db, item.as_str()));
-        let worn = auto_equip(&self.db, &self.rules, items, &npc_skills(&self.db, npc), beast);
+        let inventory = npc.inventory.iter().map(|(count, item)| (*count, item.as_str()));
+        let items = mw_actors::held::inventory_items(&self.db, id, inventory, mw_actors::held::LevelledSeed::BY_RECORD);
+        let worn = auto_equip(&self.db, &self.rules, items.iter().map(RecordId::as_str), &npc_skills(&self.db, npc), beast);
         match worn.iter().find(|(slot, _)| *slot == EquipSlot::Boots) {
             Some((_, Item::Armor(boots))) => match self.rules.weight_class(boots) {
                 WeightClass::Light => Footwear::Light,

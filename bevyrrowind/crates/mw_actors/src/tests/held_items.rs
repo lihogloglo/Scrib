@@ -2,10 +2,11 @@
 //! shields, torches at night, mounts and visibility.
 
 use sf_character::{Hand, Readiness};
-use tes3::esp::{AtmosphereData, Cell, CellData, CellFlags, LeveledItem, Light, LightData, LightFlags, Weapon, WeaponData, WeaponType as W};
+use sf_ids::ActorKey;
+use tes3::esp::{AtmosphereData, Cell, CellData, CellFlags, LeveledItem, LeveledItemFlags, Light, LightData, LightFlags, Weapon, WeaponData, WeaponType as W};
 
 use super::*;
-use crate::held::{self, CarriedLeft, DayCycle, HeldContext, bone};
+use crate::held::{self, CarriedLeft, DayCycle, HeldContext, LevelledSeed, bone};
 
 fn weapon(db: &mut RecordDb, src: sf_records::SourceId, id: &str, weapon_type: W, damage: [u8; 3]) {
     let [chop_max, slash_max, thrust_max] = damage;
@@ -54,13 +55,6 @@ fn db() -> RecordDb {
         light("torch", LightFlags::CAN_CARRY | LightFlags::FLICKER | LightFlags::FIRE | LightFlags::OFF_BY_DEFAULT),
     )
     .unwrap();
-    let list = |id: &str, items: &[(&str, u16)]| LeveledItem {
-        id: id.into(),
-        items: items.iter().map(|(i, l)| ((*i).to_owned(), *l)).collect(),
-        ..Default::default()
-    };
-    db.define(src, RecordId::new("random_axe"), list("random_axe", &[("big_axe", 5), ("axe", 1), ("same_axe", 1)])).unwrap();
-    db.define(src, RecordId::new("random_any"), list("random_any", &[("random_axe", 2), ("stars", 3)])).unwrap();
     db
 }
 
@@ -198,11 +192,46 @@ fn darkness_rule() {
     );
 }
 
-/// Scaffold: leveled item lists in an inventory hold their lowest-level item.
+/// DQ-5f5: an NPC's inventory list rolls like a container (`OpenMW` `getLevelledItem`): chance
+/// none 0 gives an item from the list at the player's level, the same actor key the same pick
+/// (other keys their own); chance none 100 gives nothing.
 #[test]
-fn leveled_lists_pick_the_lowest_level() {
-    let db = db();
-    assert_eq!(held::leveled_item_pick(&db, "random_axe"), Some("axe"));
-    assert_eq!(held::leveled_item_pick(&db, "random_any"), Some("axe"));
-    assert_eq!(held::leveled_item_pick(&db, "torch"), Some("torch"));
+fn inventory_lists_roll_per_actor_like_a_container() {
+    let mut db = content();
+    db.register::<Weapon>("WEAP").unwrap();
+    db.register::<LeveledItem>("LEVI").unwrap();
+    let src = db.add_source("levelled", &[]);
+    for id in ["axe_a", "axe_b", "axe_c", "axe_high"] {
+        weapon(&mut db, src, id, W::AxeOneHand, [10, 5, 1]);
+    }
+    let list = |id: &str, chance_none: u8, items: &[(&str, u16)]| LeveledItem {
+        id: id.into(),
+        chance_none,
+        leveled_item_flags: LeveledItemFlags::CALCULATE_FROM_ALL_LEVELS,
+        items: items.iter().map(|(i, l)| ((*i).to_owned(), *l)).collect(),
+        ..Default::default()
+    };
+    let axes = list("random_axe", 0, &[("axe_a", 1), ("axe_b", 2), ("axe_c", 3), ("axe_high", 20)]);
+    db.define(src, RecordId::new("random_axe"), axes).unwrap();
+    db.define(src, RecordId::new("no_axe"), list("no_axe", 100, &[("axe_a", 1)])).unwrap();
+    npc(&mut db, src, "guard_axe", "Dark Elf", false, &["random_axe"], [30; 27]);
+    npc(&mut db, src, "guard_none", "Dark Elf", false, &["no_axe"], [30; 27]);
+    let a = MwActors::with_probe(Arc::new(db), Arc::new(Vfs::builder().build()), Box::new(|_: &VfsPath| None));
+    let get = |id: &str| a.db().get::<Npc>(&RecordId::new(id)).unwrap();
+    let pick = |npc: &str, seed: LevelledSeed| a.npc_loadout(get(npc), HeldContext::default(), seed).weapon.map(|w| w.id.clone());
+    let mut picks = std::collections::BTreeSet::new();
+    for key in 0..16 {
+        let seed = LevelledSeed::new(ActorKey(key), 5);
+        let first = pick("guard_axe", seed).expect("chance none 0 always gives an item");
+        assert!(["axe_a", "axe_b", "axe_c"].contains(&first.as_str()), "{first}: not a level <= 5 entry");
+        assert_eq!(pick("guard_axe", seed).as_deref(), Some(first.as_str()), "same actor, same pick");
+        picks.insert(first);
+        assert_eq!(pick("guard_none", seed), None, "chance none 100 gives nothing");
+    }
+    assert!(picks.len() > 1, "each actor rolls its own pick, not the lowest level: {picks:?}");
+    let by_record = pick("guard_axe", LevelledSeed::BY_RECORD);
+    assert!(by_record.is_some() && by_record == pick("guard_axe", LevelledSeed::BY_RECORD));
+    let worn = |npc: &str| held::inventory_items(a.db(), &RecordId::new(npc), get(npc).inventory.iter().map(|(n, i)| (*n, i.as_str())), LevelledSeed::BY_RECORD);
+    assert_eq!(worn("guard_none"), Vec::<RecordId>::new());
+    assert_eq!(worn("guard_axe").len(), 1);
 }

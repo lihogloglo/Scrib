@@ -1992,3 +1992,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-25 (interaction, owner): quick replies instead of a greet/antagonise button: when an NPC addresses the
   player, 2-3 short timed replies appear without the dialogue window (DQ-39; AI49 temperament, AI50 personal space).
   Persuasion as quick verbs, gestures and quick asks stay proposals (gta6.md), not planned.
+- 2026-11-26 (owner, gameplay-roadmaps-6): NV11 (NPC portal crossing) and the AI slices that need it (AI10 tier 0, AI12
+  doors, AI8c3) are unparked: build them headless now, ahead of seamless portals (M9a/M9b); in-game checks wait for
+  portals. AI hub runs whole stages (Stage 1 rest: MA2 packages, MA4 Hello/Fight/Flee/Alarm; Stage 2 from AI9).

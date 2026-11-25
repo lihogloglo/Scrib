@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use mw_actors::MwActors;
-use mw_actors::held::{self, DayCycle, HeldContext, bone};
+use mw_actors::held::{self, DayCycle, HeldContext, LevelledSeed, bone};
 use mw_graphs::Stance;
 use mw_install::MorrowindInstall;
 use sf_character::{CharacterSource, CharacterState, Readiness};
@@ -40,7 +40,7 @@ fn npcs_hold_weapons_shields_and_torches() {
     let mut torch_example = None;
     for (id, npc) in db.iter::<Npc>() {
         npcs += 1;
-        let l = a.npc_loadout(npc, day);
+        let l = a.npc_loadout(npc, day, LevelledSeed::BY_RECORD);
         let stance = Stance::of_weapon(Readiness::Drawn, l.weapon_type());
         *stances.entry(stance.name().to_owned()).or_default() += 1;
         if npc.class.eq_ignore_ascii_case("guard") {
@@ -57,14 +57,14 @@ fn npcs_hold_weapons_shields_and_torches() {
             }
         }
         torches_day += usize::from(l.light().is_some());
-        let n = a.npc_loadout(npc, night);
+        let n = a.npc_loadout(npc, night, LevelledSeed::BY_RECORD);
         if let Some(light) = n.light() {
             torches_night += 1;
             torch_example.get_or_insert_with(|| (id.clone(), light.id.clone()));
         }
         // Every chosen item's model is in the VFS (`held_items` skips missing ones).
         let expected = usize::from(n.weapon.is_some()) + usize::from(n.carried_left.is_some());
-        let items = a.held("NPC_", id, night).unwrap();
+        let items = a.held("NPC_", id, night, LevelledSeed::BY_RECORD).unwrap();
         if items.len() != expected {
             missing += 1;
             eprintln!("{id}: {} of {expected} held models found", items.len());
@@ -83,7 +83,7 @@ fn npcs_hold_weapons_shields_and_torches() {
     assert!(stances.len() >= 5, "stances {stances:?}");
 
     // A guard's recipe holds its weapon (default context: daylight).
-    let guard = db.iter::<Npc>().find(|(_, n)| n.class.eq_ignore_ascii_case("guard") && a.npc_loadout(n, day).weapon.is_some()).unwrap().0.clone();
+    let guard = db.iter::<Npc>().find(|(_, n)| n.class.eq_ignore_ascii_case("guard") && a.npc_loadout(n, day, LevelledSeed::BY_RECORD).weapon.is_some()).unwrap().0.clone();
     let recipe = a.recipe("NPC_", &guard, &CharacterState::default()).unwrap();
     let weapon = recipe.held.iter().find(|h| h.drawn.as_ref().is_some_and(|m| m.socket == bone::WEAPON)).expect("guard weapon");
     assert!(weapon.sheathed.is_none() && vfs.contains(&weapon.model));
@@ -91,7 +91,7 @@ fn npcs_hold_weapons_shields_and_torches() {
 
     // The torch item carries its light at the flame node.
     if let Some((id, _)) = &torch_example {
-        let items = a.held("NPC_", id, night).unwrap();
+        let items = a.held("NPC_", id, night, LevelledSeed::BY_RECORD).unwrap();
         let record = a.db().get::<tes3::esp::Light>(&RecordId::new(&torch_example.as_ref().unwrap().1)).unwrap();
         eprintln!("torch record {:?} mesh {}", record.data, record.mesh);
         let torch = items.iter().find(|h| h.light.is_some()).expect("torch light");
@@ -102,7 +102,7 @@ fn npcs_hold_weapons_shields_and_torches() {
     let (mut boneoffset, mut rooted, mut models) = (0, 0, 0);
     let mut seen = std::collections::HashSet::new();
     for (_, npc) in db.iter::<Npc>() {
-        for l in [a.npc_loadout(npc, night), a.npc_loadout(npc, day)] {
+        for l in [a.npc_loadout(npc, night, LevelledSeed::BY_RECORD), a.npc_loadout(npc, day, LevelledSeed::BY_RECORD)] {
             let meshes = l.weapon.map(|w| w.mesh.clone()).into_iter().chain(l.light().map(|x| x.mesh.clone()));
             for mesh in meshes.chain(l.shield().map(|s| held::shield_mesh(db, s, false).to_owned())) {
                 let Some(path) = mw_world::model_path(&mesh).and_then(|p| sf_vfs::VfsPath::new(&p).ok()) else { continue };
@@ -130,7 +130,7 @@ fn npcs_hold_weapons_shields_and_torches() {
     let armed: Vec<String> = db
         .iter::<Creature>()
         .filter(|(_, c)| c.creature_flags.contains(CreatureFlags::WEAPON_AND_SHIELD))
-        .filter(|(_, c)| a.creature_loadout(c, day).weapon.is_some())
+        .filter(|(_, c)| a.creature_loadout(c, day, LevelledSeed::BY_RECORD).weapon.is_some())
         .map(|(id, _)| id.as_str().to_owned())
         .collect();
     let flagged = db.iter::<Creature>().filter(|(_, c)| c.creature_flags.contains(CreatureFlags::WEAPON_AND_SHIELD)).count();

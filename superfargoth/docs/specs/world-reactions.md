@@ -1,14 +1,15 @@
 # World reactions: noticing, suspecting, responding, picking up, resetting (`sf_ai` + `sf_interaction`)
 
-Status: design 2026-11-11 (ROADMAP 3.11), nothing built. Research:
+Status: design 2026-11-11 (ROADMAP 3.11), nothing built; interaction lane additions 2026-11-26 (IN30: doors, levers,
+lights, fire, landings; reset at rest, holder link, `burnt` class). Research:
 [world-reactions-2026-11-11](../research/world-reactions-2026-11-11.md). The "use" half (slots, claims, carrying,
 destruction, mounts) is [interaction.md](interaction.md); this is the "react" half. Touches [ai.md](ai.md) "Perception
 and stimuli", "Memory and relationships", "Drives", "Tiers and budget"; [crime.md](crime.md) `OffenceAttempt`,
 `WitnessQuery`, `StolenLedger`; [save.md](save.md) `sf/overlay`; [net.md](net.md).
 
 <!-- agent-summary -->
-> **Agent summary.** Interaction and combat emit `WorldChange` events (destroyed, displaced, occupied, opened, dropped,
-> taken, killed). Witnesses are found at event time; everything else becomes a bounded per-cell **concern** that NPCs
+> **Agent summary.** Interaction and combat emit `WorldChange` events (destroyed, displaced, occupied, doors, locks,
+> levers, lights, fire, landed props, dropped, taken, killed; table in "WorldChange vocabulary"). Witnesses are found at event time; everything else becomes a bounded per-cell **concern** that NPCs
 > discover by tier (sight for tier 2, room pass for tier 1, schedule edge for tier 0). A `Notice` drive picks a
 > response from data (`ConcernRules`): ignore, glance, bark, investigate, confront, report, tidy, flee. Unwitnessed
 > harm raises **suspicion** on candidates the victim's evidence points to. NPCs are full culprits too (theft, looting,
@@ -61,10 +62,9 @@ Gaps kept on purpose: no global alarm state; no open-ended NPC goals that can br
 ## Pipeline
 
 1. **Emit** (`sf_interaction`, IN14). `WorldChange { tick, kind, object, at, culprit: Option<Culprit>, owner,
-   home: Option<PlacementId> }`, `Culprit = Player(PlayerKey) | Actor(ActorRef)`. Kinds (records, adapter-extendable):
-   `Destroyed`, `Displaced` (diff against the authored placement, never a scan), `Occupied` (an owned seat or bed in use
-   by a non-owner), `Opened`, `LockBroken`, `Dropped`, `Spilled`, `Taken`, `Killed` (a body exists). Sources: IN1
-   breaking, IN2/IN3 seats and beds, IN6/IN9 moving, lock rules, combat deaths, inventory drops.
+   home: Option<PlacementId>, cause: Option<TagId> }`, `Culprit = Player(PlayerKey) | Actor(ActorRef)`, `cause` the
+   verb or rule tag that made the change (a torch, water, an impact, a bash). Kinds and sources: "WorldChange
+   vocabulary" below.
 2. **Attribute at event time.** The crime `WitnessQuery` (LOS + awareness, tier-independent, ai.md) runs once. Witnesses
    get the concern with the culprit known; if the change is an offence, crime gets an `OffenceAttempt` as today.
 3. **Concern board** (host, per cell; AI19). `Concern { kind, object, at, culprit: Known(Culprit) | Unknown,
@@ -87,6 +87,39 @@ Gaps kept on purpose: no global alarm state; no open-ended NPC goals that can br
 7. **Consequences** (AI25). `ConsequenceRules` (records): fact thresholds → effects (disposition delta, price
    modifier, refuse service, ban from premises, grudge directive Nemesis-style, bounty only through crime). Shipped
    defaults are data and tuned in play.
+
+## WorldChange vocabulary (IN14)
+
+Kinds are records (adapter-extendable); the framework ships the rows below. **One event per transition** (a door that
+opens emits one `Opened`, not one per swing frame; a bouncing prop one `Landed`). Every event carries the common
+fields (placement `object`, `at`, `culprit`, `owner`, `home`, `cause`); the column lists what is specific. "Feeds" is
+the concern the shipped `ConcernRules` defaults raise (AI19 kinds, AI28 `Fire`, `Darkened`, `Nuisance`, `Trespass`);
+the response is still the ladder's choice (an owner opening their own door is `Ignore`).
+
+| Kind | Emitted by | Carries | Feeds |
+|---|---|---|---|
+| `Opened`, `Closed` | IN33 `DoorChanged` (doors, containers) | door or container placement, user | `Trespass` (non-owner opens an owned door or container); `Closed` merges the matching concern |
+| `Locked`, `Unlocked` | shell, on crime's `LockState` change through the activation gate (crime.md decision 8) | lock placement, user, `cause` (key, spell, pick) | `Trespass` (non-owner unlocks); a pick or force is crime's offence, not ours |
+| `Bashed` | IN37 `Bashed`, each blow | `force` (from the core event) | `Nuisance` (noise via IN18); `Trespass` when owned |
+| `LockBroken` | crime settles `broken` after a bash (IN37) | lock placement | AI19 harm (vandalism if owned) |
+| `Switched` | IN34 `LeverChanged`, each toggle | new position | none by default: the linked targets emit their own kinds |
+| `Snuffed`, `Relit` | IN19 `LightChanged` | light placement; `culprit` `None` for a rule (water) | `Darkened` (`Snuffed`); `Relit` merges it away; AI27 dusk lamps relight |
+| `Ignited` | fire (IN17 / IN39): an object reaching `ignite_heat`, or a burn region's first burning cell | burning placement or region cell, `cause` = the source tag; `culprit` from the source's user (torch, spell) or the parent fire's | `Fire` (high severity: flee, report, douse rungs) |
+| `Burnt` | an object swapped to `burnt_stage` (`Charred`), a burn region's fire out | stage, culprit inherited from `Ignited` | AI19 harm (owner discovery; suspicion when unknown), AI24 replace |
+| `Landed` | a thrown or released held prop coming to rest (sleeps) | rest pose, thrower or dropper as culprit | `Nuisance` for a witness who saw the throw (crime `WitnessQuery`); a placed object also goes through `Displaced` |
+| `Destroyed` | IN1 final stage (melee, impact, fire, bash) | last stage, `cause` | AI19 harm (vandalism if owned) |
+| `Displaced` | IN6/IN9 moves at rest, diffed against the authored placement (never a scan) | offset from `home` | AI19 harm; AI24 tidy |
+| `Occupied` | IN2/IN3: an owned seat or bed in use by a non-owner | slot | AI19 |
+| `Dropped`, `Spilled`, `Taken` | inventory drops, IN1 spill, takes | item, container | AI19; IN16 adverts |
+| `Killed` | combat deaths (a body exists) | body | AI19 |
+
+- **Noise is separate.** The sound of a door, bash, drop or landing is `InteractionNoise` at first impact
+  ([interaction-world-rules.md](interaction-world-rules.md) "Noise"); `WorldChange` is the lasting state change. A
+  noise only fills `Distraction`; a seen thrower makes `Landed` a `Nuisance` (IN36 makes a seen hit an assault).
+- **Fire is bounded.** Burn cells never emit one event each: a region emits one `Ignited` for its first burning cell
+  and one `Burnt` when its fire is out; the concern board merges a blaze into one `Fire` per room or region.
+- **`Dropped` vs `Landed`:** `Dropped` is inventory to world (ownership, IN16); `Landed` is a prop at rest after a
+  throw or a release. An inventory item that falls emits both, once each.
 
 ## Suspicion (owner answer 2)
 
@@ -145,20 +178,32 @@ owned, wild, dungeon, pinned), so "it depends" is data. Defaults, from shipped g
 | Bodies (non-named) | guards or kin remove at their next shift (≤ 24 h) | 72 h | OpenMW `fCorpseClearDelay` 72 h |
 | Respawn (spawn records) | 72 h | 72 h | OpenMW `fCorpseRespawnDelay` |
 | Broken / moved objects | owner tidies at the next schedule edge | 10 days (cell reset) | Skyrim `iHoursToRespawnCell` |
+| Burnt (charred objects, burnt vegetation swaps) | owner replaces (AI24, restocked placement) at the next schedule edge | 10 days (cell reset) | as broken |
+| Door, lever, light state | owner restores at a schedule edge (close behind, AI27 relights at dusk) | authored state at the 10-day cell reset | as broken |
 | Owned stock | restock window (adapter) | - | adapter |
 | Pinned | never: player-stored, quest items, named bodies, player homes, "never reset" places | never | Skyrim "Never Resets" |
 
 - Reconcile on cell load: `elapsed = now - last_seen`; per delta: expired → drop; owner tidy due → apply "put back";
   else keep. Cost proportional to deltas (< 1 ms for hundreds).
+- **Saved at rest** ([interaction-carry.md](interaction-carry.md) "Persistence"): a moved body's delta stores its last
+  sleeping pose; one that never slept since it spawned is placed on the floor below it. No delta holds an item
+  mid-air, and reconcile never spawns one falling.
+- **Holder link wins on stream-out.** A held prop is not a cell delta: it travels with its holder across cells and
+  saves as the holder's link; once placed it becomes a delta of the cell it rests in. A prop in flight when its cell
+  unloads is placed at its holder's last position (floor below), then classed as above.
+- **Burnt ground is not a delta.** Burn cells save in the `interaction` blob and regrow in closed form over
+  `interact.burn.regrow_h` (owner: fast); [interaction-world-rules.md](interaction-world-rules.md) "Ground burn grid".
+  Only charred objects and vegetation swaps take the `burnt` class.
 - Save growth: `persistence` + `born` on spawned `sf/overlay` entries; per-cell cap 256 deltas (ephemeral first, then
   oldest); facts aggregated; concerns not saved.
 - Co-op: host game time; any player present in a cell blocks its reset.
 
 ## Data records (all mod-patchable, adapter ships defaults)
 
-`ConcernRules` (kind × relation → ladder, severities), `SuspicionRules` (weights, window, threshold, decay),
-`ConsequenceRules` (fact thresholds → effects), `ResetRules` (class × place kind → ttl), `LootRules` (roles → adverts,
-offending traits). The framework ships the mechanism and neutral defaults; numbers are tuned in play.
+`WorldChangeKinds` (kind ids, default severity, concern kind fed; the IN14 table), `ConcernRules` (kind × relation →
+ladder, severities), `SuspicionRules` (weights, window, threshold, decay), `ConsequenceRules` (fact thresholds →
+effects), `ResetRules` (class × place kind → ttl; classes include `burnt` and door/lever/light state), `LootRules`
+(roles → adverts, offending traits). The framework ships the mechanism and neutral defaults; numbers are tuned in play.
 
 ## Net, save, cost
 
@@ -172,8 +217,8 @@ offending traits). The framework ships the mechanism and neutral defaults; numbe
 
 | Slice | Deliverable | Depends on | Verify |
 |---|---|---|---|
-| IN14 | `WorldChange` vocabulary + authored-placement diff, emitted by interaction, lock, combat and drop paths | IN0, IN1, IN6 | exact: one event per transition; displaced = diff |
-| IN15 | `ResetRules`, persistence classes, `born`/ttl on overlay entries, per-cell cap, lazy reconcile | IN1, `sf/overlay` | exact: expiry math, eviction order, round trip, old saves load |
+| IN14 | `WorldChange` vocabulary (table above) + authored-placement diff, emitted by door, lock, bash, lever, light, fire, landing, destruction, combat and drop paths | IN0, IN1, IN6, IN33 | exact: one event per transition; displaced = diff; one `Ignited`/`Burnt` per burn region |
+| IN15 | `ResetRules`, persistence classes (incl. `burnt`, door/lever/light state), `born`/ttl on overlay entries, per-cell cap, lazy reconcile, at-rest snap, holder link on stream-out | IN1, IN30, `sf/overlay` | exact: expiry math, eviction order, round trip, old saves load, no mid-air delta, held prop follows its holder |
 | LW10 | `Culprit` in `OffenceAttempt` / `OffenceObserved`, NPC culprits through witness, ledger, reactions | LW2, LW6 | exact: NPC theft witnessed and not, ledger rows |
 | AI19 | `ConcernBoard`: kinds, merge, cap, severity, ttl, per-cell index, fed by IN14 + witness query | AI8, IN14 | exact: merge, eviction, attribution |
 | AI20 | `Notice` drive + `ConcernRules` + Glance/Bark rungs | AI7, AI19 | exact scores, rate limit, tier invariance |

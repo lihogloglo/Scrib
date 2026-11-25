@@ -40,8 +40,10 @@
 
 use glam::{Affine3A, Quat, Vec3};
 use sf_character::{Hand, HeldItem, HeldLight, Mount};
+use mw_rpg::{LevelledRoll, initial_items};
+use sf_ids::ActorKey;
 use sf_records::{RecordDb, RecordId};
-use tes3::esp::{Armor, ArmorType, BipedObjectType, Bodypart, Cell, CellFlags, LeveledItem, Light, LightFlags, SkillId, Weapon, WeaponType};
+use tes3::esp::{Armor, ArmorType, BipedObjectType, Bodypart, Cell, CellFlags, Light, LightFlags, SkillId, Weapon, WeaponType};
 
 /// Attach bones of the humanoid skeletons (and of weapon-carrying creatures).
 pub mod bone {
@@ -343,18 +345,55 @@ pub fn held_items(
     out
 }
 
-/// **Scaffold** (`leveled item pick`, like [`crate::leveled_pick`] for
-/// creatures): an inventory entry naming a leveled item list (`LEVI`) holds
-/// the list's lowest-level item (ties: the first), following nested lists,
-/// ignoring `chance_none`; other ids pass through. Used for held items only
-/// (guards' `Random Weapon`/`Random Shield` lists); worn items still skip
-/// lists. Removal: `sf_rpg` resolves inventories when an actor is
-/// instantiated (player level, a seeded roll) and hands the adapter items.
-pub fn leveled_item_pick<'a>(db: &'a RecordDb, id: &'a str) -> Option<&'a str> {
-    let mut id = id;
-    for _ in 0..8 {
-        let Some(list) = db.get::<LeveledItem>(&RecordId::new(id)) else { return Some(id) };
-        id = list.items.iter().min_by_key(|(_, level)| *level)?.0.as_str();
+/// The levelled-list roll of one actor's inventory (DQ-5f5): its stable key and the player's
+/// level. Each entry rolls with the words a container's entry rolls with (`mw_rpg_bevy`
+/// `container_roll`: key halves, entry index, level), so an actor's inventory rolls like a
+/// container placed with the same key, and the same actor gives the same pick every time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LevelledSeed {
+    /// The actor's placement or spawn key; `None` keys the roll by the base record instead
+    /// (callers that only know the record: [`LevelledSeed::BY_RECORD`]).
+    pub actor: Option<ActorKey>,
+    /// The player's level (`PcLevel`, `getLevelledItem`'s input).
+    pub player_level: u16,
+}
+
+impl LevelledSeed {
+    /// For callers with neither a placement key nor the player's level: the
+    /// `CharacterSource::recipe` path, which names only the base record. Keyed by the base
+    /// record's id, at level 1 (a new character's), so every path dressing a record agrees.
+    pub const BY_RECORD: Self = Self { actor: None, player_level: 1 };
+
+    /// The roll of `actor` at `player_level`.
+    pub const fn new(actor: ActorKey, player_level: u16) -> Self {
+        Self { actor: Some(actor), player_level }
     }
-    None
+
+    /// The draw stream of entry `index` of `base`'s inventory.
+    #[allow(clippy::cast_possible_truncation, reason = "splits the u128 key into its two u64 halves")]
+    fn roll(self, base: &RecordId, index: usize) -> LevelledRoll {
+        let key = self.actor.unwrap_or_else(|| record_key(base)).0;
+        LevelledRoll::new(&[key as u64, (key >> 64) as u64, index as u64, u64::from(self.player_level)])
+    }
+}
+
+/// A stable key for a base record (FNV-1a 64 over its lowercase id).
+fn record_key(id: &RecordId) -> ActorKey {
+    /// FNV-1a 64 offset basis and prime.
+    const BASIS: u64 = 0xCBF2_9CE4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01B3;
+    ActorKey(u128::from(id.as_str().bytes().fold(BASIS, |h, b| (h ^ u64::from(b)).wrapping_mul(PRIME))))
+}
+
+/// The items `base`'s `inventory` (count, item or `LEVI` list) holds once filled: every entry
+/// through [`entry_items`], one id per item given, in roll order. Counts of 0 give nothing.
+pub fn inventory_items<'s>(db: &RecordDb, base: &RecordId, inventory: impl IntoIterator<Item = (i32, &'s str)>, seed: LevelledSeed) -> Vec<RecordId> {
+    inventory.into_iter().enumerate().flat_map(|(index, (count, item))| entry_items(db, base, index, count, item, seed)).collect()
+}
+
+/// The items entry `index` of `base`'s inventory (`count` of `item`) gives: [`mw_rpg::initial_items`]
+/// with the entry's own roll from `seed` (chance none, player level, nested lists).
+pub fn entry_items(db: &RecordDb, base: &RecordId, index: usize, count: i32, item: &str, seed: LevelledSeed) -> Vec<RecordId> {
+    let mut roll = seed.roll(base, index);
+    initial_items(db, &RecordId::new(item), count, seed.player_level, &mut roll).into_iter().map(|(item, _)| item).collect()
 }

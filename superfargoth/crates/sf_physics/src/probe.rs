@@ -275,7 +275,7 @@ impl GroundProbe for PhysicsProbe<'_> {
     /// thrown ball were a wall and hit it twice (Jolt `CharacterVirtual` leaves this to the
     /// app, `mCanPushCharacter`). Characters' capsules are outside the movers' layers.
     fn contacts(&self, queries: &[ProbeQuery], out: &mut [Option<GroundHit>]) {
-        let dt = self.world.params().dt;
+        let dt = self.world.params().dt();
         let reach = self.contact_reach(dt);
         for (q, o) in queries.iter().zip(out.iter_mut()) {
             *o = self.contact(q, reach, dt);

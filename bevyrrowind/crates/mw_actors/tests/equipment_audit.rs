@@ -22,6 +22,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use mw_actors::equip::{EquipSlot, Item};
+use mw_actors::held::LevelledSeed;
 use mw_actors::slots::{PART_SLOTS, PRT_COUNT, prt};
 use mw_actors::{MwActors, wearable_id};
 use mw_install::MorrowindInstall;
@@ -186,9 +187,10 @@ fn every_npc_shows_its_equipment() {
     for (id, npc) in &npcs {
         let female = npc.npc_flags.contains(NpcFlags::FEMALE);
         let beast = db.get::<Race>(&RecordId::new(&npc.race)).is_some_and(|r| r.data.flags.contains(RaceFlags::BEAST_RACE));
-        let equipped = a.default_equipment(npc);
+        let equipped = a.default_equipment(npc, LevelledSeed::BY_RECORD);
         // Inventory armor/clothing auto-equip leaves out.
-        let inventory: Vec<&str> = npc.inventory.iter().filter(|(n, _)| *n != 0).filter_map(|(_, i)| mw_actors::held::leveled_item_pick(db, i.as_str())).collect();
+        let inventory = mw_actors::held::inventory_items(db, id, npc.inventory.iter().map(|(n, i)| (*n, i.as_str())), LevelledSeed::BY_RECORD);
+        let inventory: Vec<&str> = inventory.iter().map(RecordId::as_str).collect();
         if beast {
             let human = mw_actors::equip::auto_equip(db, &mw_actors::equip::EquipRules::from_db(db), inventory.iter().copied(), &mw_actors::equip::npc_skills(db, npc), false);
             for (slot, item) in &human {
@@ -217,13 +219,14 @@ fn every_npc_shows_its_equipment() {
                 }
             }
         }
-        for entry in npc.inventory.iter().filter(|(n, _)| *n != 0).map(|(_, i)| i.as_str()) {
-            if db.get::<tes3::esp::LeveledItem>(&RecordId::new(entry)).is_none() {
+        for (index, (count, entry)) in npc.inventory.iter().map(|(n, i)| (*n, i.as_str())).enumerate() {
+            if count == 0 || db.get::<tes3::esp::LeveledItem>(&RecordId::new(entry)).is_none() {
                 continue;
             }
-            let Some(pick) = mw_actors::held::leveled_item_pick(db, entry).and_then(|p| Item::find(db, &RecordId::new(p))) else { continue };
+            let picks = mw_actors::held::entry_items(db, id, index, count, entry, LevelledSeed::BY_RECORD);
+            let Some(pick) = picks.first().and_then(|p| Item::find(db, p)) else { continue };
             if equipped.iter().any(|(_, i)| i.id() == pick.id()) {
-                c.add("fixed: leveled-list item now worn (scaffold pick)", || format!("{id}: {entry} -> {}", pick.id()));
+                c.add("fixed: leveled-list item now worn (rolled pick)", || format!("{id}: {entry} -> {}", pick.id()));
             } else {
                 c.add("legit: leveled-list item picked, not worn (outranked/undrawn)", || format!("{id}: {entry} -> {}", pick.id()));
             }

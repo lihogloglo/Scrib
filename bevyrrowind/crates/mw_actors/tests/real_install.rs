@@ -102,7 +102,7 @@ fn npcs_and_creatures_dress_from_the_records() {
     let mut guards: Vec<&RecordId> = db
         .iter::<Npc>()
         .filter(|(_, n)| n.class.eq_ignore_ascii_case("guard") && n.race.eq_ignore_ascii_case("imperial"))
-        .filter(|(_, n)| a.default_equipment(n).iter().any(|(s, _)| *s == EquipSlot::Helmet))
+        .filter(|(_, n)| a.default_equipment(n, mw_actors::held::LevelledSeed::BY_RECORD).iter().any(|(s, _)| *s == EquipSlot::Helmet))
         .map(|(id, _)| id)
         .collect();
     guards.sort();

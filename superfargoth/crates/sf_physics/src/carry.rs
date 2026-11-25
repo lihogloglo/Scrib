@@ -407,7 +407,7 @@ impl Carrier {
 
     /// After a fixed step: the item relative to the hand, and the break check.
     pub fn after_step(&mut self, world: &mut PhysicsWorld) -> Option<CarryEnd> {
-        let dt = world.params().dt;
+        let dt = world.params().dt();
         let break_distance = self.params.break_distance;
         let break_time = self.params.break_time;
         let g = self.grab.as_mut()?;
@@ -455,7 +455,7 @@ impl Carrier {
         let g = self.grab.as_ref()?;
         let (body, mode, mass) = (g.body, g.mode, g.mass);
         let hand_velocity = match (g.target_prev, g.target) {
-            (Some(a), Some(b)) => a.pos.delta(b.pos).as_vec3() / world.params().dt,
+            (Some(a), Some(b)) => a.pos.delta(b.pos).as_vec3() / world.params().dt(),
             _ => Vec3::ZERO,
         };
         let view = self.views[1].map(|(_, v)| v);

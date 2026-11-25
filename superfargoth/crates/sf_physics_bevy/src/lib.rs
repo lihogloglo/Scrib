@@ -2,7 +2,8 @@
 //! "Streaming").
 //!
 //! - [`PhysicsPlugin`] steps the **active worldspace's** world in
-//!   `FixedUpdate` at 60 Hz, at most [`PhysicsSettings::max_steps_per_frame`]
+//!   `FixedUpdate` at [`PhysicsParams::hz`] (60), the one physics rate (the
+//!   bodies integrate `1 / hz` per step), at most [`PhysicsSettings::max_steps_per_frame`]
 //!   steps per frame (beyond that physics time dilates instead of
 //!   spiralling). Before each step the world follows [`PhysicsFocus`] (the
 //!   streaming anchor): whole-cell rebases, independent of the render
@@ -74,8 +75,6 @@ pub use stream::{
 /// Plugin settings (physics.md defaults).
 #[derive(Resource, Clone, Debug)]
 pub struct PhysicsSettings {
-    /// Fixed steps per second.
-    pub hz: f64,
     /// More fixed steps than this in one frame are dropped (time dilates).
     pub max_steps_per_frame: u32,
     /// Main-thread time per frame for inserting bodies (shapes are built on the
@@ -101,7 +100,6 @@ pub struct PhysicsSettings {
 impl Default for PhysicsSettings {
     fn default() -> Self {
         Self {
-            hz: 60.0,
             max_steps_per_frame: 3,
             insert_budget_ms: 0.5,
             insert_batch: 16,
@@ -244,6 +242,7 @@ pub enum PhysicsSystems {
 /// Fixed-step physics for the active worldspace (see the crate docs).
 #[derive(Default)]
 pub struct PhysicsPlugin {
+    /// World parameters; [`PhysicsParams::hz`] also sets `Time<Fixed>`.
     pub params: PhysicsParams,
     pub settings: PhysicsSettings,
 }
@@ -252,7 +251,7 @@ impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Physics { worlds: PhysicsWorlds::default(), params: self.params.clone(), terrain: None })
             .insert_resource(self.settings.clone())
-            .insert_resource(Time::<Fixed>::from_hz(self.settings.hz))
+            .insert_resource(Time::<Fixed>::from_hz(self.params.hz))
             .init_resource::<PhysicsFocus>()
             .init_resource::<PhysicsStats>()
             .init_resource::<PhysicsStreaming>()

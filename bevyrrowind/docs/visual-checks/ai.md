@@ -71,4 +71,4 @@ Log: `ai: N wanderers on navmesh, M on pathgrid fallback (since start: X navmesh
   clearly slower and he notices you much later (headless: 1.00 vs 0.24 at 90 ticks in 0.40 light). Lit lane (x -48):
   sneaking still slows it, less. Sprinting gives you away (fast movement reveals). Behind him you stay hidden longer.
 - Weights are Guess tunables `crime.stealth.*`, live since LW4b2 (e.g. `--set crime.stealth.crouched_concealment=60`). Morrowind's sneak skill formula is MA5.
-- Status: owner 2026-11-25 "seems to work but no guard is ever moving": Curious/Suspicious reactions never built (AI8h1/h2), search guard didn't search (AI47c diagnosis). Re-check after AI8h2.
+- Status: owner 2026-11-25 "seems to work but no guard is ever moving": Curious/Suspicious reactions never built (AI8h1/h2), search guard didn't search (AI47c diagnosis). AI8h2 + AI8i done 2026-11-25: re-check: a guard at Curious turns to face you, at Suspicious walks ~3 m toward where he saw you and stands facing it, then walks back to his post when the band drops.

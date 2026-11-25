@@ -264,10 +264,10 @@ impl EquipRules {
 
 /// The items an NPC equips from `items` (ids, inventory order): one per
 /// slot, in [`EquipSlot`] order. Shields are left to the held-item rules.
-pub fn auto_equip<'a>(
+pub fn auto_equip<'a, 'i>(
     db: &'a RecordDb,
     rules: &EquipRules,
-    items: impl IntoIterator<Item = &'a str>,
+    items: impl IntoIterator<Item = &'i str>,
     skills: &[f32; 27],
     beast: bool,
 ) -> Vec<(EquipSlot, Item<'a>)> {

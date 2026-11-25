@@ -36,7 +36,7 @@ fn query() -> ProbeQuery {
 /// A world at `hz` with ground and a wall of `kind` whose +x face starts `behind` m behind
 /// the capsule's surface (−x).
 fn world(hz: f32, kind: BodyKind, behind: f32) -> (PhysicsWorld, BodyId, WorldPos) {
-    let mut w = PhysicsWorld::new(WorldPos::ORIGIN, PhysicsParams { dt: 1.0 / hz, ..PhysicsParams::default() });
+    let mut w = PhysicsWorld::new(WorldPos::ORIGIN, PhysicsParams { hz: f64::from(hz), ..PhysicsParams::default() });
     ground(&mut w, base());
     let start = capsule().offset(Vec3::new(-RADIUS - behind - WALL.x, 0.0, 0.0));
     let wall = w.insert(&BodyDesc::new(kind, at(start), ShapeRef::Box(WALL), Layer::STATIC));

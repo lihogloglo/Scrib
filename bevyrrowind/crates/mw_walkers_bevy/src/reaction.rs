@@ -20,9 +20,16 @@
 //!   first reaction tick the actor's position and yaw become its **anchor** (where the routine was
 //!   pre-empted: a stationary NPC's post, a path actor's place on its path, a wanderer's place in
 //!   its disc); restarts and re-searches keep the first anchor.
-//! - **Return**: the search gave up (ttl) or the band left Searching: walk back to the anchor
+//! - **React** (`AI8h2`, `sf_ai::react`): the strongest entry is Curious (turn toward the last known
+//!   position) or Suspicious (step [`sf_ai::ReactConfig::step_m`] toward it, then turn), after the
+//!   double take. Each actor's [`ReactState`] (on its [`Reaction`]) is updated every tick, and its
+//!   goal's operators restart whenever its revision changes; a finished goal stands facing the
+//!   stimulus until the band drops (or the goal re-targets). The search wins: React is only chosen
+//!   when no search runs, and a Searching band idles the reaction. Same pre-emption as the search
+//!   (the anchor is taken on entry); a goal that goes idle starts the Return.
+//! - **Return**: the search gave up (ttl), the band left Searching, or a React goal went idle: walk back to the anchor
 //!   (`MoveTo`, through the same corridor) and turn to its yaw (`Face`); a fresh Searching episode
-//!   on the way pre-empts the return. When it finishes (or its walk fails) the routine gets the
+//!   (or a new React goal) on the way pre-empts the return. When it finishes (or its walk fails) the routine gets the
 //!   actor back: a wander re-chooses from there.
 //!
 //! While a reaction owns the actor ([`Reaction::owns`]) the routines stay off the intent: the
@@ -30,11 +37,9 @@
 //! [`apply_reaction_intent`] restores a stand's facing after the corridor's idle reset
 //! ([`ReactionSystems::Apply`], after [`NavSystems::Corridor`]; level drives order after it).
 //!
-//! **Seam for `AI8h2`** (Curious / Suspicious reactions from `sf_ai::react`): a new [`Phase`]
-//! variant chosen in [`react`]'s arbitration next to the search (same pre-emption: the anchor is
-//! taken on entry, the Return phase follows), its goal's `[first, second]` operators run by an
-//! [`OpRunner`] exactly as the Return phase does. Nothing else changes for the routines: they only
-//! read [`Reaction::owns`].
+//! **Arbitration order** in [`react`] each tick: the search (`Run`: Search), then a search that
+//! ended starts the Return, then React (any phase but Search; it pre-empts Routine and Return), then
+//! the Return steps. The routines only read [`Reaction::owns`].
 //!
 //! Off the navmesh (fliers, swimmers, the pathgrid fallback, no resident tile) there is no reaction
 //! (its moves need the corridor): a running one is dropped and the routine keeps the actor.
@@ -45,9 +50,9 @@ use bevy_math::Vec3;
 use bevy_time::prelude::*;
 use sf_ai::{
     ExecConfig, ExecContext, ExecGait, ExecOutput, FaceTarget, MoveOperatorIds, NavCommand, OperatorExec, OperatorKind,
-    OperatorStatus,
+    OperatorStatus, ReactConfig, ReactGoal, ReactInput, ReactState,
 };
-use sf_ai_bevy::{AiActor, AiAwareness, AiEffectivePerception, AiExecSettings};
+use sf_ai_bevy::{AiActor, AiAwareness, AiEffectivePerception, AiExecSettings, AiPerceptionSettings};
 use sf_controller::LocomotionIntent;
 use sf_controller_bevy::{Avoider, ControllerSystems, Dormant, MoveIntent, Mover, MoverMode};
 use sf_coords::WorldPos;
@@ -84,6 +89,8 @@ pub enum Phase {
     Routine,
     /// A search runs ([`Searcher`]).
     Search,
+    /// A Curious / Suspicious reaction runs (`sf_ai::react`).
+    React,
     /// Walking back to the anchor, then turning to its yaw.
     Return,
 }
@@ -99,6 +106,8 @@ pub struct ReactionStats {
     pub returned: u32,
     /// Returns whose walk failed (no path, no progress): the routine resumed where the actor stood.
     pub return_failed: u32,
+    /// Curious / Suspicious goals started (one per [`ReactState`] revision run).
+    pub reacts: u32,
 }
 
 /// An actor's perception-reaction state (`AI8i`, module docs).
@@ -110,8 +119,12 @@ pub struct Reaction {
     phase: Phase,
     /// Where the routine was pre-empted: position and yaw.
     anchor: Option<(WorldPos, f32)>,
-    /// The Return phase's operators.
+    /// The React and Return phases' operators.
     runner: OpRunner,
+    /// The Curious / Suspicious reaction (`AI8h2`), updated every tick from the awareness.
+    react: ReactState,
+    /// The [`ReactState::revision`] whose operators the runner holds (React phase only).
+    react_rev: Option<u32>,
     /// A stand's intent, restored after the corridor's idle reset.
     held: Option<LocomotionIntent>,
     pub stats: ReactionStats,
@@ -136,6 +149,11 @@ impl Reaction {
         self.anchor
     }
 
+    /// The Curious / Suspicious reaction state.
+    pub fn react_state(&self) -> &ReactState {
+        &self.react
+    }
+
     fn preempt(&mut self, pos: WorldPos, yaw: f32) {
         if self.phase == Phase::Routine {
             self.anchor = Some((pos, yaw));
@@ -149,6 +167,7 @@ impl Reaction {
             return;
         };
         self.phase = Phase::Return;
+        self.react_rev = None;
         self.stats.returns += 1;
         self.runner.start([
             Some(OperatorKind::MoveTo {
@@ -166,6 +185,33 @@ impl Reaction {
         self.anchor = None;
         self.held = None;
         self.runner = OpRunner::default();
+        self.react_rev = None;
+    }
+
+    /// Runs a non-idle React `goal` (pre-empting the routine or a return), restarting its operators
+    /// when the reaction re-targeted, and steps them; `None` while standing after the goal ended.
+    fn step_react(
+        &mut self,
+        goal: ReactGoal,
+        ctx: &ExecContext,
+        cfg: &ExecConfig,
+        ops: MoveOperatorIds,
+        speed: f32,
+    ) -> Option<ExecOutput> {
+        self.preempt(ctx.location.pos, ctx.yaw);
+        let rev = self.react.revision();
+        if self.phase != Phase::React || self.react_rev != Some(rev) {
+            self.phase = Phase::React;
+            self.react_rev = Some(rev);
+            self.stats.reacts += 1;
+            // A stand held from an earlier goal must not turn the actor back.
+            self.held = None;
+            self.runner.start(goal.operators(&ctx.location.worldspace, ExecGait::Walk, speed, cfg.face_tolerance_rad));
+        }
+        match self.runner.step(ctx, cfg, ops) {
+            RunStep::Running(o) => Some(o),
+            RunStep::Done { .. } => None,
+        }
     }
 }
 
@@ -259,6 +305,7 @@ pub(crate) fn add(app: &mut App) {
 fn react(
     time: Res<Time>,
     exec_settings: Option<Res<AiExecSettings>>,
+    perception: Option<Res<AiPerceptionSettings>>,
     meshes: Option<Res<NavMeshes>>,
     mut queries: Option<ResMut<NavQueries>>,
     search_world: SearchWorld,
@@ -272,6 +319,7 @@ fn react(
     >,
 ) {
     let exec_cfg = exec_settings.map_or_else(ExecConfig::default, |s| s.config);
+    let react_cfg = perception.map_or_else(ReactConfig::default, |s| s.react);
     let dt = time.delta_secs().min(0.1);
     for (
         (entity, mover, space, actor),
@@ -287,8 +335,18 @@ fn react(
         let pos = mover.loco.position;
         let yaw = mover.loco.motion.yaw;
         let loc = Location::new(space.0.clone(), pos);
+        // AI8h2: the Curious / Suspicious reaction advances every tick (its double take and spent
+        // placement need every band change), whatever runs.
+        let react_goal = if let (Some(aw), Some(setup)) = (awareness.as_deref(), setup.as_ref()) {
+            let top = aw.0.strongest().map(ReactInput::from);
+            reaction.react.update(&react_cfg, top, pos, setup.now)
+        } else {
+            reaction.react = ReactState::new();
+            ReactGoal::None
+        };
+        let reacts = react_goal != ReactGoal::None;
         // Fast path: nothing to react to and nothing running (no navmesh query).
-        let on_navmesh = (wants || reaction.owns())
+        let on_navmesh = (wants || reacts || reaction.owns())
             && matches!(mover.loco.mode, MoverMode::Ground)
             && meshes.as_ref().is_some_and(|m| m.0.nearest(&loc, nav.class, DEFAULT_EXTENT, &nav.filter).is_some());
         let mut out = None;
@@ -317,6 +375,21 @@ fn react(
             if out.is_none() && reaction.phase == Phase::Search {
                 // The search gave up (ttl) or the band left Searching: back to the anchor.
                 reaction.start_return(&loc, speed, &exec_cfg);
+            }
+            if reaction.phase != Phase::Search {
+                if reacts {
+                    out = reaction.step_react(react_goal, &ctx, &exec_cfg, search_world.vocab().0.operators, speed);
+                    if out.is_none() && reaction.held.is_none() {
+                        // The goal ended without a stand to hold (already facing): stand here.
+                        clear_corridor_goal(&mut nav, queries.as_deref_mut());
+                        let stand = LocomotionIntent { desired_facing: Some(yaw), ..LocomotionIntent::IDLE };
+                        intent.0 = stand;
+                        reaction.held = Some(stand);
+                    }
+                } else if reaction.phase == Phase::React {
+                    // The band dropped or the hold is over: back to the anchor.
+                    reaction.start_return(&loc, speed, &exec_cfg);
+                }
             }
             if reaction.phase == Phase::Return {
                 match reaction.runner.step(&ctx, &exec_cfg, search_world.vocab().0.operators) {

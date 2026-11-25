@@ -15,7 +15,7 @@ use tes3::esp::{
 };
 
 use crate::equip::{self, EquipRules, EquipSlot, Item};
-use crate::held::{self, HeldContext, Loadout};
+use crate::held::{self, HeldContext, LevelledSeed, Loadout};
 use crate::slots::{self, FIRST_PERSON, PART_SLOTS, PRT_COUNT, prt};
 
 /// Record kinds [`MwActors::recipe`] takes.
@@ -342,32 +342,40 @@ impl MwActors {
         }
     }
 
-    /// The items an NPC wears by default, in equip slot order. Leveled list
-    /// entries (`random_armor_chitin`, guards' helmets) hold the scaffold
-    /// [`held::leveled_item_pick`], as for held items: the original resolves
-    /// them when the actor spawns.
-    pub fn default_equipment<'a>(&'a self, npc: &'a Npc) -> Vec<(EquipSlot, Item<'a>)> {
+    /// The items an NPC wears by default, in equip slot order. Levelled list
+    /// entries (`random_armor_chitin`, guards' helmets) roll with `seed`
+    /// ([`held::inventory_items`]), as the original fills them when the actor spawns.
+    pub fn default_equipment<'a>(&'a self, npc: &'a Npc, seed: LevelledSeed) -> Vec<(EquipSlot, Item<'a>)> {
         let beast = self.db.get::<Race>(&RecordId::new(&npc.race)).is_some_and(|r| r.data.flags.contains(RaceFlags::BEAST_RACE));
         let skills = equip::npc_skills(&self.db, npc);
-        let items = npc.inventory.iter().filter(|(count, _)| *count != 0).filter_map(|(_, id)| held::leveled_item_pick(&self.db, id.as_str()));
-        equip::auto_equip(&self.db, &self.rules, items, &skills, beast)
+        let items = self.npc_items(npc, seed);
+        equip::auto_equip(&self.db, &self.rules, items.iter().map(RecordId::as_str), &skills, beast)
     }
 
-    /// The weapon, shield or light an NPC holds ([`held`]).
-    pub fn npc_loadout<'a>(&'a self, npc: &'a Npc, ctx: HeldContext) -> Loadout<'a> {
+    /// What an NPC's inventory holds once its levelled lists roll with `seed`.
+    fn npc_items(&self, npc: &Npc, seed: LevelledSeed) -> Vec<RecordId> {
+        held::inventory_items(&self.db, &RecordId::new(&npc.id), npc.inventory.iter().map(|(count, id)| (*count, id.as_str())), seed)
+    }
+
+    /// The weapon, shield or light an NPC holds ([`held`]), its levelled
+    /// lists rolled with `seed`.
+    pub fn npc_loadout<'a>(&'a self, npc: &'a Npc, ctx: HeldContext, seed: LevelledSeed) -> Loadout<'a> {
         let skills = equip::npc_skills(&self.db, npc);
-        let items: Vec<&str> = npc.inventory.iter().filter(|(count, _)| *count != 0).filter_map(|(_, id)| held::leveled_item_pick(&self.db, id.as_str())).collect();
+        let items = self.npc_items(npc, seed);
+        let items: Vec<&str> = items.iter().map(RecordId::as_str).collect();
         held::auto_held(&self.db, &items, &skills, ctx)
     }
 
     /// The held items of a creature: only with the `Weapon and Shield` flag,
     /// every weapon skill counting as its combat skill.
     #[allow(clippy::cast_precision_loss)]
-    pub fn creature_loadout<'a>(&'a self, crea: &'a Creature, ctx: HeldContext) -> Loadout<'a> {
+    pub fn creature_loadout<'a>(&'a self, crea: &'a Creature, ctx: HeldContext, seed: LevelledSeed) -> Loadout<'a> {
         if !crea.creature_flags.contains(CreatureFlags::WEAPON_AND_SHIELD) {
             return Loadout::default();
         }
-        let items: Vec<&str> = crea.inventory.iter().filter(|(count, _)| *count != 0).filter_map(|(_, id)| held::leveled_item_pick(&self.db, id.as_str())).collect();
+        let inventory = crea.inventory.iter().map(|(count, id)| (*count, id.as_str()));
+        let items = held::inventory_items(&self.db, &RecordId::new(&crea.id), inventory, seed);
+        let items: Vec<&str> = items.iter().map(RecordId::as_str).collect();
         held::auto_held(&self.db, &items, &[crea.data.combat as f32; 27], ctx)
     }
 
@@ -375,16 +383,18 @@ impl MwActors {
     /// context (dark, in combat), as `CharacterState::held` takes them.
     /// Recipes without a held override use the default context (daylight,
     /// no combat); the host re-evaluates at dusk, dawn and cell changes.
-    pub fn held(&self, kind: &str, id: &RecordId, ctx: HeldContext) -> Result<Vec<HeldItem>, CharacterError> {
+    /// Levelled item lists roll with `seed` (the recipe's own pick uses
+    /// [`LevelledSeed::BY_RECORD`]).
+    pub fn held(&self, kind: &str, id: &RecordId, ctx: HeldContext, seed: LevelledSeed) -> Result<Vec<HeldItem>, CharacterError> {
         let unknown = || CharacterError::UnknownBase { kind: kind.to_owned(), id: id.clone() };
         if kind.eq_ignore_ascii_case(NPC_KIND) {
             let npc = self.db.get::<Npc>(id).ok_or_else(unknown)?;
-            Ok(self.held_items(&self.npc_loadout(npc, ctx), npc.npc_flags.contains(NpcFlags::FEMALE)))
+            Ok(self.held_items(&self.npc_loadout(npc, ctx, seed), npc.npc_flags.contains(NpcFlags::FEMALE)))
         } else if kind.eq_ignore_ascii_case(CREATURE_KIND) {
-            Ok(self.held_items(&self.creature_loadout(self.db.get::<Creature>(id).ok_or_else(unknown)?, ctx), false))
+            Ok(self.held_items(&self.creature_loadout(self.db.get::<Creature>(id).ok_or_else(unknown)?, ctx, seed), false))
         } else if kind.eq_ignore_ascii_case(LEVELED_CREATURE_KIND) {
             let (kind, id) = leveled_pick(&self.db, id).ok_or_else(unknown)?;
-            self.held(kind, &id, ctx)
+            self.held(kind, &id, ctx, seed)
         } else {
             Err(unknown())
         }
@@ -445,7 +455,7 @@ impl MwActors {
         let head = self.body_part(&npc.head, prt::HEAD).filter(|_| !npc.head.is_empty());
         let hair = self.body_part(&npc.hair, prt::HAIR).filter(|_| !npc.hair.is_empty());
         let worn = if let Some(ids) = &state.worn { self.order_worn(ids.iter().map(|id| id.as_str().split('#').next().unwrap_or_default()), female) } else {
-            let equipped = self.default_equipment(npc);
+            let equipped = self.default_equipment(npc, LevelledSeed::BY_RECORD);
             self.order_worn(equipped.iter().map(|(_, item)| item.id()), female)
         };
         let (w, h) = if female { (race.data.weight[1], race.data.height[1]) } else { (race.data.weight[0], race.data.height[0]) };
@@ -480,7 +490,7 @@ impl MwActors {
             head,
             hair,
             worn,
-            held: state.held.clone().unwrap_or_else(|| self.held_items(&self.npc_loadout(npc, HeldContext::default()), female)),
+            held: state.held.clone().unwrap_or_else(|| self.held_items(&self.npc_loadout(npc, HeldContext::default(), LevelledSeed::BY_RECORD), female)),
             // Height on Y, build on X and Z (engine space).
             scale: Vec3::new(w, h, w),
             graph: self.config.humanoid_graph.clone(),
@@ -515,7 +525,7 @@ impl MwActors {
             head: None,
             hair: None,
             worn: Vec::new(),
-            held: state.held.clone().unwrap_or_else(|| self.held_items(&self.creature_loadout(crea, HeldContext::default()), false)),
+            held: state.held.clone().unwrap_or_else(|| self.held_items(&self.creature_loadout(crea, HeldContext::default(), LevelledSeed::BY_RECORD), false)),
             scale: Vec3::splat(crea.scale.unwrap_or(1.0)),
             // Biped creatures (dremora, golden saints, skeletons) play the
             // humanoid groups (`xbase_anim` layered under their own): the

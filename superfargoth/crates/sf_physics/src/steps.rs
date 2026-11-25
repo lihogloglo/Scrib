@@ -378,7 +378,7 @@ fn lowest(pose: &WorldTransform, shape: &BodyShape) -> f64 {
 /// which flagged a third of a vanilla install's clutter (ROADMAP M4 P3/P4).
 pub fn settle(world: &mut PhysicsWorld, items: &[SettleItem], settings: &CheckSettings) -> Vec<ItemCheck> {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let steps = (settings.settle_time / world.params().dt).ceil() as usize;
+    let steps = (settings.settle_time / world.params().dt()).ceil() as usize;
     let bottoms: Vec<f64> = items.iter().map(bottom).collect();
     let mut order: Vec<usize> = (0..items.len()).collect();
     order.sort_by(|&a, &b| bottoms[a].total_cmp(&bottoms[b]).then(a.cmp(&b)));

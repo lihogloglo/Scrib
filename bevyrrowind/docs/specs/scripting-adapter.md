@@ -303,6 +303,11 @@ schedules them. Reference OpenMW `apps/openmw/mwscript/globalscripts.cpp`, `mwwo
   record's `container_seed` list without seeding); levelled entries (DQ-5f4) roll at seed via `mw_rpg::initial_items`/`levelled_item` (OpenMW
   getLevelledItem + addInitialItem), a splitmix64 stream per (placement key, entry index, player level), so the read
   before opening equals the store after (a level-up before the first opening changes it, as in OpenMW).
+- **Actor inventories (DQ-5f5):** NPC/creature LEVI entries (worn, held, loadout) roll through the same
+  `mw_rpg::initial_items` with the container roll words, seeded by `mw_actors::held::LevelledSeed { actor, player_level }`.
+  Every caller today passes `LevelledSeed::BY_RECORD` (no placement key: FNV-1a of the base id, level 1), so all actors
+  of one base get the same pick; a per-placement seed needs it carried in `CharacterState` (DQ-5f6) so dusk held-item
+  swaps don't re-roll.
 - **Time and menus** (rule 6). `GetSecondsPassed` = the fixed-tick dt. The step also runs while a menu is open
   (`MenuMode` 1) even when game time is paused; what `GetSecondsPassed` returns then is checked in DQ-8.
 - **Randomness.** `Random` draws from a generator seeded by host tick and instance key (deterministic, net-ready).

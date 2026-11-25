@@ -177,8 +177,9 @@ pub enum PhysicsEvent {
 /// World parameters. Defaults are the physics.md values.
 #[derive(Clone, Debug)]
 pub struct PhysicsParams {
-    /// Fixed step, seconds.
-    pub dt: f32,
+    /// Fixed steps per second: the one physics rate. The worlds integrate
+    /// [`Self::dt`] per step and the Bevy plugin runs `FixedUpdate` at this rate.
+    pub hz: f64,
     pub gravity: Vec3,
     /// The anchor moves (by whole grid cells) when the focus is farther than this, meters.
     pub rebase_distance: f32,
@@ -215,10 +216,19 @@ pub struct PhysicsParams {
     pub rolling_resistance: f32,
 }
 
+impl PhysicsParams {
+    /// The fixed step, seconds: `1 / hz`.
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn dt(&self) -> f32 {
+        (1.0 / self.hz) as f32
+    }
+}
+
 impl Default for PhysicsParams {
     fn default() -> Self {
         Self {
-            dt: 1.0 / 60.0,
+            hz: 60.0,
             gravity: Vec3::new(0.0, -9.81, 0.0),
             rebase_distance: 512.0,
             mass_range: (0.2, 60.0),

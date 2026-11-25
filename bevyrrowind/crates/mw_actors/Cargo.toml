@@ -16,7 +16,11 @@ sf_anim.workspace = true
 mw_nif.workspace = true
 # `model_path` (mesh field → VFS path).
 mw_world.workspace = true
+# Levelled item lists in inventories (`held::inventory_items`: OpenMW's roll, DQ-5f5).
+mw_rpg.workspace = true
 sf_character.workspace = true
+# `ActorKey`: the levelled roll's actor key.
+sf_ids.workspace = true
 sf_records.workspace = true
 sf_vfs.workspace = true
 tes3 = { workspace = true, features = ["esp"] }

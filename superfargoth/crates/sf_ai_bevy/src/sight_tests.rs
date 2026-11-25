@@ -301,6 +301,11 @@ fn tunable_defaults_match_the_core_defaults() {
             a.notify_confidence_mul,
         ]
     );
+    let react = settings.react;
+    assert_eq!(
+        [p::REACT_STEP_M, p::REACT_RETARGET_M, p::REACT_HOLD_S, p::REACT_FACE_DELAY_S].map(|d| d.default_value()),
+        [react.step_m, react.retarget_m, react.hold_s, react.face_delay_s]
+    );
     assert_eq!(p::MAX_RAYS_PER_TICK.default_value(), b.max_rays_per_tick);
     assert_eq!(p::MAX_ENTRIES.default_value() as usize, a.max_entries);
     assert_eq!(p::NOTIFY_MAX_HOPS.default_value(), u32::from(a.notify_max_hops));

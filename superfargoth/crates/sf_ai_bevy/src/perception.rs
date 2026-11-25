@@ -15,7 +15,7 @@ use bevy_ecs::prelude::*;
 use glam::Vec3;
 use sf_ai::{
     AwarenessConfig, AwarenessMeter, EffectivePerception, LightConfig, PerceptTarget, PerceptionProfile, PerceptionState,
-    PerceptionStates, SearchConfig, SearchPatternConfig, SightBudget, SightConfig, SightTimer,
+    PerceptionStates, ReactConfig, SearchConfig, SearchPatternConfig, SightBudget, SightConfig, SightTimer,
 };
 use sf_coords::WorldPos;
 use sf_records::{RecordDb, RecordId};
@@ -112,6 +112,22 @@ pub const SEARCH_INNER_FRAC: Def<f32> = gp(def!(float "ai.perception.search_inne
     .range(0.0, 1.0)
     .unit(Unit::Ratio)
     .help("A ring point's nearest distance as a fraction of the ring radius (AI8f)"));
+pub const REACT_STEP_M: Def<f32> = gp(def!(float "ai.perception.react_step_m" = 3.0)
+    .range(0.0, 10.0)
+    .unit(Unit::Meters)
+    .help("How far a Suspicious actor steps toward the last known position (AI8h; a few strides, AC/Hitman suspicious walk)"));
+pub const REACT_RETARGET_M: Def<f32> = gp(def!(float "ai.perception.react_retarget_m" = 1.5)
+    .range(0.0, 10.0)
+    .unit(Unit::Meters)
+    .help("A last known position moved farther than this from the reaction's anchor re-targets at once (AI8h; about one stride)"));
+pub const REACT_HOLD_S: Def<f32> = gp(def!(float "ai.perception.react_hold_s" = 2.0)
+    .range(0.0, 10.0)
+    .unit(Unit::Seconds)
+    .help("A smaller move re-targets the reaction only after this long since its goal was issued (AI8h; no flicker)"));
+pub const REACT_FACE_DELAY_S: Def<f32> = gp(def!(float "ai.perception.react_face_delay_s" = 0.3)
+    .range(0.0, 2.0)
+    .unit(Unit::Seconds)
+    .help("The double take: delay from first noticing to the first Curious/Suspicious reaction (AI8h; human reaction ~0.2-0.3 s)"));
 
 pub const CURIOUS: Def<f32> = gp(def!(float "ai.awareness.curious" = 0.1)
     .range(0.0, 1.0)
@@ -242,6 +258,10 @@ pub const PERCEPTION_TUNABLES: &[&dyn AnyDef] = &[
     &SEARCH_LOOK_HALF_DEG,
     &SEARCH_UNCERTAIN_MUL,
     &SEARCH_INNER_FRAC,
+    &REACT_STEP_M,
+    &REACT_RETARGET_M,
+    &REACT_HOLD_S,
+    &REACT_FACE_DELAY_S,
     &CURIOUS,
     &SUSPICIOUS,
     &SEARCHING,
@@ -286,6 +306,8 @@ pub struct AiPerceptionSettings {
     pub light: LightConfig,
     /// Hearing (`AI8c`, [`crate::hearing`]).
     pub hearing: HearingConfig,
+    /// Curious / Suspicious band reactions (`AI8h`, `sf_ai::react`).
+    pub react: ReactConfig,
 }
 
 macro_rules! bind {
@@ -317,6 +339,10 @@ pub fn add_perception_tunables(app: &mut App) {
     bind!(app, SEARCH_LOOK_HALF_DEG, |s, v| s.search_pattern.look_half_deg = v);
     bind!(app, SEARCH_UNCERTAIN_MUL, |s, v| s.search_pattern.uncertain_mul = v);
     bind!(app, SEARCH_INNER_FRAC, |s, v| s.search_pattern.inner_frac = v);
+    bind!(app, REACT_STEP_M, |s, v| s.react.step_m = v);
+    bind!(app, REACT_RETARGET_M, |s, v| s.react.retarget_m = v);
+    bind!(app, REACT_HOLD_S, |s, v| s.react.hold_s = v);
+    bind!(app, REACT_FACE_DELAY_S, |s, v| s.react.face_delay_s = v);
     bind!(app, CURIOUS, |s, v| s.awareness.curious = v);
     bind!(app, SUSPICIOUS, |s, v| s.awareness.suspicious = v);
     bind!(app, SEARCHING, |s, v| s.awareness.searching = v);
