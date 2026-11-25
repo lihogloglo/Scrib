@@ -982,9 +982,13 @@ impl Compiler<'_> {
                 OpSpec::SpineBend { spine, gain, max_angle, halflife, max_lod } => {
                     (Op::SpineBend { spine: weights(self, spine)?, gain: *gain, max_angle: *max_angle, halflife: *halflife }, *max_lod)
                 }
-                OpSpec::Lean { joints, gain, max_angle, grade, halflife, gate, max_lod } => {
+                OpSpec::Lean { joints, counter, gain, max_angle, grade, halflife, gate, max_lod } => {
                     let gate = gate.as_deref().map(|n| self.param_of_type(n, &[ParamType::Bool, ParamType::Float])).transpose()?;
-                    (Op::Lean { joints: weights(self, joints)?, gain: *gain, max_angle: *max_angle, grade: *grade, halflife: *halflife, gate }, *max_lod)
+                    let (joints, counter) = (weights(self, joints)?, weights(self, counter)?);
+                    if counter.len() > crate::compiled::LEAN_COUNTER_MAX {
+                        return Err(format!("Lean takes at most {} counter joints", crate::compiled::LEAN_COUNTER_MAX));
+                    }
+                    (Op::Lean { joints, counter, gain: *gain, max_angle: *max_angle, grade: *grade, halflife: *halflife, gate }, *max_lod)
                 }
                 OpSpec::LimbIk { limb, target, weight, rotation, max_lod } => {
                     let leg = self.out.legs[self.out.leg(limb).ok_or_else(|| format!("unknown limb {limb:?}"))?].clone();

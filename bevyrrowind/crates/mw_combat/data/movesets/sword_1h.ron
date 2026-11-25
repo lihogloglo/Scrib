@@ -152,10 +152,16 @@
         ),
         "roll": (
             category: Dodge, classes: [Dodge], from: [Any], rank: 10,
-            slots: ["dodge.roll.fwd"], rate: 1.25, root_scale: 0.75, square_up: Stick,
+            slots: ["dodge.roll.fwd"], rate: 1.6, root_scale: 0.75, square_up: Stick,
             cost: 12.0, iframes: [(0.02, 0.40, All)],
-            // Cancels open as the motion ends (Roll: 99% of its travel by clip 0.87 s = move 0.69 s), no settle tail.
-            windows: [Cancel([Light, Heavy], 0.70, End), Cancel([Dodge], 0.72, End), Cancel([Move], 0.74, End), NoTurn(0.0, End)],
+            // Roll's root runs at a constant speed and stops at clip 0.867 s (mw_bake
+            // `roll_root_travel_against_time`, base_anim): at rate 1.6 the travel ends at move 0.54 s
+            // and the move is 0.92 s. Presses from mid-roll are buffered and fire as the travel ends,
+            // so a mashed roll chains every 0.58 s (ER-like); the get-up tail plays only when idle.
+            windows: [
+                Accept([Dodge, Light, Heavy], 0.25, End),
+                Cancel([Light, Heavy], 0.56, End), Cancel([Dodge], 0.58, End), Cancel([Move], 0.60, End), NoTurn(0.0, End),
+            ],
             // Locked on (C1c), every side keeps this roll squared up to the stick: no `locked`
             // variants, since UAL1's Dodge_Left/Right are side hops, not rolls (owner, live
             // 2026-10-27), and there is no back-roll or backstep clip yet.

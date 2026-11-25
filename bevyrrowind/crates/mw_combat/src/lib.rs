@@ -94,6 +94,9 @@ pub fn fighter(id: CharacterId, sheet: &CompiledSheet, health: f32, fatigue: f32
 mod tests {
     use super::*;
 
+    #[path = "../tests_roll.rs"]
+    mod roll;
+
     /// First-candidate clip lengths (combat.md "C1b" table), clip seconds.
     const CLIP_LENGTHS: [(&str, f32); 18] = [
         ("attack.sword_1h.light1", 0.37),

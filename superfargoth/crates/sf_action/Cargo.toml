@@ -19,6 +19,8 @@ sf_anim.workspace = true
 sf_controller.workspace = true
 # `PlayerId` (shared with `sf_rpg`).
 sf_ids.workspace = true
+# `TAP_HOLD_S` (tunables.md).
+sf_tunables.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

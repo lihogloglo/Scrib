@@ -51,7 +51,7 @@ use bevy_time::Fixed;
 use bevy_transform::prelude::*;
 use std::collections::HashMap;
 
-use sf_action::{RuleKey, SlotKey};
+use sf_action::{RuleKey, SlotKey, Tick};
 use sf_action_bevy::{ActionBody, ActionCharacter};
 use sf_anim::{RootDelta, RootMotionMode};
 use sf_anim_bevy::{AnimLod, AnimTier, Animator};
@@ -130,8 +130,10 @@ pub struct PlayerFeed {
 struct Traversal {
     key: SlotKey,
     slot: SlotId,
-    /// The move and its chain index the clip belongs to.
+    /// The move, the tick it started and its chain index the clip belongs to (a move restarted
+    /// by itself, a roll chained into a roll, is a new play: it blends in again).
     rule: RuleKey,
+    since: Tick,
     chain: u8,
     /// Clip seconds of the move's earlier chain slots (subtracted from its chain progress).
     offset: f32,
@@ -339,20 +341,20 @@ pub(crate) fn traversal(
         (p - offset).max(0.0)
     };
     match (moving.zip(out.slot), feed.traversal.as_mut()) {
-        (Some((p, key)), Some(t)) if t.key == key && t.rule == out.rule => {
+        (Some((p, key)), Some(t)) if t.key == key && t.rule == out.rule && t.since == character.state.started => {
             a.instance.set_slot_progress(t.slot, progress(p, t.offset));
         }
         (Some((p, key)), current) => {
             let current = current.map(|t| *t);
             // The next slot of the same move's chain starts where the previous clip ended.
             let offset = match current {
-                Some(t) if t.rule == out.rule && !out.started && out.chain > t.chain => t.offset + slots.duration(t.key),
+                Some(t) if t.rule == out.rule && t.since == character.state.started && out.chain > t.chain => t.offset + slots.duration(t.key),
                 _ => 0.0,
             };
             let previous = current.map(|t| t.slot);
             feed.traversal = start(a, slots, key, blend_in).map(|slot| {
                 a.instance.set_slot_progress(slot, progress(p, offset));
-                Traversal { key, slot, rule: out.rule, chain: out.chain, offset }
+                Traversal { key, slot, rule: out.rule, since: character.state.started, chain: out.chain, offset }
             });
             if feed.traversal.is_none()
                 && let Some(slot) = previous

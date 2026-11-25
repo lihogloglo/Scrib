@@ -587,5 +587,6 @@ fn a_move_without_look_limits_leaves_the_first_person_view_free() {
     };
     let samples = turn_through(sf_camera::ViewChoice::FirstPerson, roll, "roll");
     let off = samples.iter().map(|s| s.off().abs()).fold(0.0, f32::max);
-    assert!(off > 55.0, "free look through the roll: {off:.1} deg ({samples:?})");
+    // Past an attack's 45 deg limit (the roll is short: 19 frames of mouse at 0.05 rad).
+    assert!(off > 50.0, "free look through the roll: {off:.1} deg ({samples:?})");
 }

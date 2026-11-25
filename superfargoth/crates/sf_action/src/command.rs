@@ -6,8 +6,9 @@ use std::collections::VecDeque;
 
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
+use sf_tunables::{Def, Lifetime, Net, Scope, Source, Unit, def};
 
-use crate::ids::{PlayerId, Tick};
+use crate::ids::{PlayerId, TICK_HZ, Tick};
 
 /// Number of action classes.
 pub const CLASSES: usize = 13;
@@ -193,9 +194,21 @@ impl Command {
     }
 }
 
+/// `move.input.tap_hold_s`: the shared Dodge/Sprint button's tap/hold threshold ([`TapHold::DODGE_SPRINT`]).
+pub const TAP_HOLD_S: Def<f32> = def!(float "move.input.tap_hold_s" = 0.30)
+    .range(0.1, 0.6)
+    .unit(Unit::Seconds)
+    .help("Shared Dodge/Sprint button from free movement: released sooner it rolls (on release), held this long it sprints; mid-move presses roll on press")
+    .source(Source::Reference("Elden Ring: dodge/sprint button, 10 frames at 30 fps"))
+    .scope(Scope::Dev)
+    .net(Net::Presentation)
+    .lifetime(Lifetime::Respawn);
+
 /// One physical button bound to two classes (action.md "The chooser" 3): released before `ticks`
 /// samples of holding, it is a `tap` press edge on the release tick; held for `ticks` samples, `hold`
-/// goes down on that sample and stays down until release, with no `tap`.
+/// goes down on that sample and stays down until release, with no `tap`. Mid-move, while the move
+/// buffers `tap` ([`InputSampler::set_buffering`]: its hold can't start there), the press itself is
+/// the `tap` edge, on the first tick that samples it; held on, `hold` still goes down at `ticks`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TapHold {
     pub tap: ActionClass,
@@ -204,8 +217,15 @@ pub struct TapHold {
 }
 
 impl TapHold {
-    /// Dodge on tap, Sprint from the 18th held tick (0.3 s at 60 Hz; ER's 10 frames at 30 fps).
-    pub const DODGE_SPRINT: Self = Self { tap: ActionClass::Dodge, hold: ActionClass::Sprint, ticks: 18 };
+    /// Dodge on tap, Sprint from [`TAP_HOLD_S`] held (0.3 s = 18 ticks at 60 Hz).
+    pub const DODGE_SPRINT: Self = Self { tap: ActionClass::Dodge, hold: ActionClass::Sprint, ticks: Self::ticks_of(TAP_HOLD_S.default_value()) };
+
+    /// `secs` of holding in fixed ticks, rounded, at least one.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss, reason = "a fraction of a second at the tick rate")]
+    pub const fn ticks_of(secs: f32) -> u16 {
+        let t = (secs.max(0.0) * TICK_HZ as f32 + 0.5) as u16;
+        if t == 0 { 1 } else { t }
+    }
 }
 
 /// A bound [`TapHold`] button's live state.
@@ -217,6 +237,8 @@ struct SharedButton {
     down: bool,
     released: bool,
     ticks: u16,
+    /// This press already fired its tap on press (mid-move): its release fires none.
+    tapped: bool,
 }
 
 /// The input shell's Bevy-free half: device events arrive at frame rate, and [`Self::sample`]
@@ -234,6 +256,8 @@ pub struct InputSampler {
     lock: LockRequest,
     face_view: bool,
     shared: Vec<SharedButton>,
+    /// What the current move buffers ([`crate::ActionOutput::buffering`]).
+    buffering: ClassSet,
 }
 
 impl InputSampler {
@@ -248,7 +272,7 @@ impl InputSampler {
 
     /// Binds a shared tap/hold button; returns its index for [`Self::press_shared`].
     pub fn bind(&mut self, b: TapHold) -> usize {
-        self.shared.push(SharedButton { tap: b.tap, hold: b.hold, threshold: b.ticks.max(1), down: false, released: false, ticks: 0 });
+        self.shared.push(SharedButton { tap: b.tap, hold: b.hold, threshold: b.ticks.max(1), down: false, released: false, ticks: 0, tapped: false });
         self.shared.len() - 1
     }
 
@@ -299,9 +323,22 @@ impl InputSampler {
         self.lock = request;
     }
 
+    /// What the character's current move buffers (its open `Accept` windows, the last step's
+    /// [`crate::ActionOutput::buffering`]): a shared button pressed while its tap class is in it
+    /// resolves as the tap on press, without waiting for the release or the threshold.
+    pub fn set_buffering(&mut self, accept: ClassSet) {
+        self.buffering = accept;
+    }
+
     /// [`Command::face_view`] from now on (the view choice: first person faces the view).
     pub fn set_face_view(&mut self, face_view: bool) {
         self.face_view = face_view;
+    }
+
+    /// A tap edge: `c` goes down and up within this tick.
+    fn tap(&mut self, c: ActionClass) {
+        self.pressed.insert(c);
+        self.released.insert(c);
     }
 
     /// The command for `tick`; clears the edges.
@@ -309,16 +346,21 @@ impl InputSampler {
         for i in 0..self.shared.len() {
             let b = self.shared[i];
             if b.released {
-                if b.ticks < b.threshold {
-                    // A tap: the tap class goes down and up within this tick.
-                    self.pressed.insert(b.tap);
-                    self.released.insert(b.tap);
-                } else {
+                if b.ticks >= b.threshold {
                     self.release(b.hold);
+                } else if !b.tapped {
+                    // A tap: the tap class goes down and up within this tick.
+                    self.tap(b.tap);
                 }
                 self.shared[i].released = false;
                 self.shared[i].ticks = 0;
+                self.shared[i].tapped = false;
             } else if b.down {
+                if b.ticks == 0 && self.buffering.contains(b.tap) {
+                    // Mid-move: the press is the tap (the move latches it; no sprint can start here).
+                    self.tap(b.tap);
+                    self.shared[i].tapped = true;
+                }
                 let ticks = b.ticks.saturating_add(1);
                 self.shared[i].ticks = ticks;
                 if ticks == b.threshold {

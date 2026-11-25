@@ -30,8 +30,8 @@ and creature graphs are built in code, shipped as RON, and compiled at bake time
   (`:386-391`); nested stance machines (`hh`, `1h`, `2c`, `2w`); lock-on `strafe_walk`/`strafe_run` 8-way blends only
   if the manifest has `loco.*` slots (it has none, `:14-24`); `upper` and `full` slots; torch arm layer.
   Op stack order: `SpeedMatch` (0.5-2.2, `rate_share` 0.5, `gate speed_match`) `:941`, `StrideWarp` (max 1.2, `gate
-  stride_warp`) `:968`, `FootPlacement` (unplant 20 deg, `gate on_ground`) `:977`, `Lean` (chest .45, upperChest .4, neck
-  .15, `gate lean`) `:995`, `HandIk` x2 `:1001`,
+  stride_warp`) `:968`, `FootPlacement` (unplant 20 deg, `gate on_ground`) `:977`, `Lean` (grade up 0.3, max 0.15 rad, rise with speed 0.2-1.2 m/s (none standing); trunk chest .45, upperChest .4, neck
+  .15, then `counter` head .9 and upper arms .85 turned back toward their pre-lean pose, `GRAPH_FORMAT` 12; `gate lean`) `:995`, `HandIk` x2 `:1001`,
   then `HitReact` and `SpringBones` (not in first person).
 - **Gait set** (A3, 2026-11-12; `mw_graphs/src/build.rs:156-190` `Preset`, `gaits`; `:703-725`): humanoid free
   movement in `walk` and `run` (sheathed and spell stances) is one `BlendSpace1D` over `speed` (`params::SPEED`, fed by

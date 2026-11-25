@@ -31,7 +31,7 @@
 //!   support limbs pinned where the ops before left them.
 
 use glam::{Affine3A, Quat, Vec2, Vec3};
-use sf_anim::ik::{Aim, AimJoint, Effector, FullBodyScratch, LimbGoal, LimbSolver, aim_chain, clamp_angle, limb_pole, rotate_joint, solve_limb};
+use sf_anim::ik::{Aim, AimJoint, Effector, FullBodyScratch, LimbGoal, LimbSolver, aim_chain, clamp_angle, limb_pole, rotate_joint, solve_limb, weighted};
 use sf_anim::spring::{critical_spring, damper};
 use sf_anim::{LocalPose, ModelPose, Skeleton, update_subtree};
 
@@ -520,19 +520,19 @@ pub(crate) fn run_ops(cx: &mut ProceduralCx<'_>, states: &mut [OpState], local: 
                     rotate_joint(s, local, model, &ROOT, usize::from(j), Quat::from_rotation_y(*angle * w));
                 }
             }
-            (Op::Lean { joints, gain, max_angle, grade, halflife, gate }, OpState::Angles(roll, pitch)) => {
+            (Op::Lean { joints, counter, gain, max_angle, grade, halflife, gate }, OpState::Angles(roll, pitch)) => {
                 let gated = gate_value(cx, *gate);
                 // Lateral acceleration: positive to the left (+X) leans left, into the turn.
                 let goal = (cx.inputs.acceleration.x * gain).clamp(-*max_angle, *max_angle) * gated;
                 *roll = damper(*roll, goal, *halflife, cx.dt);
-                // Ground grade: forward (+Z over +Y, about +X) uphill, back downhill.
-                *pitch = damper(*pitch, grade.pitch(cx.grade) * gated, *halflife, cx.dt);
+                // Ground grade: forward (+Z over +Y, about +X) uphill, back downhill,
+                // fading out with the speed.
+                let speed = horizontal(cx.inputs.velocity).length();
+                *pitch = damper(*pitch, grade.pitch_at(cx.grade, speed) * gated, *halflife, cx.dt);
                 if roll.abs() < 1e-5 && pitch.abs() < 1e-5 {
                     continue;
                 }
-                for &(j, w) in joints {
-                    rotate_joint(s, local, model, &ROOT, usize::from(j), Quat::from_rotation_z(-*roll * w) * Quat::from_rotation_x(*pitch * w));
-                }
+                lean_pose(s, local, model, joints, counter, (*roll, *pitch));
             }
             (Op::LimbIk { limb, target, weight, rotation }, _) => {
                 let w = cx.params.value(*weight).clamp(0.0, 1.0);
@@ -925,6 +925,27 @@ fn foot_placement(
     }
 }
 
+/// `Lean`'s pose edit: each of `joints` rolls by `-roll` (about +Z) and
+/// pitches by `pitch` (about +X) times its share, in model space with its
+/// subtree; then each of `counter` turns back by its share of the way to its
+/// model rotation before the lean (in list order, so a parent's counter is
+/// already in its child's), keeping its position.
+fn lean_pose(s: &Skeleton, local: &mut LocalPose, model: &mut ModelPose, joints: &[(u16, f32)], counter: &[(u16, f32)], (roll, pitch): (f32, f32)) {
+    // At most a few counter joints (head, arms): no allocation for them.
+    let mut before = [Quat::IDENTITY; crate::compiled::LEAN_COUNTER_MAX];
+    for (b, &(j, _)) in before.iter_mut().zip(counter) {
+        *b = model.rotation(usize::from(j));
+    }
+    for &(j, w) in joints {
+        rotate_joint(s, local, model, &ROOT, usize::from(j), Quat::from_rotation_z(-roll * w) * Quat::from_rotation_x(pitch * w));
+    }
+    for (&b, &(j, w)) in before.iter().zip(counter) {
+        let j = usize::from(j);
+        let back = (b * model.rotation(j).inverse()).normalize();
+        rotate_joint(s, local, model, &ROOT, j, weighted(back, w.clamp(0.0, 1.0)));
+    }
+}
+
 #[cfg(test)]
 mod grade_tests {
     use glam::Vec3;
@@ -962,7 +983,7 @@ mod grade_tests {
 
     #[test]
     fn grade_scales_stride_and_pitch_within_caps() {
-        let (stride, lean) = (GradeStride { up: 0.45, down: 0.25 }, GradeLean { up: 0.12, down: 0.06, max: 0.07 });
+        let (stride, lean) = (GradeStride { up: 0.45, down: 0.25 }, GradeLean { up: 0.12, down: 0.06, max: 0.07, ..GradeLean::default() });
         let g30 = 30f32.to_radians().tan();
         assert!((stride.scale(0.0) - 1.0).abs() < 1e-6 && lean.pitch(0.0).abs() < 1e-6);
         assert!(stride.scale(g30) < stride.scale(0.1) && stride.scale(0.1) < 1.0);
@@ -970,5 +991,72 @@ mod grade_tests {
         assert!(lean.pitch(g30) > 0.0 && lean.pitch(g30) <= 0.07 && lean.pitch(-g30) < 0.0 && lean.pitch(-g30) > -lean.pitch(g30));
         assert!(lean.pitch(1.0) <= 0.07 + 1e-6 && lean.pitch(-1.0) >= -0.07 - 1e-6);
         assert!((GradeStride::default().scale(g30) - 1.0).abs() < 1e-6 && GradeLean::default().pitch(g30).abs() < 1e-6);
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp, reason = "exact: the fade's ends are 1 and 0")]
+    fn lean_fades_out_with_speed() {
+        let lean = GradeLean { up: 0.3, down: 0.075, max: 0.15, fade_from: 2.5, fade_to: 6.5, ..GradeLean::default() };
+        let g30 = 30f32.to_radians().tan();
+        assert_eq!(lean.pitch_at(g30, 0.0), lean.pitch(g30));
+        assert_eq!(lean.pitch_at(g30, 2.5), lean.pitch(g30));
+        assert!((lean.pitch_at(g30, 4.5) - 0.5 * lean.pitch(g30)).abs() < 1e-6);
+        assert_eq!(lean.pitch_at(g30, 6.5), 0.0);
+        assert_eq!(lean.pitch_at(-g30, 7.0), 0.0);
+        // No fade band (the default): whole at any speed.
+        let off = GradeLean { fade_from: 0.0, fade_to: 0.0, ..lean };
+        assert_eq!(off.pitch_at(g30, 9.0), off.pitch(g30));
+        // Rise band: none standing, half midway, whole from `rise_to` on.
+        let rise = GradeLean { fade_from: 0.0, fade_to: 0.0, rise_from: 0.2, rise_to: 1.2, ..lean };
+        assert_eq!(rise.pitch_at(g30, 0.0), 0.0);
+        assert!((rise.pitch_at(g30, 0.7) - 0.5 * rise.pitch(g30)).abs() < 1e-6);
+        assert_eq!(rise.pitch_at(g30, 1.2), rise.pitch(g30));
+        assert_eq!(rise.pitch_at(g30, 7.0), rise.pitch(g30));
+    }
+
+    /// pelvis - spine - chest - neck - head, and chest - arm - hand; joints 0..7.
+    fn trunk() -> (sf_anim::Skeleton, sf_anim::LocalPose, sf_anim::ModelPose) {
+        use sf_anim::{SourceJoint, Trs};
+        let joint = |name: &str, parent: Option<usize>, t: Vec3| SourceJoint { name: name.into(), parent, rest: Trs { translation: t, ..Trs::default() } };
+        let joints = [
+            joint("pelvis", None, Vec3::new(0.0, 1.0, 0.0)),
+            joint("spine", Some(0), Vec3::new(0.0, 0.2, 0.0)),
+            joint("chest", Some(1), Vec3::new(0.0, 0.2, 0.0)),
+            joint("neck", Some(2), Vec3::new(0.0, 0.2, 0.0)),
+            joint("head", Some(3), Vec3::new(0.0, 0.1, 0.0)),
+            joint("arm", Some(2), Vec3::new(0.2, 0.15, 0.0)),
+            joint("hand", Some(5), Vec3::new(0.0, -0.5, 0.0)),
+        ];
+        let (s, order) = sf_anim::Skeleton::new(&joints).unwrap();
+        assert_eq!(order, (0..7).collect::<Vec<_>>(), "source order kept");
+        let local = sf_anim::LocalPose::from_trs(s.rest());
+        let mut model = sf_anim::ModelPose::new(s.len());
+        sf_anim::local_to_model(&s, &local, &mut model, &glam::Affine3A::IDENTITY);
+        (s, local, model)
+    }
+
+    #[test]
+    fn lean_counter_keeps_the_head_and_arm_as_animated() {
+        let (s, mut local, mut model) = trunk();
+        let (head0, arm0) = (model.rotation(4), model.translation(6) - model.translation(5));
+        let pitch = 0.3;
+        super::lean_pose(&s, &mut local, &mut model, &[(1, 0.5), (2, 0.5)], &[(4, 1.0), (5, 1.0)], (0.1, pitch));
+        // The trunk leans: the head rides forward (+Z) with the chest.
+        let neck = model.translation(4) - model.translation(2);
+        assert!((neck.z.atan2(neck.y) - pitch).abs() < 0.03, "trunk pitch {}", neck.z.atan2(neck.y));
+        assert!(model.translation(4).z > 0.05);
+        // Share 1: the head's and the upper arm's model rotations are back as animated.
+        assert!(model.rotation(4).angle_between(head0) < 1e-5, "head {}", model.rotation(4).angle_between(head0));
+        let arm = model.translation(6) - model.translation(5);
+        assert!(arm.angle_between(arm0) < 1e-5 && (arm.length() - arm0.length()).abs() < 1e-5, "arm {arm} vs {arm0}");
+        // Without the counter the arm swings back (-Z) with the trunk.
+        let (s, mut local, mut model) = trunk();
+        super::lean_pose(&s, &mut local, &mut model, &[(1, 0.5), (2, 0.5)], &[], (0.0, pitch));
+        let arm = model.translation(6) - model.translation(5);
+        assert!((arm.angle_between(arm0) - pitch).abs() < 1e-5 && arm.z < 0.0, "uncountered arm {arm}");
+        // Share 0.5: half the lean's pitch is left on the head.
+        let (s, mut local, mut model) = trunk();
+        super::lean_pose(&s, &mut local, &mut model, &[(1, 0.5), (2, 0.5)], &[(4, 0.5)], (0.0, pitch));
+        assert!((model.rotation(4).angle_between(head0) - 0.5 * pitch).abs() < 1e-5);
     }
 }

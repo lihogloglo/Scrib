@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gameplay lanes: research pass and first two fixes (2026-11-25)</title>
+<style>
+  :root { --bg:#fbfaf7; --fg:#1d1c1a; --mute:#6b675f; --line:#e3dfd6; --accent:#7a4b16; --ok:#2f6b3a; --warn:#8a5a00; --card:#ffffff; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#161513; --fg:#ece8e0; --mute:#a29d93; --line:#34312c; --accent:#e0a35a; --ok:#7cc48a; --warn:#e2b45a; --card:#1e1d1a; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 920px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 1.7rem; margin: 0 0 6px; }
+  h2 { font-size: 1.2rem; margin: 40px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.02rem; margin: 22px 0 6px; }
+  p.lede { color: var(--mute); margin-top: 0; }
+  code { font: 0.88em ui-monospace, Consolas, monospace; background: color-mix(in srgb, var(--line) 50%, transparent); padding: 1px 4px; border-radius: 4px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin: 12px 0; }
+  .tag { display:inline-block; font-size: .78rem; padding: 1px 8px; border-radius: 99px; border:1px solid currentColor; margin-left: 6px; vertical-align: 2px; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); }
+  table { border-collapse: collapse; width: 100%; font-size: .93rem; margin: 8px 0; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--mute); font-weight: 600; }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  ol.q li { margin: 6px 0; }
+  .rec { color: var(--mute); }
+  ul { padding-left: 22px; }
+</style>
+</head>
+<body>
+<main>
+<h1>Gameplay lanes: research pass and first two fixes</h1>
+<p class="lede">Session <code>gameplay-roadmaps</code>, 2026-11-25, while you were away. Nothing is committed and the game was not launched.</p>
+
+<div class="card">
+<strong>In short.</strong> Six research notes are written: animation, an animation code diagnosis, combat, NPC AI,
+navigation, and dialogue and quests. You then asked me to stop coordinating and build one or two things. I built the two
+animation problems that block combat feel. The roll can now be mashed, and the slope lean is fixed. Both pass headless
+tests and wait for your check. Crime, interaction and travel research, and the eight lane roadmaps, are queued, not done.
+<div id="checks" style="margin-top:8px">Pre-PR checks: <span class="ok">clippy (plain and <code>dev</code>), hakari, cargo deny all clean; <code>test --workspace --no-fail-fast</code> 332 targets pass, 1 fails: the known flaky <code>sf_world_bevy</code> reload test (ROADMAP 1.21), not in a touched crate. Re-bake done.</span></div>
+</div>
+
+<h2>Built: two fixes waiting for your check</h2>
+<p>Run <code>bevyrrowind bake</code> first. The roll's rate and the graph format both changed.</p>
+
+<h3>CB-6: spammable roll <span class="tag warn">awaiting owner</span></h3>
+<p><strong>The cause in code.</strong> The roll had no input buffer, so every press during a roll was dropped. The
+tap/hold button only fired on release.</p>
+<ul>
+<li>A press during the second half of a roll (from 0.25 s) is now buffered and fires at the cancel point, so mashing chains rolls.</li>
+<li>While a move accepts a dodge (a roll, or an attack's recovery), the button rolls on <em>press</em>.</li>
+<li>From standing, tap still rolls on release and hold still sprints, as you decided on 2026-10-27. Holding through a roll keeps sprinting.</li>
+<li>The roll plays faster (rate 1.25 to 1.6) over about the same distance, and the pop when a roll restarts itself is fixed.</li>
+</ul>
+<table>
+<tr><th></th><th>Before</th><th>After</th></tr>
+<tr><td>Roll to roll when mashing</td><td class="num">0.9–1.3 s (presses dropped)</td><td class="num">0.58 s</td></tr>
+<tr><td>Full move</td><td class="num">1.18 s</td><td class="num">0.92 s</td></tr>
+<tr><td>Travel</td><td class="num">≈ 4.5 m</td><td class="num">4.46 m (kept)</td></tr>
+<tr><td>I-frames</td><td class="num">0.02–0.40 s</td><td class="num">0.02–0.40 s (now 73 % of the travel)</td></tr>
+</table>
+<p>Scene <code>level-sparring</code>, F to draw. The clip is still UAL1 <code>Roll</code>: Morrowind has no roll.
+Tune in <code>mw_combat/data/movesets/sword_1h.ron</code> and with the tunable <code>move.input.tap_hold_s</code>.</p>
+
+<h3>PL-10: slope lean <span class="tag warn">awaiting owner</span></h3>
+<p><strong>The cause in code.</strong> The lean pitched the trunk by up to 26°. The head took the full angle, and the
+spine rotation carried the arms with it, so the hands ended up behind the back. Jog and sprint got the full lean too.</p>
+<ul>
+<li>The lean is now small: 0.3 rad per unit of grade, capped at about 9°.</li>
+<li>It fades with speed, full up to 2.5 m/s and gone at 6.5 m/s.</li>
+<li>The head and upper arms are turned back toward their pose before the lean, which the industry calls head stabilisation and arm gravity compensation.</li>
+<li>NPC walkers share the same graph, so they get the same fix.</li>
+</ul>
+<table>
+<tr><th>30° up</th><th>Trunk</th><th>Head</th><th>Hands</th></tr>
+<tr><td>Walk, before</td><td class="num">+17.3°</td><td class="num">+23.4°</td><td class="num">11 cm behind</td></tr>
+<tr><td>Walk, after</td><td class="num">+5.8°</td><td class="num">−0.2°</td><td class="num">1.1 cm ahead</td></tr>
+<tr><td>Jog, before</td><td class="num">+12.9°</td><td class="num">+15.2°</td><td class="num">2.6 cm behind</td></tr>
+<tr><td>Jog, after</td><td class="num">+2.3°</td><td class="num">−2.6°</td><td class="num">0.7 cm ahead</td></tr>
+</table>
+<p>Scene <code>level-flat-slopes</code>, cameras <code>ramps</code> and <code>stairs</code>. This doesn't fix the Kimodo
+walk's own backward arm swing on flat ground; that comes from the clip.</p>
+
+<h2>What the research found</h2>
+<p>The notes are in <code>docs/research/gameplay-2026-11-25/</code>. Claims a note marks "from memory" were not checked against a source.</p>
+
+<h3>Animation (<code>anim.md</code>, <code>anim-diagnosis.md</code>)</h3>
+<ul>
+<li><strong>100STYLE is the best free locomotion source we don't use yet.</strong> It is real motion capture under CC BY 4.0, so it can ship in the repo, and it has walks and runs in every direction, idles and transitions. Recommendation: cook it into the locomotion slots and keep Kimodo for ambient filler.</li>
+<li>KayKit Character Animations (CC0, 161 clips including melee, block and dodge) is new to our docs and nobody has judged it yet.</li>
+<li>Morrowind's own attack clips (chop, slash and thrust per weapon type, cast, block) are already loaded in the graph as upper-body clips, but the player doesn't use them. Their text keys give hit and cancel timing for free.</li>
+<li><code>OrientationWarp</code> and <code>LookAt</code> exist but aren't wired up, and an acceleration lean is missing. Starts and stops can use inertialized transitions with no new clips. Motion matching should wait.</li>
+<li>Licences: Bandai Namco is non-commercial. LaFAN1, Mixamo and CMU are bring-your-own only.</li>
+</ul>
+
+<h3>Combat (<code>combat.md</code>)</h3>
+<ul>
+<li>The plumbing already matches the Souls-like standard: fixed tick, timing windows, swept weapon hits, hit-stop.</li>
+<li><strong>There's no enemy decision layer.</strong> The combat AI slice (AI15) is one line in the plan. The standard is attack tokens as in Doom 2016, plus spacing bands, reactions scaled by skill, and morale.</li>
+<li>Reverse two non-goals: add parry with riposte, and replace "every hit staggers" with a poise system that works the same for player and enemies. Damage should become typed, with status buildup.</li>
+<li>Ranged and magic need a delivery layer in the framework, with effects ported in the adapter.</li>
+</ul>
+
+<h3>NPC AI (<code>ai.md</code>)</h3>
+<ul>
+<li>Keep the stack: directives, utility drives and HTN match what Guerrilla ships. Two claims in our industry table are wrong: Kingdom Come uses behaviour trees, not GOAP, and the Dying Light 2 and Transformers HTN claims have no source.</li>
+<li><strong>Reorder the plan.</strong> Move smart objects (AI14) ahead of combat AI (AI15) and ship a thin "day loop" first. Perception (AI8) should have graded awareness, search of the last known position, and shared alerts.</li>
+<li>Missing from the plan: barks and chatter, followers, NPC reactions to weather, time of day and the player, and bounded gossip. Drop needs as a subsystem; two or three drive considerations cover them.</li>
+<li>No AI crate fits as the core.</li>
+</ul>
+
+<h3>Navigation (<code>nav.md</code>)</h3>
+<ul>
+<li>The ground stack (Recast tiles and a Detour corridor) is the standard; keep it. The vendored <code>navmesh-rs</code> is 0.2.2, upstream is 0.2.6, and it already has tile cache and crowd modules.</li>
+<li><strong>Fliers and swimmers are the biggest gap.</strong> Cliff racers need a per-tile clearance field, and fish need a water-volume layer.</li>
+<li>The generated 10x world needs runtime tile generation with a disk cache. Long-range routing should run on a road and door graph with travel time for NPCs travelling off-screen. NPC jumps and climbs should reuse the player's mantle and vault.</li>
+</ul>
+
+<h3>Dialogue and quests (<code>dialogue-quests.md</code>)</h3>
+<ul>
+<li><strong>The biggest quest blocker:</strong> per the wiki, object, global and start MWScripts don't run yet. That matters more than any missing function family.</li>
+<li>Don't adopt Yarn or Ink as the format. Use our own small scene model with stable line IDs, plus a Yarn importer (<code>bevy_yarnspinner</code> 0.10 supports Bevy 0.20).</li>
+<li>Add a Valve-style rule database (fuzzy pattern matching) for dialogue, barks and ambient lines. Morrowind's dialogue filters compile into it.</li>
+<li>Presentation modes: classic topic window, cinematic with an automatic camera, and barks. Text-only lines get a procedural talking animation. An LLM is a seam only.</li>
+</ul>
+
+<h2>Questions for you</h2>
+<p>These are only questions that change what the player can do, filtered from the notes. Each has a recommended answer, and "yes to all recommended" is a valid reply.</p>
+<ol class="q">
+<li><strong>Roll button on keyboard:</strong> a dedicated roll key, with sprint on a separate hold, so a roll from standing is instant too? Gamepad keeps Elden Ring's tap to roll, hold to sprint. <span class="rec">Recommended: yes. Today rolls are instant during moves, but from standing they still wait for the key's release.</span></li>
+<li><strong>Poise:</strong> light hits flinch without interrupting a swing, and only heavy hits or a broken poise bar stagger, for player and enemies alike? <span class="rec">Recommended: yes, as in Elden Ring. Every-hit-interrupts stays the Classic rule.</span></li>
+<li><strong>Parry:</strong> a well-timed guard becomes a parry, with a riposte on the staggered target? <span class="rec">Recommended: yes, a tight window on the same button.</span></li>
+<li><strong>Backstabs and ripostes:</strong> big damage with a short finisher animation, no cutscene? <span class="rec">Recommended: yes.</span></li>
+<li><strong>Moving while casting or drawing a bow:</strong> <span class="rec">Recommended: a slowed walk for bows and small spells, rooted for big spells.</span></li>
+<li><strong>Friendly fire:</strong> <span class="rec">Recommended: area spells and projectiles hurt anyone, melee doesn't hit allies, co-op friendly fire off by default.</span></li>
+<li><strong>Clip shipping:</strong> ship CC0 clips (UAL, KayKit) and CC BY clips (100STYLE) with an attribution file, everything else bring-your-own? <span class="rec">Recommended: yes.</span></li>
+<li><strong>NPC walk styles</strong> by age, mood or role, from 100STYLE? <span class="rec">Recommended: yes, later.</span></li>
+<li><strong>Companions:</strong> a command wheel (follow, wait, hold fire, engage), and companions knocked down rather than killed by default? <span class="rec">Recommended: yes to both.</span></li>
+<li><strong>Gossip:</strong> reputation and crime news spread from NPC to NPC instead of an instant faction-wide bounty? <span class="rec">Recommended: gossip in Modern, instant in Classic.</span></li>
+<li><strong>Suspicion meter</strong> over NPCs? <span class="rec">Recommended: a Modern option, off in Classic.</span></li>
+<li><strong>Crowd extras</strong> (generic pedestrians) in big cities? <span class="rec">Recommended: later, off in Classic.</span></li>
+<li><strong>Free-text or voice talk with NPCs</strong> through a plugin? <span class="rec">Recommended: a seam only, off by default, never changes quests or rewards.</span></li>
+<li><strong>Fliers and swimmers</strong> path through the real 3D world instead of fixed flight paths? <span class="rec">Recommended: yes.</span></li>
+<li><strong>Travelling NPCs</strong> appear on the roads near you and advance by travel time off-screen? <span class="rec">Recommended: yes.</span></li>
+<li><strong>Runtime nav changes:</strong> a collapsed wall or a built house makes NPCs re-path? <span class="rec">Recommended: yes, for authored or destructible geometry only.</span></li>
+<li><strong>On-demand nav tiles</strong> for generated worlds, cached to disk, as a fallback only? This is an exception to "nothing bakes during play". <span class="rec">Recommended: yes.</span></li>
+<li><strong>Dialogue default:</strong> cinematic (camera, choice wheel) for new games, while Morrowind keeps the topic window by default with Cinematic as a setting? <span class="rec">Recommended: yes.</span></li>
+<li><strong>Quest markers:</strong> none by default for Morrowind (directions in the text), a compass for the generic framework, and a setting to switch? <span class="rec">Recommended: yes.</span></li>
+<li><strong>Interrupted conversations:</strong> combat or crime cancels a conversation, which resumes with a bark? <span class="rec">Recommended: yes.</span></li>
+<li><strong>Voice:</strong> ship text-only lines with a procedural talking animation, and no TTS in the framework? <span class="rec">Recommended: yes.</span></li>
+</ol>
+
+<h2>Not done (queued)</h2>
+<ul>
+<li>Research for crime and stealth, interaction, and travel.</li>
+<li>The eight lane roadmaps, in the format of <code>docs/roadmaps/README.md</code>: one planning slice each, taking a research note in and producing a roadmap.</li>
+<li>The cross-lane order (<code>docs/roadmaps/order.md</code>).</li>
+<li>The pause follows your instruction to stop coordinating many agents. The plan and per-agent token log are in <code>.sessions/_archive/gameplay-roadmaps.md</code>. Agents ran 91k–183k tokens each, all under 250k.</li>
+</ul>
+
+<h2>Files</h2>
+<table>
+<tr><th>What</th><th>Where</th></tr>
+<tr><td>Roll</td><td><code>superfargoth/crates/sf_action</code> (<code>command.rs</code>, <code>step.rs</code>, <code>windows.rs</code>), <code>sf_action_bevy/src/input.rs</code>, <code>mw_combat</code> (<code>sword_1h.ron</code>, <code>tests_roll.rs</code>), <code>mw_player_bevy/src/avatar.rs</code>, <code>mw_bake/tests/roll_travel_real_install.rs</code></td></tr>
+<tr><td>Lean</td><td><code>superfargoth/crates/sf_anim_graph</code> (<code>asset.rs</code>, <code>compile.rs</code>, <code>compiled.rs</code>, <code>procedural.rs</code>), <code>mw_graphs</code> (<code>build.rs</code>, graph RON, <code>tests.rs</code>, <code>tests/slope_walk.rs</code>)</td></tr>
+<tr><td>Docs</td><td>visual checks CB-6 and PL-10, the animation and combat-feel ledgers, wiki pages <code>animation.md</code> and <code>locomotion-and-action.md</code>, ROADMAP 3.4 and 3.5, CHANGELOG</td></tr>
+</table>
+</main>
+</body>
+</html>

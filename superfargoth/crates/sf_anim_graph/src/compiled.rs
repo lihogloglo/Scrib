@@ -467,6 +467,8 @@ pub enum Op {
     },
     Lean {
         joints: Vec<(u16, f32)>,
+        /// Joints turned back toward their pre-lean model rotation, by share.
+        counter: Vec<(u16, f32)>,
         gain: f32,
         max_angle: f32,
         grade: GradeLean,
@@ -604,9 +606,13 @@ pub struct CompiledGraph {
     curve_joints: OnceLock<Vec<Option<u16>>>,
 }
 
+/// Most `counter` joints a `Lean` op takes (its scratch is on the stack).
+// tunables: const (capacity of a stack scratch array)
+pub const LEAN_COUNTER_MAX: usize = 8;
+
 const MAGIC: &[u8; 4] = b"SFAG";
 /// Version of the compiled graph format.
-pub const GRAPH_FORMAT: u32 = 11;
+pub const GRAPH_FORMAT: u32 = 12;
 
 impl CompiledGraph {
     #[cfg(feature = "bake")]

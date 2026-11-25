@@ -565,6 +565,44 @@ fn shared_button_taps_dodge_on_release_and_holds_sprint() {
     assert!(c.released(ActionClass::Sprint) && !c.pressed(ActionClass::Dodge) && c.hold_ticks[ActionClass::Sprint.index()] == 0);
 }
 
+/// Mid-move (the move buffers Dodge), the shared button's press is the tap on its first sample:
+/// no wait for the release, none fired again on release, and held on it still sprints.
+#[test]
+fn a_shared_press_mid_move_taps_on_press() {
+    let mut s = InputSampler::new();
+    let b = s.bind_tap_hold(ActionClass::Dodge, ActionClass::Sprint, 10);
+    s.set_buffering(ClassSet::of(&[ActionClass::Dodge, ActionClass::Light]));
+    s.press_shared(b);
+    let c = s.sample(Tick(1), None);
+    assert!(c.pressed(ActionClass::Dodge) && c.released(ActionClass::Dodge));
+    s.release_shared(b);
+    let c = s.sample(Tick(2), None);
+    assert!(!c.pressed(ActionClass::Dodge), "no second tap on release");
+    // Held on past the threshold: Sprint at sample 10 of the hold, the tap only on the first.
+    s.press_shared(b);
+    for t in 3..=14 {
+        let c = s.sample(Tick(t), None);
+        assert_eq!(c.pressed(ActionClass::Dodge), t == 3, "tick {t}");
+        assert_eq!(c.held(ActionClass::Sprint), t >= 12, "tick {t}");
+    }
+    s.release_shared(b);
+    let c = s.sample(Tick(15), None);
+    assert!(c.released(ActionClass::Sprint) && !c.pressed(ActionClass::Dodge));
+    // A move that doesn't buffer Dodge: back to tap on release.
+    s.set_buffering(ClassSet::of(&[ActionClass::Light]));
+    s.press_shared(b);
+    assert!(!s.sample(Tick(16), None).pressed(ActionClass::Dodge));
+    s.release_shared(b);
+    assert!(s.sample(Tick(17), None).pressed(ActionClass::Dodge));
+}
+
+#[test]
+fn the_dodge_sprint_threshold_is_its_tunable_in_ticks() {
+    assert_eq!(TapHold::DODGE_SPRINT.ticks, 18);
+    assert_eq!(TapHold::ticks_of(TAP_HOLD_S.default_value()), TapHold::DODGE_SPRINT.ticks);
+    assert_eq!(TapHold::ticks_of(0.0), 1);
+}
+
 /// CB-1: the input glue releases every idle separate button each frame, including an unbound
 /// Sprint beside the shared Dodge/Sprint button; that must not end a held shared sprint.
 #[test]

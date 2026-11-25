@@ -270,3 +270,15 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
   Graphics lists the player feature switches (fog volume, groundcover, bloom...), each live behind the menu, kept after a
   restart. Also judge: the options window is now 60% x 70% of the screen (1152x756 at 1080p, a bit larger than before).
 - Status: confirmed 2026-11-23 (owner: "seems to be working fine"). Source: feature-toggles (MF-1a..MF-6). Unblocks PP-4.
+
+### PL-10: Slope lean: small, only while moving, head level, arms hang (lean-fix, 2026-11-25)
+- Kind: synthetic. Bake first (`bevyrrowind bake`: graph format 12). `cargo dev scene level-flat-slopes` (cameras `ramps`,
+  `stairs`), F11 player, Tab third person, 12:00; walk then jog up and down the 10/20/30 deg ramps; NPC walkers share it.
+- Before (owner PL-7 2026-11-11, again 2026-11-25): trunk tipped up to 26 deg, head pitched with it (+23 deg at 30 deg),
+  hands ~11 cm behind the back. Now (headless, 30 deg up): walk trunk +5.8, head -0.2, hands 1.1 cm forward; jog trunk
+  +2.3, head -2.6. Round 2 (owner: "much better", but the lean showed standing, not walking: the first cut faded out
+  at 2.5-6.5 m/s): now none standing, whole from 1.2 m/s; 30 deg up walk trunk +5.8, jog +4.6, head level. Look for: a
+  slight lean into the slope while walking and jogging, none standing still, the head ahead, arms hanging naturally.
+- Tune: `mw_graphs/src/build.rs` humanoid `Lean` (up 0.3, max 0.15 rad, rise 0.2-1.2 m/s, counter head 0.9, upper arms 0.85).
+  Not changed: the Kimodo walk's own backward arm swing on flat ground (clip style, separate issue).
+- Status: confirmed 2026-11-25 round 2 ("slope thing is all good"; round 1: "much better", lean only showed standing). Source: gameplay-roadmaps lean-fix (`docs/research/gameplay-2026-11-25/anim-diagnosis.md` §1).

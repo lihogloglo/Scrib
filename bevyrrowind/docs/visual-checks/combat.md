@@ -11,6 +11,15 @@ refills at 0); a second dummy 10 m to the left; a 1 m ledge. Cameras `behind`, `
 
 
 
+### CB-6: Spammable roll: press during a move rolls at once, mashing chains (roll-chain, 2026-11-25)
+- Bake first (`bevyrrowind bake`: roll rate changed). `cargo dev scene level-sparring` (cameras `behind`, `side`), F11, F to draw.
+- Feel for: mash Shift: rolls chain every ~0.58 s with no dead time (was ~0.9-1.3 s, presses dropped); Shift pressed during an
+  attack's recovery rolls on the press, not on release; from standing, a tap still rolls on release and a hold still sprints;
+  holding Shift through a roll keeps sprinting after it; the roll reads quicker (rate 1.25 -> 1.6, same ~4.5 m travel,
+  i-frames 0.02-0.40 s); no pop when a roll restarts on itself.
+- Tune: `mw_combat/data/movesets/sword_1h.ron` roll (`rate`, `Accept` 0.25, cancels 0.56-0.60), tunable `move.input.tap_hold_s`.
+  Clip is still UAL1 `Roll` (Morrowind has none). Measurement: `mw_bake` `roll_root_travel_against_time` (ignored test).
+- Status: confirmed 2026-11-25 (owner: "roll is good"). Source: gameplay-roadmaps roll-chain (`docs/research/gameplay-2026-11-25/anim-diagnosis.md` §2).
 
 ### CB-5: First-person melee with soft aim (C4 soft-aim part, 2026-11-10)
 - `cargo dev scene level-arena`, F11 player, Tab to first person, F to draw. The dummy stands 3 m ahead (just at the soft-aim reach:

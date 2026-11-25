@@ -1005,10 +1005,11 @@ fn walkers_shorten_their_steps_uphill_and_lean_into_the_slope() {
             if (g - sign * tan).abs() > 0.25 * tan + 0.02 {
                 failures.push(format!("{name} {deg}°: grade {g} vs {}", sign * tan));
             }
-            // Sanity (AN-21): forward up, back down at 30° (owner 2026-11-05 tune: about +16/-1.5°, `slope_lean_table`), within the op's 26° cap.
-            let least = if deg >= 30.0 { if sign > 0.0 { 6.0 } else { 0.5 } } else { 0.0 };
-            if lean.abs() > 26f32.to_radians() || lean * sign < f32::to_radians(least) {
-                failures.push(format!("{name} {deg}°: lean {:.2}° (forward up, back down, within 26°)", lean.to_degrees()));
+            // Sanity (AN-21): forward up, back down at 30° (2026-11-25 tune: about +6/-1.7°,
+            // `slope_lean_head_and_hands`), within the op's 8.6° cap plus the gait's sway.
+            let least = if deg >= 30.0 { if sign > 0.0 { 3.0 } else { 0.5 } } else { 0.0 };
+            if lean.abs() > 12f32.to_radians() || lean * sign < f32::to_radians(least) {
+                failures.push(format!("{name} {deg}°: lean {:.2}° (forward up, back down, within 12°)", lean.to_degrees()));
             }
             if j > flat_jolt + 0.5f32.to_radians() {
                 failures.push(format!("{name} {deg}°: trunk jolt {:.2}° vs flat {:.2}°", j.to_degrees(), flat_jolt.to_degrees()));
@@ -1044,7 +1045,7 @@ fn slope_lean_table() {
     let (spine1, neck) = (bone("Bip01 Spine1"), bone("Bip01 Neck"));
     let old_joints = vec![(spine1, 0.7), (neck, 0.3)];
     // Candidates (owner retune): `(vec![(spine1, 0.45), (bone("Bip01 Spine2"), 0.4), (neck, 0.15)], g(up, down, max))`.
-    let g = |up, down, max| GradeLean { up, down, max };
+    let g = |up, down, max| GradeLean { up, down, max, ..GradeLean::default() };
     let variants: Vec<(&str, Override)> = vec![
         ("before", Some((old_joints, g(0.4, 0.12, 0.21)))),
         ("shipped", None),
@@ -1090,6 +1091,103 @@ fn slope_lean_table() {
                 }
             }
             eprintln!("{line}");
+        }
+    }
+}
+
+/// The 30° ramp up and down at the player's walk (1.6 m/s) and jog (4.5), the shipped
+/// humanoid graph, against its twin without ground (`ik_walk`): the head stays about as
+/// animated while the trunk leans (P-IK4; owner PL-7: "head very tilted", +23° measured
+/// 2026-11-11). Sanity only: finite, head pitch well under the old +23°, trunk within the
+/// lean cap plus the gait's sway. The numbers: `slope_lean_head_and_hands`.
+#[test]
+fn slope_lean_keeps_the_head_level() {
+    use sf_controller::Gait;
+    if humanoid_sim().is_none() {
+        return;
+    }
+    let mut failures = Vec::new();
+    for (speed, gait) in [(1.6f32, Gait::Walk), (4.5, Gait::Run)] {
+        for up in [true, false] {
+            let (w, top) = World::ramp(30.0, 12.0);
+            let (start, dir) = if up { (Vec3::new(-3.0, 0.0, 0.0), Vec3::X) } else { (Vec3::new(top.x + 3.0, top.y, 0.0), -Vec3::X) };
+            let frames = ik_walk(&w, start, dir * speed, gait, 1.0 + 16.0 / speed, true, None);
+            let on: Vec<&IkFrame> = frames.iter().filter(|f| f.root.x >= 1.0 && f.root.x <= top.x - 1.0).collect();
+            let n = on.len().max(1) as f32;
+            let (head, lean) = (on.iter().map(|f| f.head).sum::<f32>() / n, on.iter().map(|f| f.lean).sum::<f32>() / n);
+            let label = format!("{} {speed} m/s", if up { "up" } else { "down" });
+            eprintln!("{label}: head {:+5.1}° lean {:+5.1}°", head.to_degrees(), lean.to_degrees());
+            if on.is_empty() || !on.iter().all(|f| f.head.is_finite() && f.lean.is_finite() && f.hands.is_finite()) {
+                failures.push(format!("{label}: {} frames, not all finite", on.len()));
+            }
+            if head.abs() > 6f32.to_radians() || lean.abs() > 14f32.to_radians() {
+                failures.push(format!("{label}: head {:.1}° lean {:.1}°", head.to_degrees(), lean.to_degrees()));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// Slope lean, head and hands (owner 2026-11-25: "hands going behind their backs"; PL-7):
+/// the player on 10/20/30° ramps up and down at walk 1.6 and jog 4.5 m/s, each value against
+/// the twin without ground (`ik_walk`): trunk pitch (Spine1 to head) and head pitch (degrees,
+/// forward positive), the hands' fore-aft offset from the pelvis (cm, forward positive) and
+/// that offset minus the twin's. Rows: "before" (2026-11-05 values: up 0.8, max 0.45, no
+/// counter, no fade) and "shipped". Also prints the arms' parents in the skeleton.
+/// Sanity only: finite.
+#[test]
+#[ignore = "measurement: slope lean head and hands"]
+fn slope_lean_head_and_hands() {
+    use sf_anim_graph::Op;
+    use sf_anim_graph::asset::GradeLean;
+    use sf_controller::Gait;
+    let Some(probe) = humanoid_sim() else { return };
+    let parent = |n: &str| probe.skeleton.parent(probe.skeleton.find(n).unwrap()).map_or("-", |p| probe.skeleton.name(p));
+    for n in ["Bip01 L Clavicle", "Bip01 L UpperArm", "Bip01 R Clavicle", "Bip01 Head", "Bip01 Neck"] {
+        eprintln!("{n} <- {}", parent(n));
+    }
+    let before = |sim: &mut Sim| {
+        for o in &mut sim.graph.ops {
+            if let Op::Lean { counter, grade, .. } = &mut o.op {
+                counter.clear();
+                *grade = GradeLean { up: 0.8, down: 0.075, max: 0.45, ..GradeLean::default() };
+            }
+        }
+    };
+    let shipped = |_: &mut Sim| {};
+    for (label, edit) in [("before", &before as &dyn Fn(&mut Sim)), ("shipped", &shipped)] {
+        let mut sim = humanoid_sim().unwrap();
+        edit(&mut sim);
+        for o in &sim.graph.ops {
+            if let Op::Lean { joints, counter, grade, .. } = &o.op {
+                let names = |v: &[(u16, f32)]| v.iter().map(|&(j, w)| format!("{} {w}", sim.skeleton.name(usize::from(j)))).collect::<Vec<_>>().join(", ");
+                eprintln!("--- {label}: joints [{}] counter [{}] {grade:?}", names(joints), names(counter));
+            }
+        }
+        for (speed, gait, g) in [(1.6f32, Gait::Walk, "walk"), (4.5, Gait::Run, "jog")] {
+            for deg in [0.0f32, 10.0, 20.0, 30.0] {
+                for up in [true, false] {
+                    if deg == 0.0 && !up {
+                        continue;
+                    }
+                    let (w, top) = if deg == 0.0 { (World::new(), Vec2::new(12.0, 0.0)) } else { World::ramp(deg, 12.0) };
+                    let (start, dir) = if up { (Vec3::new(-3.0, 0.0, 0.0), Vec3::X) } else { (Vec3::new(top.x + 3.0, top.y, 0.0), -Vec3::X) };
+                    let frames = ik_walk_with(&w, (start, dir * speed, gait, 1.0 + 16.0 / speed), true, None, edit);
+                    let on: Vec<&IkFrame> = frames.iter().filter(|f| f.root.x >= 1.0 && f.root.x <= top.x - 1.0).collect();
+                    assert!(!on.is_empty() && on.iter().all(|f| f.head.is_finite() && f.lean.is_finite() && f.hands.is_finite()), "{label} {g} {deg}: finite");
+                    let n = on.len() as f32;
+                    let mean = |f: &dyn Fn(&IkFrame) -> f32| on.iter().map(|x| f(x)).sum::<f32>() / n;
+                    eprintln!(
+                        "{g:4} {:4} {deg:2.0}° | trunk {:+5.1}° head {:+5.1}° | hands {:+5.1} cm (twin {:+5.1}, {:+5.1})",
+                        if deg == 0.0 { "flat" } else if up { "up" } else { "down" },
+                        mean(&|x| x.lean).to_degrees(),
+                        mean(&|x| x.head).to_degrees(),
+                        mean(&|x| x.hands) * 100.0,
+                        mean(&|x| x.twin_hands) * 100.0,
+                        mean(&|x| x.hands - x.twin_hands) * 100.0,
+                    );
+                }
+            }
         }
     }
 }
@@ -1458,16 +1556,26 @@ struct IkFrame {
     /// Pelvis height, character space: placed and the twin's (L1).
     pelvis_abs: f32,
     twin_pelvis_abs: f32,
+    /// The hands' mean fore-aft offset from the pelvis (character +Z forward, m): placed and the twin's.
+    hands: f32,
+    twin_hands: f32,
 }
 
 /// Walks the humanoid graph with the player's (`player`) or the walkers' mover and feed on
 /// `world` at `gait`, with ground probes, next to a **twin** graph fed the same motion and no
 /// ground (the animated pose: no foot placement, no lean, no stride-warp grade term).
 /// `turn`: after that many seconds the intent velocity becomes the second value.
-#[allow(clippy::many_single_char_names, reason = "pose math")]
 fn ik_walk(world: &World, start: Vec3, velocity: Vec3, gait: sf_controller::Gait, seconds: f32, player: bool, turn: Option<(f32, Vec3)>) -> Vec<IkFrame> {
+    ik_walk_with(world, (start, velocity, gait, seconds), player, turn, &|_| {})
+}
+
+/// [`ik_walk`] with `edit` applied to both graphs first (op data overrides).
+#[allow(clippy::many_single_char_names, clippy::too_many_lines, reason = "pose math")]
+fn ik_walk_with(world: &World, (start, velocity, gait, seconds): (Vec3, Vec3, sf_controller::Gait, f32), player: bool, turn: Option<(f32, Vec3)>, edit: &dyn Fn(&mut Sim)) -> Vec<IkFrame> {
     let mut sim = humanoid_sim().unwrap();
     let mut twin = humanoid_sim().unwrap();
+    edit(&mut sim);
+    edit(&mut twin);
     let running = velocity.length() > 3.0;
     for s in [&mut sim, &mut twin] {
         s.set(p::RUNNING, if running { 1.0 } else { 0.0 });
@@ -1479,6 +1587,7 @@ fn ik_walk(world: &World, start: Vec3, velocity: Vec3, gait: sf_controller::Gait
     let halflife = if player { 0.025 } else { 0.05 };
     let bone = |n: &str| sim.skeleton.find(n).unwrap_or_else(|| panic!("{n}"));
     let (spine1, head, pelvis) = (bone("Bip01 Spine1"), bone("Bip01 Head"), bone("Bip01 Pelvis"));
+    let hands = [bone("Bip01 L Hand"), bone("Bip01 R Hand")];
     let legs: Vec<(usize, usize)> = sim.graph.legs.iter().map(|l| (usize::from(l.effector()), usize::from(l.joints[1]))).collect();
     let stride_grade = sim.graph.ops.iter().find_map(|o| match o.op {
         sf_anim_graph::Op::StrideWarp { grade, .. } => Some(grade),
@@ -1558,6 +1667,8 @@ fn ik_walk(world: &World, start: Vec3, velocity: Vec3, gait: sf_controller::Gait
             world_feet: legs.iter().map(|&(e, _)| WorldPos::ORIGIN.delta_f32(f.to_world(m.translation(e)))).collect(),
             pelvis_abs: m.translation(pelvis).y,
             twin_pelvis_abs: n.translation(pelvis).y,
+            hands: hands.iter().map(|&h| m.translation(h).z - m.translation(pelvis).z).sum::<f32>() / 2.0,
+            twin_hands: hands.iter().map(|&h| n.translation(h).z - n.translation(pelvis).z).sum::<f32>() / 2.0,
         });
     }
     out

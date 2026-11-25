@@ -275,4 +275,5 @@ fn classic_keeps_the_morrowind_graph() {
     assert_eq!(digest, CLASSIC_DIGEST, "Classic humanoid graph changed: digest {digest:#x}");
 }
 
-const CLASSIC_DIGEST: u64 = 0xe03c_50a5_73ac_8c28;
+/// 2026-11-25: the slope lean retune (small, speed-faded, head and arm counter) applies to Classic too.
+const CLASSIC_DIGEST: u64 = 0x6159_8cb3_fce0_9d33;

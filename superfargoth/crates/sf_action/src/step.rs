@@ -16,7 +16,7 @@ use sf_anim::{RootChain, RootPath, RootPose, WarpPlan};
 use crate::ids::{CharacterId, ClockTime, MovesetKey, RuleKey, SlotKey, TagId, TargetId, Tick, TICK_HZ};
 use crate::rule::{Category, CompiledRule, ExitOn, Launch, StickSide, Mode, ObstacleClass, Owner, Phase, PrevKey, ProbeNeed, RuleSet, SquareUp, WarpTarget};
 use crate::state::{ActionClock, ActionState, CharacterParams, RATE_ONE, WarpState};
-use crate::windows::{Gates, SlotSource, WindowKind, gates, locate, open_windows};
+use crate::windows::{Gates, SlotSource, WindowKind, buffering, gates, locate, open_windows};
 
 /// Extra choose rounds when a move ends or exits on its first tick (bounded settle).
 pub const MAX_SETTLE: usize = 4;
@@ -174,6 +174,10 @@ pub struct ActionOutput {
     /// Vertical speed to set before the mover step, m/s.
     pub launch: Option<f32>,
     pub prompt: Option<Prompt>,
+    /// What the current move's `Accept` windows latch at the end of this tick (empty in a free
+    /// move): the input shell resolves a shared tap/hold button as its tap on press while its tap
+    /// class is in here, since its hold can't start mid-move ([`crate::InputSampler::set_buffering`]).
+    pub buffering: ClassSet,
     /// Warp owner: where the body is at the end of this tick and the chain progress the graph plays.
     pub warp: Option<WarpOutput>,
     /// Clip owner: this tick's root motion and yaw.
@@ -424,12 +428,13 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
         let mut winner = None;
         for &i in rules.priority() {
             let r = rules.at(i);
-            // The current move restarts only once it is over (ended, exited or lapsed).
-            if (Some(i) == cur && !open) || started.contains(&i) || state.timers.redo.iter().any(|&(k, _)| k == r.key) {
-                continue;
-            }
             let by = r.classes.intersection(firing);
             let requested = !by.is_empty();
+            // The current move restarts once it is over (ended, exited or lapsed), or earlier when
+            // a press it takes fires through its own cancel window (a roll chained into a roll).
+            if (Some(i) == cur && !open && !requested) || started.contains(&i) || state.timers.redo.iter().any(|&(k, _)| k == r.key) {
+                continue;
+            }
             let other = forced(r) || exit_target == Some(i) || (auto_ok && (automatic(r) || r.rule.entry.auto_in.contains(&facts.mode)));
             if !(requested || other) {
                 continue;
@@ -761,9 +766,10 @@ fn write_output(ctx: &StepCtx<'_>, state: &ActionState, cur: Option<usize>, fact
     let rules = ctx.rules;
     out.rule = state.mov;
     let Some(r) = cur.map(|i| rules.at(i)) else {
-        (out.slot, out.chain, out.playhead) = (None, 0, 0.0);
+        (out.slot, out.chain, out.playhead, out.buffering) = (None, 0, 0.0, ClassSet::EMPTY);
         return;
     };
+    out.buffering = if stood(r, state.clock.elapsed) { ClassSet::EMPTY } else { buffering(r, ctx.slots, state.clock.elapsed) };
     let at = locate(r, ctx.slots, state.clock.elapsed);
     out.slot = at.slot;
     out.chain = at.chain;

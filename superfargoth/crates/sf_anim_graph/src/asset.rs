@@ -583,8 +583,10 @@ impl GradeStride {
 }
 
 /// Trunk pitch by ground grade (`Lean`): forward uphill, slightly back
-/// downhill, a few degrees at most. Radians per unit grade (rise over run
-/// along the travel); zero (the default) turns it off.
+/// downhill, a few degrees at most, scaled by speed (UE5 GASP / ALS slope
+/// lean): a body leans into a slope it moves along, not one it stands on.
+/// Radians per unit grade (rise over run along the travel); zero (the
+/// default) turns it off.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GradeLean {
@@ -594,6 +596,18 @@ pub struct GradeLean {
     pub down: f32,
     /// Pitch cap either way, radians.
     pub max: f32,
+    /// Horizontal speed (m/s) up to which the pitch is whole; it fades
+    /// linearly from there to none at `fade_to`.
+    pub fade_from: f32,
+    /// Horizontal speed (m/s) from which the pitch is gone. At or below
+    /// `fade_from` (the default, 0 and 0) the pitch never fades.
+    pub fade_to: f32,
+    /// Horizontal speed (m/s) below which there is no pitch (standing); it
+    /// grows linearly from there to whole at `rise_to`.
+    pub rise_from: f32,
+    /// Horizontal speed (m/s) from which the pitch is whole. At or below
+    /// `rise_from` (the default, 0 and 0) the pitch is whole from standing.
+    pub rise_to: f32,
 }
 
 impl GradeLean {
@@ -602,6 +616,28 @@ impl GradeLean {
     pub fn pitch(self, grade: f32) -> f32 {
         let p = if grade >= 0.0 { self.up * grade } else { self.down * grade };
         p.clamp(-self.max, self.max)
+    }
+
+    /// The share (0-1) of the pitch kept at horizontal `speed`, m/s.
+    #[must_use]
+    pub fn fade(self, speed: f32) -> f32 {
+        let rise = if self.rise_to <= self.rise_from {
+            1.0
+        } else {
+            ((speed - self.rise_from) / (self.rise_to - self.rise_from)).clamp(0.0, 1.0)
+        };
+        let out = if self.fade_to <= self.fade_from {
+            1.0
+        } else {
+            ((self.fade_to - speed) / (self.fade_to - self.fade_from)).clamp(0.0, 1.0)
+        };
+        rise * out
+    }
+
+    /// [`Self::pitch`] at `grade`, scaled by [`Self::fade`] at `speed`.
+    #[must_use]
+    pub fn pitch_at(self, grade: f32, speed: f32) -> f32 {
+        self.pitch(grade) * self.fade(speed)
     }
 }
 
@@ -745,6 +781,12 @@ pub enum OpSpec {
     /// (`grade`, off by default; the same shares).
     Lean {
         joints: Vec<(JointRef, f32)>,
+        /// Joints turned back, after the lean, by their share of the way to
+        /// their model-space rotation before it (1 = as animated): the head
+        /// stays level and the upper arms keep hanging while the trunk leans
+        /// (ALS / Control Rig head and arm stabilisation). Empty by default.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        counter: Vec<(JointRef, f32)>,
         #[serde(default = "lean_gain")]
         gain: f32,
         #[serde(default = "fifteen_degrees")]

@@ -290,8 +290,8 @@ fn spawn_controls(commands: &mut Commands, keymap: &sf_ui::Keymap, body: Entity)
             PlayerAction::Button(ActionClass::Light) => bind(commands, keymap, Control::Attack, action, plain),
             PlayerAction::Button(ActionClass::Heavy) => bind(commands, keymap, Control::HeavyAttack, action, plain),
             PlayerAction::Button(ActionClass::Guard) => bind(commands, keymap, Control::Guard, action, plain),
-            // One button: tap rolls on release, hold sprints (the separate Sprint and Dodge buttons
-            // stay unbound).
+            // One button: tap rolls on release, hold sprints; mid-move, while the move buffers
+            // Dodge, the press rolls (the separate Sprint and Dodge buttons stay unbound).
             PlayerAction::DodgeSprint => bind(commands, keymap, Control::Sprint, action, plain),
             PlayerAction::Button(_) => {}
         }

@@ -191,6 +191,19 @@ pub fn open_windows<'a>(rule: &CompiledRule, slots: &'a dyn SlotSource, t: Clock
     windows.iter().filter(move |w| w.start <= at.local && at.local < w.end)
 }
 
+/// The classes `rule`'s authored `Accept` windows latch at clock `t` (the mid-move input buffer):
+/// empty once the chain has ended and for a move with no `Accept` window open now (a free or a
+/// committed move). The input shell reads it to resolve a shared tap/hold button on press
+/// ([`crate::InputSampler::set_buffering`]).
+pub fn buffering(rule: &CompiledRule, slots: &dyn SlotSource, t: ClockTime) -> ClassSet {
+    let at = locate(rule, slots, t);
+    let windows = if at.ended { &[][..] } else { at.info.map(|s| s.windows.as_slice()).unwrap_or_default() };
+    windows
+        .iter()
+        .filter(|w| w.start <= at.local && at.local < w.end)
+        .fold(ClassSet::EMPTY, |acc, w| if let WindowKind::Accept(c) = w.kind { acc.union(c) } else { acc })
+}
+
 /// What the current move allows now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Gates {

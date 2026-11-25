@@ -22,7 +22,7 @@ pub struct PlayerInput {
     pub player: PlayerId,
     pub sampler: InputSampler,
     /// The sampler's shared Dodge/Sprint button (`TapHold::DODGE_SPRINT`: tap = roll on release, hold
-    /// = sprint), fed by [`PlayerAction::DodgeSprint`].
+    /// = sprint; mid-move, while the move buffers Dodge, roll on press), fed by [`PlayerAction::DodgeSprint`].
     pub dodge_sprint: usize,
 }
 
@@ -144,6 +144,8 @@ pub(crate) fn sample(mut tick: ResMut<ActionTick>, mut players: Query<(&mut Play
     tick.0 = tick.0.next();
     for (mut input, mut character) in &mut players {
         let player = input.player;
+        // The last step's buffer: mid-move, the shared Dodge/Sprint button rolls on press.
+        input.sampler.set_buffering(character.output.buffering);
         character.command = input.sampler.sample(tick.0, Some(player));
     }
 }

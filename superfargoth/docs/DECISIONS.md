@@ -1936,3 +1936,16 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   scale (`sf_worldgen::height_curve`; heights x10 made every 2 m vanilla shore a 20 m+ bluff); high ground and deep sea unchanged.
 - 2026-11-24 (world10x, owner): kit houses on slopes sink at the back (door at street level, ground covers up to ~2 m of the back
   wall), never raised; empty town lots get trees as a temporary scaffold (`worldgen-town --gardens`) until MU land-use planting.
+- 2026-11-25 (gameplay-roadmaps, owner): animation sources: Kimodo for everything but combat (combat = Morrowind clips);
+  100STYLE rejected (cartoony). Roll keeps one button (tap roll / hold sprint), press-to-roll inside moves (CB-6).
+- 2026-11-25 (gameplay-roadmaps, owner): combat gets Elden Ring poise (light hits don't interrupt) and a parry with riposte;
+  same gameplay rules in first and third person (only the combat-style options differ).
+- 2026-11-25 (gameplay-roadmaps, owner): crime: witnesses walk to report and can be stopped; no instant report. Guards offer
+  surrender except kill-on-sight for murder above a data threshold. Lockpicking minigame TBD; bashing locks/doors with
+  weapons or fists by strength, risking health and contents, and a crime if reported (vandalism when owned).
+- 2026-11-25 (gameplay-roadmaps, owner): world: budgeted fire spread, grass regrows fast; candles/lamps snuffed and relit,
+  NPCs react to darkness; thrown/smashed objects draw attention; one carried thing in the hands, slower.
+- 2026-11-25 (gameplay-roadmaps, owner): travel: ride ambushes can wreck the cart, skipped rides spend game time, no free
+  teleport by default, whistle for the mount. AI: companion command wheel, knocked down not killed by default, gossip
+  spreads reputation; fliers/swimmers path in 3D. Dialogue: cinematic default for Modern Morrowind; no quest markers for
+  Morrowind, compass for the framework.

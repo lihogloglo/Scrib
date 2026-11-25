@@ -48,7 +48,7 @@ pub use brace::{
     BRACE_PALM_GAP, BRACE_RISE, BRACE_STRAIGHT, BRACE_ELBOW_ROOM, BRACE_FINGERS_UP, BRACE_LEAD, BRACE_HEAD_ON, BRACE_SPREAD, BRACE_CHEST, BRACE_TUCK, BraceBody, HandBrace, PalmFrame, WallBrace,
 };
 pub use command::{
-    ActionClass, ButtonEdges, CLASSES, ClassSet, Command, CommandFeed, InputSampler, LockRequest, LockSide, REPEAT_MISSING_TICKS, TapHold,
+    ActionClass, ButtonEdges, CLASSES, ClassSet, Command, CommandFeed, InputSampler, LockRequest, LockSide, REPEAT_MISSING_TICKS, TAP_HOLD_S, TapHold,
     ViewDir,
 };
 pub use grip::{GRIP_INSET, GRIP_LATERAL, GRIP_MAX_GAP, GRIP_RAMP, GRIP_RISE, HandHold, LEFT, LedgeGrip, RIGHT, hold_target, hold_weight};
@@ -63,7 +63,7 @@ pub use state::{
 pub use step::{ActionEvent, ActionOutput, ClipOutput, EventKind, Focus, MAX_SETTLE, Obstacle, Prompt, Refusal, Refused, Sense, StepCtx, WarpOutput, step};
 /// The root-path trait a [`SlotSource`] hands Warp moves (hosts implement or box it).
 pub use sf_anim::RootPath;
-pub use windows::{Gates, HitMask, Located, SlotInfo, SlotSource, SlotTable, Window, WindowKind, gates, locate, open_windows};
+pub use windows::{Gates, HitMask, Located, SlotInfo, SlotSource, SlotTable, Window, WindowKind, buffering, gates, locate, open_windows};
 
 /// The framework's base move rules (A1: locomotion, air, landing bands, activation), loaded as
 /// [`Origin::Framework`] before content packs.

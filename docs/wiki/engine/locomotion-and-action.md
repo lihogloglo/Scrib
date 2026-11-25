@@ -12,7 +12,7 @@ the camera follows the drawn body at frame rate and never feeds gameplay.
   (device edges into `InputSampler`), `FixedUpdate` `Sample` then `Command` (AI, scripts, net write theirs) then
   `Step` then `Move`, then `Interpolate` (blend by `overstep_fraction`, plus the render-correction spring), then cameras.
 - **Chooser**: `sf_action/src/step.rs` (`step`: pure, one per character per tick; Sekiro-style two-stage buffer,
-  jump buffer and coyote time in ticks, forced landings by impact band). Rules: `rule.rs` (`MoveRule` RON compiled
+  jump buffer and coyote time in ticks, forced landings by impact band; a move whose open `Accept` latches a press it also `Cancel`s into restarts itself, so mashed rolls chain; `ActionOutput::buffering` says what the move latches). Tap/hold buttons (`command.rs` `TapHold`, threshold tunable `move.input.tap_hold_s` 0.30 s) fire the tap on release from neutral but on press while the current move buffers it (dodge during a roll or an attack recovery). Rules: `rule.rs` (`MoveRule` RON compiled
   to a priority-ordered `RuleSet`; `Owner` at `:64`: `Sim`, `Warp`, `Clip`), `BASE_RULES`, `TRAVERSAL_RULES`
   (mantle waist/high, vault), holds (guard), look limits, grip (`grip.rs`) and brace (`brace.rs`). State is plain
   serde with integer clocks and no singleton player (`state.rs`), so it is net-ready.

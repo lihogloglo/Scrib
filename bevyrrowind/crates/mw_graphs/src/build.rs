@@ -1082,20 +1082,32 @@ impl Builder {
                 ))
                 .expect("FootPlacement defaults"),
             );
-            // Trunk lean into the slope (AN-21). Walking uphill the trunk flexes forward more
-            // the steeper it gets (the forward moment helps hip propulsion); downhill it stays
-            // near upright, a small backward lean (Leroux, Fung & Barbeau 2002, Gait & Posture
-            // 15(1); Vernillo et al. 2017, Sports Med 47). Measured (`slope_walk
-            // slope_lean_table`, Spine1 to head, walk): about +5/+10/+16° at 10/20/30° up,
-            // -1.5° at 30° down (the walk clip itself leans 4° back on the flat).
-            // Owner 2026-11-05: 0.4/0.12/0.21 (+8.4/-2.6° at 30°) leaned too little uphill,
-            // a touch too much downhill. Spread over the upper spine with a small neck share
-            // so a steep climb bends the back, not the neck; never `Bip01 Spine` (the thighs
-            // hang off it on biped rigs: leaning it would swing the placed legs).
-            // No speed term (the op has none): runs lean about 3/4 of the walk's.
-            // No turn roll (gain 0): flat walking stays as authored.
+            // Trunk lean into the slope (AN-21): a few degrees forward uphill, a little back
+            // downhill (Leroux, Fung & Barbeau 2002, Gait & Posture 15(1); Vernillo et al. 2017,
+            // Sports Med 47), the procedural slope lean of UE5 GASP / ALS: small, fading with
+            // speed, head stabilised, arms hanging as animated. Owner 2026-11-25 + PL-7 ("far
+            // too strong", head tilted, hands behind the back) on 0.8/0.075/0.45 rad, no
+            // counter: +17° trunk, +23° head, hands 11 cm back at 30° up (`slope_walk
+            // slope_lean_head_and_hands`).
+            // Spread over the upper spine with a small neck share so a steep climb bends the
+            // back, not the neck; never `Bip01 Spine` (the thighs hang off it on biped rigs:
+            // leaning it would swing the placed legs). No turn roll (gain 0).
+            // Tunables (graph data; source Guess within the GASP/ALS range of a few degrees):
+            // `grade.up` 0.3 rad per unit grade (0..1), `grade.down` 0.075 rad (0..0.3),
+            // `grade.max` 0.15 rad = 8.6° (0..0.3); `rise_from`/`rise_to` 0.2/1.2 m/s: none
+            // standing on a slope, whole from a slow walk through jog and sprint (owner
+            // 2026-11-25: the first cut faded out at 2.5-6.5 m/s, so the default jog barely
+            // leaned and only standing did; the cap plus the counters keep a sprint sane).
+            // `counter` (share 0..1 back to the animated model rotation): head 0.9 (a hint of
+            // the lean kept), upper arms 0.85 (the clavicles hang from `Bip01 Neck`, so the
+            // arms ride the whole lean and would swing back).
             self.a.procedural.push(
-                ron::from_str("Lean(joints: [(Rig(\"chest\"), 0.45), (Rig(\"upperChest\"), 0.4), (Rig(\"neck\"), 0.15)], gain: 0.0, grade: (up: 0.8, down: 0.075, max: 0.45), halflife: 0.3, gate: Some(\"lean\"))").expect("Lean defaults"),
+                ron::from_str(
+                    "Lean(joints: [(Rig(\"chest\"), 0.45), (Rig(\"upperChest\"), 0.4), (Rig(\"neck\"), 0.15)], \
+                     counter: [(Rig(\"head\"), 0.9), (Rig(\"leftUpperArm\"), 0.85), (Rig(\"rightUpperArm\"), 0.85)], gain: 0.0, \
+                     grade: (up: 0.3, down: 0.075, max: 0.15, rise_from: 0.2, rise_to: 1.2), halflife: 0.3, gate: Some(\"lean\"))",
+                )
+                .expect("Lean defaults"),
             );
             // Hands on the lip (B2b): two-bone arm IK onto the host's grip targets, after the
             // trunk lean (it moves the shoulders) and before the springs. At weight 0 (every

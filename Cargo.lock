@@ -5190,6 +5190,7 @@ dependencies = [
 name = "mw_combat"
 version = "0.1.0"
 dependencies = [
+ "glam 0.33.12",
  "ron",
  "sf_action",
  "sf_combat",
@@ -7768,6 +7769,7 @@ dependencies = [
  "sf_controller",
  "sf_coords",
  "sf_ids",
+ "sf_tunables",
  "thiserror 2.0.21",
 ]
 

@@ -11,5 +11,9 @@ ron.workspace = true
 sf_action.workspace = true
 sf_combat.workspace = true
 
+[dev-dependencies]
+# The roll test's stick (`InputSampler::set_stick`).
+glam.workspace = true
+
 [lints]
 workspace = true
