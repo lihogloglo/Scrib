@@ -57,10 +57,18 @@ use sf_stats_bevy::{StatCommand, StatIndex, StatRules, StatTick, Stats};
 
 use crate::stats::MwStats;
 
+mod global_scripts;
+mod local_scripts;
 mod persuasion;
 mod services;
 pub mod service_list_screen;
 pub mod trade_screen;
+pub use global_scripts::{GlobalScripts, ScriptsSave};
+pub use local_scripts::{RegionCell, ScriptRegion};
+use global_scripts::ScriptLocals;
+/// The `mw/scripts` section's parts ([`ScriptsSave`]; v1 held a `GlobalsSnapshot` only) and the
+/// local instances' key ([`GlobalScripts::locals`]).
+pub use mw_script::{GlobalsSnapshot, LocalKey, LocalsSnapshot};
 pub use persuasion::{PERSUASION_ACTION, PERSUASION_OPTIONS, PersuadeRefused, Persuaded, persuasion_kind};
 pub use services::{ServiceEventMessage, TradeQuotes, seed_store, trade_config};
 
@@ -197,6 +205,8 @@ struct Content {
     gmst: MwGmst,
     /// Bound item ids (`sMagicBound*`), never traded.
     bound: BoundItems,
+    /// The CONT base of every container reference ([`crate::inventory::container_refs`]).
+    containers: HashMap<ActorKey, RecordId>,
 }
 
 /// One conversation (host side).
@@ -241,6 +251,9 @@ pub struct Rpg {
     /// The clock and a calendar were present at the last [`services::sync_clock`]: the `MWScript`
     /// date globals follow the clock, and services passing time only skip it (C3b-2).
     clock_calendar: bool,
+    /// Global scripts' locals as dialogue results, the console and the globals' own tick read
+    /// and write them (`scriptid.var`, DQ-4b2c), published by [`GlobalScripts`].
+    script_locals: ScriptLocals,
 }
 
 impl Content {
@@ -276,6 +289,9 @@ impl Content {
         match target {
             Target::Speaker => Some(ctx.speaker),
             Target::Actor(base) => self.by_base(base),
+            // A placed reference's key is its placement id ([`key`]), registered or not:
+            // containers and activators hold items and locals under it too.
+            Target::Ref(placement) => Some(ActorKey(*placement)),
             Target::Player => None,
         }
     }
@@ -286,6 +302,8 @@ impl Content {
 struct View<'a> {
     c: &'a Content,
     s: &'a RpgState,
+    /// Global scripts' locals (`scriptid.var`).
+    g: &'a ScriptLocals,
     sheets: &'a dyn MwSheets,
 }
 
@@ -300,8 +318,13 @@ impl View<'_> {
         })
     }
 
-    /// A declared local of `actor`'s script (`OpenMW`: undeclared reads fail the filter).
+    /// A declared local of `actor`'s script (`OpenMW`: undeclared reads fail the filter): its
+    /// object instance's when the placement has one (one store, `ObjectLocals`), else the NPC
+    /// dialogue store's (an actor not spawned from a scripted placement).
     fn actor_local(&self, actor: ActorKey, name: &RecordId) -> Option<(VarType, f32)> {
+        if self.g.addresses(actor.0) {
+            return self.g.object_local(actor.0, name);
+        }
         let ty = *self.c.actors.get(&actor)?.declared.get(name)?;
         Some((ty, self.s.locals.get(&(actor, name.clone())).copied().unwrap_or(0.0)))
     }
@@ -375,8 +398,17 @@ impl MwWorld for View<'_> {
         self.global_value(name)
     }
 
+    /// `id.var` names a global script's local when `id` is a script record, else a local of
+    /// the placed object with base record `id` (rule 7) or of the exact reference, else of the
+    /// registered actor (see [`ScriptLocals`] for the precedence, `ObjectLocals` for the objects).
     fn var(&self, ctx: &ConversationCtx, target: &Target, name: &RecordId) -> Option<ScriptVar> {
-        let (ty, value) = self.actor_local(self.target(ctx, target)?, name)?;
+        let (ty, value) = match target {
+            Target::Actor(script) if self.g.is_script(script) => self.g.get(script, name)?,
+            _ => match self.g.object_of(ctx, target) {
+                Some(placement) => self.g.object_local(placement, name)?,
+                None => self.actor_local(self.target(ctx, target)?, name)?,
+            },
+        };
         Some(ScriptVar { ty, value })
     }
 
@@ -475,6 +507,7 @@ impl Rpg {
         // Missing GMSTs take vanilla values (the stats glue logs them).
         let (gmst, _) = MwGmst::from_db(&records);
         let bound = BoundItems::from_records(&records);
+        let containers = crate::inventory::container_refs(&records);
         Ok(Self {
             content: Content {
                 records,
@@ -488,6 +521,7 @@ impl Rpg {
                 disposition: Box::new(DerivedDisposition { gmst: gmst.clone() }),
                 gmst,
                 bound,
+                containers,
             },
             state: RpgState::default(),
             results: MwResults::new(),
@@ -499,26 +533,35 @@ impl Rpg {
             service_events: Vec::new(),
             lists: Vec::new(),
             sky_hours: 0.0,
+            script_locals: ScriptLocals::default(),
             clock: None,
             clock_calendar: false,
         })
     }
 
     /// New game without character generation (scaffold `SkipChargen`; removal path: chargen,
-    /// M7): the state the end of chargen leaves that dialogue reads. As `OpenMW`'s bypassed new
-    /// game (`apps/openmw/mwworld/worldimp.cpp` `World::startNewGame`, 0.49.0), `chargenstate`
-    /// is -1 (chargen over: chargen-only lines stop matching). Beyond `OpenMW` (whose bypass
-    /// leaves Sellus Gravius asking for papers), the chargen captain's hand-off lines run in the
-    /// result runner as if chargen had reached them, and two kinds of effect are kept, so what
-    /// is granted is the data's and a mod's edit of those lines counts:
+    /// M7): the player as the end of chargen leaves them, main quest started. As `OpenMW`'s
+    /// bypassed new game (`apps/openmw/mwworld/worldimp.cpp` `World::startNewGame`, 0.49.0),
+    /// `chargenstate` is -1 (chargen over: chargen-only lines stop matching). Beyond `OpenMW`
+    /// (whose bypass leaves Sellus Gravius asking for papers and starts no quest), the chargen
+    /// captain's hand-off lines run in the result runner as if chargen had reached them, and
+    /// their effects on the player and his own locals are kept, so what is granted is the
+    /// data's and a mod's edit of those lines counts:
     /// - `AddTopic`s of his "duties" result (the package for Caius; "latest rumors", "little
     ///   advice", ...): the topics are learned.
+    /// - `Journal` / `SetJournalIndex` and the player's `AddItem` / `RemoveItem` of those lines,
+    ///   applied as the console applies them ([`Rpg::apply`], same conversation context, so the
+    ///   journal text's macros and the item rules are the game's). In the vanilla data the
+    ///   "duties" result starts the main quest's first stage and hands over Caius' package, the
+    ///   directions to him and his gold; the papers greeting's `RemoveItem` of the release
+    ///   papers is applied too and removes nothing (the player never held them; `RemoveItem`
+    ///   takes at most what is held).
     /// - his own `set <local>`s from the greeting that takes the release papers
     ///   (`chargen statssheet`; `set state to -1`): his post-chargen greeting. Applied when he is
     ///   registered ([`Rpg::add_actor`]), since his actor key exists only once his cell loads.
     ///
-    /// Their other effects (journal, package, gold, the papers' removal) start the main quest
-    /// and stay out. Returns the topics learned.
+    /// Their other effects (a message box, `Goodbye`, a choice, another actor's items) are
+    /// dropped. Returns the topics learned.
     pub fn skip_chargen(&mut self) -> Vec<RecordId> {
         const HANDOFF_TOPIC: &str = "duties";
         const HANDOFF_SPEAKER: &str = "chargen captain";
@@ -552,8 +595,9 @@ impl Rpg {
         let sheets = &NoSheets;
         let mut topics = Vec::new();
         let mut locals = Vec::new();
+        let mut kept = Vec::new();
         {
-            let v = View { c: &self.content, s: &self.state, sheets };
+            let v = View { c: &self.content, s: &self.state, g: &self.script_locals, sheets };
             let state = ResultState { world: &self.state.world, player: &self.state.pc, env: &v };
             let mut runner = self.results.runner(state);
             for (topic, response, script) in &handoff {
@@ -563,7 +607,11 @@ impl Rpg {
                             match e {
                                 ResultEffect::AddTopic(t) if topic.as_str() == HANDOFF_TOPIC => topics.push(t),
                                 ResultEffect::SetLocal { target: Target::Speaker, name, value } => locals.push((name, value)),
-                                _ => {}
+                                e @ (ResultEffect::Journal { .. }
+                                | ResultEffect::SetJournalIndex { .. }
+                                | ResultEffect::AddItem { target: Target::Player, .. }
+                                | ResultEffect::RemoveItem { target: Target::Player, .. }) => kept.push(e),
+                                e => debug!("new game: chargen hand-off {response}: dropped {e:?}"),
                             }
                         }
                     }
@@ -574,12 +622,13 @@ impl Rpg {
         for report in self.results.drain_reports() {
             debug!("new game: {report}");
         }
+        // While he is still registered: the journal text's macros may name the speaker.
+        for e in kept.into_iter().chain(topics.iter().cloned().map(ResultEffect::AddTopic)) {
+            let _ = self.apply(None, &ctx, e, sheets);
+        }
         self.content.actors.remove(&SPEAKER);
         if !locals.is_empty() {
             self.content.chargen_locals.insert(id(HANDOFF_SPEAKER), locals);
-        }
-        for t in &topics {
-            let _ = self.state.world.apply(RpgCommand::AddTopic(t.clone()));
         }
         topics
     }
@@ -607,7 +656,9 @@ impl Rpg {
             declared,
         };
         self.content.actors.insert(key, actor);
-        for (name, value) in self.content.chargen_locals.get(base).into_iter().flatten() {
+        // A scripted placement's instance takes them when it starts (`GlobalScripts`).
+        let chargen = if self.script_locals.addresses(key.0) { None } else { self.content.chargen_locals.get(base) };
+        for (name, value) in chargen.into_iter().flatten() {
             self.state.locals.entry((key, name.clone())).or_insert(*value);
         }
         true
@@ -666,7 +717,7 @@ impl Rpg {
         let mut results = MwResults::new();
         let response = id("console");
         let effects = {
-            let v = View { c: &self.content, s: &self.state, sheets };
+            let v = View { c: &self.content, s: &self.state, g: &self.script_locals, sheets };
             let state = ResultState { world: &self.state.world, player: &self.state.pc, env: &v };
             let call = ResultCall { ctx: &ctx, topic: &response, response: &response, script: text };
             results.runner(state).run(call).map_err(|e| e.to_string())?
@@ -707,7 +758,7 @@ impl Rpg {
         let name = actor.facts.name.clone();
         let ctx = ConversationCtx { player: PlayerId::HOST, speaker, speaker_base: actor.facts.id.clone(), choice: None };
         let (session, out) = {
-            let view = View { c: &self.content, s: &self.state, sheets };
+            let view = View { c: &self.content, s: &self.state, g: &self.script_locals, sheets };
             let rules = MwDialogueRules::new(&self.content.dialogue, &view);
             DialogueSession::open(&self.content.dialogue.db, &rules, ctx)
         };
@@ -732,7 +783,7 @@ impl Rpg {
             return;
         }
         let out = {
-            let v = View { c: &self.content, s: &self.state, sheets };
+            let v = View { c: &self.content, s: &self.state, g: &self.script_locals, sheets };
             let rules = MwDialogueRules::new(&self.content.dialogue, &v);
             request.apply(&mut talk.session, &self.content.dialogue.db, &rules)
         };
@@ -756,7 +807,7 @@ impl Rpg {
         let mut commands = Vec::new();
         let mut effects = Vec::new();
         {
-            let v = View { c: &self.content, s: &self.state, sheets };
+            let v = View { c: &self.content, s: &self.state, g: &self.script_locals, sheets };
             let rules = MwDialogueRules::new(dlg, &v);
             let state = ResultState { world: &self.state.world, player: &self.state.pc, env: &v };
             let mut runner = self.results.runner(state);
@@ -796,7 +847,7 @@ impl Rpg {
         view.apply_events(&events);
         // The action buttons follow the state the step left (a bribe's gold, ...).
         self.refresh_actions(talk, view);
-        let v = View { c: &self.content, s: &self.state, sheets };
+        let v = View { c: &self.content, s: &self.state, g: &self.script_locals, sheets };
         let rules = MwDialogueRules::new(&self.content.dialogue, &v);
         view.refresh_from(&talk.session, &self.content.dialogue.db, &rules, &self.state.world.topics);
     }
@@ -806,6 +857,12 @@ impl Rpg {
             return Some((Holder::Player(PlayerId::HOST), &mut self.state.pc));
         }
         let key = self.content.target(ctx, target)?;
+        // A container is seeded from its record first (opening it later must not find an
+        // empty store and skip the seed).
+        if let Some(record) = self.content.containers.get(&key) {
+            let store = crate::inventory::container_store(&mut self.state, &self.content.records, key, record);
+            return Some((Holder::Actor(key), store));
+        }
         Some((Holder::Actor(key), self.npc_store(key)))
     }
 
@@ -820,7 +877,7 @@ impl Rpg {
             // `Journal`: adds the stage's entry (text with macros expanded now) and sets the index.
             ResultEffect::Journal { quest, index } => {
                 let cmd = {
-                    let v = View { c: &self.content, s: &self.state, sheets };
+                    let v = View { c: &self.content, s: &self.state, g: &self.script_locals, sheets };
                     let rules = MwDialogueRules::new(&self.content.dialogue, &v);
                     self.content.dialogue.journal_command(&self.state.world, &quest, index, self.game_time(), |t| {
                         rules.expand(ctx, t)
@@ -873,8 +930,19 @@ impl Rpg {
                     self.state.npcs.set(k, base, value);
                 }
             }
+            // A script record's id names that global script's local (see `View::var`).
+            ResultEffect::SetLocal { target: Target::Actor(script), name, value } if self.script_locals.is_script(&script) => {
+                if !self.script_locals.set(&script, &name, value) {
+                    debug!("result scripts: {script}.{name}: the script declares no such local");
+                }
+            }
+            // A placed object's locals are its instance's (`ObjectLocals`), else the actor's store.
             ResultEffect::SetLocal { target, name, value } => {
-                if let Some(k) = target_key(self, &target) {
+                if let Some(placement) = self.script_locals.object_of(ctx, &target) {
+                    if !self.script_locals.set_object_local(placement, &name, value) {
+                        debug!("result scripts: {target:?}.{name}: its script declares no such local");
+                    }
+                } else if let Some(k) = target_key(self, &target) {
                     self.state.locals.insert((k, name), value);
                 }
             }
@@ -978,6 +1046,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, open_ui: Option<String>) {
     };
     let granted = rpg.skip_chargen();
     info!("new game without chargen: {} topics from the chargen hand-off", granted.len());
+    global_scripts::add(app, &mut rpg);
     if !app.is_plugin_added::<EnhancedInputPlugin>() {
         app.add_plugins(EnhancedInputPlugin);
     }
@@ -1597,6 +1666,36 @@ mod tests {
         assert!(has(&topics_of(&mut rpg, "chargen door guard"), &basics), "guard");
         assert!(has(&topics_of(&mut rpg, "chargen captain"), &["my trade", "caius cosades"]), "Sellus Gravius");
         assert!(has(&topics_of(&mut rpg, "chargen class"), &["imperial legion"]), "Socucius Ergalla");
+    }
+
+    /// DQ-3b: a new game without chargen starts the main quest as chargen's end does. The
+    /// vanilla "duties" result: `Journal A1_1_FindSpymaster 1`, Caius' package, the directions
+    /// to him and 87 gold; the papers greeting's `RemoveItem` takes nothing.
+    #[test]
+    fn main_quest_starts_after_skipped_chargen() {
+        let Ok((install, _)) = MorrowindInstall::detect(None) else {
+            eprintln!("no Morrowind install detected; skipping");
+            return;
+        };
+        let vfs = mw_vfs::mount_install(&install, sf_vfs::Vfs::builder()).unwrap().vfs;
+        let content = mw_records::load(&vfs, &install.game_files()).unwrap();
+        let db = Arc::new(content.db);
+        let (quest, package, directions, gold) =
+            (id("a1_1_findspymaster"), id("bk_a1_1_caiuspackage"), id("bk_a1_1_directionscaiuscosades"), id("gold_001"));
+        let mut rpg = Rpg::new(db).unwrap();
+        let gold_before = rpg.state.pc.loadout.count(&gold);
+        assert_eq!(rpg.state.world.quests.stage(&quest), 0);
+        let granted = rpg.skip_chargen();
+        assert!(granted.contains(&id("caius cosades")) && rpg.state.world.topics.knows(&id("caius cosades")));
+        assert_eq!(rpg.state.world.quests.stage(&quest), 1, "main quest started");
+        let entry = rpg.state.world.journal.for_quest(&quest).find(|e| e.stage == Some(1));
+        eprintln!("journal: {entry:?}");
+        assert!(entry.is_some(), "stage 1's journal entry");
+        assert_eq!(rpg.state.pc.loadout.count(&package), 1, "Caius' package");
+        assert_eq!(rpg.state.pc.loadout.count(&directions), 1, "directions to Caius");
+        assert_eq!(rpg.state.pc.loadout.count(&gold), gold_before + 87, "the hand-off's gold");
+        assert_eq!(rpg.state.pc.loadout.count(&id("chargen statssheet")), 0, "no papers");
+        assert!(!rpg.content.actors.contains_key(&ActorKey(u128::MAX)), "the hand-off speaker is not left registered");
     }
 
     /// Owner report 2026-10-25: after a skipped chargen Sellus Gravius greeted "Who are you?

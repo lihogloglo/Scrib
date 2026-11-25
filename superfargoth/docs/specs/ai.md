@@ -161,7 +161,8 @@ queries (grid, rays, path distance) in `sf_ai_bevy`.
 `Awareness { target, level: f32 /* 0..1 */, band, last_seen: LastSeen { pos, tick, velocity, confidence }, last_gain }`
 per actor, bounded (`max_entries`, lowest evicted), plus one `Distraction { at, tick, loudness_m }` slot (loudest
 recent wins). Bands: **Unaware**, **Curious** (look toward), **Suspicious** (turn, step toward LKP), **Searching** (HTN
-`search` at LKP: look, widen, give up on ttl; AI8f), **Alerted** (level 1, latched: drives pick combat, report or flee).
+`search` at LKP: look, widen, give up on ttl; AI8f; a running search holds the band, so the search, not the decay,
+ends Searching: AI8f3), **Alerted** (level 1, latched: drives pick combat, report or flee).
 A band is entered at its threshold and left below it minus `band_hysteresis`; Alerted holds while the target is seen,
 then drops to the Searching floor after `alert_hold_s`. Decay starts `decay_delay_s` after the last gain, per band
 rate. Bands and `LastSeen` feed world-state keys and drives.
@@ -266,10 +267,12 @@ unless noted; `hearing_mul` and the other `PerceptionProfile` / `PerceptionState
 | `asleep_wake_m` / `groggy_s` | 12 / 4 | 0-100, 0-30 |
 | `distraction_ttl_s` / `alert_alertness` (gain mul from Suspicious up) / `groggy_alertness` (AI8a) | 10 / 1.5 / 0.5 | 0-60, 0-4, 0-1 |
 | `light_search_m` / `light_rays` / `dark_threshold` | 15 / 2 / 0.15 | 1-60, 0-4, 0-1 |
+| `roof_sky_mul` (sky under a roof) / `light_falloff_exp` (k in `saturate(1 - (d/r)^k)²`; UE4/Frostbite window use 4) (AI8d1, Guess) | 0.25 / 2 | 0-1, 1-8 |
 | `sight_period_s` / `tier1_period_s` / `sight_cache_s` / `cache_move_m` | 0.1 / 1.0 / 0.25 / 0.5 | 0.02-10, 0-5 |
 | `max_rays_per_tick` Floor / Medium / High / Ultra / Dedicated (group `sim.cpu_tier`) | 24 / 32 / 48 / 64 / 96 | 4-512 |
 | `witness_radius_m` / `witness_max` / `max_entries` (8: earlier spec) | 25 / 32 / 8 | 1-100, 1-256, 1-64 |
 | `search_ttl_s` / `search_error_m` / `search_widen_mps` (AI8f globals the profile scales) | 30 / 3 / 0.5 | 0-300, 0-30, 0-5 |
+| `search_ring_points` / `search_look_half_deg` / `search_uncertain_mul` / `search_inner_frac` (AI8f1, Guess) | 6 / 60 / 2 / 0.5 | 1-16, 0-180, 1-4, 0-1 |
 
 ### Net, saves, HUD
 

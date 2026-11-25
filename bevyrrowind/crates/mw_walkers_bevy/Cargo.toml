@@ -38,6 +38,8 @@ sf_anim_bevy.workspace = true
 sf_bake.workspace = true
 sf_camera.workspace = true
 sf_camera_bevy.workspace = true
+# `light_inputs` (MA16): `Readiness`, whether a held torch shows.
+sf_character.workspace = true
 sf_character_bevy = { workspace = true, features = ["world"] }
 sf_controller = { workspace = true, features = ["bake", "terrain"] }
 sf_controller_bevy = { workspace = true, features = ["debug"] }
@@ -53,6 +55,8 @@ sf_physics = { workspace = true, features = ["bake"] }
 sf_physics_bevy = { workspace = true, features = ["debug", "controller", "ragdoll"] }
 sf_ragdoll.workspace = true
 sf_records.workspace = true
+# `light_inputs` (MA16): `CurrentSky`, the sky state from clock and weather NPC light perception reads.
+sf_sky_bevy.workspace = true
 sf_terrain_bevy.workspace = true
 # `mw.ai.wander.*` tunables (MA3 wander feel) and the `ai.exec.*` binding the wander drive reads.
 sf_tunables_bevy.workspace = true
@@ -65,7 +69,8 @@ workspace-hack.workspace = true
 # The knockdown routing test: an animator on the fixture biped (a compiled one-clip graph).
 sf_anim.workspace = true
 sf_anim_graph = { workspace = true, features = ["bake"] }
-sf_character.workspace = true
+# The noise emitter tests: the player body's chooser (`ActionCharacter`) needs its state and params.
+sf_action.workspace = true
 
 [lints]
 workspace = true

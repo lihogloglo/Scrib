@@ -335,6 +335,23 @@ pub fn container_store<'a>(state: &'a mut RpgState, db: &RecordDb, container: Ac
     })
 }
 
+/// The CONT base of every container reference, by its store key (the merged references: the last
+/// plugin wins): a script's `AddItem`/`RemoveItem` on a container nobody opened yet goes through
+/// [`container_store`], so the record's contents are seeded before the change (DQ-5d).
+pub fn container_refs(db: &RecordDb) -> HashMap<ActorKey, RecordId> {
+    let mut out = HashMap::new();
+    for (_, cell) in db.iter::<Cell>() {
+        for (&(source, refr_index), reference) in &cell.references {
+            let base = RecordId::new(&reference.id);
+            if db.get::<Container>(&base).is_some() {
+                let file = &db.source(sf_records::SourceId(source)).name;
+                out.insert(ActorKey(mw_world::ids::placement_id(file, refr_index).0), base);
+            }
+        }
+    }
+    out
+}
+
 /// Whether CONT `record` is organic (plants): it refuses items put in (module docs).
 pub fn is_organic(db: &RecordDb, record: &RecordId) -> bool {
     db.get::<Container>(record).is_some_and(|c| c.container_flags.contains(ContainerFlags::ORGANIC))

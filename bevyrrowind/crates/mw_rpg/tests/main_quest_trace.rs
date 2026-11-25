@@ -13,6 +13,7 @@
 //! Object, global and start scripts do not run yet, so a stage only a script sets stalls with
 //! "needs a script". Output: counts, record ids and function names only, never game text.
 
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Instant;
 
@@ -45,6 +46,10 @@ fn id(s: &str) -> RecordId {
 
 /// Main-quest progress: (stages reached, sum of quest indexes); higher is further.
 type Progress = (usize, i64);
+
+/// A trial's rank: how little it jumps ahead of the story (`World::start_rank`, lower first),
+/// then its progress.
+type Rank = (Reverse<u8>, Progress);
 
 /// A trial: walk to this speaker and ask this topic (`None`: the greeting only).
 type Action = (usize, Option<RecordId>);
@@ -147,6 +152,35 @@ impl World<'_> {
         }
     }
 
+    /// How far a step from `s` to `st` jumps ahead of the story: 0 when it only advances
+    /// quests already in the journal, 1 when it starts a quest from a response gated on
+    /// another main quest's journal (the story sends the player there), 2 when it starts one
+    /// ungated (a sequence break, such as Dagoth Gares' "lord's friendship" before Caius sends
+    /// the player to Ilunibi, whose `A2_2_6thHouse 49` then shadows Caius' `A1_1` orders).
+    /// The bot finishes what it started first, as a player following the journal does.
+    fn start_rank(&self, s: &State, st: &State) -> u8 {
+        self.main
+            .keys()
+            .filter(|q| s.world.quests.stage(q) == 0 && st.world.quests.stage(q) > 0)
+            .map(|q| {
+                let at = st.world.quests.stage(q);
+                let gated = self.setters.iter().any(|t| {
+                    &t.quest == q
+                        && t.index == at
+                        && self.dlg.info(&t.response).is_some_and(|i| {
+                            i.filters.iter().any(|f| {
+                                f.filter_type == FilterType::Journal
+                                    && id(&f.id) != *q
+                                    && self.main.contains_key(&id(&f.id))
+                            })
+                        })
+                });
+                if gated { 1 } else { 2 }
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
     /// (stages reached, sum of indexes) over the main quests.
     fn progress(&self, s: &State) -> Progress {
         self.main.keys().fold((0, 0), |(n, sum), q| {
@@ -211,7 +245,7 @@ impl View<'_> {
         match target {
             Target::Speaker => Some(ctx.speaker),
             Target::Actor(a) => self.w.by_base.get(a).map(|&i| key(i)),
-            Target::Player => None,
+            Target::Player | Target::Ref(_) => None,
         }
     }
 }
@@ -410,7 +444,7 @@ impl<'w> Bot<'w> {
         let target_key = |t: &Target| match t {
             Target::Speaker => Some(ctx.speaker),
             Target::Actor(a) => self.w.by_base.get(a).map(|&i| key(i)),
-            Target::Player => None,
+            Target::Player | Target::Ref(_) => None,
         };
         match effect {
             ResultEffect::AddTopic(t) => {
@@ -1199,9 +1233,9 @@ fn build_world<'a>(records: &'a RecordDb, dlg: &'a MwDialogue) -> World<'a> {
     world
 }
 
-/// The game's new game without chargen (`mw_rpg_bevy` `Rpg::skip_chargen`): `chargenstate`
-/// -1 and the topics the chargen captain's "duties" result teaches; its journal, package and
-/// gold stay out, as in the game.
+/// The game's new game without chargen (`mw_rpg_bevy` `Rpg::skip_chargen`, DQ-3b): `chargenstate`
+/// -1, and the chargen captain's "duties" result applied as in the game: its topics, journal and
+/// the player's items (package, directions, gold). His locals don't matter to the bot.
 fn new_game(bot: &mut Bot<'_>) -> State {
     let w = bot.w;
     let mut s = State::default();
@@ -1215,6 +1249,7 @@ fn new_game(bot: &mut Bot<'_>) -> State {
     };
     let ctx = w.ctx(ix);
     let mut topics = Vec::new();
+    let mut kept = Vec::new();
     {
         let view = bot.view(&s, ix);
         let state = ResultState {
@@ -1237,14 +1272,61 @@ fn new_game(bot: &mut Bot<'_>) -> State {
                 script: &info.script_text,
             };
             for e in runner.run(call).unwrap_or_default() {
-                if let ResultEffect::AddTopic(t) = e {
-                    topics.push(t);
+                match e {
+                    ResultEffect::AddTopic(t) => topics.push(t),
+                    ResultEffect::Journal { .. }
+                    | ResultEffect::SetJournalIndex { .. }
+                    | ResultEffect::AddItem {
+                        target: Target::Player,
+                        ..
+                    }
+                    | ResultEffect::RemoveItem {
+                        target: Target::Player,
+                        ..
+                    } => kept.push(e),
+                    _ => {}
                 }
             }
         }
     }
     for t in topics {
         let _ = s.world.apply(RpgCommand::AddTopic(t));
+    }
+    for e in kept {
+        match e {
+            ResultEffect::Journal { quest, index } => {
+                let cmd = {
+                    let view = bot.view(&s, ix);
+                    let rules = MwDialogueRules::new(w.dlg, &view);
+                    w.dlg
+                        .journal_command(&s.world, &quest, index, GameTime::default(), |t| {
+                            rules.expand(&ctx, t)
+                        })
+                };
+                if let Some(cmd) = cmd {
+                    let _ = s.world.apply(cmd);
+                }
+            }
+            ResultEffect::SetJournalIndex { quest, index } => {
+                let _ = s.world.apply(MwDialogue::set_journal_index(&quest, index));
+            }
+            ResultEffect::AddItem { item, count, .. } => {
+                let _ = s.pc.apply(RpgCommand::AddItem {
+                    holder: Holder::Player(PlayerId::HOST),
+                    item,
+                    count,
+                    attrs: Attrs::new(),
+                });
+            }
+            ResultEffect::RemoveItem { item, count, .. } => {
+                let _ = s.pc.apply(RpgCommand::RemoveItem {
+                    holder: Holder::Player(PlayerId::HOST),
+                    item,
+                    count,
+                });
+            }
+            _ => {}
+        }
     }
     s
 }
@@ -1284,16 +1366,17 @@ fn main_quest_trace() {
         steps = step + 1;
         let base = w.progress(&s);
         let actions = bot.actions(&s);
-        // (progress, state, (speaker, topic), choices)
-        let mut best: Option<(Progress, State, &Action, Vec<i32>)> = None;
+        // (rank, state, (speaker, topic), choices)
+        let mut best: Option<(Rank, State, &Action, Vec<i32>)> = None;
         for action in &actions {
             let (st, path) = bot.trial(&s, action.0, action.1.as_ref());
             let p = w.progress(&st);
-            if p > base && best.as_ref().is_none_or(|b| p > b.0) {
-                best = Some((p, st, action, path));
+            let k = (Reverse(w.start_rank(&s, &st)), p);
+            if p > base && best.as_ref().is_none_or(|b| k > b.0) {
+                best = Some((k, st, action, path));
             }
         }
-        if let Some((p, st, (ix, topic), path)) = best {
+        if let Some(((_, p), st, (ix, topic), path)) = best {
             let raised: Vec<String> = w
                 .main
                 .keys()

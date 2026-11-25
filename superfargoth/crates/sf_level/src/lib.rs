@@ -48,6 +48,9 @@ pub struct Level {
     /// Characters the host spawns and drives (see [`Actor`]).
     #[serde(default)]
     pub actors: Vec<Actor>,
+    /// Content records the host places as it places them in its own world (see [`Placed`]).
+    #[serde(default)]
+    pub placed: Vec<Placed>,
     /// Items the player holds equipped in this level (host item ids: a
     /// weapon, a shield), shown when the host draws them. Empty: the
     /// player's own equipment.
@@ -148,6 +151,18 @@ pub struct CameraDef {
     pub name: String,
     pub eye: Vec3,
     pub target: Vec3,
+}
+
+/// A content record placed as is: the host resolves `id` (one of its record ids, opaque here:
+/// e.g. a lamp, so the host's own light, its mesh and whatever gameplay reads lights come with
+/// it) and places it at `at` (its origin), turned by `yaw` degrees about +y (0 = -z).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Placed {
+    pub id: String,
+    pub at: Vec3,
+    #[serde(default)]
+    pub yaw: f32,
 }
 
 /// A named start point: feet position and facing (yaw degrees, 0 = -z).
@@ -398,6 +413,14 @@ impl Level {
                 && (action.trigger.trim().is_empty() || !(action.every.is_finite() && action.every > 0.0))
             {
                 out.push(format!("{label}: action needs a trigger and every > 0"));
+            }
+        }
+        for (i, p) in self.placed.iter().enumerate() {
+            if p.id.trim().is_empty() {
+                out.push(format!("placed #{i}: empty id"));
+            }
+            if !p.at.is_finite() || !p.yaw.is_finite() {
+                out.push(format!("placed #{i} {:?}: position or yaw not finite", p.id));
             }
         }
         if let Some(p) = self.lights.as_ref().and_then(LightRig::problem) {

@@ -48,7 +48,13 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   `sf_ai::exec::PlanRunner`, `AI_W` idle rolls and PGRD wander destination hints from `wander.rs`) drive ground
   wanderers over the resident navmesh via `NavCorridor` (`walkers.rs:703`), recording decisions into `AiTraces`
   (`AiActor` from `CharacterPlacement`), and falling back to PGRD polyline `PathFollower` walks only for fliers/swimmers
-  or unbaked cells (`PathWalkScaffold` removed in MA3). No combat AI, schedules, reactions, perception or following yet.
+  or unbaked cells (`PathWalkScaffold` removed in MA3). No combat AI, schedules or following yet.
+- **Perception** (AI8, 2026-11-25; `sf_ai` perception/profile/sight/light/search, `sf_ai_bevy` sight.rs, light.rs,
+  hearing.rs): walkers are `AiObserver`s, the player is `Perceivable` (`mw_walkers_bevy/src/sight.rs`); per fixed tick,
+  before `ControllerSystems::Drive`: profiles resolve, light is sampled (`AiLightInputs` from `light_inputs.rs`: sky,
+  interior AMBI, LIGH lamps), sight rays batch under `max_rays_per_tick`, `NoiseEvent`s are heard (straight-line
+  propagation seam). A walker whose strongest entry is Searching stops wandering and searches (`search.rs`: LKP, look,
+  widening rings) while the band is held, until the ttl gives up, then decays and wanders again.
 
 ## Bevy features used
 Resources and console commands only; gizmos behind feature `debug`. No Bevy navmesh crate (surveyed in the spec).
@@ -62,8 +68,9 @@ per worldspace. `ai.select`, `ai.trace`, `ai.tiers`, `ai.stats` and `ai.gizmos` 
 
 ## Known limits
 One anchor (the player), humanoid class only, synchronous store reads: portals and the large class wait for
-NV5 ([ledger](../../ledger/nav.md)). Only `AI_W` wander runs on `sf_ai` so far; packages (`MA2`), drives (`MA4`) and
-perception (`AI8`/`MA5`) are next. See `docs/ROADMAP.md` 3.9/3.10.
+NV5 ([ledger](../../ledger/nav.md)). Only `AI_W` wander and search run on `sf_ai` so far; packages (`MA2`), drives
+(`MA4`), Classic awareness (`MA5`) are next. No game noise emitters yet (AI8c2); pitch dark hides fully from sight
+(light-only visibility until crime LW4); Alerted NPCs do nothing yet. See `docs/ROADMAP.md` 3.9/3.10.
 
 ## Specs
 `superfargoth/docs/specs/nav.md`, `ai.md`, `ai-as-built.md`, `orca.md`; `bevyrrowind/docs/specs/ai-adapter.md`,

@@ -15,7 +15,7 @@ use mw_graphs::build::params as gp;
 use sf_anim_bevy::Animator;
 use sf_anim_graph::FidgetPicker;
 use sf_character::{CharacterState, WearableRef};
-use sf_character_bevy::{Character, CharacterSpawner, Characters};
+use sf_character_bevy::{Character, CharacterPlacement, CharacterSpawner, Characters};
 use sf_controller::{Gait, PathFollower, PathMode, PathNode};
 use sf_controller_bevy::{Avoider, ControllerSystems, Dormant, MoveIntent, Mover};
 use sf_coords::{WorldPos, WorldTransform};
@@ -60,6 +60,37 @@ pub fn resolve(level: &Level, db: &RecordDb) -> Vec<ActorSetup> {
             };
             let placement = PlacementId::from_key("level", format!("{}/actor/{i}", level.name).as_bytes());
             Some(ActorSetup { def, kind, placement })
+        })
+        .collect()
+}
+
+/// The level's `placed` records as world placements, resolved like a cell reference's base
+/// (`mw_world::source::resolve_base`: kind, class and model), so a `LIGH` is a real lamp (its
+/// mesh, its light, and the AI light inputs' `LightHook`, MA16) and a `STAT` a real static.
+/// Unknown ids are skipped with a warning.
+pub fn resolve_placed(level: &Level, db: &RecordDb) -> Vec<Placement> {
+    level
+        .placed
+        .iter()
+        .enumerate()
+        .filter_map(|(i, def)| {
+            let Some(base) = mw_world::source::resolve_base(db, &def.id) else {
+                warn!("level {}: placed {:?} is no placeable record, skipped", level.name, def.id);
+                return None;
+            };
+            Some(Placement {
+                id: PlacementId::from_key("level", format!("{}/placed/{i}", level.name).as_bytes()),
+                base: RecordRef::new(base.tag, def.id.as_str()),
+                model: base.model.and_then(|m| sf_vfs::VfsPath::new(&m).ok()),
+                transform: WorldTransform {
+                    pos: WorldPos::from_f64(def.at.as_dvec3()),
+                    // Engine yaw (0 faces -z), as `mw_nif::coords::reference_rotation` turns a reference.
+                    rotation: Quat::from_rotation_y(def.yaw.to_radians()),
+                    scale: Vec3::ONE,
+                },
+                class: base.class,
+                flags: PlacementFlags::empty(),
+            })
         })
         .collect()
 }
@@ -132,7 +163,19 @@ impl PlacementSpawner for LevelActorSpawner {
         local.rotation *= turn;
         let character = Character::Record { kind: p.base.kind.clone(), id: p.base.id.clone(), state: state.clone() };
         let name = Name::new(format!("level actor {} ({})", index, p.base.id.as_str()));
-        world.spawn((character, local, Visibility::Inherited, ChildOf(cx.parent), cx.layers.clone(), LevelActor { index: *index }, name, sf_character_bevy::AnimSeed::from_id(p.id.0)));
+        // `CharacterPlacement` as `CharacterSpawner` gives it: the stable id the walkers key the
+        // NPC's AI by (`AiActor` + the sight observer, MA14), so level actors perceive (AI47).
+        world.spawn((
+            character,
+            CharacterPlacement(p.id),
+            local,
+            Visibility::Inherited,
+            ChildOf(cx.parent),
+            cx.layers.clone(),
+            LevelActor { index: *index },
+            name,
+            sf_character_bevy::AnimSeed::from_id(p.id.0),
+        ));
         1
     }
 

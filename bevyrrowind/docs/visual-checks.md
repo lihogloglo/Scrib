@@ -82,6 +82,7 @@ shows a bug that's already understood; confirm the bug or skip).
 One line per open ID: `ID | status | file | title`. Entries live in [`visual-checks/`](visual-checks/); closed ones in [`archive/visual-checks-closed.md`](archive/visual-checks-closed.md). Add a new entry to the right system file and a line here.
 
 ### Awaiting owner (64)
+PH-17 | awaiting owner | [physics](visual-checks/physics.md) | movement + carry feel after physics-before-movers reorder (IN11b), Seyda Neen day (2026-11-25)
 GC-2 | owner 2026-11-23: sparse, half buried, little sway; fixed (z offset, density, bend), awaiting owner | [groundcover](visual-checks/groundcover.md) | vanilla grass and ferns scattered from land textures, scenes `gc-ascadian`, `gc-grazelands`, `gc-bittercoast`, A/B `--off groundcover` (2026-11-22)
 GC-M2 | awaiting owner (owner look 2) | [groundcover](visual-checks/groundcover.md) | mesh plants: per-clump sway, tip flutter, visible gust fronts, scenes `gc-ascadian`, `gc-grazelands` (2026-11-23)
 GC-3 | owner 2026-11-23: carpet good, could be denser (density from industry standard) | [groundcover](visual-checks/groundcover.md) | grass blades carpet (`bevy_grass`), scene `gc-blades` (2026-11-23)
@@ -172,6 +173,8 @@ LK-1 | owner: issues (submenus overlap) | [player-ui](visual-checks/player-ui.md
 LK-2 | owner: issues (Continue style) | [player-ui](visual-checks/player-ui.md) | Look pass L2: title menu as OpenMW image buttons, version text
 FG-10 | known bug | [weather-sky](visual-checks/weather-sky.md) | No visible god rays at sunrise in fog (2026-11-02)
 FG-12 | confirmed 2026-11-23 (cost pending): A1-A3 per-pixel sun visibility (LSO, AS, bloom now off; earlier: AS blocky, LSO dark disc, bloom shimmering) | [weather-sky](visual-checks/weather-sky.md) | Sun glow shows through terrain (low sun behind a ridge, 2026-11-22)
+AI-11 | owner: works, re-check later | [ai](visual-checks/ai.md) | perception lab: light vs dark lane, cover wall gaps, hearing stripes 4/8/14 m, scenes `level-perception*` (2026-11-25)
+AI-3 | awaiting owner | [ai](visual-checks/ai.md) | perception gizmos (cones, bands, LKP, light, noise rings) + NPCs noticing and searching, Seyda Neen noon and 23:00 (2026-11-25)
 AI-1 | awaiting owner | [ai](visual-checks/ai.md) | AI debug overlay (`ai.select`, `ai.trace`, plan gizmos) on a synthetic trace, example `ai_overlay` (2026-11-09)
 NV-1 | confirmed by owner 2026-11-18 (Balmora: `nav.stats` good, `nav.draw tiles` streams and follows terrain after detail-mesh + terrain-origin fixes) | [ai](visual-checks/ai.md) | Baked navmesh tiles over Seyda Neen (`nav.draw tiles`, `nav.stats`), slice NV4c (2026-11-17)
 NV-2 | confirmed by owner 2026-11-18 (Balmora) | [ai](visual-checks/ai.md) | NPCs walk smoothly on the fixed tick at low and high fps; wake, knockdown, ball hits without pops, slice NV7a (2026-11-17)

@@ -171,8 +171,9 @@ impl ResultRunner for MwResultRunner<'_> {
 }
 
 /// Name resolution against the world: a bare name is a global if the world has one, else
-/// a speaker local. Integer globals resolve as `long` (`GlobalNumber` keeps no width).
-struct WorldEnv<'a>(&'a dyn MwWorld);
+/// a speaker local (a script local in a script record). Integer globals resolve as `long`
+/// (`GlobalNumber` keeps no width). The game parses its script records with it too.
+pub struct WorldEnv<'a>(pub &'a dyn MwWorld);
 
 impl Env for WorldEnv<'_> {
     fn global(&self, key: &str) -> Option<VarType> {

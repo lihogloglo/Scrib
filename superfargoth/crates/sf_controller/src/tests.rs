@@ -1167,6 +1167,7 @@ fn locomotion_round_trips_through_postcard() {
 mod context;
 
 mod avoid;
+mod based;
 mod launch;
 mod steer;
 

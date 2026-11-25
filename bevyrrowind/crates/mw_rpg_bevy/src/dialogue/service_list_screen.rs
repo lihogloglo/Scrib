@@ -564,6 +564,7 @@ mod tests {
         let v = View {
             c: &rpg.content,
             s: &rpg.state,
+            g: &rpg.script_locals,
             sheets: &sheets,
         };
         let terms = v.barter_terms(PlayerId::HOST, TRAINER).unwrap();

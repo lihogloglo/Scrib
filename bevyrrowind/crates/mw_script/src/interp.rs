@@ -38,7 +38,7 @@ pub const STEP_LIMIT: Def<u32> = def!(count "mw.script.step_limit" = 100_000)
     .lifetime(Lifetime::Live);
 
 /// The interpreter's tunables (the catalogue list).
-pub const SCRIPT_TUNABLES: &[&dyn AnyDef] = &[&STEP_LIMIT];
+pub const SCRIPT_TUNABLES: &[&dyn AnyDef] = &[&STEP_LIMIT, &crate::locals::ACTIVE_RADIUS];
 
 /// The functions the interpreter dispatches to typed [`Host`] methods.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

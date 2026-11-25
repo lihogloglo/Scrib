@@ -181,3 +181,15 @@ fn lights_and_interior_parse() {
     assert!(level.interior.is_some());
     assert!(Level::parse(&text.replace("radius: 2.5", "radius: 0.0")).is_err());
 }
+
+#[test]
+fn placed_records_parse_and_are_checked() {
+    let with = |placed: &str| {
+        format!("(name: \"p\", cameras: [(name: \"c\", eye: (0.0, 2.0, 5.0), target: (0.0, 0.0, 0.0))], objects: [(shape: Ground(size: (10.0, 10.0)))], placed: [{placed}])")
+    };
+    let level = Level::parse(&with("(id: \"lamp\", at: (1.0, 0.0, -2.0)), (id: \"post\", at: (0.0, 0.0, 0.0), yaw: 90.0)")).expect("placed parse");
+    assert_eq!(level.placed.len(), 2);
+    assert_eq!((level.placed[0].id.as_str(), level.placed[0].yaw, level.placed[1].yaw), ("lamp", 0.0, 90.0));
+    let Err(LevelError::Invalid { problems, .. }) = Level::parse(&with("(id: \" \", at: (0.0, 0.0, 0.0))")) else { panic!("empty id accepted") };
+    assert_eq!(problems.len(), 1, "{problems:#?}");
+}

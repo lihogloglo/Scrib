@@ -217,6 +217,36 @@ filters through a new function family; named enemies remembering and returning a
 | **MA9** doors | escort/follow/pursue through doors, follower fallback | headless: follower through the Census door, guard pursues out | AI12 |
 | **MA10** combat sheets | NPC and creature combat through C6 | scripted fight, no NaN | AI15 |
 
+As built (MA14, 2026-11-25): `mw_walkers_bevy/src/sight.rs` adds `AiSightPlugin` on the controller's ground
+(`Physics`, `MwGround` with `--off physics`); walkers get `AiObserver` with `AiActor` (`walkers.rs` `attach`); the
+player body gets `Perceivable { Player(HOST_KEY) }` + `PerceivablePose` (fed each tick, survives F11 re-spawn).
+Eye 0.936 x, chest 0.720 x standing height (Drillis-Contini 1966; NPC height = 1.8 m capsule x race `body_scale.y`,
+creatures their fitted capsule, player `ActionBody.params.height`). Perception record kinds registered in `mw_mods`
+(`sf_ai::register_perception_kinds`, moved from `sf_ai_bevy`). Not yet: profile/state adapter, NPCs as targets,
+player race height, record reload, explicit worldspace filter (dormant observers skip checks).
+
+As built (MA16, 2026-11-25): `mw_walkers_bevy/src/light_inputs.rs` writes `AiLightInputs` each fixed tick (after
+`ActionSystems::Move`, before `AiPerceptionSystems::Sight`). Interior = interior CELL without "behave like exterior".
+Sky outdoors `saturate(ln(E/3 lx) / ln(10000 lx / 3 lx))`, E = sun + moon ground illuminance × sin elevation + fill
+from `CurrentSky` (weather dims it; the renderer's night ambient floor left out); indoors AMBI Rec. 709 luminance /
+0.25 (no AMBI: 0.3 grey). Sources: R0 LIGH placements via a `LightHook` (LHDT radius in metres, `OFF_BY_DEFAULT` =
+off, lifted 0.3 m off the base), carried lights at the carrier's chest. Tunables `mw.ai.light.*` (5). Known: with
+light-only visibility (until crime LW4) pitch dark = unseen by sight; no light spells; dusk drops fast (MA17).
+
+As built (AI8f2, 2026-11-25): `mw_walkers_bevy/src/search.rs` `Searcher` (required by `Walker`): `arbitrate` picks
+search when the strongest entry is Searching (start at its `LastSeen`; restart only on fresher evidence outside the
+radius, another target, or after give-up), `step` runs `SearchGoal`s through the wander vocabulary's MoveTo/Face
+executors on the navmesh branch of `drive`; ends at the ttl tick or when the band leaves Searching, then resumes the
+wander (`driver.face`). Reachable = `NavMeshes::nearest` within `DEFAULT_EXTENT`. Alerted does not search yet; off-mesh
+aborts; not saved. AI8f3: the running search holds the band (`hold_searching`), released at give-up.
+
+As built (AI8c2, 2026-11-25): `mw_walkers_bevy/src/noise_emitters.rs`: the player's `StrideClock` advances by ground
+distance / stride (gait from the action intent: sneak 0.5, walk 0.75, run 1.5, sprint 2.0 m), one revealing footstep
+per stride (reach sneak 2, walk 6, run 12, sprint 18 m, Guess); landing reach = min(30, 8 + 4 × (drop - 0.5 m)) from
+the impact speed; teleports and non-ground modes emit nothing; `surface_gear_mul` = 1 seam. Written after
+`ActionSystems::Move`, before `AiPerceptionSystems::Hearing`. Tunables `mw.ai.noise.*` (12). Not yet: NPC steps,
+surface/gear, action `noise: Loud`, IN18 object noises.
+
 ## Open questions
 
 None open. Decided 2026-11-08 (owner-delegated; `superfargoth/docs/research/ai-nav-decisions-2026-11-08.md` (e), (f),

@@ -138,3 +138,12 @@ strength 0.40)`, sanity shot `shots/p9/hit.png` at the hit; the flinch itself ne
   and staggers on weak legs for 0.6 s before it falls and goes limp (falls ~1.1 s after the blow). Console `kill` (no
   blow) still drops on the spot. Check: `kill` stays a collapse; a `V` ball on a falling corpse pushes it, a frozen
   corpse ignores it. Status: awaiting owner.
+
+### PH-17: Movement and carry feel after the tick reorder (IN11b, 2026-11-25)
+- Kind: game, dev build. `powershell -File tools/run_dev.ps1 view "Seyda Neen"` (day, default flags).
+- What changed: the physics step now runs before every character moves (the base first, as UE/Jolt), capsules lead by
+  the tick's motion, and carried items' hand view is stamped after the movers.
+- Look for: walking, running, jumping, stairs and slopes feel as before (no new jitter, float or sink); NPCs walk as
+  before; grab a bucket (carry), walk and turn with it: it stays in the hands, no lag or jitter; throw it.
+- No A/B (the old order is gone; headless tests cover drift: mover 7.5e-7 m, action body 1.4e-5 m on a slider).
+- Status: awaiting owner (gameplay-roadmaps-5, 2026-11-25).

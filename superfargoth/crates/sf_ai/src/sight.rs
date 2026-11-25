@@ -185,7 +185,7 @@ pub fn apply_darkness(light: f32, darkness: f32) -> f32 {
 
 /// splitmix64's finalizer (maths: a fixed, well-spread 64-bit mix; never the std hasher, whose
 /// algorithm may change between releases).
-fn mix64(mut z: u64) -> u64 {
+pub(crate) fn mix64(mut z: u64) -> u64 {
     // tunables: const (maths: splitmix64 constants)
     const M1: u64 = 0xbf58_476d_1ce4_e5b9;
     // tunables: const (maths: splitmix64 constants)

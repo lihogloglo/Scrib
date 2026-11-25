@@ -30,12 +30,13 @@ use serde::{Deserialize, Serialize};
 use crate::ast::{Call, Ident, Script, Target, VarRef, VarType};
 use crate::functions::{Function, FunctionTable};
 use crate::interp::{Host, Interpreter, Locals, MessageArg, RunError, ScriptOp, store};
+use crate::locals::LocalKey;
 use crate::resolve::Env;
 use crate::statfn::StatCall;
 use crate::{Diagnostics, Parsed, SourceKind, parse_and_resolve};
 
 /// The lookup form of a script id (as [`Ident::key`]).
-fn key(id: &str) -> String {
+pub(crate) fn key(id: &str) -> String {
     id.to_lowercase()
 }
 
@@ -197,15 +198,29 @@ pub trait InstanceHost: Host {
     fn begin_run(&mut self, script: &str, target: Option<&str>) {
         let _ = (script, target);
     }
-    /// After it: `committed` is `false` when the run hit the step limit (drop its ops).
+    /// After a run (global or local): `committed` is `false` when the run hit the step limit
+    /// (drop its ops).
     fn end_run(&mut self, script: &str, committed: bool) {
         let _ = (script, committed);
+    }
+    /// Before a run of local `script` on the reference or item `key`
+    /// ([`crate::LocalInstances::tick`]): the run's self is that object. Default:
+    /// [`InstanceHost::begin_run`] with no target.
+    fn begin_local_run(&mut self, script: &str, key: LocalKey) {
+        let _ = key;
+        self.begin_run(script, None);
+    }
+    /// The reference id a global started from `key`'s local run takes as its target when the
+    /// `StartScript` names no `ref->` (`OpenMW` passes the running object). Default: none.
+    fn local_self(&mut self, key: LocalKey) -> Option<String> {
+        let _ = key;
+        None
     }
 }
 
 /// An op a run requested, applied after the run.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Pending {
+pub(crate) enum Pending {
     Start { id: String, target: Option<String> },
     Stop { id: String },
 }
@@ -298,7 +313,7 @@ impl GlobalInstances {
                 let mut scoped = Scoped {
                     inner: &mut *host,
                     globals: self,
-                    running: i,
+                    self_target: inst.target.clone(),
                     pending: &mut pending,
                 };
                 interp.run(script, &mut locals, &mut scoped)
@@ -333,17 +348,7 @@ impl GlobalInstances {
                 running: g.running,
                 target: g.target.clone(),
                 start_seq: g.start_seq,
-                locals: set.get(&g.id).map_or_else(Vec::new, |s| {
-                    s.locals
-                        .iter()
-                        .zip(&g.locals.0)
-                        .map(|(l, &value)| SavedLocal {
-                            name: l.name.key.clone(),
-                            ty: l.ty.into(),
-                            value,
-                        })
-                        .collect()
-                }),
+                locals: save_locals(set.get(&g.id), &g.locals),
             })
             .collect();
         GlobalsSnapshot { globals }
@@ -361,36 +366,7 @@ impl GlobalInstances {
                 reports.push(LoadReport::UnknownScript { script: id });
                 continue;
             };
-            let mut locals = Locals::new(script);
-            for (slot, local) in script.locals.iter().enumerate() {
-                let name = &local.name.key;
-                match saved.locals.iter().find(|s| key(&s.name) == *name) {
-                    Some(s) => {
-                        let to = LocalType::from(local.ty);
-                        if s.ty != to {
-                            reports.push(LoadReport::Retyped {
-                                script: id.clone(),
-                                local: name.clone(),
-                                from: s.ty,
-                                to,
-                            });
-                        }
-                        locals.0[slot] = store(local.ty, s.value);
-                    }
-                    None => reports.push(LoadReport::MissingLocal {
-                        script: id.clone(),
-                        local: name.clone(),
-                    }),
-                }
-            }
-            for s in &saved.locals {
-                if script.local(&key(&s.name)).is_none() {
-                    reports.push(LoadReport::DroppedLocal {
-                        script: id.clone(),
-                        local: key(&s.name),
-                    });
-                }
-            }
+            let locals = load_locals(&id, script, &saved.locals, &mut reports);
             out.next_seq = out.next_seq.max(saved.start_seq + 1);
             let instance = GlobalInstance {
                 id: id.clone(),
@@ -415,7 +391,7 @@ impl GlobalInstances {
         seq
     }
 
-    fn apply(&mut self, set: &ScriptSet, op: Pending) {
+    pub(crate) fn apply(&mut self, set: &ScriptSet, op: Pending) {
         match op {
             Pending::Stop { id } => self.apply_stop(&id),
             Pending::Start { id, target } => {
@@ -453,7 +429,7 @@ impl GlobalInstances {
     }
 
     /// `ScriptRunning` as a run sees it: the flags, then the run's own pending ops in order.
-    fn running_with(&self, pending: &[Pending], id: &str) -> bool {
+    pub(crate) fn running_with(&self, pending: &[Pending], id: &str) -> bool {
         let mut running = self.is_running(id);
         for op in pending {
             match op {
@@ -466,14 +442,70 @@ impl GlobalInstances {
     }
 }
 
-/// The host a global run sees: script control goes to the instance set (as pending ops),
-/// everything else to the game's host.
-struct Scoped<'a, H: ?Sized> {
-    inner: &'a mut H,
-    globals: &'a GlobalInstances,
-    /// The running instance (its target is the implicit `StartScript` reference).
-    running: usize,
-    pending: &'a mut Vec<Pending>,
+/// A run's locals by name and type from its script (none without a live record).
+pub(crate) fn save_locals(script: Option<&Script>, locals: &Locals) -> Vec<SavedLocal> {
+    script.map_or_else(Vec::new, |s| {
+        s.locals
+            .iter()
+            .zip(&locals.0)
+            .map(|(l, &value)| SavedLocal {
+                name: l.name.key.clone(),
+                ty: l.ty.into(),
+                value,
+            })
+            .collect()
+    })
+}
+
+/// Saved locals remapped onto `script` (lower-cased id `id`) by name: missing ones start at 0,
+/// extras are dropped, a changed type converts; each case is reported.
+pub(crate) fn load_locals(
+    id: &str,
+    script: &Script,
+    saved: &[SavedLocal],
+    reports: &mut Vec<LoadReport>,
+) -> Locals {
+    let mut locals = Locals::new(script);
+    for (slot, local) in script.locals.iter().enumerate() {
+        let name = &local.name.key;
+        match saved.iter().find(|s| key(&s.name) == *name) {
+            Some(s) => {
+                let to = LocalType::from(local.ty);
+                if s.ty != to {
+                    reports.push(LoadReport::Retyped {
+                        script: id.to_owned(),
+                        local: name.clone(),
+                        from: s.ty,
+                        to,
+                    });
+                }
+                locals.0[slot] = store(local.ty, s.value);
+            }
+            None => reports.push(LoadReport::MissingLocal {
+                script: id.to_owned(),
+                local: name.clone(),
+            }),
+        }
+    }
+    for s in saved {
+        if script.local(&key(&s.name)).is_none() {
+            reports.push(LoadReport::DroppedLocal {
+                script: id.to_owned(),
+                local: key(&s.name),
+            });
+        }
+    }
+    locals
+}
+
+/// The host a run sees (global or local): script control goes to the global instance set (as
+/// pending ops), everything else to the game's host.
+pub(crate) struct Scoped<'a, H: ?Sized> {
+    pub(crate) inner: &'a mut H,
+    pub(crate) globals: &'a GlobalInstances,
+    /// The implicit `StartScript` reference: a global's own target, a local's object.
+    pub(crate) self_target: Option<String>,
+    pub(crate) pending: &'a mut Vec<Pending>,
 }
 
 impl<H: Host + ?Sized> Host for Scoped<'_, H> {
@@ -530,7 +562,7 @@ impl<H: Host + ?Sized> Host for Scoped<'_, H> {
         match op {
             ScriptOp::Start => {
                 let target = match target {
-                    Target::Implicit => self.globals.instances[self.running].target.clone(),
+                    Target::Implicit => self.self_target.clone(),
                     Target::Explicit(r) => Some(r.key.clone()),
                 };
                 self.pending.push(Pending::Start { id, target });

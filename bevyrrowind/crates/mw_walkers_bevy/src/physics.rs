@@ -130,10 +130,13 @@ pub fn add(app: &mut App, store: Store, manifest: Manifest, debug: bool, db: Opt
                 carry_feedback.after(sf_physics_bevy::PhysicsSystems::Carry),
             ),
         )
-        // The player's hand follows its tick pose (S2-b): after the move, before the hands.
+        // The player's hand follows its tick pose (S2-b): after the move; the next tick's hands
+        // record it (IN11b: the physics step runs before the movers).
+        .add_systems(FixedUpdate, player_tick_view.after(sf_action_bevy::ActionSystems::Move))
+        // Action-driven bodies on a moving base ride this step's motion (IN11b).
         .add_systems(
             FixedUpdate,
-            player_tick_view.after(sf_action_bevy::ActionSystems::Move).before(sf_physics_bevy::PhysicsSystems::Hands),
+            action_bases.after(sf_physics_bevy::PhysicsSystems::Step).before(sf_action_bevy::ActionSystems::Move),
         )
         .add_systems(Last, cap_fps);
 }
@@ -499,6 +502,18 @@ fn attach_holder(
     }
     for e in &bodies {
         commands.entity(e).try_insert((Holder::new(limits()), TickView::default()));
+    }
+}
+
+/// Action-driven bodies standing on a body re-read its velocity after the physics step
+/// (`sf_physics_bevy::refresh_base_velocity`; the movers get it from the framework).
+#[allow(clippy::needless_pass_by_value)]
+fn action_bases(physics: Res<Physics>, mut bodies: Query<&mut ActionBody>) {
+    let Some(w) = physics.worlds.active_world() else { return };
+    for mut body in &mut bodies {
+        if body.loco.grounded.is_some_and(|g| g.body.is_some()) {
+            sf_physics_bevy::refresh_base_velocity(w, &mut body.loco);
+        }
     }
 }
 

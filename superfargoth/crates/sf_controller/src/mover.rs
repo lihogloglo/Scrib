@@ -17,7 +17,7 @@ use crate::frame::CharacterFrame;
 use crate::intent::{Gait, LocomotionIntent};
 use crate::motion::{MotionState, SpringParams, wrap_angle};
 use crate::path::ArrivalParams;
-use crate::probe::{GroundHit, GroundProbe, ProbeQuery};
+use crate::probe::{GroundBody, GroundHit, GroundProbe, ProbeQuery};
 use crate::trajectory::{LocomotionParams, Trajectory};
 
 /// Fraction of the asked speed a deflecting surface must leave for a
@@ -155,10 +155,22 @@ impl MoverParams {
         if len < 1e-6 {
             return None;
         }
+        let (center, radius, half) = self.wall_capsule(feet);
+        Some(ProbeQuery::capsule(center, d / len, len + self.skin, radius, half))
+    }
+
+    /// The contact query for moving bodies ([`GroundProbe::contacts`]): the wall sweep's
+    /// capsule where it stands, reaching out to the skin.
+    fn contact(&self, feet: WorldPos) -> ProbeQuery {
+        let (center, radius, half) = self.wall_capsule(feet);
+        ProbeQuery::contact(center, self.skin, radius, half)
+    }
+
+    /// The wall capsule over `feet`: (center, radius, half height of its segment).
+    fn wall_capsule(&self, feet: WorldPos) -> (WorldPos, f32, f32) {
         let span = (self.height - self.step_up).max(2.0 * self.radius);
         let radius = self.radius.min(span / 2.0);
-        let center = feet.offset(Vec3::Y * (self.step_up + span / 2.0));
-        Some(ProbeQuery::capsule(center, d / len, len + self.skin, radius, span / 2.0 - radius))
+        (feet.offset(Vec3::Y * (self.step_up + span / 2.0)), radius, span / 2.0 - radius)
     }
 }
 
@@ -245,6 +257,14 @@ pub struct Locomotion {
     /// question 3: gravity along the slope), m/s. It decays on walkable ground
     /// and carries through the air.
     pub slide: Vec3,
+    /// Horizontal velocity imparted by the moving base the character left (a jump, a walk
+    /// off, a fall), m/s: UE's "impart base velocity" (`bImpartBaseVelocityX/Y`). It moves
+    /// the body through the air untouched by the springs (air control stays the intent's
+    /// business, relative to it) and is cleared on landing; the base's vertical speed goes
+    /// into `vertical_speed` instead. Runtime only, like [`GroundHit::velocity`]: a save
+    /// taken mid-air loads without it (the save shape stays as it is).
+    #[serde(skip)]
+    pub inherited: Vec3,
 }
 
 impl Locomotion {
@@ -265,6 +285,7 @@ impl Locomotion {
             traversing: false,
             deflect: Vec3::ZERO,
             slide: Vec3::ZERO,
+            inherited: Vec3::ZERO,
         }
     }
 
@@ -296,9 +317,43 @@ impl Locomotion {
     /// head and the upward speed; ground probing lands it on the way down. Horizontal
     /// motion stays with the springs (air control is the intent's business). Ground mode
     /// only: flying and swimming have no vertical speed (their intent's Y moves them).
+    /// Launched off a moving base, the body keeps the base's point velocity (UE imparts
+    /// base velocity on a jump): its vertical part adds to `speed` (a jump off a lift is
+    /// relative to it), its horizontal part becomes [`Self::inherited`].
     pub fn launch(&mut self, speed: f32) {
-        self.vertical_speed = speed;
+        let base = self.grounded.filter(|g| g.body.is_some()).map_or(Vec3::ZERO, |g| g.velocity);
+        self.vertical_speed = speed + base.y;
+        self.inherited = horizontal(base);
         self.grounded = None;
+    }
+
+    /// Rides the moving base under the feet for `dt` (UE `MovementBase`, Mover 2.0 based
+    /// movement, Jolt `CharacterVirtual` ground velocity): the feet move with the base's
+    /// rigid motion and the facing turns with its yaw, before the character's own move, so
+    /// a character on a turning disc keeps its spot and its heading on the disc. The base
+    /// motion is the last probe's point velocity and yaw rate held over the tick, integrated
+    /// as a rotation about the base's instantaneous centre (exact for a disc turning about
+    /// a fixed axis; stepping along the point velocity would spiral outward). Pitch and roll
+    /// of the base are not followed here (slice `IN11b`). No base, or static ground: nothing.
+    /// Turns the facing and returns the feet's motion, (horizontal, vertical), for the mover
+    /// to sweep (`KinematicMover::carry`, `IN11c1`).
+    fn ride_base(&mut self, dt: f32) -> Option<(Vec3, f32)> {
+        let g = self.grounded.filter(|g| g.body.is_some())?;
+        let (vh, w) = (horizontal(g.velocity), g.angular_velocity.y);
+        let turn = w * dt;
+        // The feet relative to the contact point, horizontal.
+        let r = horizontal(g.point.delta_f32(self.position));
+        let moved = if turn.abs() > 1e-6 {
+            // The velocity field `vh + w × (x − point)` turns everything about the point
+            // `point + (w × vh) / w²` that it leaves still.
+            let r = r - Vec3::Y.cross(vh) / w;
+            Quat::from_rotation_y(turn) * r - r
+        } else {
+            (vh + Vec3::Y.cross(r) * w) * dt
+        };
+        self.motion.yaw = wrap_angle(self.motion.yaw + turn);
+        self.motion.facing_goal = wrap_angle(self.motion.facing_goal + turn);
+        Some((moved, g.velocity.y * dt))
     }
 }
 
@@ -336,6 +391,9 @@ struct Pending {
     probe: Option<ProbeQuery>,
     /// A surface turned this step aside (sets [`Locomotion::deflect`]).
     deflected: bool,
+    /// A moving body pushed the character this step (`KinematicMover::carry`): the ground
+    /// under it is cast.
+    pushed: bool,
 }
 
 /// Movement without ground snap or gravity this step.
@@ -369,6 +427,10 @@ pub struct KinematicMover {
     queries: Vec<ProbeQuery>,
     owners: Vec<usize>,
     hits: Vec<Option<GroundHit>>,
+    /// Rides being swept this step: (horizontal, vertical, base), per `owners`.
+    rides: Vec<(Vec3, f32, Option<GroundBody>)>,
+    /// Per character this step: pushed by a moving body (`carry`).
+    pushed: Vec<bool>,
 }
 
 impl KinematicMover {
@@ -385,11 +447,13 @@ impl KinematicMover {
     /// moving characters, one batched ground cast, plus individual casts
     /// only for characters that slide along walls or hit an unclimbable slope.
     pub fn step_batch(&mut self, items: &mut [MoveInput<'_>], probe: &dyn GroundProbe, dt: f32) {
+        self.carry(items, probe, dt);
         self.pending.clear();
         self.queries.clear();
         self.owners.clear();
         for (i, it) in items.iter_mut().enumerate() {
-            let p = begin(it, dt);
+            let mut p = begin(it, dt);
+            p.pushed = self.pushed[i];
             if let Some(q) = it.params.sweep(p.start, p.d) {
                 self.queries.push(q);
                 self.owners.push(i);
@@ -429,12 +493,74 @@ impl KinematicMover {
             finish(it, p, cast, probe, dt);
         }
     }
+
+    /// Stage 0 (IN11c1): the motion a character is given rather than makes, before its own
+    /// (UE `UpdateBasedMovement` sweeps the base's motion through `MoveUpdatedComponent`;
+    /// Jolt `CharacterVirtual` solves its contacts against their bodies' velocities). The
+    /// ride on a moving base ([`Locomotion::ride_base`]) is swept and slides along what it
+    /// meets, so a lift or a cart carrying the character into a wall leaves it against the
+    /// wall while the base slides on under it. Then a moving body within the skin
+    /// ([`GroundProbe::contacts`]) pushes the character out along its normal back to the
+    /// skin, the push itself swept so it stops at static walls. Neither changes the
+    /// character's velocity or its `moved` (the graph sees it standing, as on a base). One
+    /// batched probe call per stage; slides past the first contact cast one by one.
+    fn carry(&mut self, items: &mut [MoveInput<'_>], probe: &dyn GroundProbe, dt: f32) {
+        self.queries.clear();
+        self.owners.clear();
+        self.rides.clear();
+        for (i, it) in items.iter_mut().enumerate() {
+            if Free::of(it).is_some() {
+                continue;
+            }
+            let base = it.loco.grounded.and_then(|g| g.body);
+            let Some((d, dy)) = it.loco.ride_base(dt) else { continue };
+            if let Some(q) = it.params.sweep(it.loco.position, d) {
+                self.queries.push(q);
+                self.owners.push(i);
+                self.rides.push((d, dy, base));
+            } else {
+                it.loco.position = it.loco.position.offset(d + Vec3::Y * dy);
+            }
+        }
+        self.hits.clear();
+        self.hits.resize(self.queries.len(), None);
+        probe.probe(&self.queries, &mut self.hits);
+        for ((&i, hit), &(d, dy, base)) in self.owners.iter().zip(&self.hits).zip(&self.rides) {
+            let it = &mut items[i];
+            let moved = carry_slide(it.params, it.loco.position, d, *hit, base, dt, probe);
+            it.loco.position = it.loco.position.offset(moved + Vec3::Y * dy);
+        }
+
+        // Pushes from moving bodies.
+        self.queries.clear();
+        self.queries.extend(items.iter().map(|it| it.params.contact(it.loco.position)));
+        self.hits.clear();
+        self.hits.resize(self.queries.len(), None);
+        probe.contacts(&self.queries, &mut self.hits);
+        self.pushed.clear();
+        self.pushed.resize(items.len(), false);
+        for ((it, hit), pushed) in items.iter_mut().zip(&self.hits).zip(&mut self.pushed) {
+            let Some(h) = hit else { continue };
+            let n = horizontal(h.normal).normalize_or_zero();
+            let depth = it.params.skin - h.distance;
+            if n == Vec3::ZERO || depth <= 0.0 {
+                continue;
+            }
+            let push = n * depth;
+            let first = it.params.sweep(it.loco.position, push).and_then(|q| probe.probe_one(q));
+            let moved = carry_slide(it.params, it.loco.position, push, first, h.body, dt, probe);
+            it.loco.position = it.loco.position.offset(moved);
+            *pushed = true;
+        }
+    }
 }
 
 /// Springs, root-motion blend; the horizontal displacement to try.
 fn begin(it: &mut MoveInput<'_>, dt: f32) -> Pending {
     let free = Free::of(it);
     let loco = &mut *it.loco;
+    // The base's motion and pushes came first (`KinematicMover::carry`): `moved` (from
+    // `frame`) stays the character's own.
     let frame = loco.frame();
     let yaw0 = loco.motion.yaw;
     let (mut v_goal, mut yaw_goal) = loco.motion.goals(&it.intent);
@@ -510,12 +636,13 @@ fn begin(it: &mut MoveInput<'_>, dt: f32) -> Pending {
     };
     loco.attitude = loco.attitude.lerp(settled, 1.0 - w) + it.root.delta.tilt * w;
     if free.is_none() {
-        // Sliding down unwalkable ground (see `finish`).
-        d += loco.slide * dt;
+        // Sliding down unwalkable ground (see `finish`), and the momentum a moving base
+        // left the body with (zero on the ground).
+        d += (loco.slide + loco.inherited) * dt;
     }
     let dy = d.y;
     d.y = 0.0;
-    Pending { frame, start: loco.position, d, dy, vy0, free, v_goal, yaw_goal, gait: it.intent.gait, probe: None, deflected: false }
+    Pending { frame, start: loco.position, d, dy, vy0, free, v_goal, yaw_goal, gait: it.intent.gait, probe: None, deflected: false, pushed: false }
 }
 
 fn horizontal(v: Vec3) -> Vec3 {
@@ -580,6 +707,42 @@ fn slide(it: &mut MoveInput<'_>, p: &mut Pending, first: Option<GroundHit>, prob
     }
 }
 
+/// Collide and slide of a motion the character is given (`KinematicMover::carry`): like
+/// [`slide`] (to the contact less the skin, the tangential remainder on, at most four
+/// sweeps) but it changes no velocity and never wall-stops, and only what the motion closes
+/// on blocks it, by relative velocity as Jolt `CharacterVirtual` judges its contacts: not
+/// the body this motion belongs to (`own`: the base being ridden, whose walls move with the
+/// character, or the body pushing it, which it moves away from) nor a body moving away at
+/// least as fast. `first` is the sweep of `d` from `start`. Returns the displacement made.
+fn carry_slide(params: &MoverParams, start: WorldPos, d: Vec3, first: Option<GroundHit>, own: Option<GroundBody>, dt: f32, probe: &dyn GroundProbe) -> Vec3 {
+    let v = if dt > 0.0 { d / dt } else { Vec3::ZERO };
+    let blocks = |h: &GroundHit| !(h.body.is_some() && h.body == own) && (v - h.velocity).dot(horizontal(h.normal)) < 0.0;
+    let mut moved = Vec3::ZERO;
+    let mut rem = d;
+    let mut hit = first;
+    for iter in 0..4 {
+        let Some(h) = hit.filter(blocks) else {
+            moved += rem;
+            break;
+        };
+        let len = rem.length();
+        let dir = rem / len;
+        let travel = (h.distance - params.skin).clamp(0.0, len);
+        moved += dir * travel;
+        rem = dir * (len - travel);
+        let n = horizontal(h.normal).normalize_or_zero();
+        if n == Vec3::ZERO || iter == 3 {
+            break;
+        }
+        rem -= n * rem.dot(n).min(0.0);
+        match params.sweep(start.offset(moved), rem) {
+            Some(q) => hit = probe.probe_one(q),
+            None => break,
+        }
+    }
+    moved
+}
+
 /// The fall over this step from the current vertical speed: (distance, new speed).
 fn fall(loco: &Locomotion, params: &MoverParams, dt: f32) -> (f32, f32) {
     let v1 = (loco.vertical_speed - params.gravity * dt).max(-params.max_fall_speed);
@@ -616,8 +779,8 @@ fn rise_ballistic(loco: &mut Locomotion, params: &MoverParams, feet: WorldPos, h
 }
 
 /// The downward cast at the slid position, or `None` when a grounded
-/// character stands still (its ground can't have moved: R0 statics never
-/// unload under a character).
+/// character stands still on static ground (it can't have moved: R0 statics
+/// never unload under a character). A moving base is cast every step.
 fn ground_query(it: &MoveInput<'_>, p: &Pending, dt: f32) -> Option<ProbeQuery> {
     let (loco, params) = (&*it.loco, it.params);
     let reach = match p.free {
@@ -628,7 +791,7 @@ fn ground_query(it: &MoveInput<'_>, p: &Pending, dt: f32) -> Option<ProbeQuery> 
             (-p.dy).max(0.0) + hover + params.skin
         }
         // Unwalkable ground is cast every step: the character slides off it.
-        None if loco.grounded.is_some_and(|g| g.walkable(params.min_normal_y())) && p.d.length_squared() < 1e-12 => return None,
+        None if !p.pushed && loco.grounded.is_some_and(|g| g.body.is_none() && g.walkable(params.min_normal_y())) && p.d.length_squared() < 1e-12 => return None,
         None if loco.grounded.is_some() || loco.traversing => params.step_down,
         None => fall(loco, params, dt).0.max(0.0) + 1e-3,
     };
@@ -719,8 +882,17 @@ fn finish(it: &mut MoveInput<'_>, p: &Pending, cast: Cast, probe: &dyn GroundPro
                 }
             }
             None => {
-                let (drop, v1) =
-                    if loco.grounded.is_some() { (0.5 * params.gravity * dt * dt, -params.gravity * dt) } else { fall(loco, params, dt) };
+                let (drop, v1) = match loco.grounded {
+                    // Walked off (or the ground went): a moving base's velocity is kept
+                    // (UE imparts base velocity on leaving it). This step's share of it
+                    // was the ride in `begin`; the fall is relative to the base.
+                    Some(g) => {
+                        let base = if g.body.is_some() { g.velocity } else { Vec3::ZERO };
+                        loco.inherited = horizontal(base);
+                        (0.5 * params.gravity * dt * dt, base.y - params.gravity * dt)
+                    }
+                    None => fall(loco, params, dt),
+                };
                 feet = feet.offset(Vec3::NEG_Y * drop);
                 loco.vertical_speed = v1;
                 loco.grounded = None;
@@ -731,6 +903,10 @@ fn finish(it: &mut MoveInput<'_>, p: &Pending, cast: Cast, probe: &dyn GroundPro
     // it no longer turns the motion aside.
     if !deflected && d.dot(loco.deflect) < -params.skin {
         loco.deflect = Vec3::ZERO;
+    }
+    if loco.grounded.is_some() {
+        // Landed: the ground's own motion (a base is ridden) replaces the momentum.
+        loco.inherited = Vec3::ZERO;
     }
     loco.position = feet;
     critical_spring(&mut loco.height_offset, &mut loco.height_offset_velocity, 0.0, params.halflife_height, dt);
@@ -789,6 +965,7 @@ fn finish_free(it: &mut MoveInput<'_>, p: &Pending, free: Free, cast: Cast, prob
     loco.position = slid.offset(Vec3::Y * dy);
     loco.vertical_speed = 0.0;
     loco.grounded = None;
+    loco.inherited = Vec3::ZERO;
     loco.traversing = free == Free::Traversal;
     critical_spring(&mut loco.height_offset, &mut loco.height_offset_velocity, 0.0, params.halflife_height, dt);
     loco.trajectory = loco.motion.predict(p.v_goal, p.yaw_goal, p.gait, &params.springs);

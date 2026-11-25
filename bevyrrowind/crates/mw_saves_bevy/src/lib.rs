@@ -24,6 +24,12 @@
 //!   - `mw/rpg` ([`MwRpgSave`]): the rest of `RpgState`: NPC dialogue state (disposition changes,
 //!     greetings), container inventories, script locals and globals. Actor keys that are not
 //!     placement ids (entity bits of spawned characters: `dialogue.rs` `actor_key`) are left out.
+//!   - `mw/scripts` (DQ-4b2b, v2 DQ-5c): the global script instances, running or stopped, and the
+//!     local (object) ones, live and parked, with their locals by name and type
+//!     (`mw_rpg_bevy::dialogue::GlobalScripts::snapshot`; a v1 save loads with no local). Load replaces
+//!     them wholesale against the live script set (a script gone from the content is dropped,
+//!     locals remapped by name; each case logged once); a save from before the section restarts
+//!     the new game's start list.
 //! - **Files**: `<user data>/saves/single/<world id>/<n>-quick.sfsave` (save.md "Slots and
 //!   files"; `<user data>` is the mods user folder, `mw_mods::UserDirs`, also holding
 //!   `profiles/`). Two quicksaves rotate.
@@ -83,7 +89,7 @@ use mw_controls_bevy::{QuickLoadAction, QuickSaveAction};
 use mw_game_core::doors::{ARRIVAL_EYE_M, DoorUser};
 use mw_game_core::player::PlayerBody;
 use mw_player_bevy::RestoreBody;
-use mw_rpg_bevy::dialogue::{Rpg, RpgState};
+use mw_rpg_bevy::dialogue::{GlobalScripts, Rpg, RpgState, ScriptsSave};
 
 pub mod menu;
 pub use menu::{OpenSaveLoad, SAVELOAD};
@@ -93,6 +99,11 @@ pub const OWNER: &str = "mw";
 /// `mw/rpg`: [`MwRpgSave`].
 pub const RPG: &str = "rpg";
 pub const RPG_VERSION: u32 = 1;
+/// `mw/scripts`: the global and local script instances (`Option<ScriptsSave>`; `None` only in a
+/// save from before the section). v1 held the globals only (`Option<GlobalsSnapshot>`): its step
+/// keeps them and starts the locals empty (DQ-5c).
+pub const SCRIPTS: &str = "scripts";
+pub const SCRIPTS_VERSION: u32 = 2;
 /// Version of the host character's `mw` extension blob ([`PlayerExt`]).
 pub const PLAYER_EXT_VERSION: u32 = 1;
 /// The host's character key (`mw_game_core::player::HOST_KEY`).
@@ -252,7 +263,38 @@ pub fn register(app: &mut App) {
                 v.apply(&mut rpg.state);
             }
         },
-    ));
+    ))
+    .add_save_section(
+        SaveSection::value(
+            SectionKey::new(OWNER, SCRIPTS).expect("valid key"),
+            SCRIPTS_VERSION,
+            |w: &World| w.get_resource::<GlobalScripts>().zip(w.get_resource::<Rpg>()).map(|(g, rpg)| Some(g.snapshot(rpg))),
+            load_global_scripts,
+        )
+        .typed_step(1, scripts_v1_to_v2),
+    );
+}
+
+/// `mw/scripts` v1 → v2: the globals kept, no local instance (v1 saved none: they start fresh
+/// as the region syncs). v1's value is `Option<GlobalsSnapshot>`, the type v2 still embeds:
+/// a later change to `GlobalsSnapshot`'s shape freezes v1's copy here.
+fn scripts_v1_to_v2(v1: Option<mw_rpg_bevy::dialogue::GlobalsSnapshot>) -> Option<ScriptsSave> {
+    v1.map(|globals| ScriptsSave { globals, ..ScriptsSave::default() })
+}
+
+/// `mw/scripts` on load: the saved instances replace the live ones; a save without the section
+/// (`None`, from before it) restarts the new game's start list.
+fn load_global_scripts(world: &mut World, saved: Option<ScriptsSave>) {
+    if !world.contains_resource::<GlobalScripts>() {
+        return;
+    }
+    world.resource_scope(|world, mut scripts: Mut<GlobalScripts>| {
+        let Some(mut rpg) = world.get_resource_mut::<Rpg>() else { return };
+        match &saved {
+            Some(snapshot) => scripts.load(snapshot, &mut rpg),
+            None => scripts.restart(&mut rpg),
+        }
+    });
 }
 
 /// A copy of the live overlay with the resident items physics moved written in, as their
@@ -515,6 +557,7 @@ mod tests {
 
     use bevy_ecs::message::Messages;
     use mw_install::MorrowindInstall;
+    use mw_rpg_bevy::dialogue::{LocalKey, RegionCell};
     use mw_rpg::NoSheets;
     use sf_rpg::PlayerId;
     use sf_rpg_ui::DialogueRequest;
@@ -1105,6 +1148,283 @@ mod tests {
         cast(&mut app);
         assert_eq!(read(&mut app), used, "refused while recharging: nothing spent");
         assert!(app.world().resource::<EffectClock>().0 < GameMinutes(clock.0 + GameMinutes::DAY.0));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// DQ-4b2a's fixture: `dq_start` (journals `dq_q` 10 once, guarded by its local `done`) on
+    /// the start list (`SSCR`), the `dq_q` journal with its stage 10; `with_script: false` drops
+    /// the script record (content changed since the save).
+    fn script_records(with_script: bool) -> sf_records::RecordDb {
+        script_records_in(with_script).0
+    }
+
+    /// [`script_records`] and its source, for fixtures that add to it.
+    fn script_records_in(with_script: bool) -> (sf_records::RecordDb, sf_records::SourceId) {
+        use tes3::esp::{Dialogue, DialogueInfo, DialogueType2, Script, StartScript};
+        let mut db = sf_records::RecordDb::new();
+        mw_records::register_kinds(&mut db).unwrap();
+        let src = db.add_source("test", &[]);
+        if with_script {
+            let text = "Begin dq_start
+short done
+if ( done == 0 )
+	Journal \"dq_q\" 10
+	set done to 1
+endif
+End
+";
+            let script = Script { id: "dq_start".into(), text: text.into(), ..Default::default() };
+            db.define(src, RecordId::new("dq_start"), script).unwrap();
+        }
+        let start = StartScript { id: "0".into(), script: "dq_start".into(), ..Default::default() };
+        db.define(src, RecordId::new("0"), start).unwrap();
+        let dial = Dialogue { id: "dq_q".into(), dialogue_type: DialogueType2::Journal, ..Default::default() };
+        let mut stage = DialogueInfo { id: "dq_q10".into(), text: "It began.".into(), ..Default::default() };
+        stage.data.disposition = 10;
+        db.define(src, mw_records::keys::info(&dial, &stage), stage).unwrap();
+        db.define(src, RecordId::new("dq_q"), dial).unwrap();
+        (db, src)
+    }
+
+    /// The chest in the start cell and the one far away (DQ-5b1's shape).
+    const NEAR: u32 = 1;
+    const FAR: u32 = 2;
+
+    /// [`script_records`] with its global, plus DQ-5b1's local shape: `dq_obj` (counts its runs
+    /// in its local `n`) on the container `dq_chest`, chest [`NEAR`] in exterior (0, 0), [`FAR`]
+    /// in (5, 5); `with_local: false` drops `dq_obj`'s record (the chests still name it).
+    fn local_records(with_local: bool) -> sf_records::RecordDb {
+        use tes3::esp::{Cell, Container, Reference, Script};
+        let (mut db, src) = script_records_in(true);
+        if with_local {
+            let text = "Begin dq_obj\nshort n\nset n to n + 1\nEnd\n";
+            let script = Script { id: "dq_obj".into(), text: text.into(), ..Default::default() };
+            db.define(src, RecordId::new("dq_obj"), script).unwrap();
+        }
+        let chest = Container { id: "dq_chest".into(), script: "dq_obj".into(), ..Default::default() };
+        db.define(src, RecordId::new("dq_chest"), chest).unwrap();
+        for (grid, refr_index) in [((0, 0), NEAR), ((5, 5), FAR)] {
+            let mut cell = Cell::default();
+            cell.data.grid = grid;
+            let r = Reference { mast_index: 0, refr_index, id: "dq_chest".into(), ..Reference::default() };
+            cell.references.insert((0, refr_index), r);
+            db.define(src, mw_records::keys::exterior(grid), cell).unwrap();
+        }
+        db
+    }
+
+    fn chest(refr_index: u32) -> LocalKey {
+        LocalKey::Placement(mw_world::ids::placement_id("test", refr_index).0)
+    }
+
+    /// The chest's live instance: (running, `n`).
+    fn live(app: &App, refr_index: u32) -> Option<(bool, f64)> {
+        let scripts = app.world().resource::<GlobalScripts>();
+        scripts.locals().get(chest(refr_index)).map(|i| (!i.paused, i.locals.0[0]))
+    }
+
+    /// `n` ticks with the player in `centre` (the game writes it from the player's cell).
+    fn tick_at(app: &mut App, centre: &RegionCell, n: usize) {
+        app.world_mut().resource_mut::<GlobalScripts>().set_region_centre(Some(centre.clone()));
+        tick_scripts(app, n);
+    }
+
+    /// A fresh new game over `db`: its `Rpg` and its globals (start list started, nothing run).
+    fn new_game(app: &mut App, db: &Arc<sf_records::RecordDb>) {
+        let mut rpg = Rpg::new(db.clone()).unwrap();
+        app.insert_resource(GlobalScripts::new_game(&mut rpg)).insert_resource(rpg);
+    }
+
+    /// `n` global ticks (the game runs them on `FixedUpdate`).
+    fn tick_scripts(app: &mut App, n: usize) {
+        app.world_mut().resource_scope(|world, mut scripts: Mut<GlobalScripts>| {
+            let mut rpg = world.resource_mut::<Rpg>();
+            for _ in 0..n {
+                scripts.tick(&mut rpg, &NoSheets);
+            }
+        });
+    }
+
+    /// `dq_start`'s (running, locals), when it has an instance.
+    type Instance = Option<(bool, Vec<f64>)>;
+
+    /// `dq_start`'s instance and the `dq_q` journal's stages.
+    fn script_state(app: &App) -> (Instance, Vec<Option<i32>>) {
+        let scripts = app.world().resource::<GlobalScripts>();
+        let instance = scripts.instances().get("dq_start").map(|i| (i.running, i.locals.0.clone()));
+        let quest = RecordId::new("dq_q");
+        let stages = app.world().resource::<Rpg>().state.world.journal.for_quest(&quest).map(|e| e.stage).collect();
+        (instance, stages)
+    }
+
+    /// `mw/scripts` (DQ-4b2b): a start-list global that ran (its guard `done` = 1) is back
+    /// running with `done` = 1 over a fresh new game (instance reset, `done` = 0), and its
+    /// journal line is not added a second time on the next ticks.
+    #[test]
+    fn a_running_global_and_its_locals_survive_a_save_round_trip() {
+        let root = temp_root("scripts");
+        let db = Arc::new(script_records(true));
+        let mut app = bare_app(root.clone());
+        new_game(&mut app, &db);
+        tick_scripts(&mut app, 3);
+        let ran = (Some((true, vec![1.0])), vec![Some(10)]);
+        assert_eq!(script_state(&app), ran, "ran once, guard set");
+        save(&mut app);
+
+        new_game(&mut app, &db);
+        assert_eq!(script_state(&app), (Some((true, vec![0.0])), vec![]), "a fresh new game");
+        load(&mut app);
+        assert_eq!(script_state(&app), ran, "running, done = 1, the journal line back");
+        assert!(app.world().resource::<GlobalScripts>().load_reports().is_empty());
+        tick_scripts(&mut app, 3);
+        assert_eq!(script_state(&app), ran, "the guard holds: no second journal line");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A save whose global is gone from the content loads with one report and no instance; a
+    /// save from before the section (no globals resource when saved) restarts the start list.
+    #[test]
+    fn a_removed_global_loads_with_one_report_and_an_old_save_restarts_the_start_list() {
+        let root = temp_root("scripts-gone");
+        let db = Arc::new(script_records(true));
+        let mut app = bare_app(root.clone());
+        new_game(&mut app, &db);
+        tick_scripts(&mut app, 1);
+        save(&mut app);
+
+        new_game(&mut app, &Arc::new(script_records(false)));
+        load(&mut app);
+        let scripts = app.world().resource::<GlobalScripts>();
+        assert!(scripts.instances().get("dq_start").is_none(), "dropped");
+        let reports: Vec<_> = scripts.load_reports().iter().map(|r| format!("{r:?}")).collect();
+        assert_eq!(reports, [r#"UnknownScript { script: "dq_start" }"#]);
+        tick_scripts(&mut app, 2);
+
+        app.world_mut().remove_resource::<GlobalScripts>();
+        save(&mut app);
+        new_game(&mut app, &db);
+        tick_scripts(&mut app, 1);
+        load(&mut app);
+        let (instance, _) = script_state(&app);
+        assert_eq!(instance, Some((true, vec![0.0])), "the start list again, not yet run");
+        assert!(app.world().resource::<GlobalScripts>().load_reports().is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `mw/scripts` v2 (DQ-5c): a local in the region that counted to 3 is back at 3 and running
+    /// over a fresh new game (whose own instance had restarted at 1), and keeps counting.
+    #[test]
+    fn a_live_local_and_its_locals_survive_a_save_round_trip() {
+        let root = temp_root("locals");
+        let db = Arc::new(local_records(true));
+        let start = RegionCell::Exterior(0, 0);
+        let mut app = bare_app(root.clone());
+        new_game(&mut app, &db);
+        tick_at(&mut app, &start, 3);
+        assert_eq!(live(&app, NEAR), Some((true, 3.0)));
+        save(&mut app);
+
+        new_game(&mut app, &db);
+        tick_at(&mut app, &start, 1);
+        assert_eq!(live(&app, NEAR), Some((true, 1.0)), "a fresh new game");
+        load(&mut app);
+        assert_eq!(live(&app, NEAR), Some((true, 3.0)), "restored, running");
+        let scripts = app.world().resource::<GlobalScripts>();
+        assert!(scripts.local_load_reports().is_empty() && scripts.load_reports().is_empty());
+        tick_at(&mut app, &start, 2);
+        assert_eq!(live(&app, NEAR), Some((true, 5.0)), "the next sync keeps it: it counts on");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A parked instance (its chest left the region) keeps its locals through a save and a load
+    /// and resumes with them when the player comes back; a restored live instance outside the
+    /// player's region is parked with its locals at the next sync.
+    #[test]
+    fn a_parked_local_survives_a_save_round_trip_and_resumes_on_return() {
+        let root = temp_root("locals-parked");
+        let db = Arc::new(local_records(true));
+        let (start, far) = (RegionCell::Exterior(0, 0), RegionCell::Exterior(5, 5));
+        let mut app = bare_app(root.clone());
+        new_game(&mut app, &db);
+        tick_at(&mut app, &start, 2);
+        tick_at(&mut app, &far, 1);
+        assert_eq!((live(&app, NEAR), live(&app, FAR)), (None, Some((true, 1.0))), "near parked at 2");
+        save(&mut app);
+
+        new_game(&mut app, &db);
+        load(&mut app);
+        assert_eq!((live(&app, NEAR), live(&app, FAR)), (None, Some((true, 1.0))), "near still parked");
+        tick_at(&mut app, &far, 1);
+        assert_eq!((live(&app, NEAR), live(&app, FAR)), (None, Some((true, 2.0))));
+        tick_at(&mut app, &start, 1);
+        assert_eq!((live(&app, NEAR), live(&app, FAR)), (Some((true, 3.0)), None), "near resumed from 2");
+
+        load(&mut app);
+        tick_at(&mut app, &start, 1);
+        assert_eq!(live(&app, NEAR), Some((true, 3.0)), "loaded parked, back in the region: from 2");
+        assert_eq!(live(&app, FAR), None, "the loaded live one outside the region is parked");
+        tick_at(&mut app, &far, 1);
+        assert_eq!(live(&app, FAR), Some((true, 2.0)), "with its locals: from 1");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A v1 save (globals only, as DQ-4b2b wrote it) migrates: the global is back with its
+    /// locals, the locals start fresh as the region syncs.
+    #[test]
+    fn a_v1_scripts_save_loads_its_globals_and_starts_the_locals_fresh() {
+        let root = temp_root("locals-v1");
+        let db = Arc::new(local_records(true));
+        let start = RegionCell::Exterior(0, 0);
+        let mut old = App::new();
+        old.add_plugins(SfSavePlugin { config: SaveConfig { root: root.clone(), background: false, ..Default::default() } });
+        old.add_save_section(SaveSection::value(
+            SectionKey::new(OWNER, SCRIPTS).expect("valid key"),
+            1,
+            |w: &World| w.get_resource::<GlobalScripts>().zip(w.get_resource::<Rpg>()).map(|(g, rpg)| Some(g.snapshot(rpg).globals)),
+            |_: &mut World, _: Option<mw_rpg_bevy::dialogue::GlobalsSnapshot>| {},
+        ));
+        new_game(&mut old, &db);
+        tick_at(&mut old, &start, 3);
+        assert_eq!(live(&old, NEAR), Some((true, 3.0)));
+        save(&mut old);
+
+        let mut app = bare_app(root.clone());
+        new_game(&mut app, &db);
+        // The same world (the old build's session), so `latest` finds its quicksave.
+        let world_id = old.world().resource::<SaveSession>().world_id;
+        app.world_mut().resource_mut::<SaveSession>().world_id = world_id;
+        assert_eq!(script_state(&app).0, Some((true, vec![0.0])), "a fresh new game");
+        load(&mut app);
+        assert_eq!(script_state(&app).0, Some((true, vec![1.0])), "the global's guard is back");
+        let scripts = app.world().resource::<GlobalScripts>();
+        assert!(scripts.locals().is_empty(), "v1 saved no local");
+        assert!(scripts.local_load_reports().is_empty() && scripts.load_reports().is_empty());
+        tick_at(&mut app, &start, 1);
+        assert_eq!(live(&app, NEAR), Some((true, 1.0)), "started zeroed, ran once");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A save whose local script is gone from the content: one report per instance (the live
+    /// one, then the parked one), each with its key; neither is restored.
+    #[test]
+    fn a_removed_local_script_loads_with_one_report_per_instance() {
+        let root = temp_root("locals-gone");
+        let mut app = bare_app(root.clone());
+        new_game(&mut app, &Arc::new(local_records(true)));
+        tick_at(&mut app, &RegionCell::Exterior(0, 0), 1);
+        tick_at(&mut app, &RegionCell::Exterior(5, 5), 1);
+        save(&mut app);
+
+        new_game(&mut app, &Arc::new(local_records(false)));
+        load(&mut app);
+        let scripts = app.world().resource::<GlobalScripts>();
+        assert!(scripts.locals().is_empty());
+        let reports: Vec<_> = scripts.local_load_reports().iter().map(|(k, r)| (*k, format!("{r:?}"))).collect();
+        let gone = r#"UnknownScript { script: "dq_obj" }"#.to_owned();
+        assert_eq!(reports, [(chest(FAR), gone.clone()), (chest(NEAR), gone)]);
+        assert!(scripts.load_reports().is_empty(), "the global is unaffected");
+        tick_at(&mut app, &RegionCell::Exterior(0, 0), 1);
+        assert_eq!(live(&app, NEAR), None, "no record: nothing runs");
         let _ = std::fs::remove_dir_all(&root);
     }
 

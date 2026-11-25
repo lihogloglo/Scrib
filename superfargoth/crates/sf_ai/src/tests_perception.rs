@@ -338,3 +338,110 @@ fn defaults_match_the_spec_table() {
     assert_eq!((d.noise_gain, d.noise_cap, d.noise_confidence), (0.5, 0.65, 0.5));
     assert_eq!((d.asleep_wake_m, d.groggy_s, d.max_entries), (12.0, 4.0, 8));
 }
+
+// --- AI8f3: a running search holds the Searching band ------------------------------------------
+
+#[test]
+fn a_search_hold_keeps_searching_until_release_then_decays_from_the_release_tick() {
+    let c = cfg();
+    // Unheld at the floor (0.625, gain at tick 0): delay 4 ticks + 0.0625 / 0.031 25 = 2 s =
+    // 16 ticks, so Searching ends at tick 21.
+    let lkp = LastSeen { pos: pos(4.0), tick: 0, velocity: Vec3::ZERO, confidence: 1.0 };
+    let mut free = AwarenessMeter::new();
+    free.raise_to_floor(&c, PLAYER, Searching, lkp, at(0));
+    free.update(&c, at(20));
+    assert_eq!(level(&free, PLAYER), Some((0.5625, Searching)));
+    free.update(&c, at(21));
+    assert_eq!(level(&free, PLAYER).map(|l| l.1), Some(Suspicious));
+
+    let mut m = AwarenessMeter::new();
+    m.raise_to_floor(&c, PLAYER, Searching, lkp, at(0));
+    assert!(m.hold_searching(&c, PLAYER, at(0)));
+    assert!(m.get(PLAYER).unwrap().search_held());
+    for t in 1..=100 {
+        m.update(&c, at(t));
+        assert_eq!(level(&m, PLAYER), Some((0.625, Searching)), "tick {t}: held at the threshold");
+    }
+    assert!(m.release_search_hold(&c, PLAYER, at(100)));
+    assert!(!m.get(PLAYER).unwrap().search_held());
+    // The last gain is long past: decay at 1/256 per tick from tick 100.
+    m.update(&c, at(101));
+    assert_eq!(level(&m, PLAYER), Some((0.625 - 1.0 / 256.0, Searching)));
+    m.update(&c, at(116));
+    assert_eq!(level(&m, PLAYER), Some((0.5625, Searching)), "tick 116: at the stay level");
+    m.update(&c, at(117));
+    assert_eq!(level(&m, PLAYER), Some((0.5625 - 1.0 / 128.0, Suspicious)), "tick 117: left Searching");
+
+    // Tier invariance: hold, one release, one update.
+    let mut coarse = AwarenessMeter::new();
+    coarse.raise_to_floor(&c, PLAYER, Searching, lkp, at(0));
+    coarse.hold_searching(&c, PLAYER, at(0));
+    coarse.release_search_hold(&c, PLAYER, at(100));
+    coarse.update(&c, at(117));
+    assert_eq!(level(&coarse, PLAYER), level(&m, PLAYER));
+}
+
+#[test]
+fn a_held_entry_above_the_threshold_decays_down_to_it_and_stops() {
+    let c = cfg();
+    let mut m = AwarenessMeter::new();
+    assert_eq!(m.apply(&c, &sight(PLAYER, 0.75), at(0)), StimulusOutcome::Raised(Searching));
+    m.hold_searching(&c, PLAYER, at(0));
+    // Delay 4 ticks, then 0.125 / 0.031 25 = 4 s = 32 ticks down to 0.625.
+    m.update(&c, at(20));
+    assert_eq!(level(&m, PLAYER), Some((0.75 - 16.0 / 256.0, Searching)));
+    m.update(&c, at(36));
+    assert_eq!(level(&m, PLAYER), Some((0.625, Searching)));
+    m.update(&c, at(200));
+    assert_eq!(level(&m, PLAYER), Some((0.625, Searching)));
+}
+
+#[test]
+fn a_search_hold_never_raises_a_lower_entry() {
+    let c = cfg();
+    let lkp = LastSeen { pos: pos(4.0), tick: 0, velocity: Vec3::ZERO, confidence: 1.0 };
+    // Searching, but already decayed into the hysteresis margin: held where it is.
+    let mut m = AwarenessMeter::new();
+    m.raise_to_floor(&c, PLAYER, Searching, lkp, at(0));
+    m.update(&c, at(12));
+    assert_eq!(level(&m, PLAYER), Some((0.593_75, Searching)));
+    m.hold_searching(&c, PLAYER, at(12));
+    m.update(&c, at(80));
+    assert_eq!(level(&m, PLAYER), Some((0.593_75, Searching)));
+
+    // Below Searching: the hold changes nothing (same as an unheld meter).
+    let (mut held, mut free) = (AwarenessMeter::new(), AwarenessMeter::new());
+    for x in [&mut held, &mut free] {
+        assert_eq!(x.apply(&c, &sight(PLAYER, 0.5), at(0)), StimulusOutcome::Raised(Suspicious));
+    }
+    held.hold_searching(&c, PLAYER, at(0));
+    for t in [1, 10, 30, 60] {
+        held.update(&c, at(t));
+        free.update(&c, at(t));
+        assert_eq!(level(&held, PLAYER), level(&free, PLAYER), "tick {t}");
+    }
+    assert_eq!(level(&held, PLAYER), None, "tick 60: decayed out and forgotten, as unheld");
+    // Untracked: nothing to hold.
+    assert!(!held.hold_searching(&c, actor(9), at(60)));
+    assert!(!held.release_search_hold(&c, actor(9), at(60)));
+}
+
+#[test]
+fn a_search_hold_leaves_the_alerted_latch_unchanged_and_is_not_serialised() {
+    let c = cfg();
+    let mut m = AwarenessMeter::new();
+    m.apply(&c, &sight(PLAYER, 1.0), at(0));
+    m.hold_searching(&c, PLAYER, at(0));
+    // Hold 1 s = 8 ticks from the contact, as unheld; then the Searching floor stays.
+    m.update(&c, at(7));
+    assert_eq!(level(&m, PLAYER), Some((1.0, Alerted)));
+    m.update(&c, at(8));
+    assert_eq!(level(&m, PLAYER), Some((0.625, Searching)));
+    m.update(&c, at(60));
+    assert_eq!(level(&m, PLAYER), Some((0.625, Searching)));
+
+    // The hold is the running search's state: a snapshot does not carry it.
+    let back: AwarenessMeter = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
+    assert!(!back.get(PLAYER).unwrap().search_held());
+    assert_eq!(level(&back, PLAYER), level(&m, PLAYER));
+}

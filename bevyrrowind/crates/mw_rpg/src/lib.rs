@@ -16,6 +16,7 @@ mod filter;
 mod persuasion;
 mod result;
 mod runner;
+mod script_host;
 mod script_stats;
 mod services;
 mod state;
@@ -44,8 +45,9 @@ pub use persuasion::{
     speechcraft_use,
 };
 pub use result::{ResultCall, ResultEffect, ResultError, ResultRunner, Target};
-pub use api::{GameOp, GameRun, GameView, MwWorld, ScriptVar};
-pub use runner::{MwResultRunner, MwResults, ResultReport, ResultState};
+pub use api::{Checkpoint, GameOp, GameRun, GameView, MwWorld, ScriptVar};
+pub use runner::{MwResultRunner, MwResults, ResultReport, ResultState, WorldEnv};
+pub use script_host::{ScriptHost, ScriptReport, ScriptReports};
 pub use services::{
     BarterPriceIn, BarterTerms, EffectiveValueIn, FollowerPricing, HaggleIn, HaggleOut, PartyTerms, RULE_BARTER_HAGGLE,
     RULE_BARTER_PRICE, RULE_IDS, RULE_REPAIR_PRICE, RULE_SPELL_PRICE, RULE_TRAINING, RULE_TRAVEL, RepairPriceIn,
@@ -74,6 +76,8 @@ mod tests_barter;
 mod tests_calendar;
 #[cfg(test)]
 mod tests_disposition;
+#[cfg(test)]
+mod tests_script_host;
 #[cfg(test)]
 mod tests_script_stats;
 #[cfg(test)]

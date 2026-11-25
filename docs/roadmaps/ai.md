@@ -103,16 +103,25 @@ Ends with: a Balmora guard spots a sneaking player in light, not in shadow, chec
 | AI8g | Profile core: `PerceptionProfile`, timed `PerceptionStates`, `EffectivePerception` resolve | `sf_ai` | AI0g | **done 2026-11-25** (13 exact tests) |
 | AI8b1 | Sight maths core: gain terms, cone and range from `EffectivePerception`, stagger, ray queue with cap, cache rule | `sf_ai` | AI8g | **done 2026-11-25** (14 exact tests) |
 | AI8b2 | Sight system: grid prefilter, batched physics rays, profile/record registration, `ai.perception.*` binding | `sf_ai_bevy` | AI8b1 | **done 2026-11-25** (0.037 ms/tick, 48×4, fake LOS) |
-| MA14 | Sight wiring in the game: `AiSightPlugin::<Physics>`, `AiObserver` on NPCs, `Perceivable` on players, record load (forced checks on damage/notify = MA15) | `mw_ai`, `bevyrrowind` | AI8b2 | headless: a guard's meter rises facing the player, not behind a wall |
-| MA15 | Forced sight checks (`SightTimer::force`) on damage taken and on `Notify` arrival | `mw_ai`, `mw_walkers_bevy` | MA14 | headless: hit from behind turns the NPC's check due this tick |
-| AI8c | Hearing by `portal_query::path_distance`; emitters from action `noise`, gait, surface | `sf_ai_bevy` | AI8a (action emitters arrive with IN18) | exact attenuation through a door |
-| AI8d | `VisibilityFactors` + host `LightExposure` | `sf_ai`, `sf_ai_bevy` | AI8a | exact: equal at 30/144 fps |
+| MA14 | Sight wiring in the game: `AiSightPlugin::<Physics>`, `AiObserver` on NPCs, `Perceivable` on players, record load (forced checks on damage/notify = MA15) | `mw_walkers_bevy`, `mw_mods` | AI8b2 | **done 2026-11-25** (2 headless tests on real physics) |
+| MA15 | Forced sight checks (`SightTimer::force`) on damage taken and on `Notify` arrival | `mw_ai`, `mw_walkers_bevy` | MA14, MA10 (NPCs take no damage before it), AI8c (Notify arrives by hearing) | headless: hit from behind turns the NPC's check due this tick |
+| AI8c1 | Hearing system: `NoiseEvent` message, listener prefilter by reach, `NoisePropagation` seam (default straight line + door penalty from the host, UE AIPerception), delivery as `HeardNoise` + `Notify` | `sf_ai_bevy` | AI8a, AI8e | **done 2026-11-25** (9 headless tests) |
+| AI8c2 | Player emitters in the game: gameplay stride footsteps by gait, landing (surface/gear seam ×1; NPC steps, action `noise: Loud` later) | `mw_walkers_bevy` | AI8c1 | **done 2026-11-25** (7 tests; run 12 m, sneak 2 m reach) |
+| AI8c3 | Propagation by `portal_query::path_distance` (doors counted) | `sf_ai_bevy`, `sf_nav` | AI8c1, NV11 | exact through a door |
+| AI8d1 | Light core: `VisibilityFactors`, pure `LightExposure` (sky term + strongest sources, LOS callback, roof ray), `darkness` term | `sf_ai` | AI8a | **done 2026-11-25** (14 exact tests) |
+| AI8d2 | Light system: one sample per player per tick, host source list + sky resource (until IN19 `Lit`), roof ray, feeds sight in place of `VISIBILITY_UNMODELLED` | `sf_ai_bevy` | AI8d1, MA14 | **done 2026-11-25** (9 headless tests; inert until a host inserts `AiLightInputs`) |
+| MA16 | Light inputs in the game: sky level from clock/weather/interior, Morrowind lamps (LIGH placements, carried torches) as sources | `mw_walkers_bevy` | AI8d2 | **done 2026-11-25** (2 tests; lit lamp at 1 m 0.7244, noon 1, midnight 0) |
+| MA17 | Twilight term (sky reads 0 within ~0.5 h of sunset: no fill below the horizon), scripts switching lights, `level:` interiors | `mw_walkers_bevy`, `sf_sky` | MA16 | exact dusk curve |
 | AI8e | Shared knowledge: `Notify` from shouts and alarms | `sf_ai` | AI8a | **done 2026-11-25** (9 exact tests) |
-| AI8f | HTN `search`: LKP, look, widen, give up on ttl | `sf_ai` | AI8a, AI6 | headless: reaches LKP, quits at ttl |
+| AI8f1 | Search core: seeded search points around LKP (`error_m`, `widen_mps`), look/widen/give-up state on `ttl_s` from `EffectivePerception.search`, HTN operators/method registered | `sf_ai` | AI8a, AI6, AI8g | **done 2026-11-25** (12 exact tests) |
+| AI8f2 | Search in the Bevy layer and game: Searching band starts the method, NPC walks to LKP, looks, widens, quits | `sf_ai_bevy`, `mw_walkers_bevy` | AI8f1 | **done 2026-11-25** (3 headless tests; LKP at 5.4 s, give-up at ttl tick) |
+| AI8f3 | Hold the Searching band's decay while a search runs (TLOU2/Splinter Cell: the search, not the meter, ends Searching; today decay drops the band at 5.5 s, ttl 30 s) | `sf_ai`, `mw_walkers_bevy` | AI8f2 | **done 2026-11-25** (band leaves Searching 2.5 s after the ttl give-up) |
 | MA5 | `awarenessCheck` port as Classic gain | `mw_ai` | AI8a | exact vs formula |
 | MA4 | Hello/Fight/Flee/Alarm considerations; greeting via AI8 | `mw_ai` | AI7, AI8b | exact vs OpenMW |
-| AI26 | Perception gizmos (cone, meter, LKP), `ai.perception` | `sf_ai_bevy` | AI8b | owner **AI-3** (Balmora guard, light vs shadow) |
-| AI47 | Perception test scene (owner 2026-11-25, after AI8c/d/f, AI26, IN18): reuse the arena, AI26 gizmos plus NPC state labels and noise/impact rings, scripted light, cover and throw cases | `bevyrrowind` (`level:`) | AI26, AI8c, AI8d, AI8f, IN18 | owner **AI-11** (every case visible in one controlled scene) |
+| AI26 | Perception gizmos (cone, meter, LKP), `ai.perception` | `sf_ai_bevy` | AI8b | **done 2026-11-25** (7 tests; `ai.perception`; dev enables `sf_ai_bevy/debug`); owner **AI-3** |
+| AI47 | Perception test scene (owner 2026-11-25, after AI8c/d/f, AI26, IN18): reuse the arena, AI26 gizmos plus NPC state labels and noise/impact rings, scripted light, cover and throw cases | `bevyrrowind` (`level:`) | AI26, AI8c, AI8d, AI8f, IN18 | **done 2026-11-25** (`levels/perception-lab.ron`, 6 scenes; impacts wait for IN18); owner **AI-11** |
+| AI47b | Level navmesh from the level's own geometry, so level actors wander/search (search can't walk in `level:` scenes today) | `mw_exterior_bevy`, `sf_nav_bevy` | AI47 | headless: a level guard searches |
+| AI48 | List the new perception tunables (`ai.perception.*`, `mw.ai.light.*`, `mw.ai.noise.*`) in `mw_devtools_bevy::perf::tunables::CATALOG` (the game warns once per key at start; `bevyrrowind tunables --md` misses them) | `mw_devtools_bevy` | AI47 | no CATALOG warning in last.log |
 
 ### Stage 2: a day in town
 

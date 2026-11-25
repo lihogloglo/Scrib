@@ -54,7 +54,7 @@ enum Who {
 }
 
 /// The run's copies of the sheets it wrote (dropped with the run; the host applies the effects).
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct StatOverlay {
     sheets: HashMap<Who, Sheet>,
 }

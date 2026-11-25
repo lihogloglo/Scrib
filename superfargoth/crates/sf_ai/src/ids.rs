@@ -63,3 +63,15 @@ id!(
     /// A directive instance on an actor's stack (AI4): what `done(id)` polls. Unique per actor.
     DirectiveId(u32), "dir"
 );
+id!(
+    /// A game stat a [`crate::VisibilityFactors`] modifier names (sneak skill, chameleon, ...): the
+    /// game's dense stat index (`sf_stats::StatIdx` in an adapter; `sf_ai` has no `sf_stats` edge),
+    /// read only by the game's `DetectionRules` (ai.md "Adapter seam").
+    StatId(u16), "s"
+);
+id!(
+    /// A noise kind (footstep, landing, shout, smash, ...): index into the `NoiseKind` registry the
+    /// game's emitters resolve at load (`AI8c2`); carried by a noise event for traces and per-kind
+    /// rules, never compared as a string in a tick.
+    NoiseKindId(u16), "n"
+);

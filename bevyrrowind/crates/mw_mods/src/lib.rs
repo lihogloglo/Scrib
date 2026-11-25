@@ -469,6 +469,8 @@ impl ContentAdapter for MwAdapter {
         register_tunable_kinds(db).expect("tunables kinds register once");
         // The builtin mod's Tamrielic calendar (`sf.calendar` `main`).
         sf_calendar::register_kinds(db).expect("calendar kind registers once");
+        // NPC perception profile presets and states (`sf_ai`; any mod may add them).
+        sf_ai::register_perception_kinds(db).expect("perception kinds register once");
     }
 
     fn apply_records(&self, cx: &mut RecordCx<'_>, file: &VfsPath) -> Result<(), RecordFileError> {

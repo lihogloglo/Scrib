@@ -1974,3 +1974,5 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   crime and perception questions wait. IN11 is generic moving-platform support (lifts, carts, decks).
 - 2026-11-25 (gameplay-roadmaps-5, owner): once the perception and hearing slices land, a controlled test scene
   (the arena reused) shows cones, NPC states and noise/impact events (ai.md AI47).
+- 2026-11-25 (gameplay-roadmaps-5, port rule): MWScript frame order follows OpenMW: local scripts before globals each
+  tick (`engine.cpp:283`), a global a local starts runs the same tick; disabled references keep their local scripts.

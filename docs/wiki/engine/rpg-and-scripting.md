@@ -27,6 +27,10 @@ the console. The sandboxed Luau runtime exists in the framework and is parked.
 - **MWScript** (`mw_script`): lexer, lenient parser, resolver; each leniency is a named `Rule`, a script with an
   Error is inert. Native interpreter `interp.rs` walks the AST over a `Host`; step-limited. A Luau emitter (`emit.rs`)
   exists, superseded (DQ-1 2026-11-25: interpreter + one game API; deletion is its own slice).
+- **Global MWScripts** (DQ-4, 2026-11-25): `mw_rpg_bevy/src/dialogue/global_scripts.rs` `GlobalScripts` parses every
+  SCPT once at new game, starts `main` then SSCR in record order, ticks every `FixedUpdate` through `mw_rpg::ScriptHost`
+  (`script_host.rs`), applies ops with `Rpg::apply`. Saved as `mw/scripts` (`mw_saves_bevy`). `scriptid.var` reads and
+  writes go through a copy in `Rpg` (`ScriptLocals`): a script id wins over an actor id (OpenMW `getMemberType`).
 - **Luau** (`sf_script`, `sf_script_bevy`): one sandboxed state per mod, memory/CPU limits, fault isolation,
   timers, snapshots; `ScriptSlot` systems `Input`/`Update`/`Ui` (`sf_script_bevy/src/lib.rs`). `mw_scripts_bevy::add`
   (`exterior.rs:551`) creates contexts per mod, script handles for placements, and door activation.
@@ -38,8 +42,8 @@ Resources, events, exclusive systems for script slots. No Bevy scripting crate.
 No `--off` part. Unknown MWScript functions are reported once per session by `MwResults`.
 
 ## Known limits
-Object and global MWScripts from the content do not run: only dialogue results and console lines execute (grep
-`StartScript` finds no runtime use). Luau beyond L3 is `[p]` (ROADMAP). Crime, crafting and services have adapter
+Object (local) MWScripts do not run yet (DQ-5); globals do, with ~63 % of call sites bound (DQ-2): unbound calls are
+reported once. Step limit is the tunable's default, not the store's. Luau beyond L3 is `[p]` (ROADMAP). Crime, crafting and services have adapter
 specs; check each ROADMAP line for status before relying on them.
 
 ## Specs

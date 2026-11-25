@@ -28,6 +28,8 @@
 //! - `AI8b1` (sight maths): [`sight`], the per-check [`sight_gain`], [`apply_darkness`], the
 //!   staggered [`SightTimer`], the shared [`RayQueue`] behind the caller's [`LineOfSight`], and the
 //!   [`SightCache`].
+//! - `AI8f1` (search core): [`search`], the seeded widening [`SearchState`] at the last known
+//!   position, its [`SearchGoal`]s for the move executors, and [`OP_SEARCH`].
 //!
 //! The console command `ai.trace` and BRP live in `sf_ai_bevy` (AI3): actor references and the
 //! console context are the shell's.
@@ -37,9 +39,11 @@ pub mod drive;
 pub mod exec;
 pub mod htn;
 pub mod ids;
+pub mod light;
 pub mod perception;
 pub mod profile;
 pub mod save;
+pub mod search;
 pub mod sight;
 pub mod state;
 pub mod trace;
@@ -61,18 +65,25 @@ pub use htn::{
     Decomposition, LoadError, LoadReport, Library, METHOD_KIND, MethodDef, NoPlan, Operators, Replan, Resume,
     SEARCH_DEPTH, SEARCH_TRIES, SubtaskDef, TASK_KIND, TaskDef, decompose, mtr_better, register_kinds, replan, resume,
 };
-pub use ids::{ConsiderationId, DirectiveId, DriveId, InputId, MethodId, OperatorId, TaskId};
+pub use ids::{ConsiderationId, DirectiveId, DriveId, InputId, MethodId, NoiseKindId, OperatorId, StatId, TaskId};
+pub use light::{
+    LightConfig, LightSource, MAX_LIGHT_RAYS, Stance, VISIBILITY_MODIFIERS_CAPACITY, VisibilityFactors, is_dark,
+    light_exposure, source_contribution,
+};
 pub use perception::{
     Awareness, AwarenessBand, AwarenessConfig, AwarenessMeter, Distraction, HeardNoise, LastSeen, Notify,
     NotifyDelivered, PendingNotify, PerceptClock, PerceptTarget, PlayerDetection, Stimulus, StimulusOutcome,
     player_detection,
 };
 pub use profile::{
-    EffectivePerception, OutOfRange, PERCEPTION_STATES_CAPACITY, PerceptionField, PerceptionProfile, PerceptionRangeError,
-    PerceptionState, PerceptionStates, PushOutcome, SearchConfig, SearchParams, SightConfig, SightParams, StateEntry,
-    resolve,
+    EffectivePerception, OutOfRange, PERCEPTION_PROFILE_KIND, PERCEPTION_STATE_KIND, PERCEPTION_STATES_CAPACITY,
+    PerceptionField, PerceptionProfile, PerceptionRangeError, PerceptionState, PerceptionStates, PushOutcome,
+    SearchConfig, SearchParams, SightConfig, SightParams, StateEntry, register_perception_kinds, resolve,
 };
 pub use save::{AI_SECTION, AI_VERSION, ActorSave, AiSave, AiSaveError};
+pub use search::{
+    OP_SEARCH, SearchGoal, SearchParamError, SearchPatternConfig, SearchState, register_search_operator, search_seed,
+};
 pub use sight::{
     LineOfSight, LosOutcome, LosRay, RayKind, RayQueue, RayQueueFull, RayRequest, RayResult, RaySubject, RayTickStats,
     SightBudget, SightCache, SightCheck, SightTimer, actor_hash, apply_darkness, due, seconds_to_ticks, sight_gain,
@@ -98,6 +109,8 @@ mod tests_exec;
 #[cfg(test)]
 mod tests_htn;
 #[cfg(test)]
+mod tests_light;
+#[cfg(test)]
 mod tests_notify;
 #[cfg(test)]
 mod tests_perception;
@@ -105,5 +118,7 @@ mod tests_perception;
 mod tests_profile;
 #[cfg(test)]
 mod tests_save;
+#[cfg(test)]
+mod tests_search;
 #[cfg(test)]
 mod tests_sight;

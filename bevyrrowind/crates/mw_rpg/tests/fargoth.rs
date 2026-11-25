@@ -197,6 +197,7 @@ impl Host<'_> {
             Target::Speaker => (Holder::Actor(SPEAKER), &mut self.s.speaker),
             Target::Player => (Holder::Player(PlayerId::HOST), &mut self.s.pc),
             Target::Actor(a) => panic!("item command on {a}"),
+            Target::Ref(p) => panic!("item command on ref {p}"),
         }
     }
 

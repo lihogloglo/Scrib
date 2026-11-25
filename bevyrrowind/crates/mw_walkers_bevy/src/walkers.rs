@@ -44,10 +44,10 @@ use mw_ai::{
 };
 use mw_graphs::build::params as gp;
 use sf_ai::{
-    ExecConfig, ExecContext, NavCommand, NavMoveState, TraceEntry,
+    ExecConfig, ExecContext, FaceTarget, NavCommand, NavMoveState, TraceEntry,
 };
 use sf_ai_bevy::{
-    AiActor, AiExecPlugin, AiExecSettings, AiExecTick, AiLibrary, AiPlugin, AiTraces,
+    AiActor, AiAwareness, AiEffectivePerception, AiExecPlugin, AiExecSettings, AiExecTick, AiLibrary, AiPlugin, AiTraces,
     add_exec_tunables, to_controller_gait,
 };
 use sf_anim_bevy::{AnimLod, AnimStats, Animator};
@@ -73,6 +73,8 @@ use sf_tunables_bevy::TunablesAppExt;
 use sf_tunables_bevy::sf_tunables::{AnyDef, Def, Lifetime, Net, Scope, Source, Unit, def};
 use sf_world::{IndexedPlacement, Level, Location, PlacementClass, PlacementId, WorldspaceId};
 use sf_world_bevy::coords::WorldPosOf;
+
+use crate::search::{SearchMode, SearchWorld, Searcher};
 use sf_world_bevy::{
     ActivateCx, ActiveWorldspace, LoadedModel, PlacementSpawner, PlacementSpawners, SpawnCx,
     Streaming,
@@ -364,8 +366,10 @@ pub struct ActionDriven;
 #[derive(Resource, Clone)]
 pub struct WanderVocab(pub Arc<WanderVocabulary>);
 
-/// A wandering character's HTN wander driver (`mw_ai`, `MA3`).
+/// A wandering character's HTN wander driver (`mw_ai`, `MA3`); its search mode
+/// ([`crate::search::Searcher`], `AI8f2`) pauses the wander while it runs.
 #[derive(Component)]
+#[require(Searcher)]
 pub struct Walker {
     pub driver: WanderDriver,
     variant: Option<u8>,
@@ -524,7 +528,10 @@ fn attach(
             Dormant,
         ));
         if let Some(p) = placement {
-            e.try_insert(AiActor(ActorKey(p.0.0)));
+            // Sight (MA14): the eye on the standing height, the fitted capsule or the default
+            // one times the race height.
+            let height = if setup.fit_to_body { params.height } else { params.height * body_scale.y };
+            e.try_insert((AiActor(ActorKey(p.0.0)), crate::sight::observer(height)));
         }
         if let Some((wander, speed)) = setup.wander {
             let seed = entity.to_bits() ^ 0x5741_4C4B;
@@ -700,7 +707,8 @@ fn clear_corridor_goal(nav: &mut NavCorridor, queries: Option<&mut NavQueries>) 
 
 /// Steps each awake [`Walker`] (`MA3`): on a resident navmesh tile, steps HTN + [`NavCorridor`]
 /// before [`NavSystems::Corridor`]; off the navmesh (fliers or unbaked cells), runs the pathgrid
-/// fallback route.
+/// fallback route. On the navmesh, an actor whose strongest awareness is Searching runs its
+/// search instead of the wander (`AI8f2`, [`crate::search`]), through the same corridor.
 #[allow(
     clippy::needless_pass_by_value,
     clippy::too_many_arguments,
@@ -716,6 +724,7 @@ fn drive(
     meshes: Option<Res<NavMeshes>>,
     mut queries: Option<ResMut<NavQueries>>,
     mut traces: Option<ResMut<AiTraces>>,
+    search_world: SearchWorld,
     mut walkers: Query<
         (
             Entity,
@@ -726,6 +735,7 @@ fn drive(
             &mut MoveIntent,
             &mut Avoider,
             Option<&mut NavCorridor>,
+            (&mut Searcher, Option<&mut AiAwareness>, Option<&AiEffectivePerception>),
         ),
         Without<Dormant>,
     >,
@@ -740,8 +750,17 @@ fn drive(
     let wander_tuning = wander_settings.map_or_else(WanderTuning::default, |s| s.tuning);
     let dt = time.delta_secs().min(0.1);
     let hours = dt * TIMESCALE / 3600.0;
-    for (entity, mover, space, actor, mut walker, mut intent, mut avoider, mut corridor) in
-        &mut walkers
+    for (
+        entity,
+        mover,
+        space,
+        actor,
+        mut walker,
+        mut intent,
+        mut avoider,
+        mut corridor,
+        (mut searcher, mut awareness, eff),
+    ) in &mut walkers
     {
         let pos = mover.loco.position;
         let loc = Location::new(space.0.clone(), pos);
@@ -757,6 +776,7 @@ fn drive(
                 })
             });
         walker.on_navmesh = Some(on_navmesh);
+        let key = actor.map_or(ActorKey(u128::from(entity.to_bits())), |a| a.0);
         let arrivals_before = walker.driver.arrival_count();
 
         let (walking, idle_variant) = if on_navmesh {
@@ -768,23 +788,62 @@ fn drive(
                 dt,
                 nav: nav_state,
             };
-            let wants_trace = actor
-                .zip(traces.as_ref())
-                .is_some_and(|(a, t)| t.wants(a.0, 2));
-            let mut entry = wants_trace.then(|| TraceEntry::new(current_tick, 2));
-            let (stuck, edge) = (walker.driver.stuck_count(), walker.driver.current_edge(pos));
-            let out = walker
-                .driver
-                .step_htn(graph, &ctx, &exec_cfg, hours, entry.as_mut());
-            if walker.driver.stuck_count() > stuck {
-                let _ = give_ups.record(entity, mover, edge, ground.probe());
-                modes.navmesh_give_ups += 1;
+            // AI8f2: the search mode, beside the wander.
+            let mode = awareness
+                .as_deref()
+                .zip(search_world.setup(key, eff))
+                .map_or(SearchMode::Off, |(aw, setup)| searcher.arbitrate(&aw.0, &setup));
+            let search_out = match mode {
+                SearchMode::Run => {
+                    let now = search_world.setup(key, eff).expect("Run needs the setup").now;
+                    let (class, filter) = (nav.class, &nav.filter);
+                    let mut reachable = |p: WorldPos| {
+                        meshes.as_ref().is_some_and(|m| {
+                            m.0.nearest(&Location::new(space.0.clone(), p), class, DEFAULT_EXTENT, filter)
+                                .is_some()
+                        })
+                    };
+                    searcher.step(
+                        &ctx,
+                        &exec_cfg,
+                        search_world.vocab(),
+                        &space.0,
+                        walker.driver.walk_speed,
+                        now,
+                        &mut reachable,
+                    )
+                }
+                SearchMode::End | SearchMode::Off => None,
+            };
+            if search_out.is_none() && (mode == SearchMode::End || mode == SearchMode::Run) {
+                // The search ended (ttl, or the band left Searching): the wander re-chooses from
+                // here (a turn to the current yaw ends its paused step at once).
+                walker.driver.face(FaceTarget::Yaw(mover.loco.motion.yaw), 0.0);
             }
-            if let (Some(a), Some(t), Some(e)) = (actor, traces.as_mut(), entry)
-                && (out.plan_outcome.is_some() || out.operator.is_some())
-            {
-                t.push(a.0, e);
-            }
+            let searching = search_out.is_some();
+            let out = if let Some(out) = search_out {
+                out
+            } else {
+                let wants_trace = actor
+                    .zip(traces.as_ref())
+                    .is_some_and(|(a, t)| t.wants(a.0, 2));
+                let mut entry = wants_trace.then(|| TraceEntry::new(current_tick, 2));
+                let (stuck, edge) =
+                    (walker.driver.stuck_count(), walker.driver.current_edge(pos));
+                let out = walker
+                    .driver
+                    .step_htn(graph, &ctx, &exec_cfg, hours, entry.as_mut());
+                if walker.driver.stuck_count() > stuck {
+                    let _ = give_ups.record(entity, mover, edge, ground.probe());
+                    modes.navmesh_give_ups += 1;
+                }
+                if let (Some(a), Some(t), Some(e)) = (actor, traces.as_mut(), entry)
+                    && (out.plan_outcome.is_some() || out.operator.is_some())
+                {
+                    t.push(a.0, e);
+                }
+                out
+            };
             match out.nav {
                 NavCommand::MoveTo { goal, gait, speed } => {
                     let needs_new_goal = nav.goal.as_ref() != Some(&goal)
@@ -816,11 +875,18 @@ fn drive(
                 .map_or(Vec3::ZERO, |c| {
                     pos.delta_f32(c.pos).with_y(0.0).normalize_or_zero()
                 });
-            (walker.driver.is_walking(), out.idle_variant)
+            let walking = if searching {
+                searcher.is_walking()
+            } else {
+                walker.driver.is_walking()
+            };
+            (walking, out.idle_variant)
         } else {
             if let Some(ref mut nav) = corridor {
                 clear_corridor_goal(nav, queries.as_deref_mut());
             }
+            // No search off the navmesh (its moves need the corridor).
+            searcher.abort();
             let (stuck, edge) = (walker.driver.stuck_count(), walker.driver.current_edge(pos));
             let out = walker.driver.update_fallback(graph, pos, dt, hours, &exec_cfg);
             if walker.driver.stuck_count() > stuck {
@@ -851,6 +917,14 @@ fn drive(
             });
             (out.walking, out.idle_variant)
         };
+        // AI8f3: a running search holds its target's entry at the Searching floor (taken
+        // mutably only on a change, so the meter's change ticks stay meaningful).
+        if let Some(aw) = awareness.as_mut()
+            && searcher.hold_stale(&aw.0)
+            && let Some(setup) = search_world.setup(key, eff)
+        {
+            searcher.sync_hold(&mut aw.0, &setup);
+        }
         let arrived = u64::from(walker.driver.arrival_count() - arrivals_before);
         if on_navmesh {
             modes.navmesh_arrivals += arrived;
@@ -974,10 +1048,18 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest, p
         speed: Some(gp::SPEED.into()),
     };
     // The mover probes physics when it runs (P5), else the `StaticWorld`.
+    // NPC sight (MA14) probes the same ground.
     if physics {
         app.add_plugins(SfControllerPlugin::<sf_physics_bevy::Physics>::default());
+        crate::sight::add::<sf_physics_bevy::Physics>(app);
     } else {
         app.add_plugins(SfControllerPlugin::<MwGround>::default());
+        crate::sight::add::<MwGround>(app);
+    }
+    crate::light_inputs::insert_records(app, &db);
+    let refused = sf_ai_bevy::load_perception_states(app.world_mut(), &db);
+    if refused > 0 {
+        warn!("walkers: {refused} perception records refused (out of range)");
     }
     add_drive(app, vocab);
     let idle_mult = gmst_float(&db, "fIdleChanceMultiplier", mw_ai::wander::IDLE_CHANCE_MULTIPLIER);
@@ -1018,13 +1100,14 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest, p
             )
                 .chain(),
         )
-        // Gameplay on the fixed tick (NV7a): the player moves first (its tick state is what
-        // the NPCs avoid), then the NPC intents and their mover, then the physics step.
+        // Gameplay on the fixed tick (NV7a): the physics step first (IN11b: characters ride the
+        // bases it moved), then the player (its tick state is what the NPCs avoid), then the NPC
+        // intents and their mover.
         .configure_sets(
             FixedUpdate,
             (
+                sf_physics_bevy::PhysicsSystems::Step.before(sf_action_bevy::ActionSystems::Sample),
                 ControllerSystems::Drive.after(sf_action_bevy::ActionSystems::Move),
-                ControllerSystems::Step.before(sf_physics_bevy::PhysicsSystems::Step),
             ),
         )
         .insert_resource(StrideStats {
@@ -1650,3 +1733,11 @@ mod tests {
 #[cfg(test)]
 #[path = "drive_tests.rs"]
 mod drive_tests;
+
+#[cfg(test)]
+#[path = "sight_tests.rs"]
+mod sight_tests;
+
+#[cfg(test)]
+#[path = "search_tests.rs"]
+mod search_tests;

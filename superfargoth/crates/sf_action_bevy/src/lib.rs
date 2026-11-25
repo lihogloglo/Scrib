@@ -16,6 +16,8 @@
 //!    Jump or Up press the context probe's `ObstacleAhead` fills `Sense::obstacle`),
 //!    [`ActionSystems::Move`] (a Warp move's body is placed on its warped root path; the others
 //!    launch, then one batched `KinematicMover::step_batch` against the ground resource `G`).
+//!    A host on physics orders its physics step before [`ActionSystems::Sample`] (`IN11b`,
+//!    `sf_physics_bevy::character`): the body rides a moving base the step has just moved.
 //! 4. `RunFixedMainLoop`, [`ActionSystems::Interpolate`] (after the fixed loop): the drawn
 //!    root is the previous and current tick poses blended by `Time<Fixed>::overstep_fraction`,
 //!    in `WorldPos` space, plus the correction spring's offset, written to the `Transform`

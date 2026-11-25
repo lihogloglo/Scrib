@@ -7,12 +7,13 @@
 //!   virtual clock (below).
 //! - **Tick** ([`TickView`], a character): the host writes the character's
 //!   eye at the tick (tick pose + eye height + the command's look) every
-//!   fixed step, before [`crate::PhysicsSystems::Hands`]; it is recorded with
-//!   the step's time, so the hand follows the simulation, never a render
-//!   frame (deterministic, and in third person in front of the body, not of
-//!   the camera behind it: S2-b). The pick ray and the throw use it too, and
-//!   the item is drawn against the two latest tick views blended by the
-//!   fixed overstep, as the character's body is drawn.
+//!   fixed step, after its movers (they run after the physics step, `IN11b`:
+//!   [`crate::character`]); the next step's [`crate::PhysicsSystems::Hands`]
+//!   record it with that step's start time, so the hand follows the
+//!   simulation, never a render frame (deterministic, and in third person in
+//!   front of the body, not of the camera behind it: S2-b). The pick ray and
+//!   the throw use it too, and the item is drawn against the two latest tick
+//!   views blended by the fixed overstep, as the character's body is drawn.
 //!
 //! Before each fixed step the carrier's hand moves to the view at the step's
 //! time (for a camera, extrapolated past the newest view), after it the
@@ -62,8 +63,9 @@ impl Holder {
 }
 
 /// A holder's view from the simulation (see the module docs): the eye at the
-/// current fixed step, written by the host every step before
-/// [`crate::PhysicsSystems::Hands`]. `None` until the first step.
+/// end of the current fixed tick, written by the host every tick after its
+/// movers (the next tick's [`crate::PhysicsSystems::Hands`] record it at that
+/// step's start). `None` until the first step.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct TickView(pub Option<WorldTransform>);
 
@@ -112,7 +114,7 @@ pub(crate) fn add(app: &mut App) {
         .add_systems(Update, apply_inputs.in_set(PhysicsSystems::Carry).after(PhysicsSystems::Stream).before(PhysicsSystems::WriteBack))
         .add_systems(
             PostUpdate,
-            (record_views, held_poses, crate::write_held, crate::stream::follow_held).chain().in_set(PhysicsSystems::HeldPoses),
+            (record_views, record_tick_views, held_poses, crate::write_held, crate::stream::follow_held).chain().in_set(PhysicsSystems::HeldPoses),
         );
 }
 
@@ -125,6 +127,18 @@ fn record_views(time: Res<Time<Virtual>>, mut holders: Query<(&mut Holder, &Cell
     let now = time.elapsed_secs_f64();
     for (mut h, cell, t) in &mut holders {
         h.carrier.record_view(now, view_of(cell, t));
+    }
+}
+
+/// The latest tick views at the last tick's end, so the drawn item blends the last two ticks'
+/// views as the body does (the next step's hands record the same one again).
+#[allow(clippy::needless_pass_by_value)]
+fn record_tick_views(time: Res<Time<Fixed>>, mut holders: Query<(&mut Holder, &TickView)>) {
+    let now = time.elapsed().as_secs_f64();
+    for (mut h, view) in &mut holders {
+        if let Some(view) = view.0 {
+            h.carrier.record_view(now, view);
+        }
     }
 }
 
@@ -172,10 +186,14 @@ fn drive_hands(
     mut feedback: MessageWriter<CarryFeedback>,
 ) {
     let now = time.elapsed_secs_f64();
+    // The tick view was written after the last tick's movers: the eye at this step's start
+    // (the hand is extrapolated from it to the step's end, as for a camera).
+    // On the clock's own `Duration`s: the very stamp the frame's draw gave it (`record_tick_views`).
+    let start = time.elapsed().saturating_sub(time.timestep()).as_secs_f64();
     let active = physics.worlds.active().cloned();
     for (e, mut h, tick) in &mut holders {
         if let Some(&TickView(Some(view))) = tick {
-            h.carrier.record_view(now, view);
+            h.carrier.record_view(start, view);
         }
         let Some(ws) = h.worldspace.clone() else { continue };
         let Some(w) = physics.worlds.get_mut(&ws) else {

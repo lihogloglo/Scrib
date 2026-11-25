@@ -173,8 +173,31 @@ mw_rpg_bevy / mw_scripts_bevy appliers on the host tick (the only ECS writers)
 As built (DQ-4b1a, 2026-11-25): `api.rs` holds `GameView` (base reads), `Overlay`, `GameRun` (reads see the run's
 writes; `ops()`), serde `GameOp` (`ResultEffect` is an alias), `Target { Speaker, Player, Actor }` (= `SelfRef`,
 `Player`, `Id`; the rename is mechanical, 29 uses in `mw_rpg_bevy`), and the pure rules; `RunHost` only forwards.
-`Target::Speaker` resolves through `ConversationCtx.speaker`: the script host (DQ-4b1b) gives a local script a ctx
-whose speaker is its instance.
+`Target::Speaker` resolves through `ConversationCtx.speaker`: the script host gives a local script a ctx whose
+speaker is its instance.
+
+As built (DQ-4b1b, 2026-11-25): `mw_rpg::ScriptHost` (`script_host.rs`) implements `Host` + `InstanceHost` over
+one `GameRun` per tick (each script sees the committed writes of the ones before it); `begin_run` takes a
+`Checkpoint`, `end_run(_, false)` rolls back that run's ops and overlay writes. A targeted global's self is
+`Target::Actor(target id)` (or `Player`), never `Speaker`: a tick's runs share one op list, so Speaker would be
+ambiguous. A self call in a plain global, `Choice`/`Goodbye` outside dialogue: `ScriptReports` (once each), no op.
+Start/Stop/ScriptRunning stay in `GlobalInstances`. DQ-4b2 needs: a public world `Env` (`runner.rs` `WorldEnv` is
+private) for `ScriptSet::parse_insert`, a pre-tick snapshot of global locals for `scriptid.var` reads, a
+`SetLocal{Actor(scriptid)}` applier through `GlobalInstances::get_mut`; exact-reference targets need a `Target`
+reference variant (semantics rule 7).
+
+As built (DQ-4b2a, 2026-11-25): `mw_rpg_bevy/src/dialogue/global_scripts.rs`, resource `GlobalScripts` (every SCPT
+parsed once at new game with `mw_rpg::WorldEnv`, `GlobalInstances`, one interpreter, reports logged once). New game
+starts `main` then each SSCR script in record order (OpenMW `GlobalScripts::addStartup`, 0.49.0), right after
+`skip_chargen`. `tick_global_scripts` (`FixedUpdate`, every tick, menus included) runs one `ScriptHost` and applies
+its ops through `Rpg::apply(None, ..)`, the console's applier. Step limit = the tunable's default (not the store yet).
+Save (DQ-4b2b): section `mw/scripts` v1 (`mw_saves_bevy`), `Option<GlobalsSnapshot>`; load replaces the instances
+wholesale (`LoadReport`s logged once); a save without the section (older saves) restarts the start list.
+Locals (DQ-4b2c): `Rpg` keeps a `ScriptLocals` copy (declared slots, values, queued writes) read by `View`; an id naming
+a script record is that global even if an actor shares it (OpenMW `compilercontext.cpp` `getMemberType`,
+`interpretercontext.cpp` `getMemberLocals` @ 4e718b50); never-started reads 0, a write creates it stopped. In a tick,
+globals see others' tick-start locals plus earlier `set id.var` writes; console/dialogue writes are seen at once and
+reach the instance at the next tick start; `snapshot` includes queued writes.
 
 - **Shape.** `GameView` answers reads; a run produces `GameOp`s in call order and mutates nothing; an overlay
   makes later reads in the same run see its writes (as built for results, as in the original engine). Ops are
@@ -237,6 +260,32 @@ schedules them. Reference OpenMW `apps/openmw/mwscript/globalscripts.cpp`, `mwwo
   the next run starts, so later scripts see earlier writes (sequential, as in the original engine); entity spawns
   and despawns reach the ECS at the end of the step. Scripts started this tick first run next tick. Order of (2)
   and (3) is checked against OpenMW's frame loop in DQ-4 and follows it if it differs.
+- **Decided (DQ-5a, 2026-11-25):** OpenMW runs locals before globals (`engine.cpp:283-286` @ 4e718b50), so ours does:
+  (1) edges, (2) locals by key, (3) globals in start order. A global a local starts this tick therefore runs in step (3)
+  of the same tick, as in OpenMW; every other start first runs next tick. Disabled references keep running their
+  local scripts (Q4: `World::disable` never touches `LocalScripts`; only Lua's `pauseLocalScript` flag skips them).
+- **As built (DQ-5a):** `mw_script::LocalInstances` (`locals.rs`), `LocalKey { Placement(u64), Stack { holder, stack }
+  }` (derived order = tick order), `insert` (zeroed; same script keeps locals), `take`/`restore` by name (for the
+  overlay, DQ-5c), `set_paused` (the Lua-only flag, saved; never wired to `Disable`), `tick(set, interp, &mut
+  GlobalInstances, host)`, `snapshot`/`load`. `InstanceHost` gains `begin_local_run(script, key)` and
+  `local_self(key)`. Departures: key order (OpenMW: cell-add order), a faulted instance is paused in a saved flag,
+  new locals start at zero.
+- **As built (DQ-5b1):** `mw_rpg_bevy/src/dialogue/local_scripts.rs`: `ScriptRefs` indexes every CELL reference whose
+  base (17 kinds with a script field) has a script, keyed by `mw_world::ids::placement_id`, grouped by exterior grid or
+  interior name; `ScriptRegion` (player body's cell) and `LocalScripts::sync` re-diff only when centre or radius
+  changes (take = parked with locals, return = restore). `GlobalScripts::tick` syncs, ticks locals then globals through
+  one `ScriptHost`. Self = `Target::Ref(u128)` (exact placement; `Content::target` maps it to `ActorKey(p)`); a global
+  started by a local without `ref->` gets the base id. Tunable `mw.script.active_radius` (1-3, default 1; store not
+  bound yet). Not yet: `ref.var` of locals (DQ-5b2), inventory stacks (DQ-5b3).
+- **Save (DQ-5c):** `mw/scripts` v2 = `ScriptsSave { globals, locals, parked }` (parked = taken instances, key order);
+  v1 → v2 typed step (globals kept, locals empty). Load re-syncs the region next tick: live-outside gets parked,
+  parked-inside resumes, nothing zeroed; a key in both lists = live wins; unknown scripts: one report per instance.
+- **Object locals (DQ-5b2):** `ObjectLocals` (`local_scripts.rs`) beside the globals' copy in `ScriptLocals`: `Speaker`/
+  `Ref(p)` read the instance's locals, `Actor(base)` by rule 7 (nearest live to the player by CELL position, then
+  lowest `PlacementId`; none live: lowest id). One store: a scripted placement's (NPC's) locals live only in its
+  instance; `state.locals` remains for unscripted keys; a new instance is seeded from chargen locals then moved-out
+  `state.locals` entries. Parked instances read and take writes (OpenMW keeps locals in `RefData`); a write to a
+  never-run reference creates it parked. Same-tick visibility as DQ-4b2c.
 - **Time and menus** (rule 6). `GetSecondsPassed` = the fixed-tick dt. The step also runs while a menu is open
   (`MenuMode` 1) even when game time is paused; what `GetSecondsPassed` returns then is checked in DQ-8.
 - **Randomness.** `Random` draws from a generator seeded by host tick and instance key (deterministic, net-ready).
@@ -348,7 +397,7 @@ Today, by family:
    confirm against the oracle on a known vanilla case.
 3. Order of global versus local scripts within a frame, and whether a script started this frame runs at once
    (DQ-4, from OpenMW's frame loop).
-4. Do disabled references keep running their local scripts (Morrowind scripts often re-enable themselves)? DQ-5.
+4. ~~Do disabled references keep running their local scripts?~~ Yes (DQ-5a, OpenMW `worldimp.cpp:772`).
 5. Item scripts: do locals move with an item between the world and an inventory? DQ-6.
 6. `GetSecondsPassed` while a menu is open (DQ-8).
 7. Resolved: `AIWander` through the M3 scaffold (old question 3) is left to the AI lane (roadmap decision 2).

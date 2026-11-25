@@ -3,6 +3,57 @@
 Moved here to keep [ai.md](ai.md) inside its size budget. Newest slice first; the module docs in
 `superfargoth/crates/sf_ai/src/` are the detailed reference.
 
+## AI26: perception gizmos `sf_ai_bevy` (feature `debug`, 2026-11-25)
+
+`perception_gizmos.rs` + tests (7). Console var `ai.perception` (off by default). Every non-dormant observer within 50 m
+of the camera: ground arcs at sight and lose range, peripheral + central edges, band colour (grey, yellow, orange,
+red-orange, red), text "band N%", LKP line (conf, age), "search held"; LKP sphere (+ ring while held); `AiSelected`
+gets a white foot ring and every entry's LKP; targets show "light N%"; `RecentNoises` (2 s, cap 32) draws reach rings
+(blue revealing, magenta not). Seam `AiDebugGoal(WorldPos)` (always compiled) for the game's search goal. The app's
+`dev` now enables `sf_ai_bevy/debug` (direct dep), so AI3's `ai.gizmos` shows in the game too.
+
+## AI8c1: hearing system `sf_ai_bevy` (2026-11-25)
+
+`hearing.rs` + `hearing_tests.rs` (9 pass; sf_ai_bevy 37). `NoiseEvent` message (spec fields + `notify`; `space:
+Option<WorldspaceId>`, new `sf_ai::NoiseKindId(u16)`; `tick` = emitter stamp, heard at the perception tick).
+Propagation seam `NoisePropagation(Box<dyn NoisePaths>)`, `NoisePath { path_m, closed_doors }`, default `StraightLine`
+(UE AIPerception). Host `AiWeatherMask` (absent = 1). `hear_noise` in `AiPerceptionSystems::Hearing` (after Sight,
+before `ControllerSystems::Drive`): listeners = non-dormant `AiObserver` + `AiAwareness` + `Mover`, ears at `eye_m`,
+source skipped; reach = `loudness_m × hearing_mul × mask`, straight-line prefilter, distance = path + `closed_door_m`
+(8 m) × doors; `Stimulus::Noise` then `Notify`; a heard noise forces a sight check. Events written before the set are
+heard the same tick. Linear scan (few events per tick). Notify relay not yet a behaviour.
+
+## AI8f1: search core `sf_ai::search` (2026-11-25)
+
+`search.rs` + `tests_search.rs` (12 exact; sf_ai 134). One primitive operator `OP_SEARCH` (`register_search_operator`):
+the executor (AI8f2) owns a serde `SearchState` and runs each `SearchGoal { GoTo | LookAround | Done }` through the AI6
+executors (`SearchGoal::operators`: MoveTo, two Face). First the LKP, then a look; then rings of `ring_points` seeded
+points (sight's splitmix, `search_seed(actor, tick)`) at `[inner_frac, 1] × r(t)`, `r = (error_m + widen_mps t) × (1 +
+(1 - c)(uncertain_mul - 1))`, looks facing outward; unreachable skipped (≤ 2N+1 queries, else look in place); `Done`
+sticky at `start + ttl_ticks`. Sources: TLOU2, Splinter Cell, The Dark Mod. NaN/negative params rejected.
+
+## AI8d2: light exposure system `sf_ai_bevy` (2026-11-25)
+
+`light.rs` + `light_tests.rs` (9 pass; sf_ai_bevy 28 + 1 ignored). Host resource `AiLightInputs { sky, interior,
+sources }` (absent = off: no samples, no rays, sight unchanged), target component `AiLightExposure`. `sample_light::<G>`
+runs between resolve_profiles and queue_sight: players every tick, actor targets on their staggered sight phase; at the
+chest, roof ray up from the head outdoors only; linear `light_search_m` prefilter. LOS = two passes over one batched
+`ProbeLos` call (record the rays `light_exposure` asks for, cast, replay in order): same tick, deterministic; the
+`RayQueue` didn't fit (deferred, keyed by observer). Light rays are charged to `max_rays_per_tick` first.
+`light_only_visibility(light, darkness)` = `apply_darkness` (or 1.0 unsampled) is the seam LW4's concealment replaces.
+30 vs 144 Hz: exposure exact, bands equal, meter within 0.05 (3 vs 14 ticks per 0.1 s check). A source inside its
+fixture's collider reads occluded: the host places it just outside.
+
+## AI8d1: light exposure core `sf_ai::light` (2026-11-25)
+
+`light.rs` + `tests_light.rs` (14 exact; sf_ai 122 pass). `VisibilityFactors` (Copy, serde; `Stance { Upright,
+Crouched, Prone }`, `disguise` 0..1, `modifiers` inline `[Option<(StatId, f32)>; 4]`, neutral default), new
+`StatId(u16)` (adapter maps `sf_stats::StatIdx`). `LightSource { pos, radius_m, intensity, on }`;
+`light_exposure(at, sky, roof_covered, sources, los, &LightConfig)`: sky (× `roof_sky_mul` when covered; interiors pass
+ambient as `sky`) + top-`light_rays` sources (inline top-k, cap 4), each `intensity × saturate(1 - (d/r)^k)²` (Karis
+2013 window without 1/d²), LOS-checked strongest first, an occluded one not replaced; clamp 0..1, no allocation.
+Non-finite inputs add nothing; NaN light is dark (`is_dark`). `apply_darkness` stays in `sight.rs`.
+
 ## AI8b2: sight system `sf_ai_bevy` (2026-11-25)
 
 `perception.rs` (tunables, components, record kinds), `sight.rs` (resources, LOS adapter, plugin, systems),

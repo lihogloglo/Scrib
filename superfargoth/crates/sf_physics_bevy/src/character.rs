@@ -8,9 +8,24 @@
 //! the mover ran with. Hits on a capsule ([`PhysicsEvent::Hit`]: the
 //! incoming body's momentum at first contact) of at least
 //! [`CharacterPhysics::impact_threshold`] become [`ImpactOnCharacter`]
-//! messages for gameplay (hit reactions, knockdowns). The mover itself runs
-//! on the fixed tick before the physics step, against the physics world's queries: the host makes
-//! [`crate::Physics`] its `SfControllerPlugin` ground.
+//! messages for gameplay (hit reactions, knockdowns). The host makes [`crate::Physics`] its
+//! `SfControllerPlugin` ground.
+//!
+//! Tick order (`IN11b`): **the physics step first, then the movers**, so a character reads the
+//! world its base has just moved to. [`PhysicsSystems::Step`] runs before
+//! [`ControllerSystems::Drive`] here; a host with action-driven bodies (`sf_action_bevy`) orders
+//! it before `ActionSystems::Sample` too. This is the industry's based movement: UE's
+//! `CharacterMovementComponent` (and Mover 2.0) tick after their movement base (a tick
+//! prerequisite), Jolt's `CharacterVirtual` updates after the physics step. The mover rides the
+//! base with the velocity its last ground cast saw (`Locomotion::ride_base`, `sf_controller`);
+//! run before the step, it casts against the base's pose of the tick before, so a lift would
+//! sink into the character by one tick of travel and every start or stop of a base would shift
+//! the character on it. Between the two, [`refresh_base_velocity`] re-reads each based mover's
+//! ground velocity from its body as this step left it (Jolt's
+//! `CharacterVirtual::UpdateGroundVelocity`), so the ride is this step's base motion, not the
+//! last cast's (one tick late when a base starts, stops or turns). A host with action-driven
+//! bodies calls it for them in the same place. The capsules (below) and the carry hands
+//! ([`crate::carry`]) are targeted after the movers, for the next tick's step.
 
 use std::collections::HashMap;
 
@@ -18,9 +33,9 @@ use bevy_app::{App, FixedUpdate, Update};
 use bevy_ecs::prelude::*;
 use bevy_math::Vec3;
 use bevy_time::Time;
-use sf_controller_bevy::{ControllerSystems, Dormant, Mover, MoverMode};
+use sf_controller_bevy::{ControllerSystems, Dormant, Locomotion, Mover, MoverMode};
 use sf_coords::WorldPos;
-use sf_physics::{BodyDesc, BodyId, CharacterShape, PhysicsEvent, PushParams};
+use sf_physics::{BodyDesc, BodyId, CharacterShape, PhysicsEvent, PhysicsWorld, PushParams};
 use sf_world::WorldspaceId;
 
 use crate::{Physics, PhysicsEvents, PhysicsSystems};
@@ -84,10 +99,39 @@ pub(crate) fn add(app: &mut App) {
         .init_resource::<SafeGround>()
         .add_message::<ImpactOnCharacter>()
         .add_message::<CharacterFellOut>()
-        // The movers step on the fixed tick (`ControllerSystems::Step`): the fell-out net and the
-        // capsule targets follow each tick's state, before the physics step of the same tick.
-        .add_systems(FixedUpdate, (fell_out, capsules).chain().after(ControllerSystems::Step).before(PhysicsSystems::Step))
+        // The physics step, then the movers (the module docs: based movement). The fell-out net
+        // and the capsule targets follow each tick's mover state, for the next tick's step.
+        .configure_sets(FixedUpdate, PhysicsSystems::Step.before(ControllerSystems::Drive))
+        .add_systems(FixedUpdate, (fell_out, capsules).chain().after(ControllerSystems::Step))
+        .add_systems(FixedUpdate, base_velocities.after(PhysicsSystems::Step).before(ControllerSystems::Step))
         .add_systems(Update, impacts.before(PhysicsSystems::WriteBack));
+}
+
+/// Re-reads the ground velocity of a character standing on a body (`grounded.body`) from the
+/// body as the last physics step left it: its point velocity at the ground point and its
+/// angular velocity, the motion `Locomotion::ride_base` applies in the mover step that follows
+/// (Jolt `CharacterVirtual::UpdateGroundVelocity`). Call after the physics step, before the
+/// mover. The ground point was cast before this step, on the body's pose at the step's start,
+/// so the velocity field is taken about the centre of mass there. Fixed ground, or a body gone
+/// from `world`: left as it is.
+pub fn refresh_base_velocity(world: &PhysicsWorld, loco: &mut Locomotion) {
+    let Some(g) = loco.grounded.as_mut() else { return };
+    let Some(id) = g.body.map(BodyId::from) else { return };
+    let (Some((v, w)), Some(pose), Some((com, _))) = (world.velocity(id), world.pose(id), world.mass_center(id)) else { return };
+    let start = pose.pos.offset(pose.rotation * com - v * world.params().dt);
+    g.velocity = v + w.cross(start.delta_f32(g.point));
+    g.angular_velocity = w;
+}
+
+/// [`refresh_base_velocity`] for the movers on a body, after the physics step.
+#[allow(clippy::needless_pass_by_value)]
+fn base_velocities(physics: Res<Physics>, mut movers: Query<&mut Mover, Without<Dormant>>) {
+    let Some(w) = physics.worlds.active_world() else { return };
+    for mut m in &mut movers {
+        if m.loco.grounded.is_some_and(|g| g.body.is_some()) {
+            refresh_base_velocity(w, &mut m.loco);
+        }
+    }
 }
 
 /// A walking character fell below the active world's kill height and was
@@ -127,7 +171,7 @@ fn fell_out(
     mut movers: Query<(Entity, &mut Mover), Without<Dormant>>,
 ) {
     safe.0.retain(|e, _| movers.contains(*e));
-    let kill = physics.worlds.active_world().and_then(sf_physics::PhysicsWorld::kill_height);
+    let kill = physics.worlds.active_world().and_then(PhysicsWorld::kill_height);
     for (entity, mut m) in &mut movers {
         let pos = m.loco.position;
         let walkable = m.params.min_normal_y();
@@ -167,11 +211,15 @@ fn fell_out(
     }
 }
 
-/// `FixedUpdate`, after the mover's tick and before the physics step of the
-/// same tick: inserts and removes capsules, targets each at its mover's feet
-/// (the two share the tick, so the capsule is where the mover is at every
-/// step; AN-7's extrapolation between a frame-rate mover and the 60 Hz step
-/// is gone), and pushes what the capsules touch over the tick.
+/// `FixedUpdate`, after the mover's tick (the next tick's physics step moves
+/// the capsules): inserts and removes capsules, targets each at its mover's
+/// feet led by the mover's motion of this tick, and pushes what the capsules
+/// touch over the tick. A kinematic body reaches its target at the end of the
+/// next step, which simulates the tick in which the mover moves on from these
+/// feet: led by one tick of the same motion (constant velocity), the capsule
+/// moves with the mover, not a tick behind it (Jolt's `CharacterVirtual`
+/// inner body: the character's pose and velocity after its update). A mover
+/// snapped since its step (a fell-out return) has no motion to lead by.
 #[allow(clippy::needless_pass_by_value)]
 fn capsules(
     time: Res<Time>,
@@ -199,9 +247,11 @@ fn capsules(
         for (e, m) in &movers {
             let shape = CharacterShape { radius: m.params.radius, height: m.params.height };
             let feet = m.loco.position;
+            let (prev, curr) = m.poses();
+            let lead = prev.position.delta_f32(curr.position);
             match map.0.get(&e) {
                 Some(c) if c.shape == shape => {
-                    w.move_character(c.id, feet, shape);
+                    w.move_character(c.id, feet.offset(lead), shape);
                 }
                 other => {
                     if let Some(c) = other {

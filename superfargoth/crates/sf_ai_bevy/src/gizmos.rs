@@ -1,8 +1,10 @@
 //! Feature `debug`: the selected actor's overlay as immediate-mode gizmos (UE Gameplay Debugger
 //! style: the selected actor gets a ring at its feet and its decision text above its head, facing
 //! the camera). Bevy 0.20's stroke-font `Gizmos::text` draws the text, so there's no UI tree to
-//! keep in sync; the lines are [`overlay_lines`]. Tier colours, paths, cones and claims wait for
-//! the data (AI6 paths, AI8 perception, AI9 tiers, AI14 claims): nothing is drawn for missing data.
+//! keep in sync; the lines are [`overlay_lines`]. Perception (cones, awareness, LKPs, light,
+//! noises) is its own overlay, `ai.perception` ([`crate::perception_gizmos`], AI26). Tier colours,
+//! paths and claims wait for the data (AI6 paths, AI9 tiers, AI14 claims): nothing is drawn for
+//! missing data.
 //!
 //! Drawn only when the app has Bevy's gizmo plugin (headless tests have none) and the console
 //! variable `ai.gizmos` is on. The ring's colour is the last plan outcome: green planned,
@@ -38,6 +40,7 @@ const RING_RADIUS: f32 = 0.55;
 
 pub(crate) fn add(app: &mut App) {
     let var = app.add_console_var(VarSpec::bool("ai.gizmos", true).help("Draw the selected AI actor's plan overlay"));
+    crate::perception_gizmos::add(app);
     app.insert_resource(AiGizmoVar(var))
         .add_systems(
             PostUpdate,

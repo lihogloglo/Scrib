@@ -45,6 +45,12 @@ impl ProbeQuery {
         Self { origin, dir, max, radius, half_height }
     }
 
+    /// A contact query ([`GroundProbe::contacts`]): the upright capsule at `origin` and
+    /// whatever moving body comes within `margin` of it. It goes nowhere (`dir` zero).
+    pub fn contact(origin: WorldPos, margin: f32, radius: f32, half_height: f32) -> Self {
+        Self { origin, dir: Vec3::ZERO, max: margin, radius, half_height }
+    }
+
     /// Straight down within 0.1°.
     pub fn is_down(&self) -> bool {
         self.dir.y < -0.999_998
@@ -115,23 +121,43 @@ pub trait GroundProbe: Send + Sync {
         self.probe(&[query], &mut out);
         out[0]
     }
+
+    /// Moving bodies against characters (slice `IN11c1`; Jolt `CharacterVirtual` collects its
+    /// contacts each update, moving ones with their point velocity, and keeps the character
+    /// out of them, so a kinematic wall pushes it). `out[i]` receives the nearest contact
+    /// of a moving body (one with a velocity: static geometry never pushes, the movers'
+    /// sweeps handle it) within `queries[i].max` of the upright capsule `queries[i]`
+    /// ([`ProbeQuery::contact`]), at the body's pose after its motion this tick, as a
+    /// [`GroundHit`] whose `normal` is that of the face that moved toward the capsule this
+    /// tick (from the body's motion, not the shallowest way out: a fast thin wall that ended
+    /// past the capsule's centre still reports the face it came in by, so it pushes the
+    /// character ahead of it instead of tunnelling) and whose `distance` is the signed
+    /// separation along it, negative when overlapping. The default reports nothing (no
+    /// moving bodies: the character is never pushed).
+    fn contacts(&self, queries: &[ProbeQuery], out: &mut [Option<GroundHit>]) {
+        let _ = queries;
+        out.fill(None);
+    }
 }
 
 impl<T: GroundProbe + ?Sized> GroundProbe for &T {
     fn probe(&self, queries: &[ProbeQuery], out: &mut [Option<GroundHit>]) {
         (**self).probe(queries, out);
     }
+    fn contacts(&self, queries: &[ProbeQuery], out: &mut [Option<GroundHit>]) {
+        (**self).contacts(queries, out);
+    }
 }
 
 /// Several probes composed by taking the nearest hit (terrain + statics).
 pub struct Nearest<'a>(pub &'a [&'a dyn GroundProbe]);
 
-impl GroundProbe for Nearest<'_> {
-    fn probe(&self, queries: &[ProbeQuery], out: &mut [Option<GroundHit>]) {
+impl Nearest<'_> {
+    fn nearest(&self, queries: &[ProbeQuery], out: &mut [Option<GroundHit>], cast: impl Fn(&dyn GroundProbe, &mut [Option<GroundHit>])) {
         out.fill(None);
         let mut scratch = vec![None; queries.len()];
         for p in self.0 {
-            p.probe(queries, &mut scratch);
+            cast(*p, &mut scratch);
             for (o, s) in out.iter_mut().zip(&scratch) {
                 if let Some(s) = s
                     && o.is_none_or(|o| s.distance < o.distance)
@@ -140,6 +166,15 @@ impl GroundProbe for Nearest<'_> {
                 }
             }
         }
+    }
+}
+
+impl GroundProbe for Nearest<'_> {
+    fn probe(&self, queries: &[ProbeQuery], out: &mut [Option<GroundHit>]) {
+        self.nearest(queries, out, |p, scratch| p.probe(queries, scratch));
+    }
+    fn contacts(&self, queries: &[ProbeQuery], out: &mut [Option<GroundHit>]) {
+        self.nearest(queries, out, |p, scratch| p.contacts(queries, scratch));
     }
 }
 

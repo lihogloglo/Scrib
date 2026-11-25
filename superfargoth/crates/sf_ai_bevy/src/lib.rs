@@ -14,9 +14,13 @@
 //! - Console (`console.md`): `ai.select [id|off]` (no id: the console's click-selection, feature
 //!   `debug`), `ai.trace [n] [id]`, `ai.directives [id]` (AI4: the stack, top first),
 //!   `ai.tiers` (provisional until the AI9 allocator), `ai.stats`;
-//!   `ai.gizmos` on/off (feature `debug`). `ai.facts` waits for AI13.
+//!   `ai.gizmos` on/off (feature `debug`), `ai.perception` on/off (feature `debug`, AI26: every
+//!   nearby observer's cone, band, LKP and goal, targets' light, recent noises).
+//!   `ai.facts` waits for AI13.
 //! - Perception (AI8b2): [`AiSightPlugin`] runs sight on the fixed tick over the app's ground probe
-//!   ([`sight`]); components, tunables and record kinds in [`perception`].
+//!   ([`sight`]); components, tunables and record kinds in [`perception`]; light exposure (`AI8d2`)
+//!   from the host's [`AiLightInputs`] in [`light`]; hearing (`AI8c1`): [`NoiseEvent`]s to the
+//!   listeners' meters through the host's [`NoisePropagation`], in [`hearing`].
 //! - BRP: [`brp_trace`] answers [`BRP_TRACE_METHOD`] with the store as JSON. This crate doesn't add
 //!   `bevy_remote` (one `RemotePlugin` per app, owned by the game's dev tools, and hakari keeps its
 //!   HTTP server out of every other build): the app registers [`brp_trace_system`] (see its docs).
@@ -43,7 +47,11 @@ mod console;
 pub mod exec;
 #[cfg(feature = "debug")]
 mod gizmos;
+pub mod hearing;
+pub mod light;
 pub mod perception;
+#[cfg(feature = "debug")]
+mod perception_gizmos;
 pub mod sight;
 
 pub use exec::{
@@ -53,18 +61,28 @@ pub use exec::{
 };
 #[cfg(feature = "debug")]
 pub use gizmos::AiGizmoVar;
+#[cfg(feature = "debug")]
+pub use perception_gizmos::{AiPerceptionGizmoVar, RecentNoise, RecentNoises};
+pub use hearing::{AiWeatherMask, HearingConfig, NoiseEvent, NoisePath, NoisePaths, NoisePropagation, StraightLine};
+pub use light::{AiLightExposure, AiLightInputs};
 pub use perception::{
     AiAwareness, AiEffectivePerception, AiObserver, AiPerceptionProfile, AiPerceptionSettings, AiPerceptionStateDefs,
     AiPerceptionStates, AiSightTimer, PERCEPTION_PROFILE_KIND, PERCEPTION_STATE_KIND, PERCEPTION_TUNABLES, Perceivable,
-    add_perception_tunables, load_perception_states, register_perception_kinds,
+    PerceivablePose, add_perception_tunables, load_perception_states, register_perception_kinds,
 };
 pub use sight::{
     AiPerceptClock, AiPerceptionSystems, AiRays, AiSightCache, AiSightPlugin, LosScratch, ProbeLos, VISIBILITY_UNMODELLED,
-    seen_recently,
+    light_only_visibility, seen_recently,
 };
 
 #[cfg(test)]
 mod exec_tests;
+#[cfg(test)]
+mod hearing_tests;
+#[cfg(test)]
+mod light_tests;
+#[cfg(all(test, feature = "debug"))]
+mod perception_gizmos_tests;
 #[cfg(test)]
 mod sight_tests;
 #[cfg(test)]
@@ -234,6 +252,13 @@ pub fn directives_text(world: &mut World, actor: ActorKey) -> Result<String, Str
 /// The actor the overlay shows and `ai.trace` reads by default (`ai.select`).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AiSelected(pub Option<ActorKey>);
+
+/// Where the actor is heading for its current goal (a search spot, a patrol point), for the
+/// `ai.perception` gizmos only (feature `debug` draws a line to it). The goal itself lives in the
+/// game's behaviour (e.g. its searcher); a game that wants it drawn inserts and updates this
+/// component, and nothing here reads it otherwise (presentation never feeds gameplay). Optional.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct AiDebugGoal(pub sf_coords::WorldPos);
 
 fn empty_library() -> Library {
     Library::from_defs(std::iter::empty(), std::iter::empty(), &StateKeys::new(), &sf_ai::Operators::new())

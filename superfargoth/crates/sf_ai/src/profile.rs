@@ -15,9 +15,27 @@
 //! the profile, `AI0g`).
 
 use serde::{Deserialize, Serialize};
-use sf_records::RecordId;
+use sf_records::{RecordDb, RecordError, RecordId};
 
 use crate::perception::{AwarenessConfig, PerceptClock};
+
+/// `sf_records` kind of perception profile presets (a race, creature type or role; the adapter
+/// picks one and writes the actor's profile).
+pub const PERCEPTION_PROFILE_KIND: &str = "sf.ai.perception_profile";
+
+/// `sf_records` kind of perception states (drunk, tired, on duty: game-named records).
+pub const PERCEPTION_STATE_KIND: &str = "sf.ai.perception_state";
+
+/// Registers [`PERCEPTION_PROFILE_KIND`] and [`PERCEPTION_STATE_KIND`]. Call once before loading mods
+/// (here in the core so a Bevy-free mod loader can register them).
+///
+/// # Errors
+/// A kind already registered with another type.
+pub fn register_perception_kinds(db: &mut RecordDb) -> Result<(), RecordError> {
+    db.register_serde::<PerceptionProfile>(PERCEPTION_PROFILE_KIND)?;
+    db.register_serde::<PerceptionState>(PERCEPTION_STATE_KIND)?;
+    Ok(())
+}
 
 // tunables: const (identity ratio: 1.0 leaves the global tunable unchanged, ai.md)
 const IDENTITY: f32 = 1.0;

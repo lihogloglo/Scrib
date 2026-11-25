@@ -57,3 +57,5 @@ mod churn_tests;
 mod contact_tests;
 #[cfg(test)]
 mod ground_velocity_tests;
+#[cfg(test)]
+mod probe_contacts_tests;

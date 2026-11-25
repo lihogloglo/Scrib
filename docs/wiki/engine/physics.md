@@ -20,7 +20,13 @@ character, projectile, `BODY_PROXY`), interpolated poses (`pose_at` `:444`), eve
 `PhysicsBody` entities get interpolated pose written back. Streaming (`stream.rs`): `PhysicsHook` wraps placement
 spawners, Active cells queue `Fixed` colliders (one shared mesh per model, built on the task pool) under
 `insert_budget_ms`; terrain chunks 64 m at 0.5 m follow the active cells; an item gate waits for the floor.
-Characters: `character.rs` (capsules follow the mover's tick pose inside `FixedUpdate`, `CharacterFellOut`, safety net). Proxies: `proxies.rs`. Carry: `carry.rs`.
+Characters: `character.rs` (order since IN11b, `:104`: `PhysicsSystems::Step` before `ControllerSystems::Drive`, the
+game also before `ActionSystems::Sample`, as UE/Jolt tick the base first; `base_velocities` / `refresh_base_velocity`
+re-read the ground body's point velocity after the step; capsules target the feet plus the tick's mover motion;
+`TickView` written after the movers; `CharacterFellOut`, safety net). Moving contacts (IN11c2a): `PhysicsProbe::contacts`
+(`sf_physics/src/probe.rs:272`) finds awake kinematic bodies near each capsule (broad phase grown by this step's reach),
+relative shape cast from `c + v·dt` back along -v for the entry face and separation; dynamic bodies never push (the
+solver and `PhysicsEvent::Hit` own them). Proxies: `proxies.rs`. Carry: `carry.rs`.
 
 **Collision from NIF** (`mw_bake/src/collision.rs:1-30`, `collision.cook`): OpenMW `bulletnifloader.cpp` rules (commit
 4e718b50): skinned models none; `NC` markers; non-empty `RootCollisionNode` subtree; models `mesh.cook` skips and

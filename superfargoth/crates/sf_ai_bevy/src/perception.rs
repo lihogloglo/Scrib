@@ -1,7 +1,7 @@
 //! Perception data for the sight system ([`crate::sight`], slice `AI8b2`; `docs/specs/ai.md`
 //! "Perception and stimuli"): the `ai.perception.*` / `ai.awareness.*` tunables bound into
-//! [`AiPerceptionSettings`], the per-actor components and the `sf_records` kinds of the perception
-//! profile presets and states.
+//! [`AiPerceptionSettings`] (the light exposure's too, `AI8d`), the per-actor components and the
+//! `sf_records` kinds of the perception profile presets and states.
 //!
 //! Ownership (ai.md "Perception profile", "Ownership"): the adapter writes [`AiPerceptionProfile`]
 //! (spawn, load, when its inputs change) and pushes or clears [`AiPerceptionStates`]; this crate
@@ -12,13 +12,17 @@ use std::collections::BTreeMap;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
+use glam::Vec3;
 use sf_ai::{
-    AwarenessConfig, AwarenessMeter, EffectivePerception, PerceptTarget, PerceptionProfile, PerceptionState,
-    PerceptionStates, SearchConfig, SightBudget, SightConfig, SightTimer,
+    AwarenessConfig, AwarenessMeter, EffectivePerception, LightConfig, PerceptTarget, PerceptionProfile, PerceptionState,
+    PerceptionStates, SearchConfig, SearchPatternConfig, SightBudget, SightConfig, SightTimer,
 };
-use sf_records::{RecordDb, RecordError, RecordId};
+use sf_coords::WorldPos;
+use sf_records::{RecordDb, RecordId};
 use sf_tunables::{AnyDef, Def, Lifetime, Net, Scope, Source, Unit, def};
 use sf_tunables_bevy::TunablesAppExt;
+
+use crate::hearing::HearingConfig;
 
 // --- Tunables ---------------------------------------------------------------------------------
 
@@ -93,6 +97,21 @@ pub const SEARCH_ERROR_M: Def<f32> = gp(def!(float "ai.perception.search_error_m
 pub const SEARCH_WIDEN_MPS: Def<f32> = gp(def!(float "ai.perception.search_widen_mps" = 0.5)
     .range(0.0, 5.0)
     .help("How fast a search area widens, m/s (AI8f)"));
+pub const SEARCH_RING_POINTS: Def<u32> = gp_count(def!(count "ai.perception.search_ring_points" = 6)
+    .range(1, 16)
+    .help("Points per ring of a widening search around the last known position (AI8f)"));
+pub const SEARCH_LOOK_HALF_DEG: Def<f32> = gp(def!(float "ai.perception.search_look_half_deg" = 60.0)
+    .range(0.0, 180.0)
+    .unit(Unit::Degrees)
+    .help("Half-arc a searcher sweeps when it looks around at a point (AI8f)"));
+pub const SEARCH_UNCERTAIN_MUL: Def<f32> = gp(def!(float "ai.perception.search_uncertain_mul" = 2.0)
+    .range(1.0, 4.0)
+    .unit(Unit::Ratio)
+    .help("Search radius multiplier for a last known position of confidence 0 (a vague noise; AI8f)"));
+pub const SEARCH_INNER_FRAC: Def<f32> = gp(def!(float "ai.perception.search_inner_frac" = 0.5)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("A ring point's nearest distance as a fraction of the ring radius (AI8f)"));
 
 pub const CURIOUS: Def<f32> = gp(def!(float "ai.awareness.curious" = 0.1)
     .range(0.0, 1.0)
@@ -177,6 +196,30 @@ pub const NOTIFY_MAX_HOPS: Def<u32> = gp_count(def!(count "ai.awareness.notify_m
     .range(0, 8)
     .help("A notify relayed more than this many times is ignored"));
 
+pub const CLOSED_DOOR_M: Def<f32> = gp(def!(float "ai.perception.closed_door_m" = 8.0)
+    .range(0.0, 50.0)
+    .unit(Unit::Meters)
+    .help("Path penalty per closed door between a noise and a listener (AI8c)"));
+
+pub const LIGHT_SEARCH_M: Def<f32> = gp(def!(float "ai.perception.light_search_m" = 15.0)
+    .range(1.0, 60.0)
+    .unit(Unit::Meters)
+    .help("Light sources farther than this from a target add nothing (AI8d); also the roof ray's length"));
+pub const LIGHT_RAYS: Def<u32> = gp_count(def!(count "ai.perception.light_rays" = 2)
+    .range(0, 4)
+    .help("Strongest light sources per target checked by one line-of-sight ray each (AI8d)"));
+pub const DARK_THRESHOLD: Def<f32> = gp(def!(float "ai.perception.dark_threshold" = 0.15)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Light exposure below this at an actor is dark (the dark world-state key)"));
+pub const ROOF_SKY_MUL: Def<f32> = gp(def!(float "ai.perception.roof_sky_mul" = 0.25)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Share of the sky term left under a roof (outdoors, the upward ray hit)"));
+pub const LIGHT_FALLOFF_EXP: Def<f32> = gp(def!(float "ai.perception.light_falloff_exp" = 2.0)
+    .range(1.0, 8.0)
+    .help("Exponent k of a light's falloff window saturate(1 - (d/r)^k)^2 (UE4/Frostbite use 4)"));
+
 /// The perception tunables (`ai.perception.*`, `ai.awareness.*`), bound by [`add_perception_tunables`].
 pub const PERCEPTION_TUNABLES: &[&dyn AnyDef] = &[
     &SIGHT_RANGE_M,
@@ -195,6 +238,10 @@ pub const PERCEPTION_TUNABLES: &[&dyn AnyDef] = &[
     &SEARCH_TTL_S,
     &SEARCH_ERROR_M,
     &SEARCH_WIDEN_MPS,
+    &SEARCH_RING_POINTS,
+    &SEARCH_LOOK_HALF_DEG,
+    &SEARCH_UNCERTAIN_MUL,
+    &SEARCH_INNER_FRAC,
     &CURIOUS,
     &SUSPICIOUS,
     &SEARCHING,
@@ -217,6 +264,12 @@ pub const PERCEPTION_TUNABLES: &[&dyn AnyDef] = &[
     &NOTIFY_REACT_S,
     &NOTIFY_CONFIDENCE_MUL,
     &NOTIFY_MAX_HOPS,
+    &CLOSED_DOOR_M,
+    &LIGHT_SEARCH_M,
+    &LIGHT_RAYS,
+    &DARK_THRESHOLD,
+    &ROOF_SKY_MUL,
+    &LIGHT_FALLOFF_EXP,
 ];
 
 /// The global perception config, bound from [`PERCEPTION_TUNABLES`]. A change (a tunable reload)
@@ -227,6 +280,12 @@ pub struct AiPerceptionSettings {
     pub sight: SightConfig,
     pub budget: SightBudget,
     pub search: SearchConfig,
+    /// The search pattern (`AI8f`, `sf_ai::search`).
+    pub search_pattern: SearchPatternConfig,
+    /// Light exposure (`AI8d`, [`crate::light`]).
+    pub light: LightConfig,
+    /// Hearing (`AI8c`, [`crate::hearing`]).
+    pub hearing: HearingConfig,
 }
 
 macro_rules! bind {
@@ -254,6 +313,10 @@ pub fn add_perception_tunables(app: &mut App) {
     bind!(app, SEARCH_TTL_S, |s, v| s.search.search_ttl_s = v);
     bind!(app, SEARCH_ERROR_M, |s, v| s.search.search_error_m = v);
     bind!(app, SEARCH_WIDEN_MPS, |s, v| s.search.search_widen_mps = v);
+    bind!(app, SEARCH_RING_POINTS, |s, v| s.search_pattern.ring_points = u8::try_from(v).unwrap_or(u8::MAX));
+    bind!(app, SEARCH_LOOK_HALF_DEG, |s, v| s.search_pattern.look_half_deg = v);
+    bind!(app, SEARCH_UNCERTAIN_MUL, |s, v| s.search_pattern.uncertain_mul = v);
+    bind!(app, SEARCH_INNER_FRAC, |s, v| s.search_pattern.inner_frac = v);
     bind!(app, CURIOUS, |s, v| s.awareness.curious = v);
     bind!(app, SUSPICIOUS, |s, v| s.awareness.suspicious = v);
     bind!(app, SEARCHING, |s, v| s.awareness.searching = v);
@@ -276,6 +339,12 @@ pub fn add_perception_tunables(app: &mut App) {
     bind!(app, NOTIFY_REACT_S, |s, v| s.awareness.notify_react_s = v);
     bind!(app, NOTIFY_CONFIDENCE_MUL, |s, v| s.awareness.notify_confidence_mul = v);
     bind!(app, NOTIFY_MAX_HOPS, |s, v| s.awareness.notify_max_hops = u8::try_from(v).unwrap_or(u8::MAX));
+    bind!(app, CLOSED_DOOR_M, |s, v| s.hearing.closed_door_m = v);
+    bind!(app, LIGHT_SEARCH_M, |s, v| s.light.light_search_m = v);
+    bind!(app, LIGHT_RAYS, |s, v| s.light.light_rays = v);
+    bind!(app, DARK_THRESHOLD, |s, v| s.light.dark_threshold = v);
+    bind!(app, ROOF_SKY_MUL, |s, v| s.light.roof_sky_mul = v);
+    bind!(app, LIGHT_FALLOFF_EXP, |s, v| s.light.light_falloff_exp = v);
 }
 
 // --- Components -------------------------------------------------------------------------------
@@ -289,7 +358,7 @@ pub struct AiObserver {
     pub eye_m: f32,
 }
 
-/// The actor's awareness memory (`AI8a`): sight applies here, as will noise (`AI8c`) and notify.
+/// The actor's awareness memory (`AI8a`): sight applies here, noise and notify ([`crate::hearing`], `AI8c`).
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct AiAwareness(pub AwarenessMeter);
 
@@ -312,7 +381,8 @@ pub struct AiPerceptionStates(pub PerceptionStates);
 pub struct AiEffectivePerception(pub EffectivePerception);
 
 /// Something observers can see: its perception target id and the chest and head heights above
-/// its mover's feet (the adapter sets them from the body). Chest ray first, head if blocked.
+/// its feet (its `Mover`, else its [`PerceivablePose`]; the adapter sets them from the body). Chest
+/// ray first, head if blocked.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Perceivable {
     pub target: PerceptTarget,
@@ -322,24 +392,21 @@ pub struct Perceivable {
     pub head_m: f32,
 }
 
+/// Where a [`Perceivable`] without a `Mover` stands (a player's action body, a remote player, a
+/// prop): the adapter writes it on the fixed tick before [`crate::AiPerceptionSystems::Sight`].
+/// A target with a `Mover` reads the mover instead.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct PerceivablePose {
+    /// The feet, world position.
+    pub feet: WorldPos,
+    /// Velocity, m/s (the last-seen estimate).
+    pub velocity: Vec3,
+}
+
 // --- Records ----------------------------------------------------------------------------------
 
-/// `sf_records` kind of perception profile presets (a race, creature type or role; the adapter
-/// picks one and writes [`AiPerceptionProfile`]).
-pub const PERCEPTION_PROFILE_KIND: &str = "sf.ai.perception_profile";
-
-/// `sf_records` kind of perception states (drunk, tired, on duty: game-named records).
-pub const PERCEPTION_STATE_KIND: &str = "sf.ai.perception_state";
-
-/// Registers [`PERCEPTION_PROFILE_KIND`] and [`PERCEPTION_STATE_KIND`]. Call once before loading mods.
-///
-/// # Errors
-/// A kind already registered with another type.
-pub fn register_perception_kinds(db: &mut RecordDb) -> Result<(), RecordError> {
-    db.register_serde::<PerceptionProfile>(PERCEPTION_PROFILE_KIND)?;
-    db.register_serde::<PerceptionState>(PERCEPTION_STATE_KIND)?;
-    Ok(())
-}
+// The kinds and their registration live in the core (a Bevy-free mod loader registers them).
+pub use sf_ai::{PERCEPTION_PROFILE_KIND, PERCEPTION_STATE_KIND, register_perception_kinds};
 
 /// The live [`PERCEPTION_STATE_KIND`] records the resolve looks state ids up in (an unknown id
 /// counts as 1). Filled by [`load_perception_states`]; a change rebuilds every

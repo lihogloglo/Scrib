@@ -11,17 +11,22 @@
 //! 2. `resolve_profiles`: [`AiEffectivePerception`] rebuilt where the profile or states changed,
 //!    a state expired (`needs_rebuild`), the state records or a tunable changed; dropped when the
 //!    actor has neither.
-//! 3. `queue_sight`: each due observer (`SightTimer::poll`, staggered by `ActorKey` over
+//! 3. `sample_light` ([`crate::light`], `AI8d2`): each due target's [`AiLightExposure`] from the
+//!    host's [`crate::AiLightInputs`] (absent: no target is lit, visibility stays the identity).
+//! 4. `queue_sight`: each due observer (`SightTimer::poll`, staggered by `ActorKey` over
 //!    `sight_period_s`) takes the targets of a uniform XZ grid within its reach (cell = the global
-//!    lose-sight range), skips itself, computes `sight_gain`, then reads the [`AiSightCache`] or
-//!    queues a sight request (chest, head if blocked) on the shared [`AiRays`] queue.
-//! 4. `cast_rays`: [`RayQueue::process`] with `max_rays_per_tick` against the app's ground probe
-//!    `G` (statics, props, terrain: the occluders; characters never block), through [`ProbeLos`].
-//! 5. `apply_sight`: every hit as a `Stimulus::Sight` in (`ActorKey`, target) order, then
+//!    lose-sight range), skips itself, computes `sight_gain` (visibility:
+//!    [`light_only_visibility`]), then reads the [`AiSightCache`] or queues a sight request
+//!    (chest, head if blocked) on the shared [`AiRays`] queue.
+//! 5. `cast_rays`: [`RayQueue::process`] with what `max_rays_per_tick` leaves after the light
+//!    rays, against the app's ground probe `G` (statics, props, terrain: the occluders; characters
+//!    never block), through [`ProbeLos`].
+//! 6. `apply_sight`: every hit as a `Stimulus::Sight` in (`ActorKey`, target) order, then
 //!    `AwarenessMeter::update` on every observer.
 //!
-//! Not modelled yet: the target's visibility (`AI8d` light and crime's `DetectionRules`:
-//! [`VISIBILITY_UNMODELLED`]), tier 1 checks (the `AI9` allocator picks tiers; everyone is tier 2),
+//! Not modelled yet: the rest of the target's visibility (crime's `DetectionRules::concealment`,
+//! `LW4`: stance, speed, disguise; until then [`light_only_visibility`]), tier 1 checks (the `AI9`
+//! allocator picks tiers; everyone is tier 2),
 //! worldspace and interior spaces (every spawned mover is taken to share the active worldspace,
 //! as the ground probe does), `sim.cpu_tier` groups for `max_rays_per_tick` (the Floor value).
 
@@ -35,22 +40,30 @@ use glam::Vec3;
 use sf_ai::{
     ActorKey, AwarenessMeter, EffectivePerception, LineOfSight, LosRay, PerceptClock, PerceptTarget,
     PerceptionProfile, PerceptionStates, RayKind, RayQueue, RayRequest, RayResult, RaySubject, RayTickStats,
-    SightCache, SightCheck, SightTimer, Stimulus, resolve, sight_gain,
+    SightCache, SightCheck, SightTimer, Stimulus, apply_darkness, resolve, sight_gain,
 };
 use sf_controller::{GroundHit, GroundProbe, ProbeQuery, forward};
 use sf_controller_bevy::{ControllerSystems, Dormant, Mover};
 use sf_coords::WorldPos;
 
 use crate::AiActor;
+use crate::light::{AiLightExposure, LightScratch, sample_light};
 use crate::perception::{
     AiAwareness, AiEffectivePerception, AiObserver, AiPerceptionProfile, AiPerceptionSettings,
-    AiPerceptionStateDefs, AiPerceptionStates, AiSightTimer, Perceivable, add_perception_tunables,
+    AiPerceptionStateDefs, AiPerceptionStates, AiSightTimer, Perceivable, PerceivablePose, add_perception_tunables,
 };
 
-/// The target's visibility until `AI8d` (light) and crime's `DetectionRules::concealment` feed it:
-/// fully visible.
-// tunables: const (placeholder input: the identity of the visibility factor until AI8d feeds it)
+/// The visibility of a target without a light sample (no [`crate::AiLightInputs`]): fully visible.
+// tunables: const (maths: the identity of the visibility factor)
 pub const VISIBILITY_UNMODELLED: f32 = 1.0;
+
+/// The framework's default sight visibility, light only (`AI8d2`): the target's light exposure
+/// through the observer's `darkness` ([`sf_ai::apply_darkness`]); [`VISIBILITY_UNMODELLED`]
+/// without a sample. The seam crime's `DetectionRules::concealment` (`LW4`) replaces: it reads the
+/// same light in its `VisibilityFactors` with stance, speed and disguise.
+pub fn light_only_visibility(light: Option<f32>, darkness: f32) -> f32 {
+    light.map_or(VISIBILITY_UNMODELLED, |l| apply_darkness(l, darkness))
+}
 
 // tunables: const (capacity: fixed-size request queue, ~10x the 48-actor tier-2 load; overflow refuses)
 pub const RAY_QUEUE_CAPACITY: usize = 1024;
@@ -66,6 +79,9 @@ const MIN_RAY_M: f32 = 1e-4;
 pub enum AiPerceptionSystems {
     /// The sight chain, before `ControllerSystems::Drive`.
     Sight,
+    /// Hearing ([`crate::hearing`]), after [`Self::Sight`] (it reads this tick's clock and
+    /// resolved profiles), before `ControllerSystems::Drive`.
+    Hearing,
 }
 
 /// The perception clock: one tick per `FixedUpdate`, `tick_s` the fixed timestep.
@@ -92,6 +108,9 @@ pub struct AiRays {
     pub stats: RayTickStats,
     /// Sight requests refused this tick because the queue was full.
     pub refused: u32,
+    /// Light rays cast this tick (`AI8d2`, outside the queue), charged to `max_rays_per_tick`
+    /// before the queue's sight rays.
+    pub light_cast: u32,
 }
 
 impl Default for AiRays {
@@ -103,6 +122,8 @@ impl Default for AiRays {
             stats: RayTickStats::default(),
             // tunables: const (a counter's start)
             refused: 0,
+            // tunables: const (a counter's start)
+            light_cast: 0,
         }
     }
 }
@@ -127,6 +148,8 @@ struct TargetSnap {
     chest: WorldPos,
     head: WorldPos,
     velocity: Vec3,
+    /// Its light exposure sample, if any.
+    light: Option<f32>,
 }
 
 /// A queued sight check waiting for its ray: the gain it integrates (summed if a later check
@@ -230,7 +253,8 @@ impl<G: GroundProbe + ?Sized> LineOfSight for ProbeLos<'_, G> {
 /// The sight system over ground probe `G` (the same resource the app gives
 /// `SfControllerPlugin::<G>`; until it exists, requests wait in the queue). Adds
 /// [`AiPerceptionSettings`] (bound to the perception tunables), [`AiPerceptClock`], [`AiRays`],
-/// [`AiSightCache`], [`AiPerceptionStateDefs`] and the chain in [`AiPerceptionSystems::Sight`].
+/// [`AiSightCache`], [`AiPerceptionStateDefs`] and the chain (light exposure included; the host
+/// turns it on by inserting [`crate::AiLightInputs`]) in [`AiPerceptionSystems::Sight`].
 pub struct AiSightPlugin<G> {
     probe: PhantomData<fn() -> G>,
 }
@@ -249,13 +273,15 @@ impl<G: GroundProbe + Resource> Plugin for AiSightPlugin<G> {
             .init_resource::<AiSightCache>()
             .init_resource::<AiPerceptionStateDefs>()
             .init_resource::<SightScratch>()
+            .init_resource::<LightScratch>()
             .configure_sets(FixedUpdate, AiPerceptionSystems::Sight.before(ControllerSystems::Drive))
             .add_systems(
                 FixedUpdate,
-                (begin_tick, resolve_profiles, queue_sight, cast_rays::<G>, apply_sight)
+                (begin_tick, resolve_profiles, sample_light::<G>, queue_sight, cast_rays::<G>, apply_sight)
                     .chain()
                     .in_set(AiPerceptionSystems::Sight),
             );
+        crate::hearing::add(app);
         add_perception_tunables(app);
     }
 }
@@ -339,7 +365,7 @@ fn queue_sight(
     mut rays: ResMut<AiRays>,
     cache: Res<AiSightCache>,
     mut scratch: ResMut<SightScratch>,
-    targets: Query<(Entity, &Perceivable, &Mover)>,
+    targets: Query<(Entity, &Perceivable, Option<&Mover>, Option<&PerceivablePose>, Option<&AiLightExposure>)>,
     mut observers: Query<
         (Entity, &AiActor, &AiObserver, &Mover, &AiAwareness, &mut AiSightTimer, Option<&AiEffectivePerception>),
         Without<Dormant>,
@@ -355,8 +381,9 @@ fn queue_sight(
 
     // Grid prefilter: every target bucketed by XZ cell, sorted (cell, target) for a stable order.
     snaps.clear();
-    for (entity, p, mover) in &targets {
-        let feet = mover.loco.position;
+    for (entity, p, mover, pose, light) in &targets {
+        let from_mover = mover.map(|m| (m.loco.position, m.loco.motion.velocity));
+        let Some((feet, velocity)) = from_mover.or(pose.map(|q| (q.feet, q.velocity))) else { continue };
         snaps.push(TargetSnap {
             cell: cell_of(feet, cell_m),
             target: p.target,
@@ -364,7 +391,8 @@ fn queue_sight(
             feet,
             chest: feet.offset(Vec3::Y * p.chest_m),
             head: feet.offset(Vec3::Y * p.head_m),
-            velocity: mover.loco.motion.velocity,
+            velocity,
+            light: light.map(|l| l.0),
         });
     }
     snaps.sort_unstable_by_key(|t| (t.cell, t.target));
@@ -394,7 +422,7 @@ fn queue_sight(
                         facing,
                         target: t.chest,
                         seen_before: seen_recently(&meter.0, t.target, tick, period),
-                        visibility: VISIBILITY_UNMODELLED,
+                        visibility: light_only_visibility(t.light, eff.sight.darkness),
                         alertness: meter.0.alertness(&eff.cfg, t.target, now),
                     };
                     let Some(gain) = sight_gain(&eff.sight, &s.sight, &s.budget, &check, dt) else { continue };
@@ -430,9 +458,10 @@ fn cast_rays<G: GroundProbe + Resource>(
 ) {
     let Some(probe) = probe else { return };
     let SightScratch { pending, hits, los, .. } = &mut *scratch;
+    let budget = settings.budget.max_rays_per_tick.saturating_sub(rays.light_cast);
     let AiRays { queue, results, stats, .. } = &mut *rays;
     let mut backend = ProbeLos { probe: &*probe, scratch: los };
-    *stats = queue.process(settings.budget.max_rays_per_tick, &mut backend, results);
+    *stats = queue.process(budget, &mut backend, results);
     for r in results.iter().filter(|r| r.kind == RayKind::Sight) {
         let RaySubject::Target(target) = r.subject else { continue };
         let Some(p) = pending.remove(&(r.owner, target)) else { continue };

@@ -42,6 +42,10 @@ pub enum Target {
     Player,
     /// An object by base id; the host resolves it (to an `ActorKey` for actors).
     Actor(RecordId),
+    /// One exact reference by its `PlacementId` (`sf_world::PlacementId.0`): a local script's
+    /// self (DQ-5b), never resolved by base id, so other references of the same base are not
+    /// touched.
+    Ref(u128),
 }
 
 /// What a run asked for, in call order (also exported as `ResultEffect`). The host applies
@@ -185,7 +189,7 @@ impl GameView<'_> {
 }
 
 /// A run's writes, read back by its later reads (dropped with the run; the ops carry them).
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Overlay {
     stages: HashMap<RecordId, i32>,
     /// Item deltas per holder.
@@ -194,6 +198,14 @@ pub struct Overlay {
     globals: HashMap<RecordId, f32>,
     /// The run's copies of the sheets it changed.
     stats: StatOverlay,
+}
+
+/// A point a [`GameRun`] can return to ([`GameRun::rollback`]): the script host drops a faulted
+/// script's writes while keeping the earlier scripts' of the same tick.
+#[derive(Debug)]
+pub struct Checkpoint {
+    overlay: Overlay,
+    ops: usize,
 }
 
 /// One run: reads through the [`Overlay`] of its own writes over a [`GameView`], ops in call
@@ -226,6 +238,20 @@ impl<'a> GameRun<'a> {
     /// Ends the run: its ops, in call order.
     pub fn into_ops(self) -> Vec<GameOp> {
         self.ops
+    }
+
+    /// The run as it is now (copies the overlay: it holds only this run's writes).
+    pub fn checkpoint(&self) -> Checkpoint {
+        Checkpoint {
+            overlay: self.overlay.clone(),
+            ops: self.ops.len(),
+        }
+    }
+
+    /// Back to `checkpoint`: the writes and ops since are dropped.
+    pub fn rollback(&mut self, checkpoint: Checkpoint) {
+        self.overlay = checkpoint.overlay;
+        self.ops.truncate(checkpoint.ops);
     }
 
     // Variables.
@@ -493,5 +519,6 @@ pub(crate) fn unknown_name(owner: Option<&Target>, name: &Ident) -> String {
         Some(Target::Speaker) => format!("speaker.{}", name.key),
         Some(Target::Player) => format!("player.{}", name.key),
         Some(Target::Actor(a)) => format!("{a}.{}", name.key),
+        Some(Target::Ref(p)) => format!("ref {p:032x}.{}", name.key),
     }
 }

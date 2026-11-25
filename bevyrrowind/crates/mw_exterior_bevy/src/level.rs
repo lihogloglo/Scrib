@@ -52,6 +52,7 @@ const BUILT_IN: &[(&str, &str)] = &[
     ("shapes-bench", include_str!("../../../levels/shapes-bench.ron")),
     ("texture-lab", include_str!("../../../levels/texture-lab.ron")),
     ("rock-lab", include_str!("../../../levels/rock-lab.ron")),
+    ("perception-lab", include_str!("../../../levels/perception-lab.ron")),
 ];
 
 /// When `view level:` started: the load time is measured from here.
@@ -63,6 +64,8 @@ pub struct LevelSetup {
     pub worldspace: WorldspaceId,
     /// The level's actors and the walk-mode player, resolved against the records.
     pub actors: Arc<[actors::ActorSetup]>,
+    /// The level's `placed` records as world placements (`actors::resolve_placed`).
+    pub placed: Vec<Placement>,
     /// The texture lab's swatches and models (`level:texture-lab`, or any level with `--lab-textures` / `--lab-models`).
     pub texture_lab: Option<texture_lab::LabContent>,
     /// The rock lab's textures (`level:rock-lab`, rockgen RG-3).
@@ -149,7 +152,8 @@ struct ActiveLevel(LevelSetup);
 /// Adds the level to the viewer; call after `WorldIndexSource` is inserted.
 pub fn add(app: &mut App, setup: LevelSetup) {
     let base = app.world().resource::<WorldIndexSource>().0.clone();
-    let placements = actors::placements(&setup.level, &setup.actors);
+    let mut placements = actors::placements(&setup.level, &setup.actors);
+    placements.extend(setup.placed.iter().cloned());
     actors::add(app, Arc::clone(&setup.actors));
     if let Some(content) = setup.texture_lab.clone() {
         texture_lab::add(app, content);

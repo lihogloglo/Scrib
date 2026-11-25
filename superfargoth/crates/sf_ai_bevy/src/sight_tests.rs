@@ -21,12 +21,12 @@ use sf_ids::{ActorKey, PlayerKey};
 
 use super::*;
 
-const EYE: f32 = 1.6;
-const CHEST: f32 = 1.2;
-const HEAD: f32 = 1.7;
-const PLAYER: PerceptTarget = PerceptTarget::Player(PlayerKey(1));
+pub(crate) const EYE: f32 = 1.6;
+pub(crate) const CHEST: f32 = 1.2;
+pub(crate) const HEAD: f32 = 1.7;
+pub(crate) const PLAYER: PerceptTarget = PerceptTarget::Player(PlayerKey(1));
 
-fn wpos(v: Vec3) -> WorldPos {
+pub(crate) fn wpos(v: Vec3) -> WorldPos {
     WorldPos::from_f64(DVec3::new(f64::from(v.x), f64::from(v.y), f64::from(v.z)))
 }
 
@@ -36,7 +36,7 @@ fn xyz(p: WorldPos) -> Vec3 {
 
 /// Axis-aligned boxes that block rays (the fake ground probe).
 #[derive(Resource, Default)]
-struct Walls(Vec<(Vec3, Vec3)>);
+pub(crate) struct Walls(pub(crate) Vec<(Vec3, Vec3)>);
 
 impl Walls {
     fn hit(&self, o: Vec3, d: Vec3, max: f32) -> Option<f32> {
@@ -79,7 +79,7 @@ impl GroundProbe for Walls {
     }
 }
 
-fn app(hz: f64) -> App {
+pub(crate) fn app(hz: f64) -> App {
     let mut app = App::new();
     app.insert_resource(Time::<Fixed>::from_hz(hz));
     app.init_resource::<Walls>();
@@ -88,30 +88,30 @@ fn app(hz: f64) -> App {
 }
 
 /// Every check on every tick (period = one tick).
-fn every_tick(app: &mut App, hz: f64) {
+pub(crate) fn every_tick(app: &mut App, hz: f64) {
     #[allow(clippy::cast_possible_truncation)]
     let tick_s = (1.0 / hz) as f32;
     app.world_mut().resource_mut::<AiPerceptionSettings>().budget.sight_period_s = tick_s;
 }
 
-fn step(app: &mut App) {
+pub(crate) fn step(app: &mut App) {
     app.world_mut().run_schedule(FixedUpdate);
 }
 
-fn mover(at: Vec3, yaw: f32) -> Mover {
+pub(crate) fn mover(at: Vec3, yaw: f32) -> Mover {
     Mover::new(wpos(at), yaw, MoverParams::default(), WorldPos::ORIGIN)
 }
 
 /// An observer at `at` facing +Z (yaw 0).
-fn observer(app: &mut App, key: u128, at: Vec3) -> Entity {
+pub(crate) fn observer(app: &mut App, key: u128, at: Vec3) -> Entity {
     app.world_mut().spawn((AiActor(ActorKey(key)), AiObserver { eye_m: EYE }, mover(at, 0.0))).id()
 }
 
-fn target(app: &mut App, at: Vec3) -> Entity {
+pub(crate) fn target(app: &mut App, at: Vec3) -> Entity {
     app.world_mut().spawn((Perceivable { target: PLAYER, chest_m: CHEST, head_m: HEAD }, mover(at, 0.0))).id()
 }
 
-fn level(app: &App, e: Entity) -> Option<f32> {
+pub(crate) fn level(app: &App, e: Entity) -> Option<f32> {
     app.world().get::<AiAwareness>(e).unwrap().0.get(PLAYER).map(|a| a.level)
 }
 
@@ -299,6 +299,12 @@ fn tunable_defaults_match_the_core_defaults() {
     assert_eq!(p::MAX_RAYS_PER_TICK.default_value(), b.max_rays_per_tick);
     assert_eq!(p::MAX_ENTRIES.default_value() as usize, a.max_entries);
     assert_eq!(p::NOTIFY_MAX_HOPS.default_value(), u32::from(a.notify_max_hops));
+    let sp = settings.search_pattern;
+    assert_eq!(p::SEARCH_RING_POINTS.default_value(), u32::from(sp.ring_points));
+    assert_eq!(
+        [p::SEARCH_LOOK_HALF_DEG, p::SEARCH_UNCERTAIN_MUL, p::SEARCH_INNER_FRAC].map(|d| d.default_value()),
+        [sp.look_half_deg, sp.uncertain_mul, sp.inner_frac]
+    );
 }
 
 #[test]

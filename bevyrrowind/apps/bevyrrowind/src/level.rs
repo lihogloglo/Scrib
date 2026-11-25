@@ -38,8 +38,9 @@ pub(crate) fn view(install: &MorrowindInstall, name: &str, mut flags: crate::Vie
     }
     let mut options = flags.exterior_options(install, &content.db, format!("Bevyrrowind - level {}", level.name), start)?;
     let actors = actors::resolve(&level, &content.db);
+    let placed = actors::resolve_placed(&level, &content.db);
     options.actors = Some(Arc::new(content.db));
-    options.level = Some(LevelSetup { level: Arc::new(level), worldspace: ws, actors: actors.into(), texture_lab, rock_lab });
+    options.level = Some(LevelSetup { level: Arc::new(level), worldspace: ws, actors: actors.into(), placed, texture_lab, rock_lab });
     mw_exterior_bevy::exterior::run(Arc::new(vfs), options)
 }
 
@@ -73,4 +74,46 @@ fn lab_content(level: &mut Level, flags: &crate::ViewFlags) -> Option<LabContent
     let content = LabContent::new(lab.textures.as_deref(), lab.models.as_deref());
     content.add_cameras(level);
     Some(content)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sf_records::RecordId;
+    use sf_world::PlacementClass;
+    use tes3::esp::{LightFlags, Npc};
+
+    /// The perception lab (AI47) on the real records: its six guards resolve as NPC actors and
+    /// its six street lights as lit `LIGH` placements with a mesh, so each one is a lamp the NPCs'
+    /// light inputs (MA16 `LightHook`) see. Skips (passes) without a Morrowind install.
+    #[test]
+    fn perception_lab_resolves_on_the_install() {
+        let (_, level) = find("perception-lab").expect("level parses and validates");
+        assert_eq!((level.actors.len(), level.placed.len()), (6, 6));
+        assert!(level.cameras.iter().any(|c| c.name == "hearing"));
+        let Ok((install, _)) = MorrowindInstall::detect(None) else {
+            eprintln!("no Morrowind install detected; skipping");
+            return;
+        };
+        let (_, content) = mw_boot_bevy::load(&install, false).expect("content loads");
+        let db = &content.db;
+        let guards = actors::resolve(&level, db);
+        assert_eq!(guards.len(), 6, "every guard id resolves");
+        assert!(guards.iter().all(|g| g.kind == "NPC_" && db.get::<Npc>(&RecordId::new(&g.def.id)).is_some()));
+        let placed = actors::resolve_placed(&level, db);
+        assert_eq!(placed.len(), 6, "every placed id resolves");
+        for p in &placed {
+            assert_eq!((p.class, &*p.base.kind), (PlacementClass::Light, "LIGH"), "{}", p.base.id.as_str());
+            assert!(p.model.is_some(), "{}: a lamp with a mesh", p.base.id.as_str());
+            let light = db.get::<tes3::esp::Light>(&RecordId::new(p.base.id.as_str())).expect("LIGH record");
+            let flags = light.data.flags;
+            // `mw_walkers_bevy::light_inputs::light_record`: a gameplay light, lit when placed.
+            assert!(light.data.radius > 0 && !flags.contains(LightFlags::NEGATIVE) && !flags.contains(LightFlags::OFF_BY_DEFAULT));
+            #[allow(clippy::cast_precision_loss)]
+            let reach = mw_world::convert::meters(light.data.radius as f32);
+            eprintln!("{}: reach {reach:.1} m at {:?}", p.base.id.as_str(), p.transform.pos);
+        }
+        let ids: std::collections::HashSet<_> = placed.iter().map(|p| p.id).collect();
+        assert_eq!(ids.len(), 6, "placement ids are distinct");
+    }
 }

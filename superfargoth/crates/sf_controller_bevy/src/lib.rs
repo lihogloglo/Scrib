@@ -23,7 +23,10 @@
 //!    into a collision-free one, then [`KinematicMover::step_batch`] moves
 //!    every character with one batched probe call per stage against the
 //!    ground resource `G`; each mover's pose before and after the tick is
-//!    kept ([`Mover::poses`]). Hosts order it before their physics step.
+//!    kept ([`Mover::poses`]). It runs after the physics step of the same tick
+//!    (`sf_physics_bevy` orders it, `IN11b`): a character on a moving base reads
+//!    the world the base has just moved to (UE based movement, Jolt
+//!    `CharacterVirtual`).
 //! 3. [`ControllerSystems::Interpolate`] (`RunFixedMainLoop`, after the
 //!    fixed loop, once per frame): the drawn root is the previous and current
 //!    tick poses blended by `Time<Fixed>::overstep_fraction` ([`TickPose`],

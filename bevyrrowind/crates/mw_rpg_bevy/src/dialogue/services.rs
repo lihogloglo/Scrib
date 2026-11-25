@@ -240,6 +240,7 @@ impl Rpg {
         let v = View {
             c: &self.content,
             s: &self.state,
+            g: &self.script_locals,
             sheets: &NoSheets,
         };
         let read = |name: &str| {
@@ -283,6 +284,7 @@ impl Rpg {
         let v = View {
             c: &self.content,
             s: &self.state,
+            g: &self.script_locals,
             sheets: &NoSheets,
         };
         let rules = MwServiceRules::new(
@@ -374,6 +376,7 @@ impl Rpg {
         let v = View {
             c: &self.content,
             s: &self.state,
+            g: &self.script_locals,
             sheets,
         };
         let rules = MwServiceRules::new(
@@ -448,6 +451,7 @@ impl Rpg {
         let v = View {
             c: &self.content,
             s: &self.state,
+            g: &self.script_locals,
             sheets,
         };
         let rules = MwServiceRules::new(
@@ -497,6 +501,7 @@ impl Rpg {
                 let v = View {
                     c: &self.content,
                     s: &self.state,
+                    g: &self.script_locals,
                     sheets,
                 };
                 let rules = MwServiceRules::new(
@@ -566,6 +571,7 @@ impl Rpg {
             let v = View {
                 c: &self.content,
                 s: &self.state,
+                g: &self.script_locals,
                 sheets,
             };
             let rules = MwServiceRules::new(
@@ -622,6 +628,7 @@ impl Rpg {
                     let v = View {
                         c: &self.content,
                         s: &self.state,
+                        g: &self.script_locals,
                         sheets,
                     };
                     let rules = MwDialogueRules::new(&self.content.dialogue, &v);
@@ -672,6 +679,7 @@ impl Rpg {
             let v = View {
                 c: &self.content,
                 s: &self.state,
+                g: &self.script_locals,
                 sheets,
             };
             let rules = MwServiceRules::new(
@@ -848,6 +856,7 @@ impl Rpg {
         View {
             c: &self.content,
             s: &self.state,
+            g: &self.script_locals,
             sheets: &NoSheets,
         }
         .global_value(name)
@@ -1291,6 +1300,7 @@ pub(super) mod tests {
         let v = View {
             c: &rpg.content,
             s: &rpg.state,
+            g: &rpg.script_locals,
             sheets: &NoSheets,
         };
         v.loadout(holder)
@@ -1307,6 +1317,7 @@ pub(super) mod tests {
         let v = View {
             c: &rpg.content,
             s: &rpg.state,
+            g: &rpg.script_locals,
             sheets: &NoSheets,
         };
         v.loadout(holder).map_or(0, |l| l.count(&id(item)))
@@ -1682,6 +1693,7 @@ pub(super) mod tests {
                 &View {
                     c: &rpg.content,
                     s: &rpg.state,
+                    g: &rpg.script_locals,
                     sheets: &sheets,
                 },
                 talk.session.ctx(),

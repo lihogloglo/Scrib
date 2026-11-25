@@ -48,12 +48,14 @@ pub mod ragdoll;
 pub mod proxies;
 #[cfg(all(test, feature = "controller"))]
 mod proxies_tests;
+#[cfg(all(test, feature = "controller"))]
+mod platform_tests;
 pub mod stream;
 #[cfg(test)]
 mod tests;
 
 #[cfg(feature = "controller")]
-pub use character::{CharacterFellOut, CharacterPhysics, CharacterStats, ImpactOnCharacter};
+pub use character::{CharacterFellOut, CharacterPhysics, CharacterStats, ImpactOnCharacter, refresh_base_velocity};
 #[cfg(feature = "controller")]
 pub use proxies::{BodyProxies, ProxyHolder, ProxyStats, ShapeCounters, ShapeSystems, ShapeWindow};
 #[cfg(feature = "debug")]
@@ -147,6 +149,14 @@ impl GroundProbe for Physics {
             }
             (Some(w), None) => w.probe(GROUND_LAYERS).probe(queries, out),
             (None, _) => out.fill(None),
+        }
+    }
+
+    /// Moving bodies of [`GROUND_LAYERS`] push characters (`IN11c2a`); terrain never moves.
+    fn contacts(&self, queries: &[ProbeQuery], out: &mut [Option<GroundHit>]) {
+        match self.worlds.active_world() {
+            Some(w) => w.probe(GROUND_LAYERS).contacts(queries, out),
+            None => out.fill(None),
         }
     }
 }

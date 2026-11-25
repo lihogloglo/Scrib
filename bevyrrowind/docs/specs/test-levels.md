@@ -104,6 +104,15 @@ and pipeline setup dominate; logged as `level <name> ready <s> after start`).
 Leftovers: compound props (a table with legs),
 a start flag for player mode in level scenes (F11 only; BRP `send_keys` F11).
 
+## Perception lab (built, AI47, 2026-11-25)
+
+`levels/perception-lab.ron`, scenes `level-perception` + `-light`, `-cover`, `-hearing`, `-search`, `-impacts` (hour 23,
+`--set ai.perception=true`; check AI-11). Six still `imperial guard`s 40 m apart; lamps are `light_de_streetlight_01`
+LIGH placements on collider-less posts. New level field `placed` (`sf_level::Level::placed`: record id, at, yaw;
+`resolve_placed` in `mw_exterior_bevy/src/level/actors.rs`): records placed like cell references, so a lamp gets its
+mesh, light and the AI light hook. `LevelActorSpawner` now inserts `CharacterPlacement` (as `CharacterSpawner`), so
+level actors perceive and get a dialogue/script key in every level. No level navmesh: search can't walk (AI47b).
+
 ## Light lab (built, lightlab, 2026-10-21)
 
 Controlled cost model for lights and shadows (owner 2026-10-21: one variable at a time, fixed camera; real scenes stay

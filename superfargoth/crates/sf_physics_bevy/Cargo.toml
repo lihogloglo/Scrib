@@ -47,6 +47,9 @@ sf_world_bevy.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
+# The moving-platform test (IN11b): an action-driven body next to a mover.
+sf_action.workspace = true
+sf_action_bevy.workspace = true
 # The R0 write-back test: fixture biped, a compiled walk graph.
 sf_anim.workspace = true
 sf_anim_graph = { workspace = true, features = ["bake"] }

@@ -450,7 +450,7 @@ mod tests {
         eprintln!("Fargoth: record {record_base}, modifier {modifier}, derived {disposition}");
         // The filters read the derived value.
         let ctx = talk.session.ctx().clone();
-        assert_eq!(MwView::disposition(&View { c: &rpg.content, s: &rpg.state, sheets: &sheets }, &ctx), disposition);
+        assert_eq!(MwView::disposition(&View { c: &rpg.content, s: &rpg.state, g: &rpg.script_locals, sheets: &sheets }, &ctx), disposition);
 
         // The new-game player has no gold.
         assert_eq!(rpg.persuade(&mut talk, PersuasionKind::Bribe10, &sheets, 7), Err(PersuadeRefused::NotEnoughGold));

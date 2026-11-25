@@ -25,6 +25,7 @@ pub mod functions;
 pub mod instances;
 pub mod interp;
 pub mod lexer;
+pub mod locals;
 mod parser;
 pub mod resolve;
 pub mod statfn;
@@ -37,6 +38,9 @@ pub use functions::{FnId, FunctionTable, Status};
 pub use instances::{
     GlobalInstance, GlobalInstances, GlobalsSnapshot, InstanceHost, LoadReport, LocalType, Report,
     SavedGlobal, SavedLocal, ScriptSet,
+};
+pub use locals::{
+    ACTIVE_RADIUS, LocalInstance, LocalInstances, LocalKey, LocalReport, LocalsSnapshot, SavedLocalInstance,
 };
 pub use interp::{
     Binding, Builtin, Host, Interpreter, Locals, MessageArg, RunError, SCRIPT_TUNABLES, STEP_LIMIT,
@@ -90,3 +94,6 @@ mod interp_tests;
 
 #[cfg(test)]
 mod instances_tests;
+
+#[cfg(test)]
+mod locals_tests;

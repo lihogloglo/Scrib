@@ -27,11 +27,11 @@ use super::{
 
 /// The flat room: 40 m x 40 m of navmesh in `nav_room`, home in its middle.
 const ROOM_CELLS: usize = 40;
-const HOME: [f64; 3] = [20.0, 0.0, 20.0];
+pub(super) const HOME: [f64; 3] = [20.0, 0.0, 20.0];
 /// Wander radius, m.
 const RADIUS: f32 = 6.0;
 /// Walk speed, m/s.
-const SPEED: f32 = 1.5;
+pub(super) const SPEED: f32 = 1.5;
 
 struct FlatFloor;
 
@@ -52,7 +52,7 @@ impl HeightSurface for FlatFloor {
 }
 
 #[derive(Resource)]
-struct Floor(TerrainProbe<FlatFloor>);
+pub(super) struct Floor(TerrainProbe<FlatFloor>);
 
 impl GroundProbe for Floor {
     fn probe(&self, queries: &[ProbeQuery], out: &mut [Option<GroundHit>]) {
@@ -60,15 +60,20 @@ impl GroundProbe for Floor {
     }
 }
 
-fn nav_ws() -> WorldspaceId {
+pub(super) fn nav_ws() -> WorldspaceId {
     WorldspaceId::new("nav_room")
 }
 
-fn home() -> WorldPos {
+pub(super) fn home() -> WorldPos {
     WorldPos::from_f64(DVec3::from_array(HOME))
 }
 
 fn app() -> App {
+    app_with(|_| {})
+}
+
+/// [`app`] with `extra` plugins or resources added before the first update.
+pub(super) fn app_with(extra: impl FnOnce(&mut App)) -> App {
     let mut backend = GridBackend::new(GridConfig { cell_size: 1.0, tile_cells: 40 }).unwrap();
     let row = ".".repeat(ROOM_CELLS);
     let rows: Vec<&str> = (0..ROOM_CELLS).map(|_| row.as_str()).collect();
@@ -94,12 +99,13 @@ fn app() -> App {
     .init_resource::<MwGround>()
     .insert_resource(GroundOnPhysics(false));
     add_drive(&mut app, mw_ai::wander_library());
+    extra(&mut app);
     app.update();
     app
 }
 
 /// A ground wanderer as `attach` makes it (no pathgrid: walks go to points in the wander disc).
-fn spawn_wanderer(app: &mut App, ws: &WorldspaceId, home: WorldPos, key: u128, seed: u64) -> Entity {
+pub(super) fn spawn_wanderer(app: &mut App, ws: &WorldspaceId, home: WorldPos, key: u128, seed: u64) -> Entity {
     let wander = Wander {
         distance: RADIUS,
         duration_hours: 0.0,
@@ -239,7 +245,7 @@ fn a_face_step_turns_the_navmesh_walker_and_succeeds() {
 }
 
 /// `a` wrapped to (-PI, PI].
-fn wrap(a: f32) -> f32 {
+pub(super) fn wrap(a: f32) -> f32 {
     let t = a.rem_euclid(std::f32::consts::TAU);
     if t > std::f32::consts::PI { t - std::f32::consts::TAU } else { t }
 }

@@ -12,6 +12,11 @@
 //!   contact, then drops to the Searching floor `alert_hold_s` after the last contact. Decay
 //!   starts `decay_delay_s` after the last gain, at the current band's rate, integrated across
 //!   band changes so a tier that updates less often ends at the same level (tier invariance).
+//! - `AI8f3` search hold: while the shell runs a search for a target
+//!   ([`AwarenessMeter::hold_searching`]), that entry's decay stops at the Searching threshold (or
+//!   at its level, if already below it: a hold never raises), so the search, not the meter, ends
+//!   Searching; after [`AwarenessMeter::release_search_hold`] decay resumes from the release tick.
+//!   The hold is the running search's, so it is not serialised (`#[serde(skip)]`, ai.md "Saves").
 //! - [`player_detection`]: the HUD sneak eye's `PlayerDetection { level, band }` for one player.
 //! - `AI8e` shared knowledge: a shout or alarm is a heard noise carrying a [`Notify`]
 //!   ([`Stimulus::Notify`]). A hearer queues it as a [`PendingNotify`] due `ceil((distance /
@@ -97,6 +102,9 @@ pub struct Awareness {
     pub last_contact: Option<u64>,
     /// Tick this entry was last advanced to (decay and hold are integrated from here).
     pub updated: u64,
+    /// A running search holds the Searching band (`AI8f3`); the search's state, not saved.
+    #[serde(skip)]
+    search_hold: bool,
 }
 
 /// The investigate-the-spot slot filled by non-revealing noises (ai.md `Distraction`).
@@ -427,7 +435,13 @@ impl Awareness {
             last_gain: now,
             last_contact: None,
             updated: now,
+            search_hold: false,
         }
+    }
+
+    /// Whether a running search holds this entry at the Searching floor (`AI8f3`).
+    pub fn search_held(&self) -> bool {
+        self.search_hold
     }
 
     /// Advances hold and decay from `updated` to `now`.
@@ -457,7 +471,9 @@ impl Awareness {
             if rate.is_nan() || rate <= 0.0 {
                 return;
             }
-            let floor = cfg.stay(self.band).max(0.0);
+            // A search hold stops at the Searching threshold, never above the current level.
+            let held = self.search_hold && self.band >= AwarenessBand::Searching;
+            let floor = if held { cfg.searching.min(self.level) } else { cfg.stay(self.band).max(0.0) };
             let need = (self.level - floor) / rate;
             if t <= need {
                 self.level = (self.level - rate * t).max(floor);
@@ -465,7 +481,7 @@ impl Awareness {
             }
             t -= need;
             self.level = floor;
-            if self.band == AwarenessBand::Unaware {
+            if held || self.band == AwarenessBand::Unaware {
                 return;
             }
             self.band = self.band.below();
@@ -655,6 +671,26 @@ impl AwarenessMeter {
                 })
             }
         }
+    }
+
+    /// A search for `target` starts (`AI8f3`): settles its entry to `now`, then holds it at the
+    /// Searching floor until [`Self::release_search_hold`] (module docs). `false` if untracked.
+    pub fn hold_searching(&mut self, cfg: &AwarenessConfig, target: PerceptTarget, now: PerceptClock) -> bool {
+        self.set_search_hold(cfg, target, now, true)
+    }
+
+    /// The search for `target` ended (gave up, aborted or restarted elsewhere): settles its entry
+    /// to `now` with the hold, then lets it decay from `now` on. `false` if untracked.
+    pub fn release_search_hold(&mut self, cfg: &AwarenessConfig, target: PerceptTarget, now: PerceptClock) -> bool {
+        self.set_search_hold(cfg, target, now, false)
+    }
+
+    fn set_search_hold(&mut self, cfg: &AwarenessConfig, target: PerceptTarget, now: PerceptClock, on: bool) -> bool {
+        let Ok(i) = self.entries.binary_search_by(|e| e.target.cmp(&target)) else { return false };
+        let e = &mut self.entries[i];
+        e.settle(cfg, now);
+        e.search_hold = on;
+        true
     }
 
     /// Raises `target` to at least `band`'s floor (a loaded `Search`/`Report`/combat directive

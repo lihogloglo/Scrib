@@ -43,3 +43,24 @@ Log: `ai: N wanderers on navmesh, M on pathgrid fallback (since start: X navmesh
 2. Nobody stands frozen for long, walks into walls, or leaves its area. `nav.draw paths` shows the paths.
 3. Fidgets vary (never the same one twice in a row). Is the walk/pause/fidget rhythm right? (Plain pauses are 2-5 s,
    not OpenMW's per-tick re-roll; say if NPCs fidget too often or too rarely.)
+
+### AI-3: perception gizmos and NPCs noticing the player (AI26 + AI8, 2026-11-25)
+- Kind: game, dev build (`dev` now enables `sf_ai_bevy/debug`). `owner_launch.sh view "Seyda Neen" --hour 12`, then
+  again at `--hour 23`. Third person (F11). Console: `ai.perception on`, `ai.select` + click an NPC.
+- Look for: grey cones with ground arcs at each NPC; walking into a cone turns it yellow → orange → red with
+  "<band> N%" rising; a sphere where it last saw you and "LKP ... s ago" growing behind cover; "search held" + ring
+  while it searches (it walks to the spot, looks around, widens, gives up after ~30 s, then wanders); "light N%"
+  over the player dropping in shade / at night (pitch dark = unseen, known until crime LW4); sprinting/landing
+  leaves blue rings sized to the noise reach (run 12 m, sneak 2 m), fading in ~2 s; text never overlaps `ai.gizmos`.
+- Log: none required. Status: awaiting owner (gameplay-roadmaps-5).
+
+### AI-11: perception lab, controlled cases (AI47, owner request 2026-11-25)
+- Kind: level, dev build. `owner_launch.sh scene level-perception` (overview) or `level-perception-{light,cover,
+  hearing,search,impacts}` (one camera per area; hour 23, clear; gizmos on via `--set ai.perception=true`). F11 drops
+  the player; Ctrl hold sneak, Shift hold sprint, V throws a ball.
+- Light: walk each lane north to its guard: the lit lane's band rises early (~12 m post) and fast, the dark one late or
+  never; "light N%" higher in the lit lane. Cover: walk the white line: band stays down behind the wall, rises in line
+  with a gap; the LKP marker stays at the gap. Hearing: cross the 4/8/14 m stripes: run heard at 4 and 8 not 14,
+  sneak never, sprint at 14, walk 4 only; rings show each step's reach; hearing alone tops out at Curious.
+- Known: search does not walk in levels (no level navmesh: AI47b); impacts make no noise yet (IN18).
+- Status: owner 2026-11-25 "worked, too early to tell": keep for re-check after AI47b (level navmesh) and sneak concealment (LW4/MA5).

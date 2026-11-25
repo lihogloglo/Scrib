@@ -655,7 +655,8 @@ mod carry_view {
         Transform::from_translation(feet + Vec3::Y * EYE).with_rotation(Quat::from_rotation_y(yaw) * Quat::from_rotation_x(-0.2))
     }
 
-    /// The character's simulation: its eye at each fixed step.
+    /// The character's simulation: its eye at the end of each fixed tick (after the step, as a
+    /// host writes it after its movers).
     #[allow(clippy::needless_pass_by_value)]
     fn tick_walker(time: Res<Time<Fixed>>, mut views: Query<&mut TickView>) {
         let eye = walker_eye(time.elapsed_secs_f64());
@@ -697,7 +698,7 @@ mod carry_view {
         let ws = WorldspaceId::new("carry");
         let mut app = app(&ws);
         let holder = if tick_view {
-            app.add_systems(FixedUpdate, tick_walker.before(PhysicsSystems::Hands));
+            app.add_systems(FixedUpdate, tick_walker.after(PhysicsSystems::Step));
             app.world_mut().spawn((Holder::new(HolderLimits::default()), TickView::default())).id()
         } else {
             app.add_systems(PostUpdate, camera_walker.before(PhysicsSystems::HeldPoses));
@@ -798,7 +799,7 @@ mod carry_view {
     fn despawned_holder_lets_go() {
         let ws = WorldspaceId::new("carry");
         let mut app = app(&ws);
-        app.add_systems(FixedUpdate, tick_walker.before(PhysicsSystems::Hands));
+        app.add_systems(FixedUpdate, tick_walker.after(PhysicsSystems::Step));
         let holder = app.world_mut().spawn((Holder::new(HolderLimits::default()), TickView::default())).id();
         let eye = walker_eye(0.0);
         let at = Transform::from_translation(eye.translation + eye.forward().as_vec3());

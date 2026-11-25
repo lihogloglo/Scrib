@@ -1,0 +1,120 @@
+// Synthetic test level (docs/specs/test-levels.md): the perception lab (AI47). Five areas, one
+// Imperial guard each (Morrowind.esm `imperial guard`, the same record everywhere, so the same
+// perception profile), standing still on his spawn (level actors drop the wander scaffold), at
+// night (hour 23, clear) so light matters. Lamps are real Morrowind street lights
+// (`light_de_streetlight_01`, LHDT radius 512 units = 7.3 m; a lantern hanging 0.7 m below its
+// origin, so placed 3 m up on a greybox post) placed as records (`placed`), so they light the
+// scene and feed the NPCs' light inputs (MA16) like any cell's lamp.
+// Areas are 40 m apart so a guard never sees or hears the next area's test (sprint reach 18 m).
+// Meters, y up, x east, z south; spawn yaw in degrees, 0 faces -z; `at` = footprint center at
+// the bottom. Open with `bevyrrowind scene level-perception` (or `-light`, `-cover`, ...).
+(
+    name: "perception-lab",
+    description: "perception lab: guards facing a lit and a dark lane, a wall with gaps, hearing lanes at 4/8/14 m, a search yard, a crate stack",
+    hour: Some(23.0),
+    weather: Some("clear"),
+    cameras: [
+        (name: "overview", eye: (0.0, 45.0, 55.0), target: (0.0, 0.0, 5.0)),
+        // North of the lanes, looking south at both guards' faces (F11 drops the player here).
+        (name: "light", eye: (-60.0, 6.0, -24.0), target: (-60.0, 0.0, -4.0)),
+        (name: "cover", eye: (-20.0, 8.0, -22.0), target: (-20.0, 0.0, -6.0)),
+        // East of the hearing lanes, behind the guard's back.
+        (name: "hearing", eye: (34.0, 8.0, -6.0), target: (20.0, 0.0, -7.0)),
+        (name: "search", eye: (60.0, 9.0, -24.0), target: (60.0, 0.0, -6.0)),
+        // Behind the impacts guard, facing the crates past him.
+        (name: "impacts", eye: (7.0, 3.0, 43.0), target: (0.0, 0.8, 34.0)),
+    ],
+    spawns: [
+        (name: "start", at: (-60.0, 0.0, -24.0)),
+        (name: "guard-lit", at: (-48.0, 0.0, 0.0)),
+        (name: "guard-dark", at: (-72.0, 0.0, 0.0)),
+        (name: "guard-cover", at: (-20.0, 0.0, 0.0)),
+        (name: "guard-hearing", at: (20.0, 0.0, 0.0), yaw: 180.0),
+        (name: "guard-search", at: (60.0, 0.0, 0.0)),
+        (name: "guard-impacts", at: (0.0, 0.0, 40.0)),
+    ],
+    objects: [
+        (name: "floor", shape: Ground(size: (180.0, 100.0)), at: (0.0, 0.0, 15.0)),
+
+        // 1. Light vs shadow (x = -60): each guard faces his lane (z -4..-12, 4 to 12 m ahead);
+        // the east lane is under two street lights, the west one dark; a wall keeps them apart.
+        (name: "lane-lit", shape: Box(size: (1.0, 0.02, 8.0)), at: (-48.0, 0.0, -8.0), material: Yellow, collide: false),
+        (name: "lane-dark", shape: Box(size: (1.0, 0.02, 8.0)), at: (-72.0, 0.0, -8.0), material: Blue, collide: false),
+        (name: "lit-4m", shape: Cylinder(radius: 0.08, height: 1.0), at: (-49.0, 0.0, -4.0), material: White, collide: false),
+        (name: "lit-12m", shape: Cylinder(radius: 0.08, height: 1.0), at: (-49.0, 0.0, -12.0), material: White, collide: false),
+        (name: "dark-4m", shape: Cylinder(radius: 0.08, height: 1.0), at: (-71.0, 0.0, -4.0), material: White, collide: false),
+        (name: "dark-12m", shape: Cylinder(radius: 0.08, height: 1.0), at: (-71.0, 0.0, -12.0), material: White, collide: false),
+        (name: "light-divider", shape: Box(size: (0.3, 3.0, 18.0)), at: (-60.0, 0.0, -5.0), material: Grey),
+
+        // 2. Cover (x = -20): a 3 m wall 8 m ahead of the guard, 1.5 m gaps at x = -24 and -16;
+        // the walk line 2 m behind it (z = -10), lit by two street lights behind it.
+        (name: "cover-wall-w", shape: Box(size: (3.25, 3.0, 0.3)), at: (-26.375, 0.0, -8.0), material: Grey),
+        (name: "cover-wall-c", shape: Box(size: (6.5, 3.0, 0.3)), at: (-20.0, 0.0, -8.0), material: Grey),
+        (name: "cover-wall-e", shape: Box(size: (3.25, 3.0, 0.3)), at: (-13.625, 0.0, -8.0), material: Grey),
+        (name: "cover-walk", shape: Box(size: (16.0, 0.02, 0.4)), at: (-20.0, 0.0, -10.0), material: White, collide: false),
+
+        // 3. Hearing (x = 20): the guard faces south, away from three lanes north of him at 4, 8
+        // and 14 m (8 m long, posts at their ends). Reaches: sneak 2, walk 6, run 12, sprint 18 m.
+        (name: "hear-4m", shape: Box(size: (8.0, 0.02, 0.4)), at: (20.0, 0.0, -4.0), material: Green, collide: false),
+        (name: "hear-8m", shape: Box(size: (8.0, 0.02, 0.4)), at: (20.0, 0.0, -8.0), material: Yellow, collide: false),
+        (name: "hear-14m", shape: Box(size: (8.0, 0.02, 0.4)), at: (20.0, 0.0, -14.0), material: Red, collide: false),
+        (name: "hear-4m-w", shape: Cylinder(radius: 0.1, height: 0.5), at: (16.0, 0.0, -4.0), material: Green, collide: false),
+        (name: "hear-4m-e", shape: Cylinder(radius: 0.1, height: 0.5), at: (24.0, 0.0, -4.0), material: Green, collide: false),
+        (name: "hear-8m-w", shape: Cylinder(radius: 0.1, height: 0.5), at: (16.0, 0.0, -8.0), material: Yellow, collide: false),
+        (name: "hear-8m-e", shape: Cylinder(radius: 0.1, height: 0.5), at: (24.0, 0.0, -8.0), material: Yellow, collide: false),
+        (name: "hear-14m-w", shape: Cylinder(radius: 0.1, height: 0.5), at: (16.0, 0.0, -14.0), material: Red, collide: false),
+        (name: "hear-14m-e", shape: Cylinder(radius: 0.1, height: 0.5), at: (24.0, 0.0, -14.0), material: Red, collide: false),
+
+        // 4. Search (x = 60): an open yard ahead of the guard, a street light in its middle, boxes
+        // and pillars to break his line of sight behind.
+        (name: "search-box-1", shape: Box(size: (1.0, 1.5, 1.0)), at: (56.0, 0.0, -6.0), material: Orange),
+        (name: "search-box-2", shape: Box(size: (1.0, 1.5, 1.0)), at: (64.0, 0.0, -7.0), material: Orange),
+        (name: "search-box-3", shape: Box(size: (2.0, 2.0, 1.0)), at: (60.0, 0.0, -12.0), material: Orange),
+        (name: "search-pillar-w", shape: Cylinder(radius: 0.4, height: 2.5), at: (54.0, 0.0, -12.0), material: White),
+        (name: "search-pillar-e", shape: Cylinder(radius: 0.4, height: 2.5), at: (66.0, 0.0, -13.0), material: White),
+
+        // 5. Impacts (0, 0, 40): a stack of light crates 6 m ahead of the guard and two loose ones.
+        (name: "crate-1", shape: Box(size: (0.5, 0.5, 0.5)), at: (0.0, 0.0, 34.0), material: Orange, dynamic: Some(5.0)),
+        (name: "crate-2", shape: Box(size: (0.5, 0.5, 0.5)), at: (0.0, 0.5, 34.0), yaw: 15.0, material: Orange, dynamic: Some(5.0)),
+        (name: "crate-3", shape: Box(size: (0.5, 0.5, 0.5)), at: (0.0, 1.0, 34.0), yaw: -10.0, material: Orange, dynamic: Some(5.0)),
+        (name: "crate-4", shape: Box(size: (0.5, 0.5, 0.5)), at: (-1.5, 0.0, 34.5), material: Orange, dynamic: Some(5.0)),
+        (name: "crate-5", shape: Box(size: (0.5, 0.5, 0.5)), at: (1.5, 0.0, 34.5), material: Orange, dynamic: Some(5.0)),
+
+        // Street-light posts: the lantern hangs 0.7 m below its hook (its origin, 3 m up) from an arm
+        // off a post 0.5 m east. No colliders: they must not shadow the lamp's gameplay source (MA16
+        // puts it 0.3 m above the hook).
+        (name: "lamp-1-post", shape: Cylinder(radius: 0.08, height: 3.1), at: (-46.0, 0.0, -6.0), material: Dark, collide: false),
+        (name: "lamp-1-arm", shape: Box(size: (0.6, 0.06, 0.06)), at: (-46.25, 3.0, -6.0), material: Dark, collide: false),
+        (name: "lamp-2-post", shape: Cylinder(radius: 0.08, height: 3.1), at: (-46.0, 0.0, -10.0), material: Dark, collide: false),
+        (name: "lamp-2-arm", shape: Box(size: (0.6, 0.06, 0.06)), at: (-46.25, 3.0, -10.0), material: Dark, collide: false),
+        (name: "lamp-3-post", shape: Cylinder(radius: 0.08, height: 3.1), at: (-23.5, 0.0, -12.0), material: Dark, collide: false),
+        (name: "lamp-3-arm", shape: Box(size: (0.6, 0.06, 0.06)), at: (-23.75, 3.0, -12.0), material: Dark, collide: false),
+        (name: "lamp-4-post", shape: Cylinder(radius: 0.08, height: 3.1), at: (-15.5, 0.0, -12.0), material: Dark, collide: false),
+        (name: "lamp-4-arm", shape: Box(size: (0.6, 0.06, 0.06)), at: (-15.75, 3.0, -12.0), material: Dark, collide: false),
+        (name: "lamp-5-post", shape: Cylinder(radius: 0.08, height: 3.1), at: (60.5, 0.0, -8.0), material: Dark, collide: false),
+        (name: "lamp-5-arm", shape: Box(size: (0.6, 0.06, 0.06)), at: (60.25, 3.0, -8.0), material: Dark, collide: false),
+        (name: "lamp-6-post", shape: Cylinder(radius: 0.08, height: 3.1), at: (3.5, 0.0, 37.0), material: Dark, collide: false),
+        (name: "lamp-6-arm", shape: Box(size: (0.6, 0.06, 0.06)), at: (3.25, 3.0, 37.0), material: Dark, collide: false),
+    ],
+    actors: [
+        (id: "imperial guard", spawn: "guard-lit"),
+        (id: "imperial guard", spawn: "guard-dark"),
+        (id: "imperial guard", spawn: "guard-cover"),
+        (id: "imperial guard", spawn: "guard-hearing"),
+        (id: "imperial guard", spawn: "guard-search"),
+        (id: "imperial guard", spawn: "guard-impacts"),
+    ],
+    placed: [
+        // Hooks 3 m up (the lantern hangs below). Light lane: two lamps 1.5 m east of the lane, 6 and
+        // 10 m ahead of the guard.
+        (id: "light_de_streetlight_01", at: (-46.5, 3.0, -6.0)),
+        (id: "light_de_streetlight_01", at: (-46.5, 3.0, -10.0)),
+        // Cover: behind the walk line, by the gaps.
+        (id: "light_de_streetlight_01", at: (-24.0, 3.0, -12.0)),
+        (id: "light_de_streetlight_01", at: (-16.0, 3.0, -12.0)),
+        // Search yard.
+        (id: "light_de_streetlight_01", at: (60.0, 3.0, -8.0)),
+        // Impacts: beside the crates.
+        (id: "light_de_streetlight_01", at: (3.0, 3.0, 37.0)),
+    ],
+)
