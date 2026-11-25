@@ -1961,3 +1961,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   the big interaction slice; until it lands, travel = instant teleport (fade, time spent).
 - 2026-11-25 (gameplay-roadmaps-3, owner): a passenger leaving a boat at sea: the boat slows down and stops (Sea of
   Thieves); after a while the crew loses patience and goes on, like land vehicles.
+- 2026-11-25 (gameplay-roadmaps-3, owner): NPC perception is per individual: a `PerceptionProfile` (data, moddable)
+  scales the global awareness/sight/hearing/search tunables; the game fills it from stats, race/creature traits, role
+  and temporary states (drunk, tired, on duty). Spec slice before AI8b/AI8f.
