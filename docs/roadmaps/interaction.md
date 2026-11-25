@@ -78,7 +78,7 @@ Stages 2 and 3 run in parallel after Stage 1; Stage 6 can start any time (IN20 n
 |---|---|---|---|---|
 | IN27 | `interaction.md` core, (a), (b): decisions 1-5, 9, 11; build table | docs | - | **done 2026-11-25** (core 41 KB + `interaction-carry.md`, `-destruction.md`, `-vehicles.md`; adds hand claims for seated chains, stable focus, contact points from gta6.md) |
 | IN28 | `interaction.md` new "(d) World rules": decisions 6-8, caps, reuse, industry | docs | IN27 | **done 2026-11-26** (`interaction-world-rules.md`, 19.8 KB; noise via `InteractionNoise` → host → `NoiseEvent`; `Lit` → `GameplayLights` → MA16; IN17 moves `material` to `InteractableDef`) |
-| IN29 | `interaction-adapter.md`: activation per class, doors, lights, breakables, ignition, switches | docs | IN28 | doccheck |
+| IN29 | `interaction-adapter.md`: activation per class, doors, lights, breakables, ignition, switches | docs | IN28 | **done 2026-11-26** (17.2 KB: 15-class activation table with OpenMW 4e718b50 cites, census defs, world-rules mapping, breakables, switches) |
 | IN30 | `world-reactions.md`: IN14 kinds (door, lever, light, fire), IN15 additions | docs | IN28 | **done 2026-11-26** (14-kind `WorldChange` table with concerns fed, `burnt` + door/lever/light reset rows, at-rest save, holder link wins) |
 | TV0b | `interaction.md` (c) rewrite (travel decisions 3-6; IN7, IN10, IN11, IN20-IN26) | docs | TV0, TV-R2 | doccheck |
 
@@ -88,7 +88,8 @@ Stages 2 and 3 run in parallel after Stage 1; Stage 6 can start any time (IN20 n
 |---|---|---|---|---|
 | IN0a | Core crate + claims: def types (serde), `Claims` (priority, preempt Reserved only, queue, lease, groups, hand claims, invalidation, sorted batch), `InteractParams` defaults | `sf_interaction` | IN27 | **done 2026-11-25** (26 exact tests; spec "As built (IN0a)") |
 | IN0b | Core queries: `PointIndex` + `find_slots`, `rank_verbs` + focus stability, `pick_entrance`/`pick_exit`, `interact.cook` stub | `sf_interaction` | IN0a | **done 2026-11-26** (13 exact tests, crate 39; spec "As built (IN0b)") |
-| IN31 | Shell: index on load, `FixedUpdate` claims, focus verbs + hold list, `Activate` → `Activated` → default | `sf_interaction_bevy` | IN0 | headless: handled suppresses default |
+| IN31a | Shell part 1: new `sf_interaction_bevy`, `Claims` + `PointIndex` resources, claim/index request messages applied as one sorted batch on `FixedUpdate`, lease ticks, `InteractionEvent` out, live `interact.*` binding | `sf_interaction_bevy` | IN0a, IN0b | headless: same-tick requests deterministic, lease expiry in ticks, tunable change applies |
+| IN31b | Shell part 2: per-player `FocusStabilizer`, best verb + hold list, `Activate` → `Activated` (+ verb) → gates → default | `sf_interaction_bevy` | IN31a | headless: handled suppresses default; gate refusal; script `Activate` runs gates + default once |
 | IN32 | Adapter defs (census) + each existing class's activation as a default verb, Classic switches | `mw_interaction` | IN31, IN29 | exact per class, unchanged; def counts |
 | IN2 | Player sits/stands: Interaction move, `Seated`, side entrances, Kimodo clips | `sf_interaction`, `sf_action` | IN31 | exact via `step`; owner IN-2 |
 | IN3 | Beds, lean spots, rest hook, hand IK | `sf_interaction_bevy`, `mw_interaction` | IN2 | hook once; owner IN-3 |
