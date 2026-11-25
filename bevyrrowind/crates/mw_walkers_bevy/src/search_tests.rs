@@ -8,12 +8,15 @@ use bevy_app::App;
 use bevy_math::Vec3;
 use sf_ai::{AwarenessBand, LastSeen, PerceptTarget};
 use sf_ai_bevy::{AiActor, AiAwareness, AiPerceptClock, AiPerceptionSettings, AiSightPlugin};
-use sf_controller_bevy::{Mover, MoverParams};
+use sf_controller_bevy::{MoveIntent, Mover, MoverParams};
 use sf_coords::WorldPos;
 use sf_ids::{ActorKey, PlayerKey};
+use sf_nav::QueryFilter;
+use sf_nav_bevy::NavCorridor;
 
-use super::Walker;
-use super::drive_tests::{Floor, app_with, home, nav_ws, spawn_wanderer};
+use super::drive_tests::{Floor, SPEED, app_with, home, nav_ws, spawn_wanderer, wrap};
+use super::{ActorSpace, Walker};
+use crate::reaction::{Phase, Reaction};
 use crate::search::Searcher;
 
 /// Fixed ticks per second (the harness's 60 Hz).
@@ -51,6 +54,78 @@ fn spawn(app: &mut App) -> bevy_ecs::entity::Entity {
         .entity_mut(e)
         .insert((AiActor(ActorKey(1)), crate::sight::observer(MoverParams::default().height)));
     e
+}
+
+/// A stationary NPC as `attach` makes one with `AI_W` distance 0 (a guard on post): mover,
+/// corridor, reactions and sight, no `Walker`; facing `yaw`.
+fn spawn_stationary(app: &mut App, yaw: f32) -> bevy_ecs::entity::Entity {
+    let ws = nav_ws();
+    let filter = QueryFilter::for_class(&mw_bake::nav::areas(), mw_bake::nav::HUMANOID);
+    app.world_mut()
+        .spawn((
+            Mover::new(home(), yaw, MoverParams::default(), WorldPos::ORIGIN),
+            MoveIntent::default(),
+            ActorSpace(ws.clone()),
+            NavCorridor::new(ActorKey(2), mw_bake::nav::HUMANOID, ws, SPEED).with_filter(filter),
+            Reaction::new(SPEED),
+            AiActor(ActorKey(2)),
+            crate::sight::observer(MoverParams::default().height),
+        ))
+        .id()
+}
+
+/// What [`run_search_and_return`] saw.
+struct Episode {
+    post: (WorldPos, f32),
+    /// Farthest planar distance from the post, m.
+    farthest: f32,
+    /// Ticks after the raise when the search ended and when the reaction handed back.
+    search_end: usize,
+    hand_back: usize,
+    /// Planar drift after the hand-back, m (a stationary actor stays put).
+    drift_after: f32,
+}
+
+/// Raises Searching on a settled `e`, runs the ttl plus 30 s and records the search, the walk back
+/// and the hand-back.
+fn run_search_and_return(app: &mut App, e: bevy_ecs::entity::Entity) -> Episode {
+    for _ in 0..30 {
+        app.update();
+    }
+    let mover = app.world().get::<Mover>(e).unwrap();
+    let post = (mover.loco.position, mover.loco.motion.yaw);
+    assert_eq!(app.world().get::<Reaction>(e).unwrap().phase(), Phase::Routine);
+    raise(app, e, AwarenessBand::Searching);
+    let (mut farthest, mut search_end, mut hand_back, mut at_hand_back, mut drift_after) = (0.0_f32, None, None, None, 0.0_f32);
+    for tick in 0..(TTL_TICKS + 30 * HZ) {
+        app.update();
+        let (pos, _) = sane(app, e, tick);
+        farthest = farthest.max(planar(pos, post.0));
+        let world = app.world();
+        let searching = world.get::<Searcher>(e).unwrap().is_searching();
+        let reaction = world.get::<Reaction>(e).unwrap();
+        if tick == 0 {
+            assert!(searching && reaction.owns(), "the search did not pre-empt the routine at once");
+            assert_eq!(reaction.anchor(), Some(post), "the anchor is not where the routine was pre-empted");
+        }
+        if !searching && search_end.is_none() {
+            search_end = Some(tick);
+        }
+        if search_end.is_some() && hand_back.is_none() && !reaction.owns() {
+            hand_back = Some(tick);
+            at_hand_back = Some(pos);
+        }
+        if let Some(p) = at_hand_back {
+            drift_after = drift_after.max(planar(pos, p));
+        }
+    }
+    Episode {
+        post,
+        farthest,
+        search_end: search_end.expect("the search never ended"),
+        hand_back: hand_back.expect("the reaction never handed back"),
+        drift_after,
+    }
 }
 
 fn lkp() -> WorldPos {
@@ -115,7 +190,7 @@ fn a_searching_walker_goes_to_the_lkp_looks_widens_and_gives_up_at_ttl() {
             if let Some(y0) = yaw_at_lkp
                 && s.stats.reached == 1
             {
-                turned = turned.max(super::drive_tests::wrap(yaw - y0).abs());
+                turned = turned.max(wrap(yaw - y0).abs());
             }
         } else if first_search_tick.is_some() && end_tick.is_none() {
             end_tick = Some(tick);
@@ -152,6 +227,10 @@ fn a_searching_walker_goes_to_the_lkp_looks_widens_and_gives_up_at_ttl() {
     // The band is still Searching (decay held): no restart without fresh evidence; wander resumed.
     assert_eq!(world.get::<AiAwareness>(e).unwrap().0.band(TARGET), AwarenessBand::Searching);
     assert!(wander_arrivals >= 1, "the wander did not resume after the search");
+    // AI8i: the wanderer walked back to where the search pre-empted its wander first.
+    let r = world.get::<Reaction>(e).unwrap();
+    assert_eq!((r.stats.preempted, r.stats.returns, r.stats.returned), (1, 1, 1), "{:?}", r.stats);
+    assert_eq!(r.phase(), Phase::Routine);
 }
 
 #[test]
@@ -236,4 +315,74 @@ fn a_running_search_holds_searching_to_its_ttl_then_decays_out_and_wanders() {
     // 2.5 s = 150 ticks of decay from the release tick (f32 steps: within a tick).
     assert!((149..=152).contains(&(exit - end)), "left Searching {} ticks after the give-up", exit - end);
     assert!(arrivals >= 1, "the wander did not resume");
+}
+
+#[test]
+fn a_level_actor_searches_after_its_script_takes_over() {
+    // AI47c (failing first): the perception lab's search guard never left his post in the owner
+    // run. Level actors get their walker from `attach` like any NPC (the lab's `imperial guard` has
+    // AI_W distance 2000, so a `Walker` + `NavCorridor` + observer), then
+    // `mw_exterior_bevy::level::actors::script` (its `try_remove::<(Walker, Avoider)>()`) drops the
+    // wander for its `ActorScript`. This does exactly that removal on the harness walker, raises
+    // Searching at the LKP 6 m away and expects him to walk there within 10 s (AI8i: the reaction
+    // layer runs without a `Walker`), then to walk back to his post.
+    let mut app = app(true);
+    let e = spawn(&mut app);
+    // `script` runs on `Added<Mover>`, before the walker's first drive tick (it is still `Dormant`).
+    app.world_mut().entity_mut(e).remove::<(Walker, sf_controller_bevy::Avoider)>();
+    for _ in 0..30 {
+        app.update();
+    }
+    let post = app.world().get::<Mover>(e).unwrap().loco.position;
+    raise(&mut app, e, AwarenessBand::Searching);
+    let mut moved = 0.0_f32;
+    for tick in 0..(10 * HZ) {
+        app.update();
+        let (pos, _) = sane(&app, e, tick);
+        moved = moved.max(planar(pos, post));
+    }
+    let stats = app.world().get::<Searcher>(e).unwrap().stats;
+    println!("AI47c: level actor after its script: {stats:?}, moved {moved:.2} m from the post");
+    assert!(stats.started >= 1, "the search never started on a scripted level actor: {stats:?}");
+    assert!(moved > 3.0, "the scripted level actor stayed at his post (moved {moved:.2} m)");
+    for _ in 0..(TTL_TICKS + 20 * HZ) {
+        app.update();
+    }
+    let world = app.world();
+    let (r, pos) = (world.get::<Reaction>(e).unwrap(), world.get::<Mover>(e).unwrap().loco.position);
+    println!("AI8i: level actor back {:.2} m from his post, {:?}", planar(pos, post), r.stats);
+    assert_eq!((r.stats.returned, r.phase()), (1, Phase::Routine), "{:?}", r.stats);
+    assert!(planar(pos, post) <= 0.5, "{:.2} m from his post", planar(pos, post));
+}
+
+#[test]
+fn a_stationary_npc_searches_then_walks_back_to_its_post_and_facing() {
+    // AI8i: `AI_W` distance 0 (guards on post, shopkeepers) gets no `Walker`, only the reactions.
+    let mut app = app(true);
+    let e = spawn_stationary(&mut app, 2.0);
+    let ep = run_search_and_return(&mut app, e);
+    let world = app.world();
+    let (mover, r) = (world.get::<Mover>(e).unwrap(), world.get::<Reaction>(e).unwrap());
+    let stats = world.get::<Searcher>(e).unwrap().stats;
+    let (back, yaw_off) = (planar(mover.loco.position, ep.post.0), wrap(mover.loco.motion.yaw - ep.post.1).abs());
+    let tol = sf_ai::ExecConfig::default().face_tolerance_rad;
+    println!(
+        "AI8i stationary: moved {:.1} m, search ended tick {} (ttl {TTL_TICKS}), handed back tick {} ({:.1} s of \
+         return), back {back:.2} m / {yaw_off:.3} rad off the post, drift after {:.3} m, {stats:?}, {:?}",
+        ep.farthest,
+        ep.search_end,
+        ep.hand_back,
+        secs(ep.hand_back - ep.search_end),
+        ep.drift_after,
+        r.stats,
+    );
+    assert_eq!((stats.started, stats.gave_up), (1, 1), "{stats:?}");
+    assert!(stats.reached >= 1, "never reached the LKP: {stats:?}");
+    assert!(ep.farthest > 3.0, "stayed at the post ({:.2} m)", ep.farthest);
+    assert!(ep.search_end.abs_diff(TTL_TICKS) <= 2, "search ended on tick {}", ep.search_end);
+    assert_eq!((r.stats.preempted, r.stats.returns, r.stats.returned, r.stats.return_failed), (1, 1, 1, 0), "{:?}", r.stats);
+    assert_eq!(r.phase(), Phase::Routine);
+    assert!(back <= 0.5, "{back:.2} m from the post");
+    assert!(yaw_off <= tol + 0.02, "facing {yaw_off:.3} rad off the post's (tolerance {tol})");
+    assert!(ep.drift_after < 0.1, "moved {:.3} m after the hand-back", ep.drift_after);
 }

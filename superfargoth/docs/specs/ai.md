@@ -267,6 +267,7 @@ unless noted; `hearing_mul` and the other `PerceptionProfile` / `PerceptionState
 | `asleep_wake_m` / `groggy_s` | 12 / 4 | 0-100, 0-30 |
 | `distraction_ttl_s` / `alert_alertness` (gain mul from Suspicious up) / `groggy_alertness` (AI8a) | 10 / 1.5 / 0.5 | 0-60, 0-4, 0-1 |
 | `light_search_m` / `light_rays` / `dark_threshold` | 15 / 2 / 0.15 | 1-60, 0-4, 0-1 |
+| `react_step_m` / `react_retarget_m` / `react_hold_s` / `react_face_delay_s` (AI8h1, Guess: Curious turn, Suspicious step toward LKP) | 3 / 1.5 / 2 / 0.3 | 0-10, 0-10, 0-10, 0-2 |
 | `roof_sky_mul` (sky under a roof) / `light_falloff_exp` (k in `saturate(1 - (d/r)^k)²`; UE4/Frostbite window use 4) (AI8d1, Guess) | 0.25 / 2 | 0-1, 1-8 |
 | `sight_period_s` / `tier1_period_s` / `sight_cache_s` / `cache_move_m` | 0.1 / 1.0 / 0.25 / 0.5 | 0.02-10, 0-5 |
 | `max_rays_per_tick` Floor / Medium / High / Ultra / Dedicated (group `sim.cpu_tier`) | 24 / 32 / 48 / 64 / 96 | 4-512 |

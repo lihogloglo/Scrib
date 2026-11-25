@@ -419,10 +419,13 @@ impl MwWorld for View<'_> {
     fn item_count(&self, ctx: &ConversationCtx, target: &Target, item: &RecordId) -> u64 {
         match target {
             Target::Player => self.s.pc.loadout.count(item),
-            other => self
-                .target(ctx, other)
-                .and_then(|k| self.s.inventories.get(&k))
-                .map_or(0, |inv| inv.loadout.count(item)),
+            // A container nobody opened yet counts its record's contents (the seed opening it gives).
+            other => self.target(ctx, other).map_or(0, |k| match self.c.containers.get(&k) {
+                Some(record) => {
+                    crate::inventory::container_count(self.s, &self.c.records, k, record, item, crate::inventory::player_level(self.sheets))
+                }
+                None => self.s.inventories.get(&k).map_or(0, |inv| inv.loadout.count(item)),
+            }),
         }
     }
 
@@ -856,15 +859,15 @@ impl Rpg {
         view.refresh_from(&talk.session, &self.content.dialogue.db, &rules, &self.state.world.topics);
     }
 
-    fn character(&mut self, ctx: &ConversationCtx, target: &Target) -> Option<(Holder, &mut CharacterRpg)> {
+    fn character(&mut self, ctx: &ConversationCtx, target: &Target, sheets: &dyn MwSheets) -> Option<(Holder, &mut CharacterRpg)> {
         if *target == Target::Player {
             return Some((Holder::Player(PlayerId::HOST), &mut self.state.pc));
         }
         let key = self.content.target(ctx, target, &self.script_locals)?;
         // A container is seeded from its record first (opening it later must not find an
-        // empty store and skip the seed).
+        // empty store and skip the seed), levelled entries at the player's level.
         if let Some(record) = self.content.containers.get(&key) {
-            let store = crate::inventory::container_store(&mut self.state, &self.content.records, key, record);
+            let store = crate::inventory::container_store(&mut self.state, &self.content.records, key, record, crate::inventory::player_level(sheets));
             return Some((Holder::Actor(key), store));
         }
         Some((Holder::Actor(key), self.npc_store(key)))
@@ -896,13 +899,13 @@ impl Rpg {
             }
             ResultEffect::AddTopic(t) => events.extend(self.state.world.apply(RpgCommand::AddTopic(t)).unwrap_or_default()),
             ResultEffect::AddItem { target, item, count } => {
-                if let Some((holder, inv)) = self.character(ctx, &target) {
+                if let Some((holder, inv)) = self.character(ctx, &target, sheets) {
                     let _ = inv.apply(RpgCommand::AddItem { holder, item, count, attrs: Attrs::new() });
                 }
             }
             // `RemoveItem` removes what there is (no error past zero).
             ResultEffect::RemoveItem { target, item, count } => {
-                if let Some((holder, inv)) = self.character(ctx, &target) {
+                if let Some((holder, inv)) = self.character(ctx, &target, sheets) {
                     let count = count.min(u32::try_from(inv.loadout.count(&item)).unwrap_or(u32::MAX));
                     if count > 0 {
                         let _ = inv.apply(RpgCommand::RemoveItem { holder, item, count });

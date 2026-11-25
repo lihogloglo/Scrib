@@ -117,7 +117,7 @@ brings someone to look; a drunk notices nothing.
 |---|---|---|---|---|
 | LW4a | New Bevy-free crate `sf_crime` (hakari excludes): `DetectionRules`, `DetectIn`, `StealthState`, `StandardDetection` (modern default: stance, speed, light; tunables) | `sf_crime` | LW0b (spec section written) | **done 2026-11-25** (10 exact tests; ledger crime) |
 | LW4b1 | Sight seam: `sf_ai_bevy` sight builds `DetectIn` per check and takes visibility from an `AiDetectionRules` resource (default `StandardDetection`) instead of `light_only_visibility`; target `AiVisibilityFactors` component (stance, modifiers) the game writes; Meter only (Classic with MA5) | `sf_ai_bevy` | LW4a | **done 2026-11-25** (4 headless tests; upright exact, crouched less, 100 hides) |
-| LW4b2 | `sf_crime_bevy` (new): plugin binds `crime.stealth.*` tunables live and installs the rules into `AiDetectionRules` | `sf_crime_bevy` | LW4b1 | headless: a tunable change reaches the rules |
+| LW4b2 | `sf_crime_bevy` (new): plugin binds `crime.stealth.*` tunables live and installs the rules into `AiDetectionRules` | `sf_crime_bevy` | LW4b1 | **done 2026-11-25** (4 headless tests; live change reaches the rules) |
 | MA5 | (AI lane) `awarenessCheck` as Morrowind `DetectionRules`, Classic roll | `mw_ai` | AI8a, LW4 | exact vs formula |
 | LW12 | `StealthView` from `PlayerDetection.band`, sneak eye (Classic: icon) | `scb`, `ui` | LW4, AI8b, AI8d | exact; owner LW-3 |
 | LW13 | Outcome noises: failed/snapped pick, trap, forced lock; `NoiseKind` rows | `scb`, `mw_crime` | LW6, AI8c | exact loudness |

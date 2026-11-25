@@ -123,7 +123,7 @@ what it is.
 
 **Names and the split.** Framework tunables use system prefixes from `docs/SYSTEMS.md` (`shadow.`, `stream.`,
 `lod.`, `far.`, `anim.`, `crowd.`, `sky.`, `weather.`, `surface.`, `terrain.`, `water.`, `texture.`, `render.`,
-`ai.`, `travel.`, `physics.`, `camera.`, `move.`, `combat.`, `audio.`, `ui.`, `diag.`, `app.`). Morrowind-only values are
+`ai.`, `interact.`, `travel.`, `physics.`, `camera.`, `move.`, `combat.`, `audio.`, `ui.`, `diag.`, `app.`). Morrowind-only values are
 declared in `bevyrrowind/` under `mw.` (`mw.doors.reach_m`). A game that wants a different *default* for a
 framework tunable doesn't redeclare it: its base mod ships a record (mod layer). That resolves the census "Two
 truths": `PointShadowBudget` keeps the generic 15/25 m, Bevyrrowind's base mod sets 35/45 m with its source.

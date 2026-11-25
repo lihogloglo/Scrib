@@ -13,6 +13,7 @@ mod db;
 mod disposition;
 mod equip;
 mod filter;
+mod levelled;
 mod persuasion;
 mod result;
 mod runner;
@@ -39,6 +40,7 @@ pub use disposition::{
 };
 pub use equip::{MwEquipKind, MwEquipRules, MwSlot, SLOT_NAMES, clothing_value, record_clothing_value, slot_table};
 pub use filter::{ActorFacts, MwDialogueRules, MwView, rank_name};
+pub use levelled::{LevelledRoll, initial_items, levelled_item};
 pub use persuasion::{
     AiNudge, PersuaderStats, PersuasionInput, PersuasionKind, PersuasionOutcome, PersuasionRatings, PersuasionSession,
     persuader_stats, persuasion_change, persuasion_input, persuasion_ratings, persuasion_roll, session_perm_change,
@@ -76,6 +78,8 @@ mod tests_barter;
 mod tests_calendar;
 #[cfg(test)]
 mod tests_disposition;
+#[cfg(test)]
+mod tests_levelled;
 #[cfg(test)]
 mod tests_script_host;
 #[cfg(test)]

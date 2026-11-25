@@ -5330,6 +5330,7 @@ dependencies = [
  "sf_controller",
  "sf_controller_bevy",
  "sf_coords",
+ "sf_crime_bevy",
  "sf_diag_bevy",
  "sf_gi_bevy",
  "sf_groundcover",
@@ -5971,6 +5972,7 @@ dependencies = [
  "sf_controller",
  "sf_controller_bevy",
  "sf_coords",
+ "sf_crime_bevy",
  "sf_diag_bevy",
  "sf_ids",
  "sf_nav",
@@ -8203,6 +8205,7 @@ dependencies = [
  "sf_coords",
  "sf_model",
  "sf_terrain",
+ "sf_tunables",
  "tempfile",
  "thiserror 2.0.21",
 ]
@@ -8244,6 +8247,19 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "sf_ai",
+]
+
+[[package]]
+name = "sf_crime_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_ecs",
+ "sf_ai_bevy",
+ "sf_crime",
+ "sf_tunables",
+ "sf_tunables_bevy",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -8399,6 +8415,19 @@ dependencies = [
  "bevy_ecs",
  "postcard",
  "serde",
+]
+
+[[package]]
+name = "sf_interaction"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "ron",
+ "serde",
+ "sf_ids",
+ "sf_records",
+ "sf_world",
+ "smallvec",
 ]
 
 [[package]]

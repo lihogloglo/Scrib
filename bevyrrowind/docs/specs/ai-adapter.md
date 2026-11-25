@@ -254,6 +254,14 @@ change. Modifiers from the host sheet (`StatIdx` as `StatId`): `sneak` always, `
 yet: MA19); `StandardDetection` ignores both, MA5 reads them. Measured (light 0.40, guard 10 m facing): awareness at
 90 ticks 1.00 standing vs 0.24 sneaking; sneaking reaches 0.77 at 240.
 
+As built (AI8i, 2026-11-25): `mw_walkers_bevy/src/reaction.rs`: perception reactions are a layer over the routine.
+`react` (before `NavSystems::Corridor`) runs for every ground actor with a `NavCorridor` + `Reaction` (wanderers, AI_W
+distance-0 NPCs, scripted level actors): Searching pre-empts the routine and records an anchor (pose + yaw at
+pre-emption), runs the search, then walks back to the anchor and turns to its yaw, then hands back; a new Searching
+episode can pre-empt the return. Routines read `Reaction::owns` (wander and level scripts pause);
+`apply_reaction_intent` keeps a standing reaction's facing; level path drives run after the corridor. Off the navmesh:
+no reaction. `ReactionStats` preempted / returns / returned / return_failed. Not yet: avoidance for non-wanderers (AI8j).
+
 ## Open questions
 
 None open. Decided 2026-11-08 (owner-delegated; `superfargoth/docs/research/ai-nav-decisions-2026-11-08.md` (e), (f),

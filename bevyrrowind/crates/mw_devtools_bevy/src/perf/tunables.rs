@@ -59,6 +59,7 @@ pub const CATALOG: &[(&str, &[&dyn AnyDef])] = &[
     ("sf_tunables::presets", sf_tunables::presets::TUNABLES),
     ("sf_ai_bevy::perception", sf_ai_bevy::perception::PERCEPTION_TUNABLES),
     ("sf_ai_bevy::exec", sf_ai_bevy::exec::TUNABLES),
+    ("sf_crime_bevy", sf_crime_bevy::TUNABLES),
     ("mw_walkers_bevy::light_inputs", mw_walkers_bevy::light_inputs::TUNABLES),
     ("mw_walkers_bevy::noise_emitters", mw_walkers_bevy::noise_emitters::TUNABLES),
     ("mw_walkers_bevy::walkers", mw_walkers_bevy::walkers::TUNABLES),

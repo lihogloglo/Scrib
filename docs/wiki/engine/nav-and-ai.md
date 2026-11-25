@@ -74,7 +74,7 @@ per worldspace. `ai.select`, `ai.trace`, `ai.tiers`, `ai.stats` and `ai.gizmos` 
 One anchor (the player), humanoid class only, synchronous store reads: portals and the large class wait for
 NV5 ([ledger](../../ledger/nav.md)). Only `AI_W` wander and search run on `sf_ai` so far; packages (`MA2`), drives
 (`MA4`), Classic awareness (`MA5`) are next. No game noise emitters yet (AI8c2); pitch dark hides fully from sight
-(visibility from crime's `DetectionRules` via `AiDetectionRules`, default `StandardDetection`: light, stance, speed, facing; `sf_ai_bevy/src/detection.rs`, LW4b1; the player's sneak mode sets `Stance::Crouched` there, `mw_walkers_bevy/src/visibility.rs`, MA18); Alerted NPCs do nothing yet. See `docs/ROADMAP.md` 3.9/3.10.
+(visibility from crime's `DetectionRules` via `AiDetectionRules`, default `StandardDetection`: light, stance, speed, facing; `sf_ai_bevy/src/detection.rs`, LW4b1; the player's sneak mode sets `Stance::Crouched` there, `mw_walkers_bevy/src/visibility.rs`, MA18); Reactions (AI8i, `mw_walkers_bevy/src/reaction.rs`) are a layer over the routine: Searching pre-empts wander, post or level script for any ground actor with a corridor, then the actor walks back to its anchor and facing. Alerted NPCs do nothing yet. See `docs/ROADMAP.md` 3.9/3.10.
 
 ## Specs
 `superfargoth/docs/specs/nav.md`, `ai.md`, `ai-as-built.md`, `orca.md`; `bevyrrowind/docs/specs/ai-adapter.md`,

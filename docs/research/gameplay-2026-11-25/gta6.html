@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GTA 6 as the NPC and interactivity benchmark (research, 2026-11-25)</title>
+<style>
+  :root { --bg:#fbfaf7; --fg:#1d1c1a; --mute:#6b675f; --line:#e3dfd6; --accent:#7a4b16; --ok:#2f6b3a; --warn:#8a5a00; --card:#ffffff; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#161513; --fg:#ece8e0; --mute:#a29d93; --line:#34312c; --accent:#e0a35a; --ok:#7cc48a; --warn:#e2b45a; --card:#1e1d1a; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 920px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 1.7rem; margin: 0 0 6px; }
+  h2 { font-size: 1.2rem; margin: 40px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.02rem; margin: 22px 0 6px; }
+  p.lede { color: var(--mute); margin-top: 0; }
+  code { font: 0.88em ui-monospace, Consolas, monospace; background: color-mix(in srgb, var(--line) 50%, transparent); padding: 1px 4px; border-radius: 4px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin: 12px 0; }
+  .tag { display:inline-block; font-size: .78rem; padding: 1px 8px; border-radius: 99px; border:1px solid currentColor; margin-left: 6px; vertical-align: 2px; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); }
+  table { border-collapse: collapse; width: 100%; font-size: .93rem; margin: 8px 0; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--mute); font-weight: 600; }
+  ol.q li { margin: 6px 0; }
+  .rec { color: var(--mute); }
+  ul { padding-left: 22px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+<h1>GTA 6 as the NPC and interactivity benchmark</h1>
+<p class="lede">Research, 2026-11-25. Public sources only: launch reviews (embargo lifted 2026-11-18), Rob Nelson (Rockstar North) interviews, Take-Two patents. No datamining. Full note with every source: <code>docs/research/gameplay-2026-11-25/gta6.md</code>.
+Tags: <span class="tag ok">V</span> verified (review, interview transcript, patent) · <span class="tag warn">C</span> claimed (press relay, leaks, fan wikis; not built on) · <span class="tag">I</span> inference.</p>
+
+<div class="card">
+<strong>Verdict.</strong> GTA 6 is RDR2's reaction model with more of everything, not a new paradigm. What makes it feel alive is
+a dense layer of small authored reactions applied consistently, not hidden AI depth. Our roadmaps already cover the structure
+(perception, concerns, witnesses, schedules, slots). The gaps are <em>social</em>: temperament, the confrontation ladder,
+paired chatter, ambient incidents. Rockstar has given no technical talk, so everything about <em>how</em> it is built is inference.
+</div>
+
+<h2>What it verifiably does</h2>
+<ul>
+<li><strong>Per-NPC traits</strong> <span class="tag ok">V</span>: temperament and aggression; the reaction depends on "temperament, aggression, where they are, what they have seen, and how the player has behaved towards them" (<a href="https://www.tweaktown.com/news/114388/gta-6-npcs-get-personality-traits-that-decide-whether-they-flee-or-fight-back/index.html">Edge via TweakTown</a>).</li>
+<li><strong>Carry state matters</strong> <span class="tag ok">V</span>: a gun in the hands unsettles people far more than one slung on the back.</li>
+<li><strong>Social space</strong> <span class="tag ok">V</span>: stand too close to a group and they turn: "can I help you?"; tail someone and they say "oh, hey", then get aggressive or leave. With the weapon holstered, hold L2 to greet or antagonise (<a href="https://www.bestbuy.com/gamers/gamers-articles/pcmcat1791490206931">Nelson, IGN transcript</a>).</li>
+<li><strong>Short escalation ladder</strong> <span class="tag ok">V</span>: notice, then verbal, then aggressive or leave; robbed people may hit back when you turn away; crowds scatter, some challenge (<a href="https://kotaku.com/grand-theft-auto-6-the-kotaku-review-2000757842">Kotaku review</a>).</li>
+<li><strong>Witness-only, descriptive policing</strong> <span class="tag ok">V</span>: a crime must be seen (or trip an alarm). Police know your outfit and vehicle, not who you are. A new outfit or vehicle, or splitting from your partner, lowers heat.</li>
+<li><strong>Hit reactions by body part</strong> <span class="tag ok">V</span>; knocked-out NPCs stay down, brawl bystanders get up and walk off (<a href="https://www.gfinityesports.com/article/gta-6-review-worth-every-second-of-the-13-year-wait">Gfinity</a>).</li>
+<li><strong>Staged world incidents</strong> <span class="tag ok">V</span>: a crash with police statements and paramedics, drive-bys, distant hold-ups, a lightning fire.</li>
+<li><strong>Dialogue volume</strong> <span class="tag ok">V</span>: a Los Angeles studio built only for NPC lines; the NPC team doubled since RDR2.</li>
+<li><strong>Interactions retargeted to body size</strong> on the fly <span class="tag ok">V</span> (Nelson).</li>
+<li><strong>Not verified anywhere</strong>: NPC chains such as sit, drink, put back; reactions to filming, bumping, nudity. The "600k animations" figure is <span class="tag warn">C</span> (one source says voice lines) and is surely clips × variants.</li>
+</ul>
+
+<h2>Their weak spots (ours to avoid)</h2>
+<ul>
+<li>Context prompts misfire: looting a body enters a nearby car; trunk prompts flicker with gaze (Kotaku) <span class="tag ok">V</span>.</li>
+<li>Every shop is open 24 hours; a 3 a.m. barbershop sits empty but for staff <span class="tag ok">V</span>.</li>
+</ul>
+
+<h2>Gaps against our plans: 9 proposed slices</h2>
+<table>
+<tr><th>ID</th><th>Proposed slice</th><th>GTA 6 behaviour</th><th>Builds on</th></tr>
+<tr><td><strong>GX2</strong></td><td><code>Temperament</code> per individual (flee, freeze, confront, fight, test) as data plus role defaults</td><td>Traits decide flee / fight / test</td><td>AI0g (perception only), AI20, AI37</td></tr>
+<tr><td><strong>GX3</strong></td><td>Personal-space and tailing concerns: turn and speak, then leave or escalate</td><td>"Can I help you?"</td><td>AI20, AI28 <code>Loitering</code></td></tr>
+<tr><td><strong>GX9</strong></td><td>Player social verbs: greet, antagonise, holstered only</td><td>Hold L2 to greet / provoke</td><td>IN31 verbs, DQ-23 rule DB</td></tr>
+<tr><td><strong>GX7</strong></td><td>Ambient incident director: brawl, arrest, ambush, procession, wounded traveller; roles are slots, capped</td><td>Crash + paramedics, drive-by</td><td>AI27, IN0 slots</td></tr>
+<tr><td>GX1</td><td><code>WeaponDrawn</code> weighted by carry state (hand, slung, sheathed, hidden) and distance</td><td>Held gun alarms more than slung</td><td>AI28</td></tr>
+<tr><td>GX5</td><td>Body-size contact retargeting: slots give contact points, the anim graph IK-fits them. <em>Settle before generating Kimodo clips.</em></td><td>Interactions fit any body</td><td>IN2, IN3, IN23</td></tr>
+<tr><td>GX6</td><td>Verb arbitration stability: priority per verb class, hysteresis, sticky focus</td><td>Their prompt misfires</td><td>IN31, LW8</td></tr>
+<tr><td>GX8</td><td>Paired NPC-to-NPC conversation at facing slots, lines from the rule DB</td><td>NPC small talk</td><td>AI14, DQ-23</td></tr>
+<tr><td>GX4</td><td>Report channel as data: runner, shout, bell, magic; Classic = runner only</td><td>Phone / alarm reports</td><td>AI8e, AI22</td></tr>
+</table>
+<p class="rec">Notes rather than slices: LW16 must carry <em>attributes</em> (outfit, mount, companion) not identity; a "grudge on turn-away" row in ConsequenceRules; a shop-closing row in the MA8 validator; a generic knocked-down state for any NPC (combat lane).</p>
+
+<h2>Clips to generate with Kimodo (priority order)</h2>
+<ol>
+<li><strong>Sit / stand</strong>: approach and turn in, sit, 2-3 idle postures, stand; chair, stool, bench, floor; front and both sides; low / standard / high seats; <strong>pull chair out L/R, push chair in</strong>.</li>
+<li><strong>Seated hand-prop chain</strong>, each step its own clip so chains recombine: reach, pick up (cup, bowl, bottle, book), drink / eat / read, put down; right-handed, mirrored.</li>
+<li><strong>Doors</strong>: push and pull, hinge left and right, both sides; open and walk through, hold open, knock, locked rattle, bash.</li>
+<li><strong>Stand-and-use</strong>: lean, warm hands at a fire, work loops (anvil, stove, bench), sweep, stir pot.</li>
+<li><strong>Carry and place</strong>: from floor / waist / shelf, one-hand, two-hand, shoulder; give / take pair.</li>
+<li><strong>Social reactions</strong>: turn to face (45/90/180), glance, step back, placate, shrug, point, wave, beckon, shove.</li>
+<li><strong>Fear and hit</strong>: flinch, duck, flee start, stumble, recoil ×4, knocked down and get up, cower.</li>
+<li><strong>Bed and rest</strong>: get in from both sides, sleep loop, wake, sit on the edge.</li>
+<li><strong>Ambient idles</strong>: talk gestures (3 intensities), argue, laugh, toast, mourn, tend wounded.</li>
+</ol>
+<p class="rec">Variants that change the motion: side, entry direction, height class, hand, mild / strong, loop vs one-shot. Variants that don't: body size (retargeted per GX5), the prop mesh (swapped).</p>
+
+<h2>Owner questions</h2>
+<ol class="q">
+<li><strong>Greet / antagonise verbs (GX9):</strong> hold a button to greet or provoke any NPC outside the dialogue menu, as in RDR2 and GTA 6? <span class="rec">Recommended: yes in Modern; Classic keeps dialogue only; provoking goes through the crime offence table.</span></li>
+<li><strong>Civilians fight back (GX2):</strong> ordinary NPCs sometimes retaliate when threatened or robbed, not only flee or report? <span class="rec">Recommended: yes, by temperament and role (guards and fighters always, merchants rarely, scholars never); Classic off.</span></li>
+</ol>
+</main>
+</body>
+</html>

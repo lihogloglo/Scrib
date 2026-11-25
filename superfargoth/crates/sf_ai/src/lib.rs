@@ -30,6 +30,8 @@
 //!   [`SightCache`].
 //! - `AI8f1` (search core): [`search`], the seeded widening [`SearchState`] at the last known
 //!   position, its [`SearchGoal`]s for the move executors, and [`OP_SEARCH`].
+//! - `AI8h1` (band reactions core): [`react`], the Curious / Suspicious [`ReactState`] (double
+//!   take, held goal, spent placement) and its [`ReactGoal`]s for the move executors.
 //!
 //! The console command `ai.trace` and BRP live in `sf_ai_bevy` (AI3): actor references and the
 //! console context are the shell's.
@@ -42,6 +44,7 @@ pub mod ids;
 pub mod light;
 pub mod perception;
 pub mod profile;
+pub mod react;
 pub mod save;
 pub mod search;
 pub mod sight;
@@ -80,6 +83,7 @@ pub use profile::{
     PerceptionField, PerceptionProfile, PerceptionRangeError, PerceptionState, PerceptionStates, PushOutcome,
     SearchConfig, SearchParams, SightConfig, SightParams, StateEntry, register_perception_kinds, resolve,
 };
+pub use react::{ReactConfig, ReactGoal, ReactInput, ReactState, investigate_point};
 pub use save::{AI_SECTION, AI_VERSION, ActorSave, AiSave, AiSaveError};
 pub use search::{
     OP_SEARCH, SearchGoal, SearchParamError, SearchPatternConfig, SearchState, register_search_operator, search_seed,
@@ -116,6 +120,8 @@ mod tests_notify;
 mod tests_perception;
 #[cfg(test)]
 mod tests_profile;
+#[cfg(test)]
+mod tests_react;
 #[cfg(test)]
 mod tests_save;
 #[cfg(test)]

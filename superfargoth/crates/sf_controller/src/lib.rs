@@ -52,7 +52,7 @@ pub use frame::{CharacterFrame, TickPose};
 pub use sf_anim::RootDelta;
 pub use intent::{Gait, GaitSpeeds, LocomotionIntent};
 pub use motion::{MotionState, SpringParams, TurnRates, forward, spring_character, spring_yaw, turn_toward, wrap_angle};
-pub use mover::{KinematicMover, Locomotion, MoveInput, MoverMode, MoverParams, RootMotion, separate, separate_moved};
+pub use mover::{CRUSH_DEPTH_M, Crush, KinematicMover, Locomotion, MoveInput, MoverMode, MoverParams, RootMotion, Squeeze, separate, separate_moved};
 pub use path::{ArrivalParams, PathFollower, PathMode, PathNode, PathOutput};
 pub use probe::{GroundBody, GroundHit, GroundProbe, HeightSurface, Nearest, ProbeQuery, SurfaceId, TerrainProbe};
 pub use statics::{COLLISION_FORMAT, CollisionBuilder, CollisionMesh, StaticId, StaticShape, StaticWorld};

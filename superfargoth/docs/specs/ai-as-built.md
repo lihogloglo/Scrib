@@ -12,6 +12,18 @@ gets a white foot ring and every entry's LKP; targets show "light N%"; `RecentNo
 (blue revealing, magenta not). Seam `AiDebugGoal(WorldPos)` (always compiled) for the game's search goal. The app's
 `dev` now enables `sf_ai_bevy/debug` (direct dep), so AI3's `ai.gizmos` shows in the game too.
 
+## AI8h1: band reactions core `sf_ai::react` (2026-11-25)
+
+`ReactState::update(cfg, Option<ReactInput>, actor_pos, PerceptClock) -> ReactGoal` from the actor's top awareness
+entry (`ReactInput: From<&Awareness>`, plain data). Unaware/Searching/Alerted = `None`; Curious = `Face { toward: LKP }`;
+Suspicious = `Investigate { to: investigate_point(from, lkp, step_m), then_face: LKP }` (XZ line, never past the LKP).
+Double take: first goal `face_delay_s` after entering from idle; escalation or a target switch adds no delay. Hold: a
+band/target change or an LKP move > `retarget_m` re-targets at once, a smaller move after `hold_s`, an unmoved LKP
+never; `revision()` bumps per re-target. After escalating to Searching/Alerted on a sighting, the decay back down on
+that same sighting (same target, `LastSeen.tick`) gives `None`, so a guard who gave up returns to its routine (Skyrim,
+MGS V); a newer sighting re-arms. `ReactGoal::operators` = `SearchGoal::operators` shape (Face; MoveTo + Face). Serde,
+no RNG. Tunables `ai.perception.react_*` (4, Guess), bound by AI8h2. 11 exact tests.
+
 ## AI8c1: hearing system `sf_ai_bevy` (2026-11-25)
 
 `hearing.rs` + `hearing_tests.rs` (9 pass; sf_ai_bevy 37). `NoiseEvent` message (spec fields + `notify`; `space:

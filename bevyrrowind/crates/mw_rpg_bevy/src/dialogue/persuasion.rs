@@ -130,10 +130,10 @@ impl Rpg {
         }
         if outcome.gold > 0 {
             let count = u32::try_from(outcome.gold).unwrap_or(0);
-            if let Some((holder, inv)) = self.character(&ctx, &Target::Player) {
+            if let Some((holder, inv)) = self.character(&ctx, &Target::Player, sheets) {
                 let _ = inv.apply(RpgCommand::RemoveItem { holder, item: id(GOLD), count });
             }
-            if let Some((holder, inv)) = self.character(&ctx, &Target::Speaker) {
+            if let Some((holder, inv)) = self.character(&ctx, &Target::Speaker, sheets) {
                 let _ = inv.apply(RpgCommand::AddItem { holder, item: id(GOLD), count, attrs: Attrs::new() });
             }
         }

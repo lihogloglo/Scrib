@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NPC animation variety: age, build, injury, fatigue, mood (research, 2026-11-25)</title>
+<style>
+  :root { --bg:#fbfaf7; --fg:#1d1c1a; --mute:#6b675f; --line:#e3dfd6; --accent:#7a4b16; --ok:#2f6b3a; --warn:#8a5a00; --card:#ffffff; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#161513; --fg:#ece8e0; --mute:#a29d93; --line:#34312c; --accent:#e0a35a; --ok:#7cc48a; --warn:#e2b45a; --card:#1e1d1a; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 920px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 1.7rem; margin: 0 0 6px; }
+  h2 { font-size: 1.2rem; margin: 40px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  p.lede { color: var(--mute); margin-top: 0; }
+  code { font: 0.88em ui-monospace, Consolas, monospace; background: color-mix(in srgb, var(--line) 50%, transparent); padding: 1px 4px; border-radius: 4px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin: 12px 0; }
+  .warn { color: var(--warn); }
+  table { border-collapse: collapse; width: 100%; font-size: .93rem; margin: 8px 0; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--mute); font-weight: 600; }
+  ol.q li { margin: 6px 0; }
+  .rec { color: var(--mute); }
+  ul { padding-left: 22px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+<h1>NPC animation variety</h1>
+<p class="lede">Research, 2026-11-25, from the owner's "old people don't walk like young girls". Full note with sources:
+<code>docs/research/gameplay-2026-11-25/anim-style.md</code>. Only GTA's clipset mechanism is sourced; RDR2 and TLOU2 internals are inference.</p>
+
+<div class="card">
+<strong>Verdict.</strong> No shipped game stores a full clip set for every kind of person in every state. They stack three
+things: a few authored <strong>gait classes</strong> (old, heavy, drunk, wounded…), cheap <strong>modifiers</strong> driven by
+continuous values (limp, hunch, fatigue, load), and <strong>speed and stride warping</strong>. The gait classes cost content;
+the rest is nearly free at runtime. Style is mostly a locomotion problem: sitting, drinking and doors share clips and get
+their style from the modifiers.
+</div>
+
+<div class="card warn">
+<strong>Corrected against owner decisions</strong> (the md note carries the same box): 100STYLE is rejected, so no class uses it;
+Kimodo walk and run are fixed, not replaced; Delirium is adopted and on by default; the clip budget below is a first batch,
+not a ceiling, because the owner wants a lot of variation.
+</div>
+
+<h2>How to run it: one <code>MotionProfile</code> per NPC</h2>
+<ul>
+<li><code>style_id</code>: the NPC's gait class, chosen at spawn from race, sex, age and build; stable and saved.</li>
+<li>Smoothed values that gameplay updates: <code>injury</code> (with a side), <code>fatigue</code>, <code>load</code>, <code>intoxication</code>, <code>mood</code>, <code>age</code>.</li>
+<li>Selection is a data table, extensible by mods: (class, state) → clip set + modifier values (like UE Chooser tables or GTA clipsets).</li>
+</ul>
+<table>
+<tr><th>Layer</th><th>What it does</th><th>Cost</th><th>Tiers</th></tr>
+<tr><td>1. Clip set per gait class</td><td>idle, walk, run, starts, stops, turns: ~14 clips per class</td><td>content</td><td>all</td></tr>
+<tr><td>2. Additive / procedural modifiers</td><td>hunch, limp (hip drop, uneven stride), fatigue (breathing, slump), load (arm offset), tremor; values are tunables</td><td>very low</td><td>A0-A1 (close range)</td></tr>
+<tr><td>3. Blend two classes</td><td>e.g. neutral ↔ old by <code>age</code>, like a blend-space axis: continuous age from two sets</td><td>low</td><td>A0-A1</td></tr>
+<tr><td>4. Motion matching per style</td><td>parked (as in anim.md)</td><td>high</td><td>-</td></tr>
+<tr><td>5. Physics tint (Delirium)</td><td>stagger, drunk sway, wounded stumble, collapse; reacts to bumps and terrain</td><td>high: far over the 25 µs per character budget</td><td>A0-A1, capped at ~4-8 at once</td></tr>
+</table>
+<p class="rec">At a distance the class alone carries who someone is; modifiers are for close range.</p>
+
+<h2>Generating the classes</h2>
+<ul>
+<li><strong>Kimodo has no style, age or injury control.</strong> Its model card names age bias as a risk and recommends physical wording ("walks slowly with shuffled steps").</li>
+<li>Consistency within a family (one person's walk, idle and sit-down): a fixed style recipe string in every prompt, the same posture pose as a constraint at the start and end, the same speed envelope, a seed sweep, then an automatic <strong>style-score filter</strong> on top of the existing foot-slide gates: mean speed, stride, spine pitch and step asymmetry must fall in the family's band.</li>
+<li><strong>MotionBricks v0.2.0</strong> (NVlabs, late October 2026): adds the SOMA human model (the skeleton we already use), SafeTensors weights, ONNX and an in-betweener demo. Style presets: Zombie, Injured-Leg, Injured-Torso, Skipping, Strafing, Crouch Strafing; no old or drunk. Style is set from a reference pose or clip. Code Apache 2.0; weights under the NVIDIA Open Model Agreement (commercial use allowed); the bundled sample motions are evaluation-only. Needs an NVIDIA GPU, so offline only. <em>Verdict: worth a one-session spike for a consistent limp family; read the paper and the licence on outputs first.</em></li>
+</ul>
+
+<h2>First batch, in numbers</h2>
+<table>
+<tr><th>Content</th><th>Clips</th></tr>
+<tr><td>Locomotion: ~7 classes × ~14 clips</td><td>~100</td></tr>
+<tr><td>Idles and fidgets per class</td><td>~40</td></tr>
+<tr><td>Interactions: ~12 verbs × ~4 furniture heights, shared</td><td>~50</td></tr>
+<tr><td>"Old / heavy" variants of sitting down and getting up</td><td>~8</td></tr>
+<tr><td><strong>Total accepted</strong></td><td><strong>~200</strong>, about 2 h of generation for the generated part</td></tr>
+</table>
+<p class="rec">Copying every interaction clip per style would mean 350+ clips for the same look. Modifiers multiply the look
+(age × fatigue × injury) without adding clips. More classes are data plus one overnight batch; the real limit is filtering and review.</p>
+
+<h2>Owner questions</h2>
+<ol class="q">
+<li><strong>Which gait classes at launch?</strong> <span class="rec">Recommended: at least neutral, old, heavy, drunk and wounded/limp, plus fatigue and load modifiers; add female and child variants where the neutral set looks wrong. Since you want a lot of variety, more classes can follow as batches.</span></li>
+<li><strong>Do wounded NPCs visibly limp</strong> from combat damage, and walk normally again once healed? <span class="rec">Recommended: yes for NPCs and companions, by health band; the player's character stays as is until you try it.</span></li>
+<li><strong>How is age assigned?</strong> Morrowind records have no age. <span class="rec">Recommended: derived from the NPC's id (stable), with overrides in data; class from race, sex and build.</span></li>
+</ol>
+</main>
+</body>
+</html>

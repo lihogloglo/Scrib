@@ -1,19 +1,28 @@
 # Interaction: smart objects, carrying, destruction, mounts and vehicles (`sf_interaction`)
 
-Status: design 2026-11-11 (ROADMAP 3.11), nothing built. Research:
-[world-interactivity-2026-11-11](../research/world-interactivity-2026-11-11.md). Adapter (first content pack):
-[interaction-adapter](../../../bevyrrowind/docs/specs/interaction-adapter.md). Touches [ai.md](ai.md) "Smart objects",
-[action.md](action.md) (Interaction category, `Claim(point)`), [physics.md](physics.md) "Carry and throw",
-[nav.md](nav.md) "Runtime patches", [combat.md](combat.md) "The rules seam", [static-scene.md](static-scene.md) §1
-"Promotion" (read only; scene-coord owns it), [save.md](save.md), [net.md](net.md).
+Status: design 2026-11-11 (ROADMAP 3.11), updated 2026-11-25 (IN27: lane roadmap decisions 1-5, 9, 11); nothing built
+except IN20 ((c)). Lane roadmap: [interaction](../../../docs/roadmaps/interaction.md) (decisions, stages, owner answers).
+Research: [world-interactivity-2026-11-11](../research/world-interactivity-2026-11-11.md),
+[gameplay-2026-11-25/interaction](../../../docs/research/gameplay-2026-11-25/interaction.md). Adapter (first content
+pack): [interaction-adapter](../../../bevyrrowind/docs/specs/interaction-adapter.md). Touches [ai.md](ai.md) "Smart
+objects", [action.md](action.md) (Interaction category, `Claim(point)`), [physics.md](physics.md) "Carry and throw",
+[locomotion.md](locomotion.md) (`Docked` mover), [nav.md](nav.md) "Runtime patches" and NV9 links, [crime.md](crime.md)
+(`LockState`, decision 8), [combat.md](combat.md) "The rules seam", [static-scene.md](static-scene.md) §1 "Promotion"
+(read only; scene-coord owns it), [world-reactions.md](world-reactions.md), [save.md](save.md), [net.md](net.md),
+[tunables.md](tunables.md). Activation contract consumer: DQ-6 in
+[dialogue-quests](../../../docs/roadmaps/dialogue-quests.md).
 
 <!-- agent-summary -->
-> **Agent summary.** One interaction-point model for player and NPC alike: objects carry **slots** (seat, bed, lean,
-> counter, saddle, vehicle seat) with entrances by side, a clip family, IK targets and adverts; a **host-only claim
-> table** (Free → Reserved → Occupied, leases, invalidation) serves `sf_ai` and `sf_action`. On it: (a) moving and
-> carrying (player physics carry exists; NPCs get attached held props), (b) destruction (Bethesda-style stage swap
-> first, crates before buildings), (c) mounts and vehicles (a seat slot whose occupant is attached, control hand-off
-> by routing the driver's `Command`). Slices IN0-IN13 below, cheapest first.
+> **Agent summary.** One interaction-point model for player and NPC alike: objects carry **slots** of a kind (pose:
+> seat, bed, lean, counter; door, lever, ladder, workstation, light; (c) saddle, vehicle seat) with entrances by side,
+> a **verb** + priority, clips, IK targets and adverts. A **host-only claim table** on `FixedUpdate` (Free → Reserved →
+> Occupied; claim **priority**: a higher user takes a Reserved claim, never an Occupied one; **queue tickets** for
+> doors and workstations; leases, groups, invalidation) serves `sf_ai` and `sf_action`. Every use is an
+> `Activate(tag)` command the host turns into `Activated` (a script may suppress the default; DQ-6 consumes it).
+> On it: (a) carrying, one `HeldProp` link with two presentations (third person attach + clip for player and NPC,
+> first person the built spring), carry classes gate speed, sprint, roll; (b) destruction (stage swap first, Chaos-style
+> cluster chunks later, debris distance LOD, baked glass shards, loot and salvage, lock bashing; buildings parked);
+> (c) mounts and vehicles (TV0b). World rules (fire, `Lit`, noise) are "(d)" (IN28). Slices: "Build slices".
 <!-- /agent-summary -->
 
 ## Goal
@@ -28,16 +37,25 @@ carried; crates break and spill; buildings take authored damage; creatures are r
 vehicles and later walks on moving decks. All of it saves, replicates (host-authoritative, net.md) and fits the frame target (≤ 8.3 ms median, ≤ 11 ms p99).
 The adapter says which records become interactable; the framework names none.
 
+
 ## Reuse check (CONTRIBUTING rule 0)
 
-- **Bevy 0.20 (native).** Observers, entity events and relationships (a seat link can be a custom relationship in
-  the shell), `MeshPickingPlugin`. No smart objects, reservations, physics, destruction, mounts or vehicles.
-  Verdict: Bevy is glue only (thin `sf_interaction_bevy`).
-- **Crates** (table in the research note §2). No smart-object/slot-claim crate; utility-AI crates are stale, BT/FSM
-  crates don't model slots, and we have our HTN core (ai.md "Reuse"). `rapier3d` 0.36.1 stays (physics.md): joints,
-  `ContactForceEvent` thresholds, a ray-cast vehicle controller, but **no breakable joint** and no moving-platform
-  rule (both ours). `bevy_carnage` (gore cutting) and `csgrs` (CSG) are not prop destruction; pre-fracture is offline
-  content (Blender Cell Fracture output, parry3d VHACD hulls). No mount/vehicle/seat crate.
+- **Bevy 0.20 (native).** Observers, entity events and relationships (a seat or held-prop link can be a custom
+  relationship in the shell), `MeshPickingPlugin`, `FixedUpdate`. No smart objects, reservations, physics,
+  destruction, mounts or vehicles. Verdict: Bevy is glue only (thin `sf_interaction_bevy`).
+- **Physics is rapier, not Avian.** `rapier3d` 0.36.1 under our own `sf_physics` (physics.md; Avian stays the
+  documented fallback): joints, kinematic bodies, `ContactForceEvent` thresholds, a ray-cast vehicle controller, but
+  **no breakable joint** and no moving-platform rule (both ours). Anything Avian-only is a design reference.
+- **Crates** (research 2026-11-25 §7; 2026-11-11 note §2). `avian_pickup` 0.7.0 (MIT OR Apache-2.0, Avian 0.8, Bevy
+  0.20): **design reference only** (wrong physics engine): one held object per actor, a held prop cannot be stolen by
+  another puller, input and output as messages (SFX, VFX), works for player and AI; untested over a network, no mass
+  limits (our `HolderLimits` and host link already go further). `bevy_picking_rapier` 0.20: ray picking only, no grab;
+  our focus uses the point index. `bevy_carnage` (gore mesh fracture, Bevy 0.19, git), `bevy_shatter` (runtime
+  Voronoi glass, Bevy 0.16, stale) and `csgrs` (CSG): **runtime fracture is rejected** (decision 5); pre-fracture and
+  glass shard sets are offline content (Blender Cell Fracture output, parry3d VHACD hulls). Licences of `bevy_carnage`
+  and `saddle-physics-object-interaction` (Bevy 0.18, Avian 0.6) are unverified: check before any port. No
+  smart-object, slot-claim, chemistry, mount, vehicle or seat crate; utility-AI crates are stale, BT/FSM crates don't
+  model slots, and we have our HTN core (ai.md "Reuse").
 - **Projects.** Veloren (GPL-3.0) `common/src/mounting.rs`: mount and ship-seat **links** by stable `Uid` with
   create/persist/delete validation and a per-vehicle seat map; our seat link follows it (design reference; a port
   cites the file and commit). OpenMW has no furniture use, mounts or destruction; Morrowind mount mods are script
@@ -47,15 +65,24 @@ The adapter says which records become interactable; the framework names none.
 
 ## Industry comparison
 
+Tags as in the research note: [M] = from memory, unverified.
+
 | Concern | Industry | Ours |
 |---|---|---|
-| Point data | On the object: UE Smart Object slots, Bethesda furniture markers, GTA/RDR2 scenario points on prop models, Cyberpunk workspots | `InteractableDef` records: slots, entrances, clips, IK targets, adverts |
-| Choosing | Sims adverts (need × value − distance); UE tag filters | `find_slots` by tags; adverts feed `sf_ai` considerations |
-| Reservation | UE Claim → Use → Release, invalidated when the object changes | host `Claims`: Reserved → Occupied → Free, leases, invalidation |
+| Point data | On the object: UE Smart Object slots, Bethesda furniture markers, GTA/RDR2 scenario points on prop models, Cyberpunk workspots | `InteractableDef` records: slots by kind, entrances, verbs, clips, IK targets, adverts |
+| Choosing | Sims adverts (need × value − distance); UE Gameplay Tag queries and user-required tags | `find_slots` by tags; `users` filter; adverts feed `sf_ai` considerations |
+| Reservation | UE Claim → Use → Release, invalidated when the object changes; **claim priority**: a higher claim takes a lower one unless it is in use | host `Claims`: Reserved → Occupied → Free, priority (player/quest > schedule > ambient) preempts Reserved only, leases, groups, invalidation |
+| Crowding | UE leaves it to the user [M]; Sims and RDR2 scenario queues [M] | a **queue ticket** per door and workstation slot |
+| Verbs | RDR2 prompt with hold for alternatives, Cyberpunk context list [M]; Bethesda one activate | slot `verb` + priority: focus shows the best, hold lists the rest |
+| Activation | Bethesda `OnActivate` replaces the default, `Activate` runs it | `Activate(tag)` command → `Activated`; a handled script suppresses the default (DQ-6) |
 | Approach | UE entrance annotations (nav/collision-validated); Bethesda entry flags + L/R variants | entrances by side, nav-validated + `EndPoseFree` |
 | Use | enter/loop/exit clips, user aligned and attached | Interaction move (Warp), then a Docked-like `Seated` owner |
-| Carry | HL2/Skyrim physics grab (player); socket + hand IK + carry clips (NPC, unverified) | built for the player; NPC `HeldProp`; relocation as an HTN plan |
-| Destruction | Bethesda `DEST` stages; Chaos pre-fracture; The Finals/Frostbite structural, server-side; replicate the event, debris local | stage swap first, chunks later, buildings authored; `Destroyed` event + seed |
+| Doors | animated hinged doors NPCs open and close (Bethesda, RDR2) [M] | door slot: Open/Closed, kinematic hinge, doorway claim + queue; Locked read from crime |
+| Ladders | ladder mode on a vertical chain plus a nav link (RDR2, TLOU, UE NavLink) [M] | ladder slot = edge chain for the `Docked` mover, both entrances, NV9 link |
+| Work | Cyberpunk workspots, RDR2 scenarios, Skyrim crafting furniture (NPC idles, player menu) [M] | workstation slot: NPC job loop (data), the pack's own menu for the player |
+| Carry | third person attach to hand + carry clip (RDR2, TLOU) [M]; first person physics grab (HL2, Skyrim) | one `HeldProp` link, two presentations; carry class gates speed, sprint, roll |
+| Destruction | Bethesda `DEST` stages; UE Chaos geometry collections with per-cluster damage thresholds and distance debris removal; The Finals/Frostbite structural, server-side; Teardown syncs by determinism | stage swap first, cluster chunks later, debris LOD, buildings parked; `Destroyed` event + seed, debris per client |
+| Persistence | Skyrim respawn timers and persistent refs; items saved mid-air [M] | overlay deltas, at-rest snapping, holder link wins (IN15, world-reactions.md) |
 | Mounts, vehicles | mount is a character, rider on a saddle socket, input routed (Elden Ring, Skyrim, RDR2); GTA seat indices; Star Citizen physics grids | `SeatLink` (Veloren); rail vehicles first; moving platforms later |
 
 Gaps go in [industry-audit.md](industry-audit.md) when built (none known beyond the hard problems below).
@@ -70,14 +97,20 @@ sf_interaction (Bevy-free): defs, PointIndex (per cell, by PlacementId), Claims,
   ↑ find_slots / claim / release        ↑ Claim(point) validator, focus targets       ↑ hits, impacts
 sf_ai (UseSlot, Relocate fragments)    sf_action (Interaction, Seated, Mounted)      sf_combat / sf_physics events
 sf_interaction_bevy (thin): builds the index on cell load, follows moved bodies, runs claims and destruction on
-                            FixedUpdate, emits InteractionEvent, attaches held props and riders, save section
+                            FixedUpdate, emits InteractionEvent, attaches held props and riders, save section,
+                            turns Activate commands into Activated → gates → default, swings doors
 ```
 
 Dependencies: `sf_interaction` → `sf_ids`, `sf_coords`, `sf_world` (`PlacementId`, `WorldPos`), `sf_records`, serde.
-Never Bevy, Rapier or `sf_ai`. `sf_ai` may depend on it (Bevy-free); `sf_action` does not: the shell evaluates the
-claim and passes the result in `Sense` (as it does for probes), so the action core stays independent.
+Never Bevy, Rapier, `sf_ai` or `sf_crime`, and never a game's formats, ids or names (framework rule). `sf_ai` may
+depend on it (Bevy-free); `sf_action` does not: the shell evaluates the claim and passes the
+result in `Sense` (as it does for probes), so the action core stays independent.
 
 ## The shared core
+
+Tick, net, data (decision 11): claims, uses and breaks advance on `FixedUpdate` (net rule 1), host-authoritative
+(rule 5); presentation (swing pose, debris, effects) is seeded per client (rule 4); all content comes through
+`sf_records` / `sf_mods` records; the core is Bevy-free and never names a game, `sf_ai` or `sf_crime`.
 
 ### Definitions (`sf.interact.def` records, data, mod-patchable)
 
@@ -86,30 +119,72 @@ claim and passes the result in `Sense` (as it does for probes), so the action co
 pub struct InteractableDef {
     pub id: RecordId,
     pub slots: Vec<SlotDef>,
+    pub verbs: SmallVec<[VerbDef; 2]>,          // slotless uses: carry, take, break, read, the pack's defaults
     pub destructible: Option<DestructibleDef>,  // (b)
-    pub carry: Option<CarryDef>,                // (a): grips, carry class, relocatable, slide axis
+    pub carry: Option<CarryDef>,                // (a)
     pub adverts: Vec<(TagId, f32)>,             // what using it satisfies (rest, social, work), Sims-style
 }
 pub struct SlotDef {
-    pub kind: TagId,                 // seat, bed, lean, counter, saddle, vehicle_seat, idle ...
-    pub local: Iso,                  // slot frame in the object's frame (pelvis/root target)
+    pub kind: SlotKind,
+    pub local: Iso,                  // slot frame in the object's frame (pelvis/root target; door: the doorway)
     pub band: f32,                   // seat/bed/top height, m (picks the clip band, motion-generation.md)
-    pub entrances: SmallVec<[Entrance; 4]>,     // side (Front/Back/Left/Right), approach point, enter/exit clips
+    pub verb: VerbDef,               // "sit", "sleep", "open", "pull", "climb", "work", "snuff" ...
+    pub entrances: SmallVec<[Entrance; 4]>,     // side (Front/Back/Left/Right, ladder Bottom/Top), approach point, enter/exit clips
     pub clips: ClipFamily,           // slot ids: "<kind>.<family>.{enter.<side>,loop,exit.<side>}" (motion-generation ids)
-    pub ik: IkTargets,               // hands (armrests, table edge, reins), feet (floor, stirrups), look
-    pub occupancy: Occupancy,        // Pose (aligned, mover off) | Attach (rider follows a moving owner)
-    pub control: Option<Control>,    // Driver | Passenger (mounts and vehicles)
-    pub users: TagFilter,            // who may use it (body type, size class, player/NPC), adapter tags
+    pub ik: IkTargets,               // contact points in the object frame: hands (armrests, table edge, rungs, reins), feet (floor, stirrups), look
+    pub reach: f32,                  // m: hand claims allowed within this radius while Occupied (a seat at a table); 0 = none
+    pub occupancy: Occupancy,        // Pose (aligned, mover off) | Attach (rider follows a moving owner, (c))
+    pub control: Option<Control>,    // Driver | Passenger ((c))
+    pub users: TagFilter,            // who may use it (body type, size class, player/NPC, armed), UE user tags
     pub group: Option<u8>,           // slots that exclude each other (a bench's middle vs ends)
+    pub queue: Option<u8>,           // ticket capacity; None = no queue (defaults: door, workstation = `interact.queue.capacity`)
+}
+pub struct VerbDef { pub verb: TagId, pub priority: i16 /* focus order */, pub requires: TagFilter /* state tags, e.g. Lit */ }
+pub enum SlotKind {
+    Pose { family: TagId },          // seat, bed, lean, counter, idle; saddle and vehicle_seat in (c)
+    Door(DoorDef),                   // hinge axis + point, open angle, swing one way or both, close_behind
+    Lever(LeverDef),                 // positions (2 = on/off), links: [(target placement, signal tag)]
+    Ladder(LadderDef),               // bottom and top points (an edge chain), rung spacing, Bottom/Top entrances
+    Workstation(WorkstationDef),     // jobs: TagFilter over job records; player_verb (the pack's menu)
+    Light,                           // snuff/relight a light-bearing object: see (d) World rules (IN28)
 }
 ```
 
 - Defs come from the adapter (`InteractionContent::def_for(base, model)`) and from mods; `interact.cook` (one-time
   bake, mod-aware, seconds) measures slot frames and bands from collision top surfaces (the MG4 census logic,
-  motion-generation.md "Furniture and race census", promoted to a cook step). Unknown tags or clip slots are load
-  errors naming the mod (mods.md).
+  motion-generation.md "Furniture and race census", promoted to a cook step), and door hinges and ladder chains from
+  the model's bounds where the adapter gives none. Unknown tags, kinds or clip slots are load errors naming the mod
+  (mods.md). The adapter may switch a kind or verb off (Classic rules): its slots are then not indexed.
 - **Points are derived, never saved**: the index is rebuilt from placements (and the overlay's moved transforms) on
-  cell load.
+  cell load. Object state that is saved (door open, lever position, health, stage) lives in the `interaction` overlay
+  blob ((b) "Save").
+
+### Slot kinds
+
+- **Pose** (seat, bed, lean, counter, idle): "Using a slot" below; beds also fire the adapter's rest hook (IN3).
+- **Door** (IN33): state `Closed | Open`, saved. "Locked" is not core state: the shell reads it from crime's
+  `LockState` through the activation gate (crime.md decision 8; neither core names the other). The leaf is a
+  **kinematic hinge** body turned over `interact.door.swing_s`, away from the user when the def swings both ways; a
+  blocked sweep (shape cast against characters) pauses the swing, never pushes a character into geometry. The
+  doorway is the slot: an NPC passing claims it (Occupied while passing), others take queue tickets; `UseSlot(door)`
+  = claim, open if closed, pass, close behind after `interact.door.close_behind_s` if it found it closed and the def
+  says `close_behind`, release. The player never claims a doorway (NPCs wait for them through local avoidance).
+  Every state change is a `WorldChange` (IN14) and feeds nav's door state (NV10). **Travel (load) doors are not door
+  slots**: their default stays the adapter's (Bevyrrowind: the fade in `mw_doors_bevy`, AI12).
+- **Lever** (IN34): positions, saved; the use toggles at the clip's contact event and sends its signal to the linked
+  targets (a door, a gate, a light); scripted activators stay scripts (the adapter's). `WorldChange` per toggle.
+- **Ladder** (IN43): the def's bottom-to-top points form an **edge chain** consumed by locomotion.md's
+  `MoverMode::Docked { edge, s, side, offset }`; entrances at both ends (enter clip onto the chain, exit clip off it;
+  jump off mid-way releases). One user at a time (claim; `queue` optional by def). The def registers an off-mesh
+  `ladder` link between its entrances (nav.md NV9) whose traversal is `UseSlot(ladder)`, so NPCs cross it (AI33).
+- **Workstation** (IN42): a pose slot plus a job set. An NPC runs a **job loop**; the player's use opens the pack's
+  own menu (`player_verb`, e.g. alchemy or repair; no new crafting in this lane). **Jobs are mod data** (owner
+  2026-11-25): a job is a TOML record file loaded through `sf_records` / `sf_mods` (like Magna Urbis cultures)
+  naming its slot kinds, steps (clip slot, duration range, props attached or spawned, IK), loop rule and outputs
+  (records or a `WorldChange`); dev builds hot-reload job files (a running loop finishes its step, then reads the
+  new def); adding a job never recompiles. The queue keeps five NPCs off one stool.
+- **Light** (IN19): a slot whose verbs are snuff and relight, gated on the `Lit` state tag; one user at a time so
+  two NPCs don't relight one lamp. State, rules and `LightChanged`: see (d) World rules (IN28).
 
 ### Point index and focus
 
@@ -118,195 +193,221 @@ pub struct SlotDef {
   object updates once when it falls asleep.
 - `find_slots(near: WorldPos, radius, filter: TagFilter, user) -> impl Iterator<(SlotRef, score)>` (grid buckets;
   score = advert value for the user's need × distance falloff, adapter curve). `sf_ai` calls it; the player's focus
-  query (shell ray/cone, `sf_action::Focus`) gets slots as targets with their tag and prompt verb.
+  query (shell ray/cone, `sf_action::Focus`) gets slots and slotless verbs as targets.
+- **Verbs** (decision 3, RDR2 and Cyberpunk prompts): `rank_verbs(def, state_tags, user) -> SmallVec<VerbChoice>`
+  collects the slot verbs whose claim would not be refused and the slotless verbs whose `requires` matches, sorted by
+  `priority` (descending), then def order. Focus shows the first; holding interact for `interact.focus.hold_s` lists
+  the rest. **Stable focus** (GTA 6's prompt misfires, `docs/research/gameplay-2026-11-25/gta6.md` §2): the focused
+  target changes only when another target's score leads by `interact.focus.switch_margin` for `interact.focus.switch_s`;
+  while interact is held, the target and its verb list are frozen. An object with several uses (a bed: sleep, sit, pick lock) has several slots or verbs, never a special
+  case.
 
 ### Claims (host only, net rule 5)
 
 ```rust
-pub struct Claims { by_slot: HashMap<SlotRef, Claim>, by_user: HashMap<UserKey, SlotRef> }
-pub struct Claim { pub user: UserKey /* ActorKey | PlayerKey */, pub phase: Phase /* Reserved | Occupied */,
-                   pub since: Tick, pub lease_until: Option<Tick> }
+// Illustrative, not compiled.
+pub struct Claims { by_slot: HashMap<SlotRef, Claim>, by_user: HashMap<UserKey, Hold>,
+                    queues: HashMap<SlotRef, SmallVec<[Ticket; 4]>> }
+pub struct Claim  { pub user: UserKey /* ActorKey | PlayerKey */, pub phase: Phase /* Reserved | Occupied */,
+                    pub priority: u8, pub since: Tick, pub lease_until: Option<Tick> }
+pub struct Ticket { pub user: UserKey, pub priority: u8, pub since: Tick, pub lease_until: Tick }
+pub enum Hold { Claim(SlotRef), Ticket(SlotRef) }   // one per user
 ```
 
-- `claim(slot, user, tick)`: refused if the slot, its exclusion `group` or the user is taken, or the user fails the
-  filter. One claim per user. Same-tick conflicts (two players, co-op) resolve deterministically: lower `UserKey`
-  first, then the request order of the tick's command list.
-- **Lease**: a Reserved claim expires unless renewed by progress (an NPC walking to it; default 10 s of no path
-  progress, adapter-tunable); Occupied has no lease.
-- `occupy` on entering, `release` on the exit's end. **Invalidation** releases and notifies (event) when the owner
-  object is destroyed, moved beyond a tolerance (0.25 m or 20°), unloaded, or the user dies, is knocked down
-  (`Takeover`), or leaves its worldspace. The user's executor then exits (a forced stand-up) or replans.
+- **Priority** (decision 1, UE Smart Objects): each claim carries a priority from its user's reason, ordered
+  player = quest > schedule > ambient (values are tunables below). `claim(slot, user, priority, tick)`:
+  - Free (slot and its exclusion `group`), user filter passes, user holds nothing → **Reserved**.
+  - Reserved by a **lower** priority → preempted: the old user's claim becomes a ticket at the head of the queue if the
+    slot has one, else it is released with `Invalidated(Preempted)`; the new user is Reserved. Equal or higher → refused.
+  - **Occupied → never preempted**, whatever the priority. A group conflict preempts only if every conflicting claim
+    in the group is Reserved and lower.
+  - Refusals are typed: `Taken`, `GroupTaken`, `UserBusy`, `Filter`, `Disabled`, `QueueFull`.
+- **Queue** (decision 1): `enqueue(slot, user, priority, tick)` on a slot with `queue: Some(capacity)` gives a ticket
+  ordered by priority (descending), then `since`, then `UserKey`; full → `QueueFull` (the AI picks another slot).
+  A release or invalidation **promotes** the head ticket to Reserved with a fresh lease in the same tick. A ticket has
+  its own lease (`interact.queue.ticket_lease_s`) and is cancelled when its user leaves. The core orders tickets; the
+  shell places waiters at the def's approach points (or along the approach). The player never takes a ticket.
+- **One body hold per user, plus hand claims**: a body claim (seat, bed, door, ladder, workstation) or a ticket; a
+  second body request is `UserBusy` (the caller releases first). While Occupied in a body slot, the user may also hold
+  up to `interact.claim.hand_max` **hand claims** on take/use targets within that slot's `reach`: the seated chain
+  (sit, take the cup on the table, drink, put it back; RDR2 scenario props, UE Smart Objects allow several claims per
+  user). A hand claim is released on put-back, and every hand claim ends with the body claim (a forced stand-up drops
+  or returns the held prop per (a)).
+- **Same tick**: the shell hands the core one batch per tick; the core sorts it by (priority descending, `UserKey`,
+  request index), so co-op conflicts and NPC races resolve identically on every replay.
+- **Lease**: a Reserved claim expires unless renewed by progress (`renew(user, tick)`: an NPC's path progress) within
+  `interact.claim.lease_s`; Occupied has no lease. Leases count ticks (seconds × fixed rate).
+- `occupy` on entering (holder only), `release` on the exit's end. **Invalidation** releases, emits an event and
+  promotes the queue when the owner object is destroyed, moved beyond `interact.claim.move_tolerance_m` or
+  `_deg`, unloaded, or its slot is disabled (a broken bed, a locked door's doorway), or when the user dies, is knocked
+  down (`Takeover`) or leaves its worldspace. The user's executor then exits (a forced stand-up) or replans.
 - Claims are **not saved**: on load, `sf/ai` restores the NPC's activity and the AI's promotion resolve re-claims
   (ai.md "Tiers and budget"); a seated player saves `seated: Option<SlotRef>` in `CharacterSave` and re-claims first.
 
 ### Using a slot (one path for player and NPC)
 
-1. **Approach**: the entrance by side (nearest valid; NPC: nav-validated approach point, nav.md; all: the `EndPoseFree`
-   capsule test at the slot's end pose).
+1. **Approach**: `pick_entrance(slot, user_pos, valid)` returns the nearest entrance (distance to its approach point)
+   that `valid` accepts (the shell's checks: NPC nav-validated approach point, nav.md; all: the `EndPoseFree` capsule
+   test at the slot's end pose), ties by side order Front, Left, Right, Back (Bottom, Top); none valid → `None`.
 2. **Enter**: an `Interaction` move rule (action.md: Warp to an interaction slot): `validate: [Claim(point),
-   EndPoseFree]`, warp aligns the enter clip's end onto the slot frame; the claim becomes Occupied.
+   EndPoseFree]`, warp aligns the enter clip's end onto the slot frame; the claim becomes Occupied. A ladder enters
+   the `Docked` mover instead of `Seated`.
 3. **Loop**: a `Seated` owner (Docked-like): root pinned to the slot frame, mover off, the capsule replaced by the
    slot's seated shape (contact-pair filter against the object, physics.md); loop clips and variants
-   (motion-generation.md activities), IK to the slot's targets (hands on armrests or table, feet on the floor,
-   animation.md two-bone IK), look-at free.
-4. **Exit**: by input (player: Move, Jump or Interact; NPC: plan step done) or invalidation; exit clip by side, chosen
-   by `EndPoseFree` (blocked side → another, Bethesda's L/R rule), then release.
+   (motion-generation.md activities; a workstation's job steps), IK to the slot's targets (hands on armrests or
+   table, feet on the floor, animation.md two-bone IK), look-at free. **Clips fit any body** (GTA 6 retargets
+   interactions by body size): clips are generated on one canonical body against the slot's contact points, and IK
+   fits each race and size to them, so body size needs no clip variants (side, entry and height band do). Style variants (age, build, health, mood:
+   owner 2026-11-25, old people don't move like young ones) are clip sets or layers from the animation lane, not IK.
+4. **Exit**: by input (player: Move, Jump or Interact; NPC: plan step done) or invalidation; `pick_exit` prefers the
+   entry side, else the nearest free side by `EndPoseFree` (Bethesda's L/R rule), else the shell places the user on
+   the nearest navmesh point; then release.
 
 The NPC path is `sf_ai`'s `UseSlot(slot)` operator (claim, approach, enter, loop, exit), emitting the same `Command`
 (`Activate(tag)` + target) the player's input does (net rule 2). Smart objects add method fragments per slot kind
 (ai.md "Behaviours"), so new furniture adds no AI code.
 
+### Activation contract (for DQ-6)
+
+Every use, from player input, an NPC's `UseSlot` or a script, is one path (decision 3):
+
+1. **Command**: `Activate { verb: TagId, target: PlacementId, slot: Option<u8> }` in the user's tick command list
+   (net rule 2). Player: the focused best verb or the hold-list choice; NPC: its plan step.
+2. **Validate** (host, `FixedUpdate`): target resident and in reach, verb offered by `rank_verbs` for this user.
+   Refused commands emit nothing.
+3. **Event**: the host writes the existing `Activated { target, actor }`
+   (`superfargoth/crates/sf_script_bevy/src/lib.rs:66`); IN31 adds the verb as an optional field (`None` = the
+   target's primary use, as today's callers), the script payload keeps `{ target, actor }` and gains `verb`.
+4. **Scripts** run in the `Update` slot; a handler returning `"handled"` suppresses the default (`ActivationOutcome`).
+   This is where DQ-6's `OnActivate` lives; whether NPC activations reach scripts is the adapter's call (the event
+   carries the actor).
+5. **Gates**, when not handled: registered gates run in order before the default; crime's lock and trap gate marks
+   `Locked` / `TrapSprung` handled (crime.md decision 8). A refused use reports its reason to the prompt.
+6. **Default**: the verb's action from this lane: pose verbs claim and run "Using a slot"; open/close toggle a door;
+   pull toggles a lever; climb docks on a ladder; work runs the job loop (NPC) or the pack's menu (player);
+   snuff/relight set `Lit`; carry makes the `HeldProp` link. The pack's existing classes (talk, container, book, take
+   item, travel door) register as default verbs (IN32), unchanged in behaviour.
+7. **Script `Activate`** (DQ-6) re-enters at step 5 for its target (gates, then default), never step 4 again, so a
+   script cannot recurse into itself.
+
 ### Events (net rule 8)
 
-`InteractionEvent { tick, user, slot, kind: Claimed | Entered | Exited | Released | Invalidated(reason) }`, plus
-`Destroyed`, `Mounted`, `Dismounted` below. Scripts (adapter: MWScript `OnActivate`), audio, barks and crime read them.
-NPC reactions to changed objects read `WorldChange` events ([world-reactions.md](world-reactions.md), IN14-IN16).
+`InteractionEvent { tick, user, slot, kind: Claimed | Queued | Promoted | Entered | Exited | Released |
+Invalidated(reason) }` with `reason: Preempted | LeaseExpired | OwnerDestroyed | OwnerMoved | OwnerUnloaded |
+SlotDisabled | UserDied | UserKnockedDown | UserLeftWorldspace`, plus `DoorChanged`, `LeverChanged`, `Destroyed`,
+`Mounted`, `Dismounted` below. Scripts, audio, barks and crime read them. NPC reactions to changed objects read
+`WorldChange` events ([world-reactions.md](world-reactions.md), IN14-IN16). Noise from doors, drops, throws and
+breaks: see (d) World rules (IN28).
+
+### Tunables (tunables.md; framework values, a pack's base mod may override)
+
+| Name | Unit | Default | Range | Source | Net |
+|---|---|---|---|---|---|
+| `interact.claim.priority_ambient` | count | 10 | 0-255 | Guess (order: Industry, UE Smart Objects) | Gameplay |
+| `interact.claim.priority_schedule` | count | 20 | 0-255 | Guess | Gameplay |
+| `interact.claim.priority_quest` | count | 30 | 0-255 | Guess (= player, roadmap decision 1) | Gameplay |
+| `interact.claim.priority_player` | count | 30 | 0-255 | Guess | Gameplay |
+| `interact.claim.lease_s` | s | 10 | 1-60 | Guess (spec 2026-11-11) | Gameplay |
+| `interact.claim.move_tolerance_m` | m | 0.25 | 0.05-2 | Guess | Gameplay |
+| `interact.claim.move_tolerance_deg` | deg | 20 | 1-90 | Guess | Gameplay |
+| `interact.queue.capacity` | count | 3 | 0-16 | Guess | Gameplay |
+| `interact.queue.ticket_lease_s` | s | 30 | 5-300 | Guess | Gameplay |
+| `interact.focus.hold_s` | s | 0.35 | 0.1-1.5 | Guess (RDR2-style hold prompt) | Presentation |
+| `interact.focus.switch_margin` | ratio | 0.2 | 0-1 | Guess (hysteresis against prompt flicker, gta6.md §2) | Presentation |
+| `interact.focus.switch_s` | s | 0.15 | 0-1 | Guess | Presentation |
+| `interact.claim.hand_max` | count | 2 | 0-4 | Guess (two hands) | Gameplay |
+| `interact.door.swing_s` | s | 0.8 | 0.2-3 | Guess | Gameplay |
+| `interact.door.close_behind_s` | s | 1.0 | 0-10 | Guess | Gameplay |
+| `interact.carry.present_blend_s` | s | 0.2 | 0-1 | Guess | Presentation |
+| `interact.debris.lod_m` | m | 25 | 5-100 | Guess (Industry: Chaos debris removal by distance [M]) | Presentation |
+| `interact.debris.awake_max` | count | 48 | 0-256 | Guess (spec 2026-11-11) | Presentation |
+| `interact.debris.breaks_per_tick` | count | 6 | 1-32 | Guess | Gameplay |
+| `interact.debris.fade_s` | s | 8 | 1-60 | Guess | Presentation |
+
+All `Scope::Dev`, `Lifetime::Live` except `interact.focus.hold_s` (`Scope::Player`, a menu row). Record data (carry
+class multipliers, verb priorities, queue capacities per def, job durations) is mod data with its own source, not a
+tunable.
 
 ### Cost, net, save, risk (core)
 
 - Cost: index rebuild per cell load (hundreds of slots, < 1 ms on the loader); `find_slots` a bucket scan at AI
-  decision rate (tier 2: 5-10 Hz); claims O(1). Frame cost negligible.
-- Net: host owns claims and the index; replicated is each character's current activity (slot + phase, ai.md
-  "Co-op"); a client's sit press is a request the host validates; clients predict only their own enter clip.
-- Save: nothing new for the core (points derived, claims rebuilt).
+  decision rate (tier 2: 5-10 Hz); claims and tickets O(1) per request plus a sort of the tick's batch; door swings
+  one kinematic transform each while moving. Frame cost negligible.
+- Net: host owns claims, tickets, door and lever state and the index; replicated is each character's current
+  activity (slot + phase, ai.md "Co-op") and object state changes as events; a client's use is a request the host
+  validates; clients predict only their own enter clip; swing poses and debris are local presentation.
+- Save: door, lever, health and stage in the `interaction` overlay blob; points derived, claims rebuilt.
 - Risk: low. Claim-table bugs (UE forum reports of double claims) → exact tests for every transition.
 
 ## (a) Moving and carrying (player and NPC)
 
-**Player.** Carry, drag and throw exist (physics.md "Carry and throw", `HolderLimits` from strength). New:
-- **Furniture is grabbable** when its def has `carry`: a static in the static scene is **promoted** first (static-scene
-  §1: one flag write, an entity spawned with the same placement id), then gets a dynamic body. Heavy pieces drag
-  (mass > `carry_mass`), light ones carry; its slots follow the body and refresh on sleep.
-- **Moved furniture persists** through `sf/overlay` moved placements (save.md; the physics blob already stores item
-  poses). Ownership: moving is not theft (physics-adapter.md), taking is.
+Moved to [interaction-carry.md](interaction-carry.md) (2026-11-25, size). In short (decision 4): one thing held;
+one `HeldProp` link with two presentations (third person: kinematic attach to the hand socket + grip IK + carry
+clips, player and NPC alike; first person: the built `sf_physics` spring); `CarryClass` data (speed multiplier,
+`can_sprint`, `can_roll`); `HolderLimits` gate carry, drag or refuse; furniture is promoted from the static scene
+to be carried and persists as moved placements; chair pull-out folded into IN9; NPC `Relocate` is an HTN fragment.
 
-**NPC.** A simulated grab (joint + motors) for every NPC is costly and unpredictable; the industry attaches. So:
-- **Chair pull-out** (the common case, cheap): a slot entrance may carry `pre_move: Slide { axis, distance }`; the enter
-  clip's first phase slides the chair kinematically along its axis (0.3-0.5 m, synced to the clip's hand contact), the
-  exit pushes it back. The chair body is kinematic during the slide, then rests; the new pose is saved only if it stays.
-- **Held props** (`HeldProp { holder, grips: [hand; 2], carry_class }`): the object becomes a kinematic body attached
-  to the holder's hand socket(s) (the `Weapon Bone`-style attach of first-person.md "Held" and MG7a), hands on the
-  def's grip points by IK, collision against the holder filtered, a carry clip set by class (`carry.one_hand`,
-  `carry.two_hand`, `drag.chair`, `carry.shoulder`). Mass gate: the NPC's `HolderLimits`, as for the player.
-- **Relocate** (the owner's "NPC moves the chair to sit"): an HTN fragment `Relocate(obj, spot)` = `MoveTo(obj)` →
-  `Pick` → `MoveTo(spot)` → `Place` (navmesh-validated floor spot, capsule-free, facing from the def's `pairs_with`
-  tags, e.g. a table edge) → `UseSlot`. The AI picks it when no free slot scores above a threshold but a movable object
-  with that advert is near (Sims-style). Placement drops the object dynamic onto the floor, it sleeps, the index updates.
+## (b) Destruction (crates first, buildings parked)
 
-Dependencies: static-scene promotion (built B5a, B5a-2 running); AI wired into the game (ROADMAP 3.10) and nav (NV
-slices) for NPCs; carry clips (3.8 clip factory, MG7b grip table); hand IK (animation.md, the mantle lip IK path).
-**Cost**: a held prop is one kinematic transform per tick; a moved furniture body sleeps within ~1 s (physics budget
-unchanged). **Nav**: moved furniture is not carved by default (nav.md: ORCA and the mover avoid it); a record may opt
-into carving (`carves_nav`, NV10). **Static scene**: a moved or destroyed scene placement must stay an entity on the
-next cell load (the overlay must make it ineligible): to confirm with scene-coord (adapter eligibility hook, §1).
-**Net**: the host simulates; a held prop replicates as its link (holder, grips), not a transform stream; dynamic
-furniture replicates like any body. **Save**: moved placements in `sf/overlay`; a held prop saves as placed at its
-current pose (the plan is rebuilt on load). **Risk**: medium (hand IK quality, carry clips); relocation is ahead of
-the industry (no verified shipped example), so it comes after the cheap pull-out.
-
-## (b) Destruction (crates first, buildings later)
-
-**Tier 1: stage swap** (Bethesda `DEST`, the cheapest, saves and replicates as one integer).
-
-```rust
-pub struct DestructibleDef { pub health: f32, pub material: TagId /* wood, clay, glass, stone */,
-    pub stages: SmallVec<[Stage; 4]>, pub ignore_external: bool }
-pub struct Stage { pub at: f32 /* health fraction */, pub model: Option<ModelRef> /* None = remove */,
-    pub debris: SmallVec<[DebrisRef; 4]>, pub effect: Option<RecordId>, pub on_break: BreakAction /* SpillContents | Loot | None */ }
-```
-
-- **Damage in**: (1) melee and projectile hits on a prop: combat's swing/contact path gains **prop targets** (the
-  object's collision as a hurt volume; combat.md "Hit and hurt volumes" today targets characters only); (2) physics
-  impacts: `ContactForceEvent` over a material threshold (a thrown crate breaks a jar, a fall breaks itself); (3)
-  spells and explosions (effects area). The adapter's `DestructionRules` turns (source kind, damage type, material)
-  into damage (blunt vs blade vs fire), the framework never names a stat.
-- **On a stage**: the swap (an entity's model change; a static-scene placement is promoted first), debris spawned, the
-  effect played, contents spilled (container items become placed items or a loot bag, adapter), `Destroyed` event.
-- **Debris** is cosmetic: `DEBRIS` bodies from a per-material generic set (planks, shards) or the model's own
-  pre-cut chunks; each client spawns them from the event's seed; they sleep then fade (8 s), capped per region
-  (budget below). Never saved, never gameplay.
-
-**Tier 2: pre-fractured chunks** (optional stage visual, IN12): an offline-cut chunk set per model (Blender Cell
-Fracture or a parry/CSG bake tool), the whole model swapped for its chunks at the break, the impact impulse applied at
-the hit point. Still the same event and saves.
-
-**Tier 3: buildings.** Morrowind-scale buildings are huge statics in the static scene and interior cells behind doors;
-structural collapse (Red Faction, The Finals) needs a structural graph, nav patches and interior consistency, a hard
-problem (proposal for `bevyrrowind/docs/hard-problems.md`, owner to decide). Cheap version first: **authored damage
-states** for chosen buildings (quest or script set pieces, siege damage, a breachable wall) as stage swaps with large
-debris and an authored nav link switch (nav.md link flags), which is how most open worlds ship it.
-
-**Dependencies**: combat prop targets (sf_combat), physics contact events (sf_physics), effects (sf_effects),
-container contents (sf_rpg inventory), static-scene promotion for statics (crates and barrels are containers, so
-entities already: no scene work for tier 1). **Cost**: a break is one swap plus N debris bodies; cap 48 awake debris
-bodies per region and 6 breaks spawned per tick (queued), to be measured on the 4060 laptop (perf work reports ms per
-preset). **Nav**: a removed crate frees space (no carving default); a breached wall flips an authored link.
-**Net**: `Destroyed { tick, placement, stage, point, dir, seed }`; clients swap and spawn debris locally.
-**Save**: an overlay blob `interaction` v1 per placement: health and stage (save.md "Overlay blobs", blob version
-table); spilled items are overlay spawned placements; a removed object is an overlay removal. **Risk**: low for
-tier 1; medium for chunks (content); high for structures.
+Moved to [interaction-destruction.md](interaction-destruction.md) (2026-11-25, size). In short (decision 5): tier 1
+stage swap (IN1: health, material, stages, spill with damage, loot and salvage, `Destroyed` + seed, cosmetic debris
+under caps and the `interact.debris.lod_m` distance LOD, baked glass shard sets); lock and door bashing by strength
+(IN37; crime settles the lock); tier 2 pre-fractured chunks with Chaos-style cluster thresholds (IN12, later);
+tier 3 buildings parked (IN13, owner). Runtime fracture crates rejected. Saved as one stage integer (plus door and
+lever state) in the `interaction` overlay blob.
 
 ## (c) Mounts and vehicles (seats, attach, control hand-off)
 
-**Seat links.** A seat is a slot with `occupancy: Attach` on a moving owner. `SeatLink { seat: SlotRef, rider:
-CharacterId }` (stable ids) follows Veloren's link: `create` refuses a taken seat, a rider already seated or dead;
-`persist` re-validates each tick (owner and rider alive, seat still registered, same worldspace); `delete` places the
-rider at a free dismount spot (exit side by `EndPoseFree`, else any side, else the nearest navmesh point). The rider
-is **attached** (root = seat frame each tick, never simulated against the owner), in a `Mounted` owner (Docked-like):
-mounted clip set (idle, gait-matched loops, enter/exit by side), leg IK to stirrups or footrests, hands to reins.
+Moved to [interaction-vehicles.md](interaction-vehicles.md) (2026-11-25, size; TV0b rewrites it). Seat slots whose
+occupant is attached to a moving owner, control hand-off to a mount or vehicle, `SeatLink` after Veloren; based
+movement on moving bodies is IN11 (travel.md Stage 3).
 
-**Control hand-off.** A `Driver` seat routes the rider's `Command` to the owner: a mount's own action and locomotion
-rules (a quadruped gait set; the mount's AI keeps only reactions such as panic and flee), or a vehicle controller.
-`Passenger` seats only look and (later) fight. In co-op the driver's client predicts the mount as it predicts its own
-character (net.md "Prediction" extended to "own mount"); the host stays authoritative.
+## Budgets (High preset, 1440p + DLSS Quality, RTX 4060 laptop, ≤ 8.3 ms median, ≤ 11 ms p99; targets to measure)
 
-**Kinds, cheapest first.**
-1. **Rail vehicles** (travel boats, giant creatures on routes): the vehicle follows an authored route spline at a
-   speed; the player sits in a seat and may skip (fade) at any time. "Go inside a vehicle" with no physics risk.
-2. **Creature mounts**: the mount is a character (own controller, capsule, gaits, stats); call/summon, follow when
-   unridden (`sf_ai` `Follow`), mount by side, dismount, mounted locomotion; mounted combat later (Elden Ring-style
-   moveset rules, combat.md).
-3. **Physics vehicles** (rowboats, carts): one body, buoyancy pontoons (ROADMAP 3.7) or Rapier's ray-cast vehicle
-   controller; seats as above.
-4. **Walk-on vehicles** (ship decks, a strider's howdah): needs **moving-platform support** in `sf_controller` (the
-   ground body's point velocity added to the move, the mover solved in the platform's frame, as in moving-platform
-   controllers) and nav in the platform's local frame; hard, last.
-
-**Dependencies**: `sf_controller` (Mounted mode; moving platforms for kind 4), a quadruped action/locomotion set
-(creature locomotion is not built), rider clips (no free mounted pack is known; Kimodo can make a seated-astride
-rider, the creature's gaits come from the game's own clips), `sf_ai` Follow (3.10), physics buoyancy (3.7) for boats,
-streaming (a ridden mount changes cells like an actor). **Cost**: a ridden mount is one more tier-2 character (pinned
-while ridden); a rail vehicle is one transform; a physics boat one body plus pontoons. **Net**: seat links are host
-state, replicated as events (`Mounted`/`Dismounted` with tick and ids) plus the link in the character's replicated
-state. **Save**: the rider's `CharacterSave` / `sf/ai` activity holds its seat (`SlotRef`); the mount's own state is
-its actor save; vehicles' positions are overlay moved or spawned placements; a rail vehicle saves its route progress
-in the `interaction` blob. **Risk**: medium (mounts: clips and quadruped locomotion), high (walk-on vehicles).
-
-## Budgets (High preset, RTX 4060 laptop, ≤ 8.3 ms median, ≤ 11 ms p99; targets to measure)
-
-Index rebuild < 1 ms per cell on the loader (off the frame path); claims and slot follow < 0.05 ms per tick; debris
-≤ 48 awake bodies per region and 6 breaks per tick, then queued (measure the physics step); held props and riders one
-attach transform each; moving platforms measured in IN11.
+Index rebuild < 1 ms per cell on the loader (off the frame path); claims, tickets, door swings and slot follow
+< 0.05 ms per tick; debris ≤ `interact.debris.awake_max` awake bodies per region and
+`interact.debris.breaks_per_tick` breaks per tick, then queued, none beyond `interact.debris.lod_m` (measure the
+physics step); held props and riders one attach transform each; moving platforms measured in IN11. IN44 measures
+claims, debris (and (d)'s spread and burn grid) in ms on High; results go in `docs/ledger/perf.md`.
 
 ## Build slices (cheapest first; one deliverable plus its test each)
 
-| Slice | Deliverable | Depends on | Verify |
-|---|---|---|---|
-| IN0 | `sf_interaction` core: defs, `PointIndex`, `Claims` (lease, groups, invalidation), entrance pick; `interact.cook` stub | - | headless exact tests: every claim transition, same-tick conflict order, lease expiry, invalidation reasons |
-| IN1 | Crate and barrel breaking, tier 1: prop targets in combat, health, stage swap/remove, spill contents, generic debris, `Destroyed`, overlay blob | IN0, combat C-slices | exact: stage math, save round-trip, event; sanity: debris rests, no NaN; visual check IN-1 (owner) |
-| IN2 | Player sits and stands on seats: Interaction move, `Seated` owner, side entrances, generated sit clips | IN0, 3.8 clips | exact: claim/occupy/release via `step`; sanity: pelvis on the seat, no capsule through it; IN-2 |
-| IN3 | Beds and lean spots (lie down, the adapter's rest hook), hand IK on armrests/tables | IN2 | exact: rest hook fires once; IN-3 |
-| IN4 | Impact damage (thrown items, falls) from `ContactForceEvent` thresholds | IN1 | exact: threshold maps to damage; sanity; IN-4 |
-| IN5 | Chair pull-out slide on enter, push back on exit | IN2 | sanity: chair ends inside tolerance; IN-5 |
-| IN6 | Player moves furniture: promotion + carry/drag, slots follow, persistence | IN2, static-scene B5a-2 | exact: overlay round-trip moves slots; sanity: comes to rest; IN-6 |
-| IN7 | Seat links + rail vehicle (ride a travel route seated, skip) | IN2 | exact: link create/persist/delete; sanity; IN-7 |
-| IN8 | NPCs use slots (`UseSlot`, `find_slots`, adverts in considerations) | IN2, 3.10 wired, NV route | headless: AI picks and releases; tier invariance; IN-8 |
-| IN9 | NPC held props + `Relocate` | IN8, MG7b grips | headless plan test; sanity: prop stays in hands; IN-9 |
-| IN10 | Creature mount: summon, mount/dismount by side, hand-off, mounted gaits | IN7, quadruped locomotion | exact: hand-off routing; sanity; IN-10 |
-| IN11 | Moving platforms in `sf_controller`; walk on a moving deck | IN7, 3.7 buoyancy | sanity: no slide-off at rest, no tunnelling; measure ms; IN-11 |
-| IN12 | Pre-fractured chunk visuals for a stage | IN1 | sanity; IN-12 |
-| IN13 | Building damage: design slice (structure vs authored stages) | owner decision | doc |
-| IN14-IN16 | `WorldChange` events, reset/persistence classes, loose-item `take` slots ([world-reactions.md](world-reactions.md)) | there | there |
+IDs and order as the lane roadmap ([interaction](../../../docs/roadmaps/interaction.md) §4, stages 1-5; docs slices
+IN27-IN30 and TV0b are stage 0). IN5 is folded into IN9 (owner 2026-11-11). The first build slice creates
+`docs/ledger/interaction.md`.
+
+| Slice | Deliverable | Crate | Depends on | Verify |
+|---|---|---|---|---|
+| IN0 | Core, Bevy-free (`sf_ids`, `sf_coords`, `sf_world`, `sf_records`, serde; in hakari `final-excludes`): types `InteractableDef`, `SlotDef`, `SlotKind` (Pose, Door, Lever, Ladder, Workstation, Light; (c) kinds as data only), `VerbDef`, `Entrance`, `CarryDef`, `CarryClass`, `DestructibleDef`/`Stage` (types only), `InteractionEvent`; `PointIndex` + `find_slots`; `rank_verbs`; `Claims`: priority with preemption of Reserved only, queue tickets (order, capacity, promotion, ticket lease), lease + `renew`, exclusion groups, one body hold per user plus hand claims within `reach`, typed refusals, invalidation reasons, sorted same-tick batch; `pick_entrance` / `pick_exit`; the "Tunables" table declared; `interact.cook` stub (defs in = defs out) | `sf_interaction` | IN27 | headless exact: Free→Reserved→Occupied→Free and Reserved→Free (release, lease expiry; `renew` extends); only the holder occupies; higher priority preempts Reserved (old user re-queued at the head, or `Invalidated(Preempted)` without a queue), equal/lower refused, Occupied never preempted; group conflicts (and preempting across a group only when all are Reserved and lower); queue order (priority, since, `UserKey`), `QueueFull`, head promoted in the same tick on release and on each invalidation, ticket expiry; `UserBusy`; a hand claim only while Occupied and within `reach`, at most `hand_max`, all released with the body claim; a permuted same-tick batch gives the same result; each invalidation reason releases once, emits one event (move within tolerance keeps the claim); entrance nearest-valid, fallback, `None`, side-order ties; exit prefers the entry side; `rank_verbs` order and `requires` filter; defs serde round trip; tunables registered with ranges |
+| IN31 | Shell: index on cell load, claims on `FixedUpdate`, focus best verb + hold list with stable focus (switch margin + dwell, frozen while held), `Activate` → `Activated` (+ verb) → gates → default | `sf_interaction_bevy` | IN0 | headless: handled suppresses the default; gate refusal; script `Activate` runs gates + default once |
+| IN32 | Adapter defs (MG4 census) + each existing class's activation as a default verb, Classic switches | `mw_interaction` | IN31, IN29 | exact per class, behaviour unchanged; def counts |
+| IN2 | Player sits and stands: Interaction move, `Seated` owner, side entrances, Kimodo sit clips | `sf_interaction`, `sf_action` | IN31 | exact: claim/occupy/release via `step`; sanity: pelvis on the seat, no capsule through it; owner IN-2 |
+| IN3 | Beds and lean spots (lie down, the adapter's rest hook), hand IK on armrests/tables | `sf_interaction_bevy`, `mw_interaction` | IN2 | exact: rest hook fires once; owner IN-3 |
+| IN33 | Swing doors (doors, containers): Open/Closed, kinematic hinge, doorway claim + queue, close behind, "Locked" from crime's `LockState`, `WorldChange` | `sf_interaction(_bevy)`, `mw_interaction` | IN31 | exact transitions; blocked swing pauses; owner IN-33 |
+| IN35 | Player third-person `HeldProp`: attach, grip IK, carry class gates (speed, sprint, roll), one thing held; first-person spring kept | `sf_interaction_bevy`, `sf_physics` | IN0, MG7b | exact gates; link survives a camera switch; owner IN-35 |
+| IN6 | Player moves furniture: promotion + carry/drag, slots follow, persistence | `sf_interaction_bevy` | IN2, IN35, static-scene B5a-2 | exact: overlay round trip moves slots; sanity: comes to rest; owner IN-6 |
+| IN1 | Crates and barrels break, tier 1: prop targets, health, stages, spill with damage, loot/salvage, debris + LOD, `Destroyed`, overlay blob | `sf_interaction(_bevy)` | IN0, combat C2c/C3 | exact: stage math, LOD gate, save round trip, event; sanity: debris rests, no NaN; owner IN-1 |
+| IN38 | Adapter breakables (crates, barrels, urns, sacks, pottery), materials, `NoiseKind` | `mw_interaction` | IN1, IN29 | exact rows on game data |
+| IN4 | Impact damage (thrown items, falls) from `ContactForceEvent` thresholds | `sf_interaction_bevy` | IN1 | exact: threshold maps to damage; sanity; owner IN-4 |
+| IN18 | `NoiseEvent` emitters: impacts, breaks, doors, throws, drops, bashes, lock picks (crime LW13); see (d) | `sf_interaction_bevy` | IN4, IN33, AI8a | exact loudness per case |
+| IN37 | Bash locks/doors: strength-scaled lock damage, contents risk, `Bashed`, `LockRequest::Force` + offence hook | `sf_interaction`, `mw_interaction` | IN1, IN33 | exact thresholds |
+| IN14 | `WorldChange` vocabulary + placement diff ([world-reactions.md](world-reactions.md)) | `sf_interaction` | IN1, IN6, IN33 | one event per transition |
+| IN15 | `ResetRules`, classes (+ `burnt`), ttl, cap, lazy reconcile, at-rest snap, holder link wins | `sf_interaction`, `sf/overlay` | IN1, IN30 | expiry, eviction, old saves load, mid-air save snaps |
+| IN36 | Thrown props hit people: damage/stagger by mass × speed (capped), assault when seen, Classic off | `sf_interaction_bevy`, `sf_combat` | IN4, Q2 | exact curve; owner IN-36 |
+| IN19 | `Lit`, snuff/relight verb, light follows, `LightChanged`; see (d) | `sf_interaction(_bevy)`, `mw_interaction` | IN31 | exact events; owner IN-19 |
+| IN17 | Rules core: `InteractionRules`, states + TTL, `Wet`, budgeted wind spread; see (d) | `sf_interaction` | IN28, IN1 | exact on a synthetic grid; rain stops it |
+| IN39 | Fire in game: effects (capped lights), charred stage, damage, extinguish | `sf_interaction_bevy`, `sf_effects` | IN17 | sanity; owner IN-39 |
+| IN40 | Ground burn grid: groundcover/terrain tint, fast regrow | `sf_interaction_bevy` | IN17 | exact regrow; owner IN-40 |
+| IN41 | Adapter: ignition sources, flammables, town rule (Q1), Classic off | `mw_interaction` | IN39, IN40 | exact rows; Classic ignites nothing |
+| IN44 | Measurement: claims, spread, debris, burn grid ms, High, 4060 laptop | tests | IN39, IN40 | `#[ignore = "measurement: ..."]`; perf ledger |
+| IN8 | = AI14 (AI lane builds): `UseSlot`, `find_slots`, adverts in considerations, claim priority | `sf_ai`, `sf_interaction` | IN0, IN2, IN3 | headless deterministic: AI picks, queues and releases; tier invariance; owner IN-8 |
+| IN9 | NPC held props + `Relocate` (chair pull-out folded in, was IN5) | `sf_interaction`, `sf_ai` | IN8, IN35, MG7b | headless plan; sanity: prop stays in hands; owner IN-9 |
+| IN16 | Loose-item `take` slots, ownership on take, `LootRules` ([world-reactions.md](world-reactions.md)) | `sf_interaction` | IN8, LW10 | ownership and ledger |
+| IN42 | Workstations: NPC job loop, player menu (Q4), queue; job loader for TOML mod files (no recompile, dev hot reload) with the first jobs | `sf_interaction`, `mw_interaction` | IN8 | exact queue; a new job file loads without a rebuild; owner IN-42 |
+| IN34 | Levers, buttons, switches: toggle, linked target, saved (scripted activators stay scripts) | `sf_interaction(_bevy)` | IN31, IN14 | exact; round trip |
+| IN43 | Ladders: edge-chain slot, both entrances, `Docked` enter/exit, NV9 link | `sf_interaction`, `sf_controller` | IN0, `Docked`, NV9 | exact; an NPC crosses (AI33); owner IN-43 |
+| (c) | IN20 (done 2026-11-25), IN11, IN21, IN7, IN23, IN24, IN22, IN25, IN26, IN10: "(c) Mounts and vehicles" and [travel](../../../docs/roadmaps/travel.md) (owner IN-7, IN-10, IN-11) | | | |
+| later | IN12 pre-fractured chunks with cluster thresholds (owner IN-12); IN13 buildings (parked, owner); placement mode | | | |
 
 Visual checks go in `bevyrrowind/docs/visual-checks/interaction.md` (prefix IN-) with camera, time, flags and what to
 look for; agents never judge them from screenshots.
@@ -331,3 +432,6 @@ outer shell fractures and the linked interior's contents spawn and are destroyed
 player too. (7) No free sitting for the player (conflicts with ledge mantling); only on furniture (benches, chairs).
 (8) Park NPC chair moving until AI is in the game: drop IN5 as a separate slice, fold it into IN9. (9) Yes, a "Sit"
 prompt on furniture.
+
+Lane questions of 2026-11-25 and their answers (fire, thrown objects, doors, workstations, decorating; jobs as data):
+[interaction roadmap](../../../docs/roadmaps/interaction.md) §7.

@@ -8,8 +8,10 @@
 //! the mover ran with. Hits on a capsule ([`PhysicsEvent::Hit`]: the
 //! incoming body's momentum at first contact) of at least
 //! [`CharacterPhysics::impact_threshold`] become [`ImpactOnCharacter`]
-//! messages for gameplay (hit reactions, knockdowns). The host makes [`crate::Physics`] its
-//! `SfControllerPlugin` ground.
+//! messages for gameplay (hit reactions, knockdowns). A character a moving base or pusher
+//! squeezes into the world past `MoverParams::crush_depth` gets one [`CharacterCrushed`] per
+//! episode (`IN11c2c2`; the game decides damage or the platform's response). The host makes
+//! [`crate::Physics`] its `SfControllerPlugin` ground.
 //!
 //! Tick order (`IN11b`): **the physics step first, then the movers**, so a character reads the
 //! world its base has just moved to. [`PhysicsSystems::Step`] runs before
@@ -34,6 +36,7 @@ use bevy_app::{App, FixedUpdate, Update};
 use bevy_ecs::prelude::*;
 use bevy_math::Vec3;
 use bevy_time::Time;
+use sf_controller::Crush;
 use sf_controller_bevy::{ControllerSystems, Dormant, Locomotion, Mover, MoverMode};
 use sf_coords::WorldPos;
 use sf_physics::{BodyDesc, BodyId, CharacterShape, PhysicsEvent, PhysicsWorld, PushParams};
@@ -80,6 +83,8 @@ pub struct CharacterStats {
     pub impacts: u32,
     /// Characters returned from under the kill height since start ([`CharacterFellOut`]).
     pub fell_out: u32,
+    /// Crush episodes of movers since start ([`CharacterCrushed`]).
+    pub crushed: u32,
 }
 
 /// Each character's capsule: its world, body and shape. Targeted at the
@@ -100,10 +105,12 @@ pub(crate) fn add(app: &mut App) {
         .init_resource::<SafeGround>()
         .add_message::<ImpactOnCharacter>()
         .add_message::<CharacterFellOut>()
+        .add_message::<CharacterCrushed>()
         // The physics step, then the movers (the module docs: based movement). The fell-out net
         // and the capsule targets follow each tick's mover state, for the next tick's step.
         .configure_sets(FixedUpdate, PhysicsSystems::Step.before(ControllerSystems::Drive))
         .add_systems(FixedUpdate, (fell_out, capsules).chain().after(ControllerSystems::Step))
+        .add_systems(FixedUpdate, crushes.after(ControllerSystems::Step))
         .add_systems(FixedUpdate, base_velocities.after(PhysicsSystems::Step).before(ControllerSystems::Step))
         .add_systems(Update, impacts.before(PhysicsSystems::WriteBack));
 }
@@ -178,6 +185,41 @@ pub struct CharacterFellOut {
     pub from: WorldPos,
     /// Where it was put back: its last walkable ground, else where it was first seen.
     pub to: WorldPos,
+}
+
+/// A moving body squeezed a character into the world past its `MoverParams::crush_depth`
+/// (`IN11c2c2`; `sf_controller::Squeeze`): a lift rising into a rider under a ceiling, a cart or
+/// a door pushing one against a wall. One per episode: the next comes only after nothing
+/// squeezed it for a step. The mover keeps the character's pose finite and out of the world
+/// (held under the ceiling, against the wall); what the crush does is the game's rule (damage,
+/// the platform stopping or reversing), as Source's blocked movers and UE's encroachment leave it.
+#[derive(Message, Clone, Debug)]
+pub struct CharacterCrushed {
+    pub entity: Entity,
+    /// How far the body reached into the capsule when it began, m.
+    pub depth: f32,
+    /// The way the body pushes the character, world unit vector (up for a lift).
+    pub direction: Vec3,
+    /// The squeezing body, when known.
+    pub body: Option<BodyId>,
+}
+
+/// The [`CharacterCrushed`] of `loco`'s last mover step, if a crush began in it. The movers'
+/// come from this plugin; a host with action-driven bodies (`sf_action_bevy`) writes theirs
+/// with this after `ActionSystems::Move`, as it calls [`refresh_base_motion`] for them.
+pub fn crushed(entity: Entity, loco: &Locomotion) -> Option<CharacterCrushed> {
+    let s = loco.squeeze.filter(|_| loco.crush == Crush::Began)?;
+    Some(CharacterCrushed { entity, depth: s.depth, direction: s.direction, body: s.body.map(BodyId::from) })
+}
+
+/// [`CharacterCrushed`] for the movers whose step began a crush.
+fn crushes(mut stats: ResMut<CharacterStats>, mut out: MessageWriter<CharacterCrushed>, movers: Query<(Entity, &Mover), Without<Dormant>>) {
+    for (entity, m) in &movers {
+        if let Some(c) = crushed(entity, &m.loco) {
+            stats.crushed += 1;
+            out.write(c);
+        }
+    }
 }
 
 /// How far under resident terrain a character counts as fallen out, m
@@ -299,7 +341,7 @@ fn capsules(
             max_push = max_push.max(p.max_impulse);
         }
     }
-    *stats = CharacterStats { capsules: map.0.len(), pushed, max_push, impacts: 0, fell_out: stats.fell_out };
+    *stats = CharacterStats { capsules: map.0.len(), pushed, max_push, impacts: 0, fell_out: stats.fell_out, crushed: stats.crushed };
 }
 
 /// Hits on capsules ([`PhysicsEvent::Hit`]: impact momentum at first

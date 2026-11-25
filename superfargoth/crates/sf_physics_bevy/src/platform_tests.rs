@@ -7,7 +7,10 @@
 //! the base starting from rest, moving and reversing: no tick of lead or lag, no sinking into
 //! the lift, no hop off it. `IN11c2b`: on a sliding and turning base, a tick whose physics step
 //! is dropped and one that steps twice leave them on their spot (the ride is the base's pose
-//! delta, [`crate::refresh_base_motion`]). Run with `--nocapture` for the measured drift.
+//! delta, [`crate::refresh_base_motion`]). `IN11c2c1`: a lift rising into a ceiling leaves them
+//! under it (the vertical ride is swept). `IN11c2c2`: a lift squeezing its riders into the ceiling
+//! and a cart pushing characters into a wall crush each once ([`CharacterCrushed`]), their pose
+//! held where the world lets them be. Run with `--nocapture` for the measured drift and depths.
 
 #![allow(clippy::cast_precision_loss)]
 
@@ -27,7 +30,7 @@ use sf_physics::{BodyDesc, BodyId, BodyKind, Layer, ShapeRef};
 use sf_world::WorldspaceId;
 use sf_world_bevy::ActiveWorldspace;
 
-use crate::{Physics, PhysicsPlugin, PhysicsSettings, PhysicsStats, PhysicsSystems, refresh_base_motion};
+use crate::{CharacterCrushed, Physics, PhysicsPlugin, PhysicsSettings, PhysicsStats, PhysicsSystems, crushed, refresh_base_motion};
 
 const HZ: f64 = 60.0;
 /// The platform's half extents, m: its top is `HALF.y` above its centre.
@@ -185,6 +188,29 @@ fn record(
     samples.0.push((now(&time), pose.pos.offset(pose.rotation * Vec3::Y * HALF.y), pose.rotation, [mover, body]));
 }
 
+/// Crushes over the run: (time, character index, depth, m).
+#[derive(Resource, Default)]
+struct Crushes(Vec<(f32, usize, f32)>);
+
+/// The movers' [`CharacterCrushed`] messages, and the host's part for the action body
+/// ([`crushed`] after its step), at the tick's end.
+#[allow(clippy::needless_pass_by_value)]
+fn record_crushes(time: Res<Time<Fixed>>, who: Res<Characters>, bodies: Query<&ActionBody>, mut messages: MessageReader<CharacterCrushed>, mut out: ResMut<Crushes>) {
+    for c in messages.read() {
+        let i = who.0.iter().position(|e| *e == c.entity).expect("a test character");
+        assert!(c.depth.is_finite() && c.direction.is_finite(), "crush {c:?}");
+        out.0.push((now(&time), i, c.depth));
+    }
+    if let Some(c) = crushed(who.0[1], &bodies.get(who.0[1]).expect("action body").loco) {
+        out.0.push((now(&time), 1, c.depth));
+    }
+}
+
+/// Per character, the crushes of a run: (time, depth, m).
+fn crushes_of(crushes: &[(f32, usize, f32)], i: usize) -> Vec<(f32, f32)> {
+    crushes.iter().filter(|c| c.1 == i).map(|c| (c.0, c.2)).collect()
+}
+
 fn rules() -> ActionRules {
     let slots = SlotTable::new()
         .with("loco.move", SlotInfo::looping())
@@ -197,6 +223,17 @@ fn rules() -> ActionRules {
 
 /// Runs `seconds` with both characters idle on the platform moving by `motion`.
 fn ride(motion: Motion, seconds: f32) -> Vec<Sample> {
+    ride_under(motion, None, seconds)
+}
+
+/// [`ride`], under a fixed ceiling slab whose underside is `ceiling` m above the platform's
+/// starting top, when given.
+fn ride_under(motion: Motion, ceiling: Option<f32>, seconds: f32) -> Vec<Sample> {
+    ride_crushed(motion, ceiling, seconds).0
+}
+
+/// [`ride_under`], with the crushes ([`Crushes`]).
+fn ride_crushed(motion: Motion, ceiling: Option<f32>, seconds: f32) -> (Vec<Sample>, Vec<(f32, usize, f32)>) {
     bevy_tasks::AsyncComputeTaskPool::get_or_init(bevy_tasks::TaskPool::new);
     let ws = WorldspaceId::new("platform");
     let mut app = App::new();
@@ -205,6 +242,7 @@ fn ride(motion: Motion, seconds: f32) -> Vec<Sample> {
         .insert_resource(ActiveWorldspace(Some(ws.clone())))
         .insert_resource(rules())
         .init_resource::<Samples>()
+        .init_resource::<Crushes>()
         // The host's order for its action bodies (the movers' is the framework's).
         .configure_sets(FixedUpdate, PhysicsSystems::Step.before(ActionSystems::Sample))
         .add_systems(FixedUpdate, (drive, drop_step).chain().before(PhysicsSystems::Hands))
@@ -213,11 +251,15 @@ fn ride(motion: Motion, seconds: f32) -> Vec<Sample> {
         // At the tick's end, whatever the order inside it.
         .init_resource::<Dropped>()
         .add_systems(Last, count_dropped)
-        .add_systems(FixedPostUpdate, record);
+        .add_systems(FixedPostUpdate, (record, record_crushes));
     let desc = BodyDesc::new(BodyKind::Kinematic, WorldTransform::from_pos(centre()), ShapeRef::Box(HALF), Layer::STATIC);
     let id = app.world_mut().resource_mut::<Physics>().insert(&ws, &desc);
-    app.insert_resource(Platform { ws, id, motion });
     let top = centre().offset(Vec3::Y * HALF.y);
+    if let Some(c) = ceiling {
+        let slab = WorldTransform::from_pos(top.offset(Vec3::Y * (c + CEILING.y)));
+        app.world_mut().resource_mut::<Physics>().insert(&ws, &BodyDesc::new(BodyKind::Fixed, slab, ShapeRef::Box(CEILING), Layer::STATIC));
+    }
+    app.insert_resource(Platform { ws, id, motion });
     // Dropped from 5 cm onto opposite halves of the platform, facing different ways.
     let feet = |x: f32| top.offset(Vec3::new(x, 0.05, 0.5));
     let mover = app.world_mut().spawn((Mover::new(feet(-1.2), 0.3, MoverParams::default(), centre()), MoveIntent::default(), Transform::default())).id();
@@ -236,7 +278,7 @@ fn ride(motion: Motion, seconds: f32) -> Vec<Sample> {
     let want = motion.pose(t);
     let want = want.pos.offset(want.rotation * Vec3::Y * HALF.y);
     assert!(top.delta_f32(want).length() < 1e-4, "the platform is {} m off its path", top.delta_f32(want));
-    samples
+    (samples, std::mem::take(&mut app.world_mut().resource_mut::<Crushes>().0))
 }
 
 /// Per character: the largest horizontal and vertical departure from its platform-local spot
@@ -312,6 +354,157 @@ fn idle_characters_keep_their_spot_through_dropped_and_doubled_steps() {
     }
 }
 
+// IN11c2c1: a lift rises into a ceiling.
+
+/// The ceiling slab's half extents, m: over the whole platform.
+const CEILING: Vec3 = Vec3::new(4.0, 0.25, 4.0);
+/// The room over the riders' heads at the start, m, and how far the lift goes on rising once
+/// their heads reach the ceiling (it then stops), m.
+const HEADROOM: f32 = 1.0;
+const SQUEEZE: f32 = 0.3;
+
+/// Up at `speed` m/s after [`REST`] by [`HEADROOM`] + [`SQUEEZE`], then still.
+fn to_ceiling(t: f32, speed: f32) -> Vec3 {
+    Vec3::Y * (speed * (t - REST).max(0.0)).min(HEADROOM + SQUEEZE)
+}
+
+fn lift_2(t: f32) -> Vec3 {
+    to_ceiling(t, 2.0)
+}
+
+/// 10 m/s: a tick (17 cm) covers more than the last gap under the ceiling.
+fn lift_10(t: f32) -> Vec3 {
+    to_ceiling(t, 10.0)
+}
+
+/// A lift at 2 and 10 m/s carries both idle characters into a ceiling: until their heads reach
+/// it they ride the deck as on an open lift; the capsule's top never passes the ceiling (no
+/// tunnelling at 10 m/s, no pop through by the ground snap) and from contact on they stay under
+/// it, while the lift rises [`SQUEEZE`] m more into them (the crush, slice `IN11c2c2`: printed).
+#[test]
+fn a_lift_into_a_ceiling_stops_its_riders_under_it() {
+    let params = MoverParams::default();
+    for (speed, path) in [(2.0_f32, lift_2 as Path), (10.0, lift_10)] {
+        let samples = ride_under(Motion::along(path), Some(params.height + HEADROOM), REST + (HEADROOM + SQUEEZE) / speed + 0.5);
+        let top0 = samples[0].1;
+        let ceiling = top0.offset(Vec3::Y * (params.height + HEADROOM));
+        let travel = speed / 60.0;
+        for i in 0..2 {
+            let who = ["mover", "action body"][i];
+            // The capsule's top under the ceiling, m (negative: through it).
+            let gap = |s: &Sample| s.3[i].0.delta_f32(ceiling).y - params.height;
+            let mut lowest = f32::MAX;
+            for s in &samples {
+                assert!(s.1.delta_f32(s.3[i].0).is_finite(), "{speed} m/s, t {}: {who} NaN", s.0);
+                lowest = lowest.min(gap(s));
+                assert!(gap(s) > -1e-4, "{speed} m/s, t {}: {who}'s head {} m through the ceiling", s.0, -gap(s));
+            }
+            let contact = samples.iter().position(|s| s.0 > REST && gap(s) <= params.skin + 1e-3).expect("the heads reach the ceiling");
+            let settled = samples.iter().rposition(|s| s.0 < REST - 0.05).expect("rest samples");
+            for s in &samples[settled..contact] {
+                let over = s.1.delta_f32(s.3[i].0).y;
+                assert!(s.3[i].1, "{speed} m/s, t {}: {who} not on the lift before contact", s.0);
+                assert!(over.abs() < travel / 2.0, "{speed} m/s, t {}: {who}'s feet {over} m over the deck before contact", s.0);
+            }
+            let stop = samples[contact].3[i].0;
+            let after = &samples[contact..];
+            let rose = after.iter().map(|s| stop.delta_f32(s.3[i].0).y.abs()).fold(0.0_f32, f32::max);
+            let on = after.iter().filter(|s| s.3[i].1).count();
+            let last = after.last().expect("ticks after contact");
+            println!(
+                "{speed} m/s {who}: contact at t {:.3} s, head gap {:.2e} m at contact, lowest {lowest:.2e} m (skin {}); after: moved {rose:.2e} m, on the lift {on}/{} ticks, feet {:.3} m over the deck at the end",
+                samples[contact].0,
+                gap(&samples[contact]),
+                params.skin,
+                after.len(),
+                last.1.delta_f32(last.3[i].0).y,
+            );
+            assert!(rose < 1e-4, "{speed} m/s: {who} moved {rose} m after its head reached the ceiling");
+        }
+    }
+}
+
+// IN11c2c2: crushes.
+
+/// 2 m/s, on 0.6 m after the heads reach the ceiling: past `step_up` (0.45 m) into the feet, so
+/// the ground cast starts inside the deck.
+const DEEP: f32 = 0.6;
+
+fn lift_deep(t: f32) -> Vec3 {
+    Vec3::Y * (2.0 * (t - REST).max(0.0)).min(HEADROOM + DEEP)
+}
+
+/// 2 m/s, stopping 5 cm after the heads reach the ceiling: under [`MoverParams::crush_depth`].
+fn lift_short(t: f32) -> Vec3 {
+    Vec3::Y * (2.0 * (t - REST).max(0.0)).min(HEADROOM + 0.05)
+}
+
+/// Per character over a lift run under the ceiling: asserts the pose stays finite, the head
+/// under the ceiling and the feet never lower in the deck than the ceiling holds them (on top of
+/// it, within the skin, while there is room; held where the head met the ceiling once there is
+/// none). Returns the deepest the deck reached over the feet, m, and the ticks off the lift after
+/// contact.
+fn squeezed(samples: &[Sample], ceiling: WorldPos, params: &MoverParams, label: &str) -> [(f32, usize); 2] {
+    let mut out = [(0.0_f32, 0_usize); 2];
+    for (i, o) in out.iter_mut().enumerate() {
+        let gap = |s: &Sample| s.3[i].0.delta_f32(ceiling).y - params.height;
+        let contact = samples.iter().position(|s| s.0 > REST && gap(s) <= params.skin + 1e-3).expect("the heads reach the ceiling");
+        let held = samples[contact].3[i].0;
+        for (k, s) in samples.iter().enumerate() {
+            let (t, feet) = (s.0, s.3[i].0);
+            assert!(s.1.delta_f32(feet).is_finite(), "{label} t {t}: character {i} NaN");
+            assert!(gap(s) > -1e-4, "{label} t {t}: character {i}'s head {} m through the ceiling", -gap(s));
+            // The deck's top over the feet (positive: in them).
+            let into = feet.delta_f32(s.1).y;
+            let floor = if k < contact { params.skin } else { params.skin.max(held.delta_f32(s.1).y) };
+            assert!(into <= floor + 1e-4, "{label} t {t}: character {i}'s feet {into} m into the deck (the ceiling holds them {floor} m)");
+            if k >= contact {
+                o.0 = o.0.max(into);
+                o.1 += usize::from(!s.3[i].1);
+            }
+        }
+    }
+    out
+}
+
+/// A lift at 2 and 10 m/s squeezes both idle riders [`SQUEEZE`] m into the ceiling, and at 2 m/s
+/// [`DEEP`] m (past the ground cast's origin): each is crushed exactly once, on the tick the deck
+/// passes [`MoverParams::crush_depth`] into its feet, and is held under the ceiling meanwhile
+/// (never through it, never deeper in the deck than the ceiling forces; off the lift from then on).
+#[test]
+fn a_lift_squeezing_riders_into_a_ceiling_crushes_each_once() {
+    let params = MoverParams::default();
+    for (speed, path, squeeze) in [(2.0_f32, lift_2 as Path, SQUEEZE), (10.0, lift_10, SQUEEZE), (2.0, lift_deep, DEEP)] {
+        let (samples, crushes) = ride_crushed(Motion::along(path), Some(params.height + HEADROOM), REST + (HEADROOM + squeeze) / speed + 0.5);
+        let ceiling = samples[0].1.offset(Vec3::Y * (params.height + HEADROOM));
+        let label = format!("{speed} m/s, {squeeze} m");
+        let deepest = squeezed(&samples, ceiling, &params, &label);
+        for (i, (deep, off)) in deepest.iter().enumerate() {
+            let c = crushes_of(&crushes, i);
+            let after = samples.iter().filter(|s| s.0 >= c.first().map_or(f32::MAX, |c| c.0)).count();
+            println!("{label} character {i}: crushes {c:?} (crush depth {}), deck up to {deep:.3} m into the feet, off the lift {off} ticks, {after} ticks from the crush", params.crush_depth);
+            assert_eq!(c.len(), 1, "{label}: character {i} crushed {} times", c.len());
+            assert!(c[0].1 > params.crush_depth, "{label}: character {i} crushed at {} m", c[0].1);
+            assert!(*deep > squeeze - 0.05, "{label}: character {i}: the deck only reached {deep} m into it");
+        }
+    }
+}
+
+/// A lift that stops 5 cm into its riders' heads, and one with no ceiling over it, crush no one:
+/// the riders under the ceiling are held there, finite, out of it.
+#[test]
+fn a_lift_that_stops_short_or_rises_free_crushes_no_one() {
+    let params = MoverParams::default();
+    let (samples, crushes) = ride_crushed(Motion::along(lift_short), Some(params.height + HEADROOM), REST + HEADROOM / 2.0 + 0.5);
+    let ceiling = samples[0].1.offset(Vec3::Y * (params.height + HEADROOM));
+    for (i, (deep, off)) in squeezed(&samples, ceiling, &params, "short").iter().enumerate() {
+        println!("short character {i}: deck up to {deep:.3} m into the feet, off the lift {off} ticks");
+    }
+    assert!(crushes.is_empty(), "a lift stopping short crushed {crushes:?}");
+    let (_, crushes) = ride_crushed(Motion::along(lift), None, REST + 2.0 * LEG + 0.5);
+    assert!(crushes.is_empty(), "an open lift crushed {crushes:?}");
+}
+
 // IN11c2a: a moving wall pushes idle characters standing on static ground.
 
 /// The wall's half extents, m: thin (0.2 m), so a 10 m/s wall at 30 Hz (0.33 m a tick)
@@ -326,6 +519,8 @@ struct Wall {
     start: WorldPos,
     speed: f32,
     kinematic: bool,
+    /// How far it goes, m (then still).
+    travel: f32,
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -335,7 +530,7 @@ fn drive_wall(time: Res<Time<Fixed>>, wall: Res<Wall>, mut physics: ResMut<Physi
     }
     #[allow(clippy::cast_possible_truncation)]
     let t = time.elapsed_secs_f64() as f32;
-    let at = wall.start.offset(Vec3::X * wall.speed * (t - REST).max(0.0));
+    let at = wall.start.offset(Vec3::X * (wall.speed * (t - REST).max(0.0)).min(wall.travel));
     let w = physics.world_mut(&wall.ws).expect("world");
     assert!(w.set_kinematic_target(wall.id, WorldTransform::from_pos(at)));
 }
@@ -369,6 +564,12 @@ fn record_wall(
 /// Runs `seconds` at `hz` with both characters idle on static ground and a wall whose +x
 /// face is `behind` m behind their feet (−x), kinematic at `speed` along +x or fixed.
 fn walled(hz: f64, speed: f32, kinematic: bool, behind: f32, seconds: f32) -> Vec<WallSample> {
+    walled_into(hz, speed, kinematic, behind, (f32::INFINITY, None), seconds).0
+}
+
+/// [`walled`], the moving wall stopping after `travel.0` m, and a fixed wall whose −x face is
+/// `travel.1` m ahead of the feet (+x), when given; with the crushes ([`Crushes`]).
+fn walled_into(hz: f64, speed: f32, kinematic: bool, behind: f32, travel: (f32, Option<f32>), seconds: f32) -> (Vec<WallSample>, Vec<(f32, usize, f32)>) {
     bevy_tasks::AsyncComputeTaskPool::get_or_init(bevy_tasks::TaskPool::new);
     let ws = WorldspaceId::new("wall");
     #[allow(clippy::cast_possible_truncation)]
@@ -382,9 +583,10 @@ fn walled(hz: f64, speed: f32, kinematic: bool, behind: f32, seconds: f32) -> Ve
         .insert_resource(ActiveWorldspace(Some(ws.clone())))
         .insert_resource(rules())
         .init_resource::<WallSamples>()
+        .init_resource::<Crushes>()
         .configure_sets(FixedUpdate, PhysicsSystems::Step.before(ActionSystems::Sample))
         .add_systems(FixedUpdate, drive_wall.before(PhysicsSystems::Hands))
-        .add_systems(FixedPostUpdate, record_wall);
+        .add_systems(FixedPostUpdate, (record_wall, record_crushes));
     // Ground: a fixed slab 40 m along x, its top at the centre's height.
     let slab = WorldTransform::from_pos(centre().offset(Vec3::new(17.0, -0.25, 0.0)));
     app.world_mut().resource_mut::<Physics>().insert(&ws, &BodyDesc::new(BodyKind::Fixed, slab, ShapeRef::Box(Vec3::new(20.0, 0.25, 6.0)), Layer::STATIC));
@@ -392,7 +594,11 @@ fn walled(hz: f64, speed: f32, kinematic: bool, behind: f32, seconds: f32) -> Ve
     let start = centre().offset(Vec3::new(-behind - WALL.x, WALL.y + 0.05, 0.0));
     let kind = if kinematic { BodyKind::Kinematic } else { BodyKind::Fixed };
     let id = app.world_mut().resource_mut::<Physics>().insert(&ws, &BodyDesc::new(kind, WorldTransform::from_pos(start), ShapeRef::Box(WALL), Layer::STATIC));
-    app.insert_resource(Wall { ws, id, start, speed, kinematic });
+    if let Some(ahead) = travel.1 {
+        let at = centre().offset(Vec3::new(ahead + WALL.x, WALL.y + 0.05, 0.0));
+        app.world_mut().resource_mut::<Physics>().insert(&ws, &BodyDesc::new(BodyKind::Fixed, WorldTransform::from_pos(at), ShapeRef::Box(WALL), Layer::STATIC));
+    }
+    app.insert_resource(Wall { ws, id, start, speed, kinematic, travel: travel.0 });
     let feet = |z: f32| centre().offset(Vec3::new(0.0, 0.05, z));
     let mover = app.world_mut().spawn((Mover::new(feet(-1.2), 0.3, MoverParams::default(), centre()), MoveIntent::default(), Transform::default())).id();
     let character = ActionCharacter::new(CharacterId(1), ActionState::new(RuleKey::of("loco")), CharacterParams::default());
@@ -403,7 +609,8 @@ fn walled(hz: f64, speed: f32, kinematic: bool, behind: f32, seconds: f32) -> Ve
     for _ in 0..(f64::from(seconds) * hz).round() as usize {
         app.update();
     }
-    std::mem::take(&mut app.world_mut().resource_mut::<WallSamples>().0)
+    let crushes = std::mem::take(&mut app.world_mut().resource_mut::<Crushes>().0);
+    (std::mem::take(&mut app.world_mut().resource_mut::<WallSamples>().0), crushes)
 }
 
 /// Per character, over the ticks after the wall reached it (its face within the skin of
@@ -457,5 +664,42 @@ fn a_static_wall_never_pushes() {
         let d = first.2[i].0.delta_f32(last.2[i].0).with_y(0.0).length();
         println!("static wall, character {i}: moved {d:.2e} m");
         assert!(d < 1e-4, "character {i} moved {d} m by a static wall");
+    }
+}
+
+/// The room between the capsules and the fixed wall ahead of them, and how far the cart goes on
+/// pushing once they touch it, m.
+const AHEAD: f32 = 0.2;
+const SHOVE: f32 = 0.25;
+
+/// A cart (the kinematic wall) at 2 m/s pushes both idle characters [`AHEAD`] m into a fixed
+/// wall and on [`SHOVE`] m into them, then stops: each is crushed exactly once, past
+/// [`MoverParams::crush_depth`], and stays finite, grounded and out of the fixed wall, at its skin.
+#[test]
+fn a_cart_pushing_characters_into_a_wall_crushes_each_once() {
+    let params = MoverParams::default();
+    let behind = 1.0;
+    let ahead = params.radius + AHEAD;
+    // To the capsules' backs, across the room ahead, then the shove.
+    let travel = behind - params.radius + AHEAD + SHOVE;
+    let (samples, crushes) = walled_into(60.0, 2.0, true, behind, (travel, Some(ahead)), REST + travel / 2.0 + 0.5);
+    let wall = centre().offset(Vec3::X * ahead);
+    for i in 0..2 {
+        let mut closest = f32::MAX;
+        for s in &samples {
+            let (t, feet) = (s.0, s.2[i].0);
+            assert!(s.1.delta_f32(feet).is_finite(), "t {t}: character {i} NaN");
+            assert!(t < REST || s.2[i].1, "t {t}: character {i} left the ground");
+            // The capsule's side short of the fixed wall's face (negative: in it).
+            let room = feet.delta_f32(wall).x - params.radius;
+            closest = closest.min(room);
+            assert!(room > -1e-4, "t {t}: character {i} {} m into the fixed wall", -room);
+        }
+        let last = samples.last().expect("ticks ran");
+        let into = last.1.delta_f32(last.2[i].0).x - params.radius;
+        let c = crushes_of(&crushes, i);
+        println!("cart character {i}: crushes {c:?} (crush depth {}), closest to the wall {closest:.2e} m (skin {}), cart {:.3} m into it at the end", params.crush_depth, params.skin, -into);
+        assert_eq!(c.len(), 1, "character {i} crushed {} times", c.len());
+        assert!(c[0].1 > params.crush_depth, "character {i} crushed at {} m", c[0].1);
     }
 }

@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use sf_anim::spring::{critical_spring, damper};
 use sf_anim::{RigProfile, RigTemplate, RootDelta, attitude_rotation};
 use sf_coords::WorldPos;
+use sf_tunables::{Def, Lifetime, Net, Scope, Source, Unit, def};
 
 use crate::frame::CharacterFrame;
 use crate::intent::{Gait, LocomotionIntent};
@@ -27,6 +28,18 @@ pub const DEFLECT_FACING: f32 = 0.1;
 
 /// Time constant of a slide stopping on walkable ground, seconds.
 const SLIDE_STOP_S: f32 = 0.1;
+
+/// The default [`MoverParams::crush_depth`] (`IN11c2c2`): how far a squeeze may reach into the
+/// capsule before it is a crush. Deeper than a tick of an ordinary lift (2.5 cm at 1.5 m/s, 60 Hz)
+/// and well inside `step_up`, so the cast that measures it still starts above the base.
+pub const CRUSH_DEPTH_M: Def<f32> = def!(float "move.crush.depth_m" = 0.1)
+    .range(0.0, 1.0)
+    .unit(Unit::Meters)
+    .help("How far a moving base or pusher may squeeze into a character the world blocks before it counts as crushed (CharacterCrushed)")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .net(Net::Gameplay)
+    .lifetime(Lifetime::Respawn);
 
 /// Shape and tuning of one character's mover. Defaults are generic
 /// human-scale values; adapters set their own (race scale, creature size).
@@ -61,6 +74,9 @@ pub struct MoverParams {
     pub swim_depth: f32,
     /// How path followers brake this character into a stop.
     pub arrival: ArrivalParams,
+    /// Squeeze depth from which the character is crushed, meters (0..=1; [`CRUSH_DEPTH_M`],
+    /// `Guess`): a [`Squeeze`] deeper than this starts a crush episode ([`Locomotion::crush`]).
+    pub crush_depth: f32,
 }
 
 impl Default for MoverParams {
@@ -80,6 +96,7 @@ impl Default for MoverParams {
             ground_radius: 0.0,
             swim_depth: 1.35,
             arrival: ArrivalParams::default(),
+            crush_depth: CRUSH_DEPTH_M.default_value(),
         }
     }
 }
@@ -220,6 +237,44 @@ struct RootDeltaDef {
     tilt: Vec2,
 }
 
+/// A moving body squeezing a character against what blocks it (`IN11c2c2`, `KinematicMover`): a
+/// lift rising into a rider the ceiling holds down, a pusher shoving a character a wall holds back.
+/// The mover keeps the character where the world lets it be and reports how far the body reaches
+/// into the capsule; what that does to the character (damage, the platform stopping or reversing)
+/// is the game's rule, as Source's blocked pushers and UE's encroachment leave it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Squeeze {
+    /// How far the body reaches into the capsule, m: a base's top over the feet, a pusher's face
+    /// past the capsule's side.
+    pub depth: f32,
+    /// The way the body pushes the character, world unit vector (up for a base).
+    pub direction: Vec3,
+    /// The squeezing body, when the probe knows it.
+    pub body: Option<GroundBody>,
+}
+
+impl Squeeze {
+    /// The deeper of two squeezes.
+    fn deeper(a: Option<Self>, b: Option<Self>) -> Option<Self> {
+        match (a, b) {
+            (Some(a), Some(b)) => Some(if b.depth > a.depth { b } else { a }),
+            (a, b) => a.or(b),
+        }
+    }
+}
+
+/// Where a character is in a crush episode ([`Locomotion::crush`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Crush {
+    /// Not crushed: free, or squeezed less than [`MoverParams::crush_depth`] so far.
+    #[default]
+    Free,
+    /// The squeeze passed [`MoverParams::crush_depth`] this step: the one report of the episode.
+    Began,
+    /// Still squeezed after it began; the episode ends (re-arms) once nothing squeezes.
+    Held,
+}
+
 /// A character's controller state (saved, and the co-op snapshot: plain serde data, net
 /// rule 3).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -265,6 +320,15 @@ pub struct Locomotion {
     /// taken mid-air loads without it (the save shape stays as it is).
     #[serde(skip)]
     pub inherited: Vec3,
+    /// This step's squeeze, if a moving body is pressing the character into the world
+    /// ([`Squeeze`], `IN11c2c2`). Runtime only.
+    #[serde(skip)]
+    pub squeeze: Option<Squeeze>,
+    /// The crush episode: [`Crush::Began`] on the one step the squeeze passes
+    /// [`MoverParams::crush_depth`] (the step hosts report, `sf_physics_bevy::CharacterCrushed`).
+    /// Runtime only.
+    #[serde(skip)]
+    pub crush: Crush,
 }
 
 impl Locomotion {
@@ -286,6 +350,8 @@ impl Locomotion {
             deflect: Vec3::ZERO,
             slide: Vec3::ZERO,
             inherited: Vec3::ZERO,
+            squeeze: None,
+            crush: Crush::Free,
         }
     }
 
@@ -394,6 +460,8 @@ struct Pending {
     /// A moving body pushed the character this step (`KinematicMover::carry`): the ground
     /// under it is cast.
     pushed: bool,
+    /// The push into the world this step (`KinematicMover::carry`).
+    squeeze: Option<Squeeze>,
 }
 
 /// Movement without ground snap or gravity this step.
@@ -431,6 +499,8 @@ pub struct KinematicMover {
     rides: Vec<(Vec3, f32, Option<GroundBody>)>,
     /// Per character this step: pushed by a moving body (`carry`).
     pushed: Vec<bool>,
+    /// Per character this step: the push a static wall held back (`carry`, [`Squeeze`]).
+    squeezes: Vec<Option<Squeeze>>,
 }
 
 impl KinematicMover {
@@ -454,6 +524,7 @@ impl KinematicMover {
         for (i, it) in items.iter_mut().enumerate() {
             let mut p = begin(it, dt);
             p.pushed = self.pushed[i];
+            p.squeeze = self.squeezes[i];
             if let Some(q) = it.params.sweep(p.start, p.d) {
                 self.queries.push(q);
                 self.owners.push(i);
@@ -490,7 +561,8 @@ impl KinematicMover {
             } else {
                 Cast::Skipped
             };
-            finish(it, p, cast, probe, dt);
+            let lifted = finish(it, p, cast, probe, dt);
+            crush(it.loco, it.params, Squeeze::deeper(p.squeeze, lifted));
         }
     }
 
@@ -519,6 +591,7 @@ impl KinematicMover {
                 self.owners.push(i);
                 self.rides.push((d, dy, base));
             } else {
+                let dy = headroom(it.params, it.loco.position, dy, base, dt, probe);
                 it.loco.position = it.loco.position.offset(d + Vec3::Y * dy);
             }
         }
@@ -527,8 +600,8 @@ impl KinematicMover {
         probe.probe(&self.queries, &mut self.hits);
         for ((&i, hit), &(d, dy, base)) in self.owners.iter().zip(&self.hits).zip(&self.rides) {
             let it = &mut items[i];
-            let moved = carry_slide(it.params, it.loco.position, d, *hit, base, dt, probe);
-            it.loco.position = it.loco.position.offset(moved + Vec3::Y * dy);
+            let slid = it.loco.position.offset(carry_slide(it.params, it.loco.position, d, *hit, base, dt, probe));
+            it.loco.position = slid.offset(Vec3::Y * headroom(it.params, slid, dy, base, dt, probe));
         }
 
         // Pushes from moving bodies.
@@ -539,7 +612,9 @@ impl KinematicMover {
         probe.contacts(&self.queries, &mut self.hits);
         self.pushed.clear();
         self.pushed.resize(items.len(), false);
-        for ((it, hit), pushed) in items.iter_mut().zip(&self.hits).zip(&mut self.pushed) {
+        self.squeezes.clear();
+        self.squeezes.resize(items.len(), None);
+        for (((it, hit), pushed), squeeze) in items.iter_mut().zip(&self.hits).zip(&mut self.pushed).zip(&mut self.squeezes) {
             let Some(h) = hit else { continue };
             let n = horizontal(h.normal).normalize_or_zero();
             let depth = it.params.skin - h.distance;
@@ -551,8 +626,26 @@ impl KinematicMover {
             let moved = carry_slide(it.params, it.loco.position, push, first, h.body, dt, probe);
             it.loco.position = it.loco.position.offset(moved);
             *pushed = true;
+            // What the wall held back: the body's face past the capsule's side (`IN11c2c2`). Free,
+            // the push leaves it at the skin (separation `skin`, depth `-skin`).
+            let depth = -(h.distance + moved.dot(n));
+            if depth > 0.0 {
+                *squeeze = Some(Squeeze { depth, direction: n, body: h.body });
+            }
         }
     }
+}
+
+/// The crush episode after a step (`IN11c2c2`): `squeeze` is this step's deepest, from a push
+/// ([`KinematicMover::carry`]) or a base ([`finish`]). Began on the step it first passes
+/// [`MoverParams::crush_depth`], held while anything squeezes, free (re-armed) once nothing does.
+fn crush(loco: &mut Locomotion, params: &MoverParams, squeeze: Option<Squeeze>) {
+    loco.crush = match (squeeze, loco.crush) {
+        (Some(_), Crush::Began | Crush::Held) => Crush::Held,
+        (Some(s), Crush::Free) if s.depth > params.crush_depth => Crush::Began,
+        _ => Crush::Free,
+    };
+    loco.squeeze = squeeze;
 }
 
 /// Springs, root-motion blend; the horizontal displacement to try.
@@ -642,7 +735,7 @@ fn begin(it: &mut MoveInput<'_>, dt: f32) -> Pending {
     }
     let dy = d.y;
     d.y = 0.0;
-    Pending { frame, start: loco.position, d, dy, vy0, free, v_goal, yaw_goal, gait: it.intent.gait, probe: None, deflected: false, pushed: false }
+    Pending { frame, start: loco.position, d, dy, vy0, free, v_goal, yaw_goal, gait: it.intent.gait, probe: None, deflected: false, pushed: false, squeeze: None }
 }
 
 fn horizontal(v: Vec3) -> Vec3 {
@@ -743,6 +836,38 @@ fn carry_slide(params: &MoverParams, start: WorldPos, d: Vec3, first: Option<Gro
     moved
 }
 
+/// How much of the upward motion `dy` (m) the head may make from `feet` (`IN11c2c1`): the wall
+/// capsule swept up stops at the skin under what it closes on, as Jolt `CharacterVirtual` sweeps
+/// the ground velocity's vertical part with the rest of the move and UE's based movement sweeps
+/// the base's delta, so a lift carrying the character into a ceiling leaves it under the ceiling
+/// (one cast per rising rider: lifts carry few). As in [`carry_slide`], not the body the motion
+/// belongs to (`own`: the base ridden, whose roof rises with it) nor a body moving up at least as
+/// fast. Down (or still): `dy` as it is, the base is under the feet. What the base does to a rider
+/// it squeezes against the ceiling is the crush's business (slice `IN11c2c2`).
+fn headroom(params: &MoverParams, feet: WorldPos, dy: f32, own: Option<GroundBody>, dt: f32, probe: &dyn GroundProbe) -> f32 {
+    if dy <= 0.0 {
+        return dy;
+    }
+    let Some(h) = params.sweep(feet, Vec3::Y * dy).and_then(|q| probe.probe_one(q)) else { return dy };
+    let v = if dt > 0.0 { Vec3::Y * (dy / dt) } else { Vec3::ZERO };
+    if (h.body.is_some() && h.body == own) || (v - h.velocity).dot(h.normal) >= 0.0 {
+        return dy;
+    }
+    (h.distance - params.skin).clamp(0.0, dy)
+}
+
+/// Snapped up onto a moving base `h` (a lift rising into the feet) by `up` m: the head stops
+/// under a ceiling as the ride does ([`headroom`]), no pop through it. Returns the rise made and
+/// the squeeze (`IN11c2c2`): what the ceiling held back is the base's top over the feet, a squeeze
+/// when the base rises into them or already did (`pinned`: squeezed up last step); a base standing
+/// still under a low ceiling is a step too high, not a squeeze.
+fn lift(params: &MoverParams, feet: WorldPos, up: f32, h: &GroundHit, pinned: bool, dt: f32, probe: &dyn GroundProbe) -> (f32, Option<Squeeze>) {
+    let room = headroom(params, feet, up, h.body, dt, probe);
+    let depth = up - room;
+    let squeeze = (depth > 0.0 && (h.velocity.y > 0.0 || pinned)).then_some(Squeeze { depth, direction: Vec3::Y, body: h.body });
+    (room, squeeze)
+}
+
 /// The fall over this step from the current vertical speed: (distance, new speed).
 fn fall(loco: &Locomotion, params: &MoverParams, dt: f32) -> (f32, f32) {
     let v1 = (loco.vertical_speed - params.gravity * dt).max(-params.max_fall_speed);
@@ -801,11 +926,12 @@ fn ground_query(it: &MoveInput<'_>, p: &Pending, dt: f32) -> Option<ProbeQuery> 
 }
 
 /// Lands, snaps or falls; then height smoothing, trajectory, `moved`.
-/// `cast` is the ground cast at the slid position.
-fn finish(it: &mut MoveInput<'_>, p: &Pending, cast: Cast, probe: &dyn GroundProbe, dt: f32) {
+/// `cast` is the ground cast at the slid position. Returns the squeeze of a moving base the
+/// world won't let lift the character (`IN11c2c2`).
+fn finish(it: &mut MoveInput<'_>, p: &Pending, cast: Cast, probe: &dyn GroundProbe, dt: f32) -> Option<Squeeze> {
     if let Some(free) = p.free {
         finish_free(it, p, free, cast, probe, dt);
-        return;
+        return None;
     }
     it.loco.traversing = false;
     let params = it.params;
@@ -817,6 +943,9 @@ fn finish(it: &mut MoveInput<'_>, p: &Pending, cast: Cast, probe: &dyn GroundPro
     let mut d = p.d;
     let mut deflected = p.deflected;
     let mut feet = p.start.offset(d);
+    let mut lifted = None;
+    // Squeezed up against the world last step: held there until the base lets go.
+    let pinned = loco.squeeze.is_some_and(|s| s.direction.y > 0.5);
     if loco.grounded.is_none() && loco.vertical_speed > 0.0 {
         // Launched and still rising: ballistic, never snapped to the ground.
         let hit = if let Cast::Done(hit) = cast { hit } else { None };
@@ -853,7 +982,10 @@ fn finish(it: &mut MoveInput<'_>, p: &Pending, cast: Cast, probe: &dyn GroundPro
         match hit {
             _ if blocked => {}
             Some(h) => {
-                let up = rise(params, &h);
+                let mut up = rise(params, &h);
+                if h.body.is_some() {
+                    (up, lifted) = lift(params, feet, up, &h, pinned, dt, probe);
+                }
                 // The height change a planar continuation of the previous ground
                 // explains is slope, not a step: only the rest is smoothed.
                 if let Some(g) = loco.grounded {
@@ -865,14 +997,16 @@ fn finish(it: &mut MoveInput<'_>, p: &Pending, cast: Cast, probe: &dyn GroundPro
                 }
                 feet = feet.offset(Vec3::Y * up);
                 loco.vertical_speed = 0.0;
-                loco.grounded = Some(h);
-                if h.walkable(min_ny) {
+                // No room on the base: kept where the world holds it, not standing on the base
+                // (its top is inside the feet; a cast from inside it has no normal), no slide.
+                loco.grounded = lifted.is_none().then_some(h);
+                if lifted.is_none() && h.walkable(min_ny) {
                     // Walkable again: the slide dies out within a few frames.
                     loco.slide *= (-dt / SLIDE_STOP_S).exp();
                     if loco.slide.length_squared() < 1e-4 {
                         loco.slide = Vec3::ZERO;
                     }
-                } else {
+                } else if lifted.is_none() {
                     // Too steep to stand on: gravity along the slope, of
                     // which the horizontal part moves the feet (the ground
                     // cast keeps them on the slope).
@@ -881,6 +1015,8 @@ fn finish(it: &mut MoveInput<'_>, p: &Pending, cast: Cast, probe: &dyn GroundPro
                     loco.slide = (loco.slide + accel * dt).clamp_length_max(params.max_fall_speed);
                 }
             }
+            // Pinned by a base the cast now starts inside: held, not dropped into it.
+            None if pinned => loco.vertical_speed = 0.0,
             None => {
                 let (drop, v1) = match loco.grounded {
                     // Walked off (or the ground went): a moving base's velocity is kept
@@ -912,6 +1048,7 @@ fn finish(it: &mut MoveInput<'_>, p: &Pending, cast: Cast, probe: &dyn GroundPro
     critical_spring(&mut loco.height_offset, &mut loco.height_offset_velocity, 0.0, params.halflife_height, dt);
     loco.trajectory = loco.motion.predict(p.v_goal, p.yaw_goal, p.gait, &params.springs);
     loco.moved = p.frame.delta_to(&loco.frame());
+    lifted
 }
 
 /// Free movement (flying, swimming, traversals): the vertical displacement

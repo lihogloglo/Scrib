@@ -6,6 +6,9 @@
 //! `AI_W` scaffold here: [`script`]); [`drive`] steers them along their
 //! scripted path (`sf_controller::PathFollower`: loop, back-and-forth or
 //! once, walk or run) and fires their periodic action while they stand.
+//! The script is the actor's routine: perception reactions (`mw_walkers_bevy::reaction`, `AI8i`:
+//! a search, then the walk back to where it left its script) pre-empt it, and [`drive`] runs
+//! after them and after the navmesh corridor's idle write, skipping while a reaction owns the actor.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -193,8 +196,16 @@ pub fn add(app: &mut App, actors: Arc<[ActorSetup]>) {
         .add_message::<ImpactOnCharacter>()
         .add_systems(PostStartup, install)
         .add_systems(Update, script)
-        // The path follower is NPC gameplay: on the fixed tick, with the walkers (NV7a).
-        .add_systems(FixedUpdate, drive.in_set(ControllerSystems::Drive));
+        // The path follower is NPC gameplay: on the fixed tick, with the walkers (NV7a); after the
+        // reactions and the corridor (which writes `IDLE` for a goal-less corridor), so the path's
+        // intent is the last word on the tick and the two never fight (`AI8i`).
+        .add_systems(
+            FixedUpdate,
+            drive
+                .in_set(ControllerSystems::Drive)
+                .after(sf_nav_bevy::NavSystems::Corridor)
+                .after(mw_walkers_bevy::reaction::ReactionSystems::Apply),
+        );
 }
 
 /// Replaces the viewer's actor spawner (when characters are on).
@@ -222,7 +233,9 @@ pub struct ActorScript {
 }
 
 /// Once `walkers.rs` gave a level actor its mover: its script replaces the
-/// `AI_W` scaffold and local avoidance (scripted paths stay on their line).
+/// `AI_W` scaffold and local avoidance (scripted paths stay on their line). The perception
+/// reactions (`Reaction`, the navmesh corridor and the searcher) stay: a scripted actor still
+/// searches and walks back (`AI8i`).
 fn script(mut commands: Commands, actors: Res<LevelActors>, fresh: Query<(Entity, &LevelActor, &Mover), Added<Mover>>) {
     for (entity, actor, mover) in &fresh {
         let Some(setup) = actors.0.get(actor.index) else { continue };
@@ -277,16 +290,23 @@ fn fidget_picker(action: &sf_level::Action, index: usize) -> FidgetPicker {
     FidgetPicker::new(&weights, action.every, param("max", action.every * 2.0), sf_anim_graph::variety::mix64(index as u64))
 }
 
-/// Paths write the intent; actions fire while standing (`FixedUpdate`: `dt` is the tick).
-#[allow(clippy::needless_pass_by_value)]
+/// Paths write the intent; actions fire while standing (`FixedUpdate`: `dt` is the tick). Paused
+/// (path, actions, fidgets) while a perception reaction owns the actor.
+#[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
 fn drive(
     time: Res<Time>,
-    mut actors: Query<(Entity, &Mover, &mut MoveIntent, &mut ActorScript), Without<Dormant>>,
+    mut actors: Query<
+        (Entity, &Mover, &mut MoveIntent, &mut ActorScript, Option<&mw_walkers_bevy::reaction::Reaction>),
+        Without<Dormant>,
+    >,
     mut animators: Query<&mut Animator>,
     mut impacts: MessageWriter<ImpactOnCharacter>,
 ) {
     let dt = time.delta_secs().min(0.1);
-    for (entity, mover, mut intent, mut script) in &mut actors {
+    for (entity, mover, mut intent, mut script, reaction) in &mut actors {
+        if reaction.is_some_and(mw_walkers_bevy::reaction::Reaction::owns) {
+            continue;
+        }
         let script = &mut *script;
         let mut standing = true;
         if let Some(f) = &mut script.follower {
@@ -328,5 +348,113 @@ fn drive(
                 animator.fire(&action.trigger);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The level path drive against the navmesh corridor (`AI8i`): a level path actor keeps its
+    //! goal-less `NavCorridor` (the reactions' corridor), which writes `IDLE` every tick; [`drive`]
+    //! runs after it, so the path's intent is what the mover gets.
+
+    use std::time::Duration;
+
+    use bevy::app::TaskPoolPlugin;
+    use bevy::time::{TimePlugin, TimeUpdateStrategy};
+    use sf_controller::{GroundHit, GroundProbe, HeightSurface, ProbeQuery, TerrainProbe};
+    use sf_controller_bevy::{MoverParams, SfControllerPlugin};
+    // `sf_ids` through a dependency that re-exports it (no new dev-dependency for one key).
+    use sf_sky_bevy::sf_ids::ActorKey;
+    use sf_nav::{AgentClassId, GridBackend, GridConfig};
+    use sf_nav_bevy::{NavCorridor, NavCorridorPlugin, NavMeshes, NavPlugin, NavQueryPlugin};
+    use sf_world::WorldspaceId;
+
+    use super::*;
+
+    struct Flat;
+
+    impl HeightSurface for Flat {
+        fn height(&self, _p: WorldPos) -> Option<f32> {
+            Some(0.0)
+        }
+        fn normal(&self, _p: WorldPos) -> Option<Vec3> {
+            Some(Vec3::Y)
+        }
+        fn raycast(&self, origin: WorldPos, dir: Vec3, max: f32) -> Option<(f32, Vec3)> {
+            if dir.y.abs() < 1e-6 {
+                return None;
+            }
+            let t = -WorldPos::ORIGIN.delta_f32(origin).y / dir.y;
+            (0.0..=max).contains(&t).then_some((t, Vec3::Y))
+        }
+    }
+
+    #[derive(Resource)]
+    struct Floor(TerrainProbe<Flat>);
+
+    impl GroundProbe for Floor {
+        fn probe(&self, queries: &[ProbeQuery], out: &mut [Option<GroundHit>]) {
+            self.0.probe(queries, out);
+        }
+    }
+
+    #[test]
+    fn a_level_path_actor_walks_its_path_beside_its_idle_corridor() {
+        let mut app = App::new();
+        app.add_plugins((
+            TaskPoolPlugin::default(),
+            TimePlugin,
+            SfControllerPlugin::<Floor>::default(),
+            NavPlugin,
+            NavQueryPlugin,
+            NavCorridorPlugin,
+        ))
+        .insert_resource(Time::<Fixed>::from_hz(60.0))
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)))
+        .insert_resource(Floor(TerrainProbe(Flat)))
+        .insert_resource(NavMeshes(Box::new(GridBackend::new(GridConfig { cell_size: 1.0, tile_cells: 8 }).unwrap())));
+        add(&mut app, Arc::from(Vec::<ActorSetup>::new()));
+        app.update();
+        let start = WorldPos::from_f64(bevy::math::DVec3::new(10.0, 0.0, 10.0));
+        let end = start.offset(Vec3::new(5.0, 0.0, 0.0));
+        let params = MoverParams::default();
+        let speed = 1.5;
+        let follower = PathFollower::new(vec![PathNode::at(start), PathNode::at(end)], PathMode::Once, speed).for_mover(&params);
+        let ws = WorldspaceId::new("level_path");
+        let e = app
+            .world_mut()
+            .spawn((
+                Mover::new(start, 0.0, params, WorldPos::ORIGIN),
+                MoveIntent::default(),
+                NavCorridor::new(ActorKey(1), AgentClassId(0), ws, speed),
+                mw_walkers_bevy::reaction::Reaction::new(speed),
+                ActorScript { follower: Some(follower), action: None, fidgets: None },
+            ))
+            .id();
+        let (mut walking_ticks, mut idle_ticks, mut done) = (0_u32, 0_u32, None);
+        for tick in 0..(10 * 60) {
+            app.update();
+            let world = app.world();
+            let pos = world.get::<Mover>(e).unwrap().loco.position;
+            let off = start.delta_f32(pos);
+            assert!(off.is_finite() && off.y.abs() < 0.5, "tick {tick}: {off:?}");
+            if done.is_none() {
+                // Short of the end's braking (the follower's own stop coasts to rest on its spring).
+                let to_end = pos.delta_f32(end).with_y(0.0).length();
+                if world.get::<MoveIntent>(e).unwrap().0.desired_velocity.length_squared() > 1e-6 {
+                    walking_ticks += 1;
+                } else if to_end > 0.5 {
+                    idle_ticks += 1;
+                }
+                if to_end < 0.2 {
+                    done = Some(tick);
+                }
+            }
+        }
+        let done = done.expect("the level path actor never reached the end of its path");
+        println!("level path: reached the end on tick {done}, {walking_ticks} walking / {idle_ticks} idle intents short of its brake");
+        // 5 m at 1.5 m/s (plus the start and the brake): the corridor's idle never took the intent.
+        assert_eq!(idle_ticks, 0, "{idle_ticks} ticks of IDLE intent while walking the path");
+        assert!(done < 8 * 60, "took {done} ticks for 5 m");
     }
 }

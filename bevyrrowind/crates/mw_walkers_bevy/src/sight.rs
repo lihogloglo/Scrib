@@ -45,6 +45,10 @@ pub fn add<G: GroundProbe + Resource>(app: &mut App) {
     if !app.is_plugin_added::<AiSightPlugin<G>>() {
         app.add_plugins(AiSightPlugin::<G>::default());
     }
+    // The `crime.stealth.*` tunables as the sight's detection rules (LW4b2).
+    if !app.is_plugin_added::<sf_crime_bevy::CrimeStealthPlugin>() {
+        app.add_plugins(sf_crime_bevy::CrimeStealthPlugin);
+    }
     app.add_systems(
         FixedUpdate,
         (perceive_player, player_pose)

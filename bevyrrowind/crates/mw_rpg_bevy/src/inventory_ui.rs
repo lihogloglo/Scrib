@@ -40,8 +40,8 @@ use tes3::esp::{
 };
 
 use mw_controls_bevy::{InventoryAction, inventory_pressed};
-use crate::dialogue::Rpg;
-use crate::inventory::{ContainerOpened, ItemRecords, is_organic, move_stack, take_all};
+use crate::dialogue::{DialogueSheets, Rpg};
+use crate::inventory::{ContainerOpened, ItemRecords, is_organic, move_stack, player_level, take_all};
 
 /// The screen's id.
 pub const SCREEN: &str = "inventory";
@@ -368,6 +368,7 @@ pub fn host_containers(
     records: Res<ItemRecords>,
     mut rpg: ResMut<Rpg>,
     mut screens: ResMut<ScreenStackRes>,
+    sheets: DialogueSheets,
 ) {
     for event in events.read() {
         let Ok(open) = windows.get(event.screen) else { continue };
@@ -388,7 +389,7 @@ pub fn host_containers(
                     warn!("container {}: take all from {from:?} to {to:?} refused", open.record);
                     continue;
                 }
-                let taken = take_all(&mut rpg.state, &records.0, PlayerId::HOST, open.key, &open.record);
+                let taken = take_all(&mut rpg.state, &records.0, PlayerId::HOST, open.key, &open.record, player_level(&sheets));
                 info!("container {}: took all {taken:?}", open.record);
                 screens.0.close(CONTAINER_SCREEN);
             }
@@ -422,7 +423,7 @@ mod tests {
         assert!(player_view(&records, &slots.0, &rpg.state.pc).rows().is_empty(), "nothing taken yet");
 
         let barrel = RecordId::new("chargen barrel fatigue");
-        take_all(&mut rpg.state, &db, PlayerId::HOST, ActorKey(7), &barrel);
+        take_all(&mut rpg.state, &db, PlayerId::HOST, ActorKey(7), &barrel, 1);
         let mut view = player_view(&records, &slots.0, &rpg.state.pc);
         let visible = view.visible().to_vec();
         let ring = visible.iter().filter_map(|id| view.rows().get(id)).find(|r| r.stack.item.as_str() == "ring_keley");

@@ -248,6 +248,13 @@ darkness (`VISIBILITY_UNMODELLED` without a sample), speed = |velocity|, distanc
 `visibility_from_concealment(concealment)`. Views (stats, `StealthState`) stay default until `sf_crime_bevy` fills them.
 `light_only_visibility` removed. Meter only; Classic with MA5.
 
+**As built (LW4b2, 2026-11-25):** `sf_crime_bevy` (bevy_app/bevy_ecs std only) declares the 9 `crime.stealth.*`
+tunables (defaults = `StandardDetectionConfig::default()`, a test keeps them equal; Guess, Live). `CrimeStealthPlugin`
+binds them into `CrimeStealthSettings` and, in PreUpdate after `TunableSystems::Bind`, installs
+`AiDetectionRules(Arc::new(StandardDetection::new(cfg)))`, swapping the `Arc` only on a change and only while the
+installed rules are still its own (`Arc::ptr_eq`: a game's own rules are kept). Bevyrrowind adds it in
+`mw_walkers_bevy::sight::add` beside `AiSightPlugin`.
+
 ### Locks and traps
 
 ```rust

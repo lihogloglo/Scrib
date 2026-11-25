@@ -1082,7 +1082,7 @@ mod tests {
         let mut rpg = Rpg::new(Arc::new(db)).unwrap();
         let open = |rpg: &mut Rpg, refr_index: u32| {
             let key = ActorKey(placement(refr_index));
-            let inv = &crate::inventory::container_store(&mut rpg.state, &rpg.content.records, key, &id("dq_stocked")).loadout;
+            let inv = &crate::inventory::container_store(&mut rpg.state, &rpg.content.records, key, &id("dq_stocked"), 1).loadout;
             ["dq_gem", "dq_ring", "dq_coin"].map(|i| inv.count(&id(i)))
         };
 
@@ -1093,6 +1093,105 @@ mod tests {
         assert_eq!(open(&mut rpg, TAKEN), [1, 1, 0], "removed from the seeded contents");
         items(&mut rpg, Target::Ref(placement(TAKEN)), "dq_ring", 5, false);
         assert_eq!(open(&mut rpg, TAKEN), [1, 0, 0], "at most what it holds");
+    }
+
+    // ------------------------------------------------------------ DQ-5f1: counts before opening
+
+    #[test]
+    fn get_item_count_on_an_unopened_container_counts_its_record_contents() {
+        const CHEST: u32 = 12;
+        let mut db = records();
+        let src = db.add_source("test2", &[]);
+        // Forced: chance none 0, one candidate at level 1 (the player's level without stats).
+        let lev = tes3::esp::LeveledItem { id: "dq_lev".into(), items: vec![("dq_gem".into(), 1)], ..Default::default() };
+        db.define(src, id("dq_lev"), lev).unwrap();
+        let coins = Container {
+            id: "dq_coins".into(),
+            inventory: vec![(3, tes3::esp::FixedString("gold_001".into())), (1, tes3::esp::FixedString("dq_lev".into()))],
+            ..Default::default()
+        };
+        db.define(src, id("dq_coins"), coins).unwrap();
+        let mut room = Cell { name: "DQ Vault".into(), ..Cell::default() };
+        room.data.flags = CellFlags::IS_INTERIOR;
+        room.references.insert((0, CHEST), reference(CHEST, "dq_coins"));
+        db.define(src, RecordId::new("DQ Vault"), room).unwrap();
+        let mut rpg = Rpg::new(Arc::new(db)).unwrap();
+        let (key, chest) = (ActorKey(placement(CHEST)), Target::Ref(placement(CHEST)));
+        // `chest->GetItemCount item` (`View::item_count`, a `&self` read).
+        let count = |rpg: &Rpg, item: &str| mw_rpg::MwWorld::item_count(&view(rpg), &ctx(0), &chest, &id(item));
+
+        let counts = |rpg: &Rpg| (count(rpg, "gold_001"), count(rpg, "dq_gem"), count(rpg, "dq_lev"));
+        assert_eq!(counts(&rpg), (3, 1, 0), "unopened: the record's coins and the levelled entry's roll (never the list)");
+        assert!(!rpg.state.inventories.contains_key(&key), "the read seeded nothing");
+
+        let _ = crate::inventory::container_store(&mut rpg.state, &rpg.content.records, key, &id("dq_coins"), 1);
+        assert_eq!(counts(&rpg), (3, 1, 0), "opened (seeded): the same counts");
+
+        items(&mut rpg, chest.clone(), "gold_001", 2, true);
+        assert_eq!(count(&rpg, "gold_001"), 5, "`AddItem` 2 on top of the seed");
+    }
+
+    // ------------------------------------------------------------ DQ-5f4: levelled entries rolled
+
+    /// Chests `100..100 + n` of CONT `dq_loot`: 4 of `dq_loot_lev` (all levels, each piece rolled,
+    /// chance none 30 over `dq_g1`/`dq_g2`/`dq_g3`/`dq_g9`, level 9 above the player's 1) and 2
+    /// `dq_coin`.
+    fn loot(n: u32) -> Rpg {
+        let mut db = records();
+        let src = db.add_source("test", &[]);
+        let flags = tes3::esp::LeveledItemFlags::CALCULATE_FROM_ALL_LEVELS | tes3::esp::LeveledItemFlags::CALCULATE_FOR_EACH_ITEM;
+        let items = [("dq_g1", 1), ("dq_g2", 1), ("dq_g3", 0), ("dq_g9", 9)].map(|(i, l)| (i.to_string(), l)).to_vec();
+        let lev = tes3::esp::LeveledItem { id: "dq_loot_lev".into(), leveled_item_flags: flags, chance_none: 30, items, ..Default::default() };
+        db.define(src, id("dq_loot_lev"), lev).unwrap();
+        let inventory = vec![(4, tes3::esp::FixedString("dq_loot_lev".into())), (-2, tes3::esp::FixedString("dq_coin".into()))];
+        db.define(src, id("dq_loot"), Container { id: "dq_loot".into(), inventory, ..Default::default() }).unwrap();
+        let mut room = Cell { name: "DQ Loot".into(), ..Cell::default() };
+        room.data.flags = CellFlags::IS_INTERIOR;
+        for i in 100..100 + n {
+            room.references.insert((0, i), reference(i, "dq_loot"));
+        }
+        db.define(src, RecordId::new("DQ Loot"), room).unwrap();
+        Rpg::new(Arc::new(db)).unwrap()
+    }
+
+    const LOOT: [&str; 6] = ["dq_g1", "dq_g2", "dq_g3", "dq_g9", "dq_coin", "dq_loot_lev"];
+
+    /// `GetItemCount` of every [`LOOT`] id in chest `refr` (`View::item_count`).
+    fn loot_counts(rpg: &Rpg, refr: u32) -> Vec<u64> {
+        LOOT.iter().map(|item| mw_rpg::MwWorld::item_count(&view(rpg), &ctx(0), &Target::Ref(placement(refr)), &id(item))).collect()
+    }
+
+    #[test]
+    fn a_levelled_entry_counts_before_opening_what_the_opening_seeds() {
+        const CHESTS: u32 = 12;
+        let mut rpg = loot(CHESTS);
+        let before: Vec<Vec<u64>> = (100..100 + CHESTS).map(|r| loot_counts(&rpg, r)).collect();
+        assert!(rpg.state.inventories.is_empty(), "the reads seeded nothing");
+        for (i, r) in (100..100 + CHESTS).enumerate() {
+            let _ = crate::inventory::container_store(&mut rpg.state, &rpg.content.records, ActorKey(placement(r)), &id("dq_loot"), 1);
+            assert_eq!(loot_counts(&rpg, r), before[i], "chest {r}: the count before opening is the seeded store");
+            let c = &before[i];
+            assert_eq!((c[3], c[4], c[5]), (0, 2, 0), "chest {r}: no level 9 pick, the coins by magnitude, never the list");
+            assert!(c[..3].iter().sum::<u64>() <= 4, "chest {r}: at most one piece per roll");
+        }
+        assert!(before.iter().any(|c| c[..3].iter().sum::<u64>() < 4), "chance none 30 empties some rolls");
+        assert!(before.iter().any(|c| c[..3].iter().filter(|n| **n > 0).count() > 1), "each piece rolled on its own");
+    }
+
+    #[test]
+    fn a_placement_rolls_the_same_every_time_and_others_roll_their_own() {
+        const CHESTS: u32 = 12;
+        let seeded = |rpg: &mut Rpg, r: u32| {
+            let store = crate::inventory::container_store(&mut rpg.state, &rpg.content.records, ActorKey(placement(r)), &id("dq_loot"), 1);
+            store.loadout.inventory().stacks().iter().map(|s| (s.item.clone(), s.count)).collect::<Vec<_>>()
+        };
+        let (mut first, mut second) = (loot(CHESTS), loot(CHESTS));
+        let a: Vec<_> = (100..100 + CHESTS).map(|r| seeded(&mut first, r)).collect();
+        // The second state seeds in reverse order: the roll depends on the placement, not the order.
+        let mut b: Vec<_> = (100..100 + CHESTS).rev().map(|r| seeded(&mut second, r)).collect();
+        b.reverse();
+        assert_eq!(a, b, "fresh states: each placement seeds the same contents");
+        assert!(a.iter().any(|s| *s != a[0]), "placements of the same record roll their own contents");
     }
 
     // ------------------------------------------------------------ DQ-5e: one rule 7 resolver
@@ -1198,7 +1297,7 @@ mod tests {
     /// inventory, as its local key.
     fn pick_up(rpg: &mut Rpg) -> LocalKey {
         let key = ActorKey(placement(BOX));
-        let store = crate::inventory::container_store(&mut rpg.state, &rpg.content.records, key, &id("dq_box"));
+        let store = crate::inventory::container_store(&mut rpg.state, &rpg.content.records, key, &id("dq_box"), 1);
         let stack = store.loadout.inventory().stacks()[0].id;
         let player = sf_rpg::Holder::Player(sf_rpg::PlayerId::HOST);
         crate::inventory::move_stack(&mut rpg.state, the_box(), player, stack, 1).expect("the ring moves");

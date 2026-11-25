@@ -38,8 +38,9 @@
 //!   [`TakeRequest`]s are the player's). The content lives in `RpgState::inventories` under the
 //!   container's placement id (saved with the RPG state) and is `Holder::Actor(ActorKey(id))`,
 //!   the store NPC inventories use, so `sf_rpg`'s `Holder` needs no container variant. It is
-//!   seeded from the record's item list the first time ([`container_store`]; levelled entries
-//!   are skipped). The host validates an open ([`ContainerOpened`]) and applies the window's
+//!   seeded from the record's item list the first time ([`container_store`]; a levelled entry
+//!   is rolled at the player's level, deterministically per placement and entry, DQ-5f4:
+//!   `mw_rpg::initial_items`, `OpenMW` `ContainerStore::fill` @ 4e718b50). The host validates an open ([`ContainerOpened`]) and applies the window's
 //!   intents: [`move_stack`] takes pieces off one stack (`Loadout::take`, instance data kept)
 //!   and adds them to the other holder (merging into an identical stack), gold converting as
 //!   in [`give`]; [`take_all`] moves every stack in container order, then the window closes
@@ -70,11 +71,12 @@ use sf_script_bevy::{ActivationOutcome, PLAYER, ScriptPlacements, ScriptSlot};
 use sf_world::PlacementId;
 use sf_world_bevy::WorldOverlay;
 use tes3::esp::{
-    Alchemy, Apparatus, Armor, Book, Cell, Clothing, Container, ContainerFlags, Ingredient, LeveledItem, Light, LightFlags, Lockpick,
+    Alchemy, Apparatus, Armor, Book, Cell, Clothing, Container, ContainerFlags, Ingredient, Light, LightFlags, Lockpick,
     MiscItem, Probe, Reference, RepairItem, Weapon,
 };
 
-use crate::dialogue::{Rpg, RpgState};
+use crate::dialogue::{Rpg, RpgState, WorldSheets};
+use mw_rpg::{LevelledRoll, MwSheets, initial_items};
 use mw_scripts_bevy::ActivePlacements;
 
 /// What activating a record does.
@@ -278,8 +280,9 @@ pub fn apply_takes(world: &mut World, reader: &mut SystemState<MessageReader<'st
                     continue;
                 }
                 let db = world.resource::<ItemRecords>().0.clone();
+                let level = player_level(&WorldSheets(world));
                 let mut rpg = world.resource_mut::<Rpg>();
-                let stacks = container_store(&mut rpg.state, &db, ActorKey(request.target.0), &request.record).loadout.inventory().stacks().len();
+                let stacks = container_store(&mut rpg.state, &db, ActorKey(request.target.0), &request.record, level).loadout.inventory().stacks().len();
                 let owned = world.get_resource::<RefOwners>().is_some_and(|o| o.0.contains(&request.target));
                 info!("open {}: {stacks} stacks{}", request.record, if owned { ", owned" } else { "" });
                 world.write_message(ContainerOpened { player: request.player, target: request.target, record: request.record, owned });
@@ -319,20 +322,58 @@ fn gold_as_001(item: &RecordId) -> RecordId {
 }
 
 /// The store of `container` (a placement of CONT `record`), seeded from the record's item list
-/// on first access (levelled entries skipped; negative restocking counts by magnitude).
-pub fn container_store<'a>(state: &'a mut RpgState, db: &RecordDb, container: ActorKey, record: &RecordId) -> &'a mut CharacterRpg {
+/// on first access at the player's `level` ([`container_seed`]: levelled entries rolled, negative
+/// restocking counts by magnitude).
+pub fn container_store<'a>(state: &'a mut RpgState, db: &RecordDb, container: ActorKey, record: &RecordId, level: u16) -> &'a mut CharacterRpg {
     state.inventories.entry(container).or_insert_with(|| {
         let mut seeded = CharacterRpg::default();
-        for (count, item) in db.get::<Container>(record).map(|c| c.inventory.as_slice()).unwrap_or_default() {
-            let item = RecordId::new(item.as_str());
-            if db.get::<LeveledItem>(&item).is_some() {
-                info!("open {record}: levelled list {item} skipped (no levelled items yet)");
-                continue;
-            }
-            let _ = seeded.loadout.add(item, count.unsigned_abs(), Attrs::new());
+        for (item, count) in container_seed(db, record, container, level) {
+            let _ = seeded.loadout.add(item, count, Attrs::new());
         }
         seeded
     })
+}
+
+/// What a fresh seed of `container` (a placement of CONT `record`) holds at the player's `level`,
+/// in record order: each entry through [`mw_rpg::initial_items`] (a levelled list rolled, DQ-5f4),
+/// every entry with its own [`container_roll`]. The one list [`container_store`] seeds from and
+/// [`container_count`] reads, so they cannot diverge.
+fn container_seed(db: &RecordDb, record: &RecordId, container: ActorKey, level: u16) -> Vec<(RecordId, u32)> {
+    let inventory = db.get::<Container>(record).map(|c| c.inventory.as_slice()).unwrap_or_default();
+    inventory
+        .iter()
+        .enumerate()
+        .flat_map(|(index, (count, item))| {
+            initial_items(db, &RecordId::new(item.as_str()), *count, level, &mut container_roll(container, index, level))
+        })
+        .collect()
+}
+
+/// The draw stream of entry `index` of `container`'s record at the player's `level`: `splitmix64`
+/// over (placement key halves, entry index, level), so the same placement rolls the same, another
+/// placement of the record rolls its own, and the read before opening agrees with the seed.
+#[allow(clippy::cast_possible_truncation, reason = "splits the u128 key into its two u64 halves")]
+fn container_roll(container: ActorKey, index: usize, level: u16) -> LevelledRoll {
+    LevelledRoll::new(&[container.0 as u64, (container.0 >> 64) as u64, index as u64, u64::from(level)])
+}
+
+/// The host player's level (`PcLevel`, the `getLevelledItem` input), 1 without stats (a new
+/// character's level).
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "clamped to the u16 range first")]
+pub fn player_level(sheets: &dyn MwSheets) -> u16 {
+    let level = sheets.table().zip(sheets.player(PlayerId::HOST)).map(|(t, s)| s.view(&t.table).modified(t.idx.level));
+    level.map_or(1, |l| l.trunc().clamp(0.0, f32::from(u16::MAX)) as u16)
+}
+
+/// Pieces of `item` in `container` (a placement of CONT `record`) without seeding it: its store
+/// once it exists, else what [`container_store`] would seed at `level` (`GetItemCount` on a
+/// container nobody opened yet, a `&self` read; DQ-5f1). A level-up before the first opening
+/// changes the roll (`OpenMW` rolls on the first fill too).
+pub fn container_count(state: &RpgState, db: &RecordDb, container: ActorKey, record: &RecordId, item: &RecordId, level: u16) -> u64 {
+    match state.inventories.get(&container) {
+        Some(store) => store.loadout.count(item),
+        None => container_seed(db, record, container, level).into_iter().filter(|(i, _)| i == item).map(|(_, c)| u64::from(c)).sum(),
+    }
 }
 
 /// The CONT base of every container reference, by its store key (the merged references: the last
@@ -390,9 +431,9 @@ pub fn move_stack(state: &mut RpgState, from: Holder, to: Holder, stack: StackId
 }
 
 /// The container window's Take all: moves every stack of `container` (seeded from `record` on
-/// first access) to `player`, in container order. Returns what moved.
-pub fn take_all(state: &mut RpgState, db: &RecordDb, player: PlayerId, container: ActorKey, record: &RecordId) -> Vec<(RecordId, u32)> {
-    let stacks: Vec<(StackId, u32)> = container_store(state, db, container, record).loadout.inventory().stacks().iter().map(|s| (s.id, s.count)).collect();
+/// first access at the player's `level`) to `player`, in container order. Returns what moved.
+pub fn take_all(state: &mut RpgState, db: &RecordDb, player: PlayerId, container: ActorKey, record: &RecordId, level: u16) -> Vec<(RecordId, u32)> {
+    let stacks: Vec<(StackId, u32)> = container_store(state, db, container, record, level).loadout.inventory().stacks().iter().map(|s| (s.id, s.count)).collect();
     stacks
         .into_iter()
         .filter_map(|(stack, count)| move_stack(state, Holder::Actor(container), Holder::Player(player), stack, count))
@@ -600,7 +641,7 @@ mod tests {
         assert_eq!(take_kind(&db, &RecordId::new("ex_common_house_tall_02")), None);
 
         let (mut rpg, store) = ring_through_the_window(&db);
-        assert!(take_all(&mut rpg.state, &db, PlayerId::HOST, store, &barrel).is_empty(), "the barrel stays empty");
+        assert!(take_all(&mut rpg.state, &db, PlayerId::HOST, store, &barrel, 1).is_empty(), "the barrel stays empty");
 
         assert!(rpg.add_actor(FARGOTH, &RecordId::new("fargoth"), "Seyda Neen"));
         let (mut talk, mut view) = rpg.open(FARGOTH, &NoSheets).unwrap();

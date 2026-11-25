@@ -1,0 +1,26 @@
+[package]
+name = "sf_interaction"
+description = "Bevy-free interaction core for superfargoth (interaction.md): smart-object definitions (slots, verbs, carry and destruction data) and the `Claims` table (priority, queue tickets, leases, exclusion groups, hand claims); the point index, verb ranking and entrances follow in IN0b"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Bevy-free core (build-perf.md rule 1): in hakari's final-excludes.
+[dependencies]
+# Slot frames, approach and contact points in the object's frame.
+glam = { workspace = true, features = ["serde"] }
+serde.workspace = true
+smallvec = { workspace = true, features = ["serde"] }
+# `ActorKey`, `PlayerKey`: who claims (`UserKey`).
+sf_ids.workspace = true
+# `RecordId`: def, carry class, loot and model references.
+sf_records.workspace = true
+# `PlacementId`: what a slot and a hand claim belong to (`SlotRef`).
+sf_world.workspace = true
+
+[dev-dependencies]
+ron.workspace = true
+
+[lints]
+workspace = true

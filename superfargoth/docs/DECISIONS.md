@@ -1976,3 +1976,10 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   (the arena reused) shows cones, NPC states and noise/impact events (ai.md AI47).
 - 2026-11-25 (gameplay-roadmaps-5, port rule): MWScript frame order follows OpenMW: local scripts before globals each
   tick (`engine.cpp:283`), a global a local starts runs the same tick; disabled references keep their local scripts.
+- 2026-11-25 (interaction, owner): generated animation needs many style variants, not one generic set: age (old people
+  don't walk like young ones), build, health/injury (limp), and the like; Delirium may "tint" clips (limping), the new
+  MotionBricks version may help; existing auto filters already drop bad clips (foot sliding); the clip picker tool is weak (separate).
+- 2026-11-25 (interaction, owner): animation style answers (anim-style.md §6): gait classes as recommended (neutral,
+  old, heavy, drunk, wounded/limp + fatigue/load modifiers, more in batches); wounded NPCs and companions limp by health
+  band and recover. Age is a per-NPC value set in code/data; Morrowind: no "very old" people except chosen obviously old
+  NPCs (a matriarch...) by override; how age shows visually comes later, low priority.

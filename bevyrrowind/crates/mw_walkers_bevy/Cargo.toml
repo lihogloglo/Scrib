@@ -36,6 +36,8 @@ sf_action.workspace = true
 sf_action_bevy.workspace = true
 sf_ai.workspace = true
 sf_ai_bevy.workspace = true
+# `sight` (LW4b2): the `crime.stealth.*` tunables as the sight rules (`CrimeStealthPlugin`).
+sf_crime_bevy.workspace = true
 sf_anim_bevy.workspace = true
 sf_bake.workspace = true
 sf_camera.workspace = true

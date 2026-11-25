@@ -23,6 +23,8 @@ sf_bake.workspace = true
 sf_coords.workspace = true
 sf_model = { path = "../sf_model", version = "0.1.0", optional = true, default-features = false }
 sf_terrain = { workspace = true, optional = true }
+# `CRUSH_DEPTH_M` (tunables.md).
+sf_tunables.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

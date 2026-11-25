@@ -372,7 +372,7 @@ impl PersuasionSession {
 }
 
 /// `splitmix64`'s finaliser (Steele, Lea, Flood 2014; public domain constants).
-const fn splitmix64(z: u64) -> u64 {
+pub(crate) const fn splitmix64(z: u64) -> u64 {
     let z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
     let z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     let z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);

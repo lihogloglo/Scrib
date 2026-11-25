@@ -1,20 +1,21 @@
 //! NPCs search when their awareness reaches Searching (`AI8f2`; `docs/specs/ai.md` "Perception":
 //! the Searching band runs the HTN `search` at the last known position). The core is
-//! `sf_ai::search` (`AI8f1`): this module owns one [`SearchState`] per walker ([`Searcher`]) and
-//! steps its goals through the existing `MoveTo` / `Face` executors (`sf_ai::OperatorExec`), so
-//! [`crate::walkers`]' drive feeds the same `NavCorridor` either way.
+//! `sf_ai::search` (`AI8f1`): this module owns one [`SearchState`] per actor ([`Searcher`]) and
+//! steps its goals through the existing `MoveTo` / `Face` executors (`sf_ai::OperatorExec`). The
+//! perception-reaction layer ([`crate::reaction`], `AI8i`) runs it for every actor with a navmesh
+//! corridor, wanderer or not, pre-empting the routine and walking back to its post afterwards.
 //!
-//! **Arbitration (the simplest that fits until `AI7`'s drives):** a mode beside the wander, chosen
+//! **Arbitration (the simplest that fits until `AI7`'s drives):** a mode over the routine, chosen
 //! every tick from the strongest awareness entry ([`Searcher::arbitrate`]):
 //! - its band is **Searching** and no search ran for this episode → start one at its `LastSeen`
 //!   (position, confidence), the actor's resolved `SearchParams` (`AiEffectivePerception`, else the
-//!   globals) and the `ai.perception.search_*` pattern; the wander is paused where it was;
+//!   globals) and the `ai.perception.search_*` pattern; the routine is pre-empted (`crate::reaction`);
 //! - fresher evidence (a newer `LastSeen` tick) outside the running search's current radius, about
 //!   another target, or after the search gave up → restart at the new position (no new tunable:
 //!   the search's own radius decides);
 //! - the search reached its ttl (`SearchGoal::Done`, on the ttl tick even mid-walk) or the band left Searching (Alerted
-//!   up, or another target's entry got stronger) → the wander resumes, re-choosing from where the search left the actor
-//!   (`WanderDriver::face` toward its current yaw, which ends the paused step at once).
+//!   up, or another target's entry got stronger) → the reaction walks the actor back to where the search pre-empted
+//!   its routine, then hands it back (a wander re-chooses from there).
 //!
 //! **The search, not the meter, ends Searching (`AI8f3`):** while a search runs, its target's
 //! awareness entry is held at the Searching floor (`AwarenessMeter::hold_searching`, synced by
@@ -22,8 +23,8 @@
 //! released on that tick and the entry decays out of Searching from there.
 //!
 //! Not covered: **Alerted** (latched) actors do not search (combat / report / flee drives come
-//! later; an Alerted actor keeps wandering, then searches once it drops to the Searching floor);
-//! walkers off the navmesh (fliers, swimmers, the pathgrid fallback) do not search; a running
+//! later; an Alerted actor keeps its routine, then searches once it drops to the Searching floor);
+//! actors off the navmesh (fliers, swimmers, the pathgrid fallback) do not search; a running
 //! search is not saved yet (ai.md "Saves"); no gizmos (`AI26`).
 
 use bevy_ecs::prelude::*;
@@ -64,7 +65,7 @@ pub struct SearchStats {
     pub dropped: u32,
 }
 
-/// A walker's search mode (`AI8f2`), required by [`crate::walkers::Walker`].
+/// An actor's search mode (`AI8f2`), required by [`crate::reaction::Reaction`].
 #[derive(Component, Debug, Default)]
 pub struct Searcher {
     run: Option<Running>,
@@ -93,11 +94,11 @@ struct Running {
 /// What [`Searcher::arbitrate`] decided for this tick.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SearchMode {
-    /// No search: wander.
+    /// No search: the routine (or a return to the post).
     Off,
     /// A search runs this tick ([`Searcher::step`]).
     Run,
-    /// A running search just ended: resume the wander.
+    /// A running search just ended: walk back to the post.
     End,
 }
 
@@ -111,7 +112,7 @@ pub(crate) struct SearchSetup<'a> {
     pub now: PerceptClock,
 }
 
-/// The drive's search inputs: the perception settings and clock (from `AiSightPlugin`) and the
+/// The reaction layer's search inputs: the perception settings and clock (from `AiSightPlugin`) and the
 /// wander vocabulary's move operator ids.
 #[derive(SystemParam)]
 pub(crate) struct SearchWorld<'w> {
@@ -254,7 +255,7 @@ impl Searcher {
     }
 
     /// Steps the running search by one tick through the move executors; `None` once it gave up
-    /// (ttl): resume the wander. `reachable` filters points (a navmesh polygon near them).
+    /// (ttl): walk back to the post. `reachable` filters points (a navmesh polygon near them).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn step(
         &mut self,

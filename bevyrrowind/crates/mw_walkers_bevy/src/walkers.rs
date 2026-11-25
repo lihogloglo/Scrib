@@ -10,6 +10,9 @@
 //!   others); characters with an `AI_W` package also get a [`Walker`]
 //!   (the scaffold) and an `Avoider` (ORCA, reactive). The camera is a
 //!   non-reactive obstacle (`AvoidObstacle`), as the player will be.
+//!   Every ground actor that perceives also gets a `NavCorridor` and the perception reactions
+//!   ([`crate::reaction`], `AI8i`: search, walk back to its post), wander or not; while a reaction
+//!   owns it the wander ([`drive`]) is paused.
 //! - The animation graph gets `moving`/`move`/`running` from the mover's
 //!   velocity (the graph's `SpeedMatch` op matches playback to speed), and
 //!   `AI_W` idles fire `fidget` with `idle_variant`.
@@ -44,10 +47,10 @@ use mw_ai::{
 };
 use mw_graphs::build::params as gp;
 use sf_ai::{
-    ExecConfig, ExecContext, FaceTarget, NavCommand, NavMoveState, TraceEntry,
+    ExecConfig, ExecContext, NavCommand, NavMoveState, TraceEntry,
 };
 use sf_ai_bevy::{
-    AiActor, AiAwareness, AiEffectivePerception, AiExecPlugin, AiExecSettings, AiExecTick, AiLibrary, AiPlugin, AiTraces,
+    AiActor, AiExecPlugin, AiExecSettings, AiExecTick, AiLibrary, AiPlugin, AiTraces,
     add_exec_tunables, to_controller_gait,
 };
 use sf_anim_bevy::{AnimLod, AnimStats, Animator};
@@ -74,7 +77,7 @@ use sf_tunables_bevy::sf_tunables::{AnyDef, Def, Lifetime, Net, Scope, Source, U
 use sf_world::{IndexedPlacement, Level, Location, PlacementClass, PlacementId, WorldspaceId};
 use sf_world_bevy::coords::WorldPosOf;
 
-use crate::search::{SearchMode, SearchWorld, Searcher};
+use crate::reaction::Reaction;
 use sf_world_bevy::{
     ActivateCx, ActiveWorldspace, LoadedModel, PlacementSpawner, PlacementSpawners, SpawnCx,
     Streaming,
@@ -366,10 +369,10 @@ pub struct ActionDriven;
 #[derive(Resource, Clone)]
 pub struct WanderVocab(pub Arc<WanderVocabulary>);
 
-/// A wandering character's HTN wander driver (`mw_ai`, `MA3`); its search mode
-/// ([`crate::search::Searcher`], `AI8f2`) pauses the wander while it runs.
+/// A wandering character's HTN wander driver (`mw_ai`, `MA3`), a routine: the perception-reaction
+/// layer ([`crate::reaction::Reaction`], `AI8i`: the search, `AI8f2`) pauses it while it owns the actor.
 #[derive(Component)]
-#[require(Searcher)]
+#[require(Reaction)]
 pub struct Walker {
     pub driver: WanderDriver,
     variant: Option<u8>,
@@ -383,6 +386,13 @@ pub struct Walker {
     on_navmesh: Option<bool>,
 }
 
+impl Walker {
+    /// Drops the stand [`apply_held_intent`] would restore (a reaction owns the intent).
+    pub(crate) fn release_held_intent(&mut self) {
+        self.held_intent = None;
+    }
+}
+
 /// The worldspace a mover lives in (NPCs never change worldspace in M3).
 #[derive(Component, Clone, Debug)]
 pub struct ActorSpace(pub WorldspaceId);
@@ -391,7 +401,10 @@ pub struct ActorSpace(pub WorldspaceId);
 struct Setup {
     params: MoverParams,
     mode: MoverMode,
-    wander: Option<(Wander, f32)>,
+    /// `AI_W` with a distance: the wander routine.
+    wander: Option<Wander>,
+    /// Walk speed, m/s (the wander's and the reactions').
+    speed: f32,
     /// Size the capsule from the dressed body's bind-pose bounds (`params` is the fallback).
     fit_to_body: bool,
 }
@@ -408,22 +421,19 @@ fn setup_of(content: &WalkerContent, id: &RecordId) -> Setup {
             .stats
             .as_ref()
             .map_or(50.0, |s| f32::from(s.attributes[4]));
-        let wander = Wander::of_npc(npc)
-            .filter(|w| w.distance > 0.0)
-            .map(|w| (w, speed_of(speed)));
+        let wander = Wander::of_npc(npc).filter(|w| w.distance > 0.0);
         return Setup {
             params: MoverParams::default(),
             mode: MoverMode::Ground,
             wander,
+            speed: speed_of(speed),
             fit_to_body: false,
         };
     }
     if let Some(c) = content.db.get::<Creature>(id) {
         #[allow(clippy::cast_precision_loss)]
         let speed = speed_of(c.data.speed as f32);
-        let wander = Wander::of_creature(c)
-            .filter(|w| w.distance > 0.0)
-            .map(|w| (w, speed));
+        let wander = Wander::of_creature(c).filter(|w| w.distance > 0.0);
         let flies = c.creature_flags.contains(CreatureFlags::FLIES);
         // Scaffold (fallfix): pure swimmers (slaughterfish) hold their depth
         // without gravity, `Fly { hover: None }` with a level intent, until the
@@ -452,6 +462,7 @@ fn setup_of(content: &WalkerContent, id: &RecordId) -> Setup {
             params,
             mode,
             wander,
+            speed,
             fit_to_body: true,
         };
     }
@@ -459,6 +470,7 @@ fn setup_of(content: &WalkerContent, id: &RecordId) -> Setup {
         params: MoverParams::default(),
         mode: MoverMode::Ground,
         wander: None,
+        speed: speed_of(50.0),
         fit_to_body: false,
     }
 }
@@ -533,7 +545,9 @@ fn attach(
             let height = if setup.fit_to_body { params.height } else { params.height * body_scale.y };
             e.try_insert((AiActor(ActorKey(p.0.0)), crate::sight::observer(height)));
         }
-        if let Some((wander, speed)) = setup.wander {
+        let walk_speed = setup.speed;
+        let wanders = setup.wander.is_some();
+        if let Some(wander) = setup.wander {
             let seed = entity.to_bits() ^ 0x5741_4C4B;
             let vocab = vocab
                 .as_ref()
@@ -542,7 +556,7 @@ fn attach(
             planner.idle_mult = content.idle_mult;
             let driver = WanderDriver::with_vocab(
                 planner,
-                speed,
+                walk_speed,
                 seed,
                 location.worldspace.clone(),
                 vocab,
@@ -561,24 +575,22 @@ fn attach(
                     on_navmesh: None,
                 },
                 Avoider {
-                    max_speed: speed * 1.5,
+                    max_speed: walk_speed * 1.5,
                     ..Avoider::default()
                 },
             ));
-            if matches!(setup.mode, MoverMode::Ground) {
-                let actor_key = ActorKey(placement.map_or(u128::from(entity.to_bits()), |p| p.0.0));
-                let filter =
-                    QueryFilter::for_class(&mw_bake::nav::areas(), mw_bake::nav::HUMANOID);
-                e.insert(
-                    NavCorridor::new(
-                        actor_key,
-                        mw_bake::nav::HUMANOID,
-                        location.worldspace.clone(),
-                        speed,
-                    )
+        }
+        // AI8i: every ground actor that perceives (or wanders) gets the navmesh corridor and the
+        // perception reactions (search, walk back to its post), with or without a wander: guards
+        // on post and shopkeepers (`AI_W` distance 0) search too.
+        if matches!(setup.mode, MoverMode::Ground) && (wanders || placement.is_some()) {
+            let actor_key = ActorKey(placement.map_or(u128::from(entity.to_bits()), |p| p.0.0));
+            let filter = QueryFilter::for_class(&mw_bake::nav::areas(), mw_bake::nav::HUMANOID);
+            e.insert((
+                NavCorridor::new(actor_key, mw_bake::nav::HUMANOID, location.worldspace.clone(), walk_speed)
                     .with_filter(filter),
-                );
-            }
+                Reaction::new(walk_speed),
+            ));
         }
     }
 }
@@ -682,7 +694,7 @@ fn terrain_missing(heights: &TerrainHeightsMap, ws: &WorldspaceId, pos: WorldPos
         .any(|(dx, dz)| h.height(pos.offset(Vec3::new(dx, 0.0, dz))).is_none())
 }
 
-fn nav_move_state(nav: &NavCorridor) -> NavMoveState {
+pub(crate) fn nav_move_state(nav: &NavCorridor) -> NavMoveState {
     if nav.failed.is_some() {
         NavMoveState::Failed
     } else if nav.is_arrived() {
@@ -696,7 +708,7 @@ fn nav_move_state(nav: &NavCorridor) -> NavMoveState {
     }
 }
 
-fn clear_corridor_goal(nav: &mut NavCorridor, queries: Option<&mut NavQueries>) {
+pub(crate) fn clear_corridor_goal(nav: &mut NavCorridor, queries: Option<&mut NavQueries>) {
     if let Some(id) = nav.pending.take()
         && let Some(q) = queries
     {
@@ -707,8 +719,8 @@ fn clear_corridor_goal(nav: &mut NavCorridor, queries: Option<&mut NavQueries>) 
 
 /// Steps each awake [`Walker`] (`MA3`): on a resident navmesh tile, steps HTN + [`NavCorridor`]
 /// before [`NavSystems::Corridor`]; off the navmesh (fliers or unbaked cells), runs the pathgrid
-/// fallback route. On the navmesh, an actor whose strongest awareness is Searching runs its
-/// search instead of the wander (`AI8f2`, [`crate::search`]), through the same corridor.
+/// fallback route. While a perception reaction owns the actor ([`Reaction::owns`], `AI8i`: a search
+/// or the walk back to its post, [`crate::reaction`], which runs before this) the wander is paused.
 #[allow(
     clippy::needless_pass_by_value,
     clippy::too_many_arguments,
@@ -724,7 +736,6 @@ fn drive(
     meshes: Option<Res<NavMeshes>>,
     mut queries: Option<ResMut<NavQueries>>,
     mut traces: Option<ResMut<AiTraces>>,
-    search_world: SearchWorld,
     mut walkers: Query<
         (
             Entity,
@@ -735,7 +746,7 @@ fn drive(
             &mut MoveIntent,
             &mut Avoider,
             Option<&mut NavCorridor>,
-            (&mut Searcher, Option<&mut AiAwareness>, Option<&AiEffectivePerception>),
+            &Reaction,
         ),
         Without<Dormant>,
     >,
@@ -759,12 +770,17 @@ fn drive(
         mut intent,
         mut avoider,
         mut corridor,
-        (mut searcher, mut awareness, eff),
+        reaction,
     ) in &mut walkers
     {
+        let walker = &mut *walker;
+        if reaction.owns() {
+            // AI8i: the reaction drives the actor; the wander stays paused where it was.
+            walker.held_intent = None;
+            continue;
+        }
         let pos = mover.loco.position;
         let loc = Location::new(space.0.clone(), pos);
-        let walker = &mut *walker;
         walker.driver.tuning = wander_tuning;
         let graph = grids.0.get(&walker.key);
 
@@ -776,7 +792,6 @@ fn drive(
                 })
             });
         walker.on_navmesh = Some(on_navmesh);
-        let key = actor.map_or(ActorKey(u128::from(entity.to_bits())), |a| a.0);
         let arrivals_before = walker.driver.arrival_count();
 
         let (walking, idle_variant) = if on_navmesh {
@@ -788,42 +803,7 @@ fn drive(
                 dt,
                 nav: nav_state,
             };
-            // AI8f2: the search mode, beside the wander.
-            let mode = awareness
-                .as_deref()
-                .zip(search_world.setup(key, eff))
-                .map_or(SearchMode::Off, |(aw, setup)| searcher.arbitrate(&aw.0, &setup));
-            let search_out = match mode {
-                SearchMode::Run => {
-                    let now = search_world.setup(key, eff).expect("Run needs the setup").now;
-                    let (class, filter) = (nav.class, &nav.filter);
-                    let mut reachable = |p: WorldPos| {
-                        meshes.as_ref().is_some_and(|m| {
-                            m.0.nearest(&Location::new(space.0.clone(), p), class, DEFAULT_EXTENT, filter)
-                                .is_some()
-                        })
-                    };
-                    searcher.step(
-                        &ctx,
-                        &exec_cfg,
-                        search_world.vocab(),
-                        &space.0,
-                        walker.driver.walk_speed,
-                        now,
-                        &mut reachable,
-                    )
-                }
-                SearchMode::End | SearchMode::Off => None,
-            };
-            if search_out.is_none() && (mode == SearchMode::End || mode == SearchMode::Run) {
-                // The search ended (ttl, or the band left Searching): the wander re-chooses from
-                // here (a turn to the current yaw ends its paused step at once).
-                walker.driver.face(FaceTarget::Yaw(mover.loco.motion.yaw), 0.0);
-            }
-            let searching = search_out.is_some();
-            let out = if let Some(out) = search_out {
-                out
-            } else {
+            let out = {
                 let wants_trace = actor
                     .zip(traces.as_ref())
                     .is_some_and(|(a, t)| t.wants(a.0, 2));
@@ -875,18 +855,11 @@ fn drive(
                 .map_or(Vec3::ZERO, |c| {
                     pos.delta_f32(c.pos).with_y(0.0).normalize_or_zero()
                 });
-            let walking = if searching {
-                searcher.is_walking()
-            } else {
-                walker.driver.is_walking()
-            };
-            (walking, out.idle_variant)
+            (walker.driver.is_walking(), out.idle_variant)
         } else {
             if let Some(ref mut nav) = corridor {
                 clear_corridor_goal(nav, queries.as_deref_mut());
             }
-            // No search off the navmesh (its moves need the corridor).
-            searcher.abort();
             let (stuck, edge) = (walker.driver.stuck_count(), walker.driver.current_edge(pos));
             let out = walker.driver.update_fallback(graph, pos, dt, hours, &exec_cfg);
             if walker.driver.stuck_count() > stuck {
@@ -917,14 +890,6 @@ fn drive(
             });
             (out.walking, out.idle_variant)
         };
-        // AI8f3: a running search holds its target's entry at the Searching floor (taken
-        // mutably only on a change, so the meter's change ticks stay meaningful).
-        if let Some(aw) = awareness.as_mut()
-            && searcher.hold_stale(&aw.0)
-            && let Some(setup) = search_world.setup(key, eff)
-        {
-            searcher.sync_hold(&mut aw.0, &setup);
-        }
         let arrived = u64::from(walker.driver.arrival_count() - arrivals_before);
         if on_navmesh {
             modes.navmesh_arrivals += arrived;
@@ -1152,13 +1117,16 @@ fn add_drive(app: &mut App, vocab: Arc<WanderVocabulary>) {
             drive
                 .in_set(ControllerSystems::Drive)
                 .after(NavSystems::Publish)
+                .after(crate::reaction::ReactionSystems::React)
                 .before(NavSystems::Corridor),
             apply_held_intent
                 .in_set(ControllerSystems::Drive)
-                .after(NavSystems::Corridor),
+                .after(NavSystems::Corridor)
+                .before(crate::reaction::ReactionSystems::Apply),
         ),
     )
     .add_systems(Update, report_modes);
+    crate::reaction::add(app);
     // The drive reads `AiExecSettings` without `AiExecPlugin` (it steps its own runners): bind
     // the `ai.exec.*` tunables here unless the plugin already does.
     if !app.is_plugin_added::<AiExecPlugin>() {

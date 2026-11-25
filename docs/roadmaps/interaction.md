@@ -76,7 +76,7 @@ Stages 2 and 3 run in parallel after Stage 1; Stage 6 can start any time (IN20 n
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| IN27 | `interaction.md` core, (a), (b): decisions 1-5, 9, 11; build table | docs | - | doccheck |
+| IN27 | `interaction.md` core, (a), (b): decisions 1-5, 9, 11; build table | docs | - | **done 2026-11-25** (core 41 KB + `interaction-carry.md`, `-destruction.md`, `-vehicles.md`; adds hand claims for seated chains, stable focus, contact points from gta6.md) |
 | IN28 | `interaction.md` new "(d) World rules": decisions 6-8, caps, reuse, industry | docs | IN27 | doccheck |
 | IN29 | `interaction-adapter.md`: activation per class, doors, lights, breakables, ignition, switches | docs | IN28 | doccheck |
 | IN30 | `world-reactions.md`: IN14 kinds (door, lever, light, fire), IN15 additions | docs | IN28 | doccheck |
@@ -86,7 +86,8 @@ Stages 2 and 3 run in parallel after Stage 1; Stage 6 can start any time (IN20 n
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| IN0 | Core: defs, `PointIndex`, `Claims` (priority, queue, lease, groups, invalidation), kinds, entrances, cook stub | `sf_interaction` | IN27 | exact: every transition, priority, queue, same tick |
+| IN0a | Core crate + claims: def types (serde), `Claims` (priority, preempt Reserved only, queue, lease, groups, hand claims, invalidation, sorted batch), `InteractParams` defaults | `sf_interaction` | IN27 | exact: every transition, priority, queue, hand claims, permuted batch |
+| IN0b | Core queries: `PointIndex` + `find_slots`, `rank_verbs` + focus stability, `pick_entrance`/`pick_exit`, `interact.cook` stub | `sf_interaction` | IN0a | exact: order, filters, ties, hysteresis |
 | IN31 | Shell: index on load, `FixedUpdate` claims, focus verbs + hold list, `Activate` → `Activated` → default | `sf_interaction_bevy` | IN0 | headless: handled suppresses default |
 | IN32 | Adapter defs (census) + each existing class's activation as a default verb, Classic switches | `mw_interaction` | IN31, IN29 | exact per class, unchanged; def counts |
 | IN2 | Player sits/stands: Interaction move, `Seated`, side entrances, Kimodo clips | `sf_interaction`, `sf_action` | IN31 | exact via `step`; owner IN-2 |
