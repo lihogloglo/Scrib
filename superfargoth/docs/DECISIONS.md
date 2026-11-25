@@ -1949,3 +1949,5 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   teleport by default, whistle for the mount. AI: companion command wheel, knocked down not killed by default, gossip
   spreads reputation; fliers/swimmers path in 3D. Dialogue: cinematic default for Modern Morrowind; no quest markers for
   Morrowind, compass for the framework.
+- 2026-11-25 (gameplay-roadmaps-2, owner): "no instant report" holds for both presets, Classic and Modern (crime research's
+  "Classic = instant" and crime.md's bounty-at-assess are superseded; fixed by spec slices in docs/roadmaps/ai.md).

@@ -5,9 +5,9 @@ roadmap is the ordered plan from today's state to the finished system: what the 
 in slices one agent finishes. It sits between the short `bevyrrowind/docs/ROADMAP.md` line (status + pointer) and
 the spec (design and as-built detail). Research behind each one: `docs/research/gameplay-2026-11-25/<lane>.md`.
 
-**Status 2026-11-25:** research done for anim (+ `anim-diagnosis.md`), combat, ai, nav, dialogue-quests; not yet
-for crime, interaction, travel. No lane file below is written yet: each is one planning slice (research note + spec
-sections in, this format out), queued in `.sessions/_archive/gameplay-roadmaps.md`.
+**Status 2026-11-25:** research done for every lane (anim + `anim-diagnosis.md`, combat, ai, nav, dialogue-quests,
+crime, interaction, travel) plus `ecswind.md` (the owner's earlier sim, ideas only). Written: [ai.md](ai.md),
+[dialogue-quests.md](dialogue-quests.md), [travel.md](travel.md). Later (owner): combat, anim, then order.md.
 
 | Lane | File | Specs it drives |
 |---|---|---|
