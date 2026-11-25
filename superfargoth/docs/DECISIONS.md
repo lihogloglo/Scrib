@@ -1951,3 +1951,5 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   Morrowind, compass for the framework.
 - 2026-11-25 (gameplay-roadmaps-2, owner): "no instant report" holds for both presets, Classic and Modern (crime research's
   "Classic = instant" and crime.md's bounty-at-assess are superseded; fixed by spec slices in docs/roadmaps/ai.md).
+- 2026-11-25 (gameplay-roadmaps-2, owner): AI: NPCs sleep in beds at night except night workers (schedule data); storms
+  empty the streets and people seek cover where they can; crowd extras and companion opinions parked for later.

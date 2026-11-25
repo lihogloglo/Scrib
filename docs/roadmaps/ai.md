@@ -241,3 +241,6 @@ optional `sf_crowd` (Q2), Nemesis content.
 4. **Storms empty the streets** (commoners shelter; guards, travellers stay)? Recommended: yes in Modern.
 5. **Companion opinions:** remarks on your deeds, and may they leave? Recommended: remarks yes; leaving only where a
    pack's content says so.
+
+Owner answers 2026-11-25: Q1 open (asked again with examples). Q2 later (parked). Q3 yes, except NPCs whose
+schedule works at night (guards, night trades). Q4 yes, and people find cover where they can. Q5 much later (parked).
