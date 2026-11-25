@@ -86,7 +86,7 @@ Stages 2 and 3 run in parallel after Stage 1; Stage 6 can start any time (IN20 n
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| IN0a | Core crate + claims: def types (serde), `Claims` (priority, preempt Reserved only, queue, lease, groups, hand claims, invalidation, sorted batch), `InteractParams` defaults | `sf_interaction` | IN27 | exact: every transition, priority, queue, hand claims, permuted batch |
+| IN0a | Core crate + claims: def types (serde), `Claims` (priority, preempt Reserved only, queue, lease, groups, hand claims, invalidation, sorted batch), `InteractParams` defaults | `sf_interaction` | IN27 | **done 2026-11-25** (26 exact tests; spec "As built (IN0a)") |
 | IN0b | Core queries: `PointIndex` + `find_slots`, `rank_verbs` + focus stability, `pick_entrance`/`pick_exit`, `interact.cook` stub | `sf_interaction` | IN0a | exact: order, filters, ties, hysteresis |
 | IN31 | Shell: index on load, `FixedUpdate` claims, focus verbs + hold list, `Activate` → `Activated` → default | `sf_interaction_bevy` | IN0 | headless: handled suppresses default |
 | IN32 | Adapter defs (census) + each existing class's activation as a default verb, Classic switches | `mw_interaction` | IN31, IN29 | exact per class, unchanged; def counts |

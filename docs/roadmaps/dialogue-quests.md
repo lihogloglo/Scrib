@@ -149,6 +149,7 @@ engine ready for ambient lines.
 | DQ-23 | Rule DB + `Facts` trait + selection, indexed by concept | `sf_rpg` | DQ-22 | exact unit; seeded tie-break |
 | DQ-24 | INFO filters compiled to rules with OpenMW-order priority | `mw_rpg` | DQ-23 | equivalence test: same INFO as `accepts()` across sampled contexts on the real install |
 | DQ-25 | Bark presenter + triggers from AI/combat/crime events, Morrowind Voice DIAL | `sf_rpg`, `mw_rpg_bevy` | DQ-23, DQ-14 | headless trigger tests; owner DJ-7 |
+| DQ-39 | Quick replies (owner 2026-11-25, replaces GTA's greet/antagonise button): when an NPC addresses the player (guard warning, "can I help you?", beggar, hawker), 2-3 short timed replies on screen without the dialogue window (defuse/apologise, pay, retort, ignore); the outcome by temperament (AI49) and rule DB | `sf_rpg`, `sf_rpg_ui`, `mw_rpg_bevy` | DQ-23, DQ-25, AI50 | headless: each reply's outcome, timeout = ignore; owner DJ-8 |
 
 ### Stage 5: cinematic conversations
 

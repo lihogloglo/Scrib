@@ -1,0 +1,195 @@
+# Lane roadmap: Animation for gameplay (locomotion, styles, interaction clips, combat clips, physics tint)
+
+Specs: `superfargoth/docs/specs/{animation,animation-plan,locomotion,action}.md`, `bevyrrowind/docs/specs/{animation-sources,
+motion-generation}.md`. Research: `docs/research/gameplay-2026-11-25/{anim,anim-diagnosis,anim-style}.md` (anim-style's
+"Orchestrator corrections" win), `gta6.md` §6, `combat.md` §1/§4; R19 = `superfargoth/docs/research/animation/19-kimodo-prompting-2026-11-12.md`.
+Ledgers `docs/ledger/animation.md`, `combat-feel.md`; ROADMAP 3.1, 3.4, 3.4c, 3.4d, 3.8. Kept IDs: A*/B*/C* (2026-11-12
+plan), MG*, AG*, P-IK*; new slices `AN<n>`, owner checks `ANIM-<n>`.
+
+## 1. Player-facing goal
+
+Modern preset, lane done: player and NPCs walk, jog and sprint on clean generated cycles with real starts, stops and
+turns, arms swinging naturally, upright on slopes [1]. Each NPC moves like who they are: the old shuffle, the heavy plod,
+the wounded limp, the drunk sway, the tired slump [3]. People sit, pull out chairs, drink at tables, open doors and carry
+things with clips that fit their body [4]. Swings are Morrowind's own attacks, retimed for an Elden Ring feel, beside a
+fast spammable roll [5]. Rare strong states (stagger, stumble, collapse) react physically through Delirium [6].
+**Classic keeps** Morrowind walk/run (`Preset::Classic`), attacks over walking legs, no style classes, no tint.
+
+## 2. Where we are (2026-11-25)
+
+- **Confirmed today (uncommitted):** slope lean fix (small, only moving, head and upper arms counter-rotated; PL-10;
+  P-IK4's level head folded in); spammable roll (buffered, press-to-roll in moves, 0.58 s cadence, UAL `Roll` rate 1.6;
+  CB-6 "roll is good").
+- **Built:** A3 gait set on Kimodo loco1 cycles (loop cutter, rate clamp 0.8-1.25, sync groups; WALK-1, LOOP-1
+  confirmed), A0 A/B ladder (WALK-0 awaiting), A4 switch-aware plant, matched trunk retarget + shoulder `pose_offsets`,
+  style seam `loco.<style>.<gait>.*` with base fallback. Factory: Kimodo worker, census, `clip-preview --browse` (Y/N/M),
+  AG1 `motiongen grade` (recall 33-38 %), loco1 228 clips (LOCO-2 picks pending), tier1 268 activity clips. `LookAt`,
+  `OrientationWarp` ops exist, **unwired**. Delirium default: knockdowns/deaths via `RagdollTakeover` (PH-14/15).
+- **Owner verdicts open:** Kimodo walk/run still bad (fix generation/retarget, no pack); combat clips (UAL2 sword chains)
+  very bad; most Quaternius clips bad; review tool weak; NPCs need many style variants.
+- **Known, unfixed:** elbows 6-7 cm from the chest on `walk.cycle.1`, run.3 hands cross the midline (body-capsule arm IK
+  not built); Kimodo arm swing hangs back (-36..+15 deg vs Morrowind -40..+31); path-forced run/sprint skate 83/179 cm/s
+  (R19 §3: sparse 1 Hz keys, speed out of distribution); no start/stop/pivot clips; Morrowind attack groups registered as
+  `upper` clips (`WEAPON_SECTIONS`) but played by no sheet.
+- **Not started:** style model, MotionBricks (MG8; v0.2.0 SOMA model out), grip table MG7b, AG2-AG4, MG9.
+
+## 3. Decisions
+
+1. **Fix the generated base, never swap in a pack** (owner 2026-11-25: 100STYLE rejected, no mocap or paid packs, no
+   Bones SEED). Locomotion and interaction = Kimodo (MotionBricks for links and style presets); combat = Morrowind.
+   Every "100STYLE base" and "Kimodo = seeds only" line in the research is superseded.
+2. **Generate free, retime at bake** (R19 §4-5): no forced speed on cycles, dense per-frame root keys where a path is
+   needed, retime ≤ 1.15x walk / 1.3x run; R19 prompt form. Sparse 1 Hz paths dropped.
+3. **Retarget fixes live in the retarget** (UE5 IK Rig collision, retarget-pose offsets, DECISIONS 2026-11-12): arm IK
+   against a body capsule and per-source offsets hold on every take; graph ops are retuned only after (ledger rule).
+4. **Style = gait classes + continuous modifiers** (GTA V/RDR2 movement clipsets, TLOU injured sets, UE Chooser;
+   anim-style §1, §4). A per-individual `MotionProfile` (data, like the perception profile, DECISIONS 2026-11-25):
+   `style_id` (stable, saved) + smoothed `age`, `injury` (+ side), `fatigue`, `load`, `intoxication`, `mood`.
+   `(class, state) -> clipset` is a data table; modifiers (hunch, limp, breathing, slump, load offset) are tunables.
+   **Classes are data:** a recipe plus slot rows, no code; batches keep coming (owner: "a LOT").
+5. **LOD carries style** (animation.md "LOD and budget"): A0 all layers, A1 class + bone modifiers, A2 class + speed
+   match, A3 none. A0 ≤ 25 µs per character within the 8.3 ms frame.
+6. **Family consistency by filters** (anim-style §2.1): one style recipe string, the family's posture key pose at both
+   ends, one speed envelope, numeric bands (speed, stride, spine pitch, asymmetry) after the physical gates.
+7. **Interaction clips: one canonical body, IK fits the rest** (interaction.md "Clips fit any body", gta6.md §6): variants
+   by side, entry, height band and hand, never body size; style = modifiers plus a second variant for sit down/stand up,
+   more as later data batches. Each clip is a fragment so chains recombine (RDR2).
+8. **Review is the bottleneck, so the tool is a stage** (owner; ~2 h per 200 clips): scores in the browser, side-by-side
+   elimination (the owner rates by elimination), playback on the real graph and bodies, picks written to slots.
+9. **Combat on Morrowind clips** (owner 2026-11-25; OpenMW ReAnimation: text keys drive timing): text keys become sheet
+   windows, per-phase rate (strike 1.3-1.6x), additive anticipation/overshoot, step-in by the `Warp` owner. Missing
+   moves are key-pose `PoseSeq` clips (Overgrowth, GDC 2014). The roll stays UAL `Roll` (CB-6) until beaten.
+10. **Physics tint on Delirium, rare and capped** (DECISIONS 2026-11-19; anim-style §3 cost verdict): stagger, drunk or
+    wounded stumble, exhausted collapse, medium hits (combat.md §4); A0/A1 only, concurrent cap (tunable), additive
+    fallback over the cap and in Classic. Baseline limp is never physics. Framework seam `PhysicsTint`; Delirium fills it.
+11. **Motion matching stays parked** (anim.md §2): no shippable dataset.
+
+## 4. Stages
+
+Stage 2 runs beside Stage 1 and lands before Stage 3's first review; Stages 4-5 start after Stage 1. Stage 0 is done:
+P-IK4 + lean fix (PL-10) and the roll chain (CB-6), both 2026-11-25.
+
+### Stage 1: clean walk and run (player and NPCs share the graph)
+
+| ID | Deliverable | Crate | Depends | Verify |
+|---|---|---|---|---|
+| AN1 | Diagnosis of the shipped cycles, flat and at speed: arm swing, elbow/hand clearance, spine pitch, bob, skate; ranks generation vs retarget vs graph | tests `mw_bake`, `mw_graphs` | - | printed table; ledger |
+| AN2 | Retarget arm IK against a body capsule (eased like the leg IK) | `sf_anim`, `sf_character` | AN1 | exact: clearance on every take; no contact = byte-identical |
+| AN3 | Swing-bias offset (upper-arm pitch, `pose_offsets`) if AN1 ranks it | `mw_graphs` data | AN1 | swing in Morrowind's range |
+| AN4 | Batch 2 recipe (R19 §6): free cycles + dense-path sweep, `cfg_weight`, starts/stops/turns/pivots, side/back cycles (C2) | scrib-motiongen | AN1 | plan prints; selftest |
+| AN5 | Batch 2 generation + grade (≥ 6 samples per prompt) | generation | AN4 | grade table; ledger |
+| AN6 | Picks into slots, bake retime limits | `mw_graphs` data | AN5, AN10 | `player_gaits` in clamp; owner **ANIM-1** (replaces LOCO-2) |
+| A5 | Turns: body follows (offset-root spring), `OrientationWarp` for the rest | `sf_anim_graph`, `mw_graphs` | AN6 | exact; owner ANIM-2 |
+| B1 | Distance curve at cook | `sf_anim` | - | exact, synthetic |
+| B2 | Seek by distance + stop predictor | `sf_anim_graph`, `sf_controller` | B1 | stop within 1 cm |
+| B4 | Start/stop/pivot states, stop clip by planted foot | `mw_graphs` | B2, AN6 | exact; owner ANIM-3 |
+| AN7 | Acceleration and turn lean in `Lean` | `sf_anim_graph` | AN6 | exact: no accel, no lean |
+| AN8 | `LookAt` wired (head then eyes, limits, spring, target param) | `sf_anim_graph`, `mw_graphs` | - | exact limits; owner ANIM-4 |
+| B6 | Gaze, slope posture, downhill stride, P-IK6, P-IK3 retuned on the new cycles | `sf_anim_graph`, `mw_graphs` | AN6 | printed; owner ANIM-5 |
+
+### Stage 2: the clip review and pick tool
+
+| ID | Deliverable | Crate | Depends | Verify |
+|---|---|---|---|---|
+| AN9 | Diagnosis: what slows decisions in `--browse` (owner notes, a timed session) vs dailies review; gap list in the spec | docs | - | doccheck |
+| AG2 | Browser reads `grades.json`: overlay, sort, candidates only (absorbs ROADMAP's MG10b) | `mw_viewers_bevy` | AN9 | list order; owner ANIM-6 |
+| AN10 | Side-by-side elimination: 2-4 takes synced in a row, reject drops one, last ones get keep/maybe | `mw_viewers_bevy` | AG2 | exact list state; owner ANIM-6 |
+| AN11 | In context: a take through the shipped graph at slot speed (treadmill, ramps) on chosen bodies (old/young, races, female rig) | `mw_viewers_bevy` | AN10 | pose = `mw_graphs::sim`; owner ANIM-6 |
+| AG3 | Fitted gates + score; `motiongen calibrate` from `verdicts.toml` | scrib-motiongen | AG2 | AUC printed |
+| AG4 | Target-body arm/chest check on retargeted clips | `mw_bake` | AN2 | exact on fixtures |
+| MG9 | Keep verdicts write `sources.ron` rows with class/family tags | `mw_viewers_bevy`, `mw_graphs` | AN10 | round trip; bake loads |
+
+### Stage 3: NPC style variety (ROADMAP 3.4d)
+
+| ID | Deliverable | Crate | Depends | Verify |
+|---|---|---|---|---|
+| AN12 | Spec: profile, classes, modifiers, selection, LOD, budget | docs | - | doccheck |
+| AN13 | MotionBricks v0.2.0 spike: SOMA out, Injured presets, style by key pose, output licence, VRAM | research | - | note; ledger |
+| AN14 | Core: `MotionProfile`, class chooser over `gait_slot`, smoothing | `sf_anim_graph` | AN12 | exact lookup, fallback |
+| AN15 | Posture modifiers: hunch, slump, breathing, load offset, speed scale | `sf_anim_graph` | AN14 | exact at 0; sanity at 1 |
+| AN16 | Limp: hip drop, short stance, asymmetric timing, one side | `sf_anim_graph` | AN14 | exact side/phase; no added slide |
+| AN17 | Style bands in `motiongen grade` | scrib-motiongen | AG3 | exact on fixtures |
+| AN18 | First style batch recipe: old, heavy, wounded, drunk, tired, timid, proud, female neutral (~14 loco clips + idles each) | scrib-motiongen | AN6, AN13, AN17 | plan prints |
+| AN19 | First style batch generation + grade + bands | generation | AN18 | grade table; ledger |
+| AN20 | Picks into `loco.<style>.*` slots | `mw_graphs` data | AN19, MG9 | counts per class; owner ANIM-7 |
+| AN21 | Adapter: profile from race, sex, class, health, fatigue, encumbrance, drink effects; age per Q4; Classic none | `mw_walkers_bevy`, `mw_graphs` | AN14 | exact per record |
+| AN22 | Profile in game: walkers pick class + modifiers by tier | `mw_walkers_bevy`, `sf_anim_bevy` | AN15, AN16, AN20, AN21 | counts; owner ANIM-8 (Balmora) |
+| AN23 | Measurement: style layers per tier, High, 4060 laptop | tests | AN22 | `#[ignore = "measurement"]`; perf ledger |
+| AN24 | Further class batches (repeatable, data only) | generation, data | AN22 | grade; owner per batch |
+
+### Stage 4: interaction clip families (interaction and AI lanes)
+
+Each family: recipe against slot contact points and MG4 height bands, generation, picks through Stage 2.
+
+| ID | Deliverable | Crate | Depends | Verify |
+|---|---|---|---|---|
+| AN25 | Spec: families, slot naming, contact constraints, variant axes | docs | IN27 | doccheck |
+| MG7b | Grip table + second-hand `FullBodyIk` | `mw_viewers_bevy`, data | MG7a | exact sockets |
+| MG8 | MotionBricks link worker (approach, loop seams, exit) | scrib-motiongen | AN13 | seams printed |
+| AN26 | Sit/stand (IN2): approach-turn-in, sit, idle loops, stand; stool/chair/bench/floor; sides; bands; old/heavy variant | generation | AN25, MG8 | grade; owner ANIM-9 |
+| AN27 | Chair pull-out/push-in, bench scoot, seated prop chain: reach, pick, drink/eat/read, put down (IN9, AI31) | generation | AN26, MG7b | grade; owner ANIM-9 |
+| AN28 | Doors (IN33): push/pull, hinge L/R, both sides, walk-through, knock, locked rattle, bash (IN37) | generation | AN25 | grade; owner ANIM-10 |
+| AN29 | Carry and place (IN35, AI31): pick up at 3 heights, carry 1H/2H/shoulder, place, give/take, throw | generation | MG7b | grade; owner ANIM-10 |
+| AN30 | Beds and lean spots (IN3) | generation | AN25 | grade; owner ANIM-9 |
+| AN31 | Social and fear reactions: turn-to-face, placate, cower, flee start, surrender (LW14), talk gestures (DQ-30) | generation | AN25 | grade; owner ANIM-11 |
+
+### Stage 5: combat on Morrowind clips (the combat lane owns the sheets)
+
+| ID | Deliverable | Crate | Depends | Verify |
+|---|---|---|---|---|
+| AN32 | Measurement: weapon groups' text keys, durations, root travel; `Hit1-5`, `KnockDown`, `Shield`; missing moves | tests `mw_bake` | - | printed; ledger |
+| AN33 | Text keys -> sheet windows at cook (anticipation, active, recovery) | `mw_combat` | AN32 | exact vs keys |
+| AN34 | Per-phase rate + additive anticipation/overshoot op | `sf_anim_graph`, `mw_combat` | AN33 | exact; owner ANIM-12 (level-sparring) |
+| C4 | Attack clip pass: sword sheet on Morrowind chop/slash/thrust by direction, step-in `Warp`, `ik.feet` (B5) | `mw_combat`, `mw_player_bevy` | AN34, B5, Q2 | owner CB-1 re-check |
+| AN35 | Reaction map: `Hit1-5`/`KnockDown` to tiers, `HitReact` additive for light hits | `mw_combat` data | AN32 | exact rows |
+| AN36 | `PoseSeq` asset: key poses, eases, root arc cooked to a clip | `sf_anim` | - | exact at keys |
+| AN37 | Missing moves as `PoseSeq` from Morrowind poses: backstep, 2H guard, parry, riposte, kick (Q1) | `mw_combat` data | AN36 | owner ANIM-13 |
+| C2 | Locked-on strafe on the new gait set + `OrientationWarp` (C1c-2b) | `mw_graphs` | AN6, A5 | exact sync; CB-2 re-check |
+
+### Stage 6: physics tint on Delirium
+
+| ID | Deliverable | Crate | Depends | Verify |
+|---|---|---|---|---|
+| AN38 | Research: Delirium partial drive (per-region strength, disturbance), cost per body | research, test | - | measurement; ledger |
+| AN39 | Spec: `PhysicsTint` seam, states, cap, gate, fallback | docs | AN38 | doccheck |
+| AN40 | Seam + Delirium tint with cap and additive fallback | `sf_anim_bevy`, `mw_delirium_bevy` | AN39 | exact cap; no NaN, not through floor, comes to rest |
+| AN41 | Triggers: intoxication, injury, fatigue 0, medium hits | `mw_walkers_bevy`, `mw_combat` | AN40, AN22 | exact; owner ANIM-14 |
+| AN42 | Measurement: tint ms at the cap | tests | AN41 | `#[ignore = "measurement"]` |
+
+**Later / parked:** motion matching; quadruped legs IN26 (TV-R2 parked); first-person body (3.4b); player limp (Q3).
+
+## 5. Spec changes (as spec slices, before build)
+
+- AN12: `animation.md` new "Motion style"; `animation-sources.md` "Gait classes" (fill, `loco.<style>.*`, Classic).
+- AN9: `motion-generation.md` "Review renderer" rewrite; AN25 its "Interaction families"; AN39 `animation.md` "Physics tint".
+- Before AN33: `combat-adapter.md` "Morrowind attack clips" (windows, per-phase rate, reaction map).
+- Cleanup: drop 100STYLE from `animation-sources.md` and ROADMAP 3.4c ("look for a free sprint clip (100STYLE)").
+
+## 6. Dependencies on other lanes
+
+| Lane | Needs | Provides |
+|---|---|---|
+| Interaction | IN27 slot frames, IK targets | AN26-AN30, MG7b, MG8; modifiers on slot clips |
+| AI | AI14/IN8, AI31, AI37, perception profile | AN8 look-at, AN22 styled walkers, AN31 |
+| Combat | sheets, poise (C3), C6 | AN32-AN37, C2, C4, AN41 medium-hit tint |
+| Crime, dialogue | LW14, DQ-30 | AN31 surrender/search, talk gestures; AN8 |
+| Travel | IN7/IN23 seats | sit/astride clips (AN26 family) |
+
+## 7. Owner questions (each with a recommended answer)
+
+1. **Moves Morrowind has no clip for** (backstep, two-hand guard, parry, riposte, kick): key poses from Morrowind's own
+   poses, or Kimodo? Recommended: key poses (Morrowind's look, exact timing); Kimodo only where one reads stiff.
+2. **Swinging while moving:** Elden Ring full-body commit (legs stop, short step-in) or Morrowind's swing over walking?
+   Recommended: commit in Modern, over-walk swing in Classic.
+3. **Style states on the player:** Recommended: fatigue and heavy load yes (slower, slumped), drunk sway yes; a
+   low-health limp only as an option, off by default; Classic none.
+4. **Who looks old** (Morrowind has no age)? Recommended: named NPCs from an override list filled from head models and
+   lore, the rest by a stable per-NPC roll weighted by race and class; mods override.
+   **Answered (owner 2026-11-25):** age is a per-NPC value set in code/data; in Morrowind nobody is "very old" except
+   chosen obviously old NPCs (a matriarch...) by override; how age shows visually comes later, low priority.
+
+Owner answers 2026-11-25 (DECISIONS): Q1 Morrowind's poses first, Kimodo takes too; Q2 commit with a short step-in;
+Q3 as recommended. The Quaternius roll clip is fine for now (maybe Kimodo later).
+
+Also answered 2026-11-25 (DECISIONS): launch gait classes neutral, old, heavy, drunk, wounded/limp (+ fatigue/load,
+more in batches); wounded NPCs and companions limp by health band and recover.

@@ -1983,3 +1983,12 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   old, heavy, drunk, wounded/limp + fatigue/load modifiers, more in batches); wounded NPCs and companions limp by health
   band and recover. Age is a per-NPC value set in code/data; Morrowind: no "very old" people except chosen obviously old
   NPCs (a matriarch...) by override; how age shows visually comes later, low priority.
+- 2026-11-25 (interaction, owner): yes to per-NPC temperament (gta6.md GX2): ordinary NPCs may confront or fight back
+  by temperament and role (guards always, merchants rarely, scholars never), Modern; Classic keeps Fight/Flee.
+  GTA-style greet/antagonise button (GX9) rejected as crime-sim specific: alternatives proposed, answer pending.
+- 2026-11-25 (interaction, owner): anim roadmap answers (docs/roadmaps/anim.md §7): the Quaternius roll clip is fine
+  (maybe Kimodo later); moves Morrowind lacks: build from Morrowind's poses first, Kimodo takes too; swings commit with
+  a short step-in (Modern); player style states as recommended (fatigue, load, drunk sway yes; low-health limp an option, off).
+- 2026-11-25 (interaction, owner): quick replies instead of a greet/antagonise button: when an NPC addresses the
+  player, 2-3 short timed replies appear without the dialogue window (DQ-39; AI49 temperament, AI50 personal space).
+  Persuasion as quick verbs, gestures and quick asks stay proposals (gta6.md), not planned.

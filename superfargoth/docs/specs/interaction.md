@@ -136,7 +136,7 @@ pub struct SlotDef {
     pub occupancy: Occupancy,        // Pose (aligned, mover off) | Attach (rider follows a moving owner, (c))
     pub control: Option<Control>,    // Driver | Passenger ((c))
     pub users: TagFilter,            // who may use it (body type, size class, player/NPC, armed), UE user tags
-    pub group: Option<u8>,           // slots that exclude each other (a bench's middle vs ends)
+    pub group: u8,                   // exclusion bit mask: slots sharing a bit exclude each other (bench middle 0b11, ends 0b01/0b10); 0 = none
     pub queue: Option<u8>,           // ticket capacity; None = no queue (defaults: door, workstation = `interact.queue.capacity`)
 }
 pub struct VerbDef { pub verb: TagId, pub priority: i16 /* focus order */, pub requires: TagFilter /* state tags, e.g. Lit */ }
@@ -378,7 +378,7 @@ IN27-IN30 and TV0b are stage 0). IN5 is folded into IN9 (owner 2026-11-11). The 
 
 | Slice | Deliverable | Crate | Depends on | Verify |
 |---|---|---|---|---|
-| IN0 | Core, Bevy-free (`sf_ids`, `sf_coords`, `sf_world`, `sf_records`, serde; in hakari `final-excludes`): types `InteractableDef`, `SlotDef`, `SlotKind` (Pose, Door, Lever, Ladder, Workstation, Light; (c) kinds as data only), `VerbDef`, `Entrance`, `CarryDef`, `CarryClass`, `DestructibleDef`/`Stage` (types only), `InteractionEvent`; `PointIndex` + `find_slots`; `rank_verbs`; `Claims`: priority with preemption of Reserved only, queue tickets (order, capacity, promotion, ticket lease), lease + `renew`, exclusion groups, one body hold per user plus hand claims within `reach`, typed refusals, invalidation reasons, sorted same-tick batch; `pick_entrance` / `pick_exit`; the "Tunables" table declared; `interact.cook` stub (defs in = defs out) | `sf_interaction` | IN27 | headless exact: Free→Reserved→Occupied→Free and Reserved→Free (release, lease expiry; `renew` extends); only the holder occupies; higher priority preempts Reserved (old user re-queued at the head, or `Invalidated(Preempted)` without a queue), equal/lower refused, Occupied never preempted; group conflicts (and preempting across a group only when all are Reserved and lower); queue order (priority, since, `UserKey`), `QueueFull`, head promoted in the same tick on release and on each invalidation, ticket expiry; `UserBusy`; a hand claim only while Occupied and within `reach`, at most `hand_max`, all released with the body claim; a permuted same-tick batch gives the same result; each invalidation reason releases once, emits one event (move within tolerance keeps the claim); entrance nearest-valid, fallback, `None`, side-order ties; exit prefers the entry side; `rank_verbs` order and `requires` filter; defs serde round trip; tunables registered with ranges |
+| IN0 (IN0a done, IN0b) | Core, Bevy-free (`sf_ids`, `sf_coords`, `sf_world`, `sf_records`, serde; in hakari `final-excludes`): types `InteractableDef`, `SlotDef`, `SlotKind` (Pose, Door, Lever, Ladder, Workstation, Light; (c) kinds as data only), `VerbDef`, `Entrance`, `CarryDef`, `CarryClass`, `DestructibleDef`/`Stage` (types only), `InteractionEvent`; `PointIndex` + `find_slots`; `rank_verbs`; `Claims`: priority with preemption of Reserved only, queue tickets (order, capacity, promotion, ticket lease), lease + `renew`, exclusion groups, one body hold per user plus hand claims within `reach`, typed refusals, invalidation reasons, sorted same-tick batch; `pick_entrance` / `pick_exit`; the "Tunables" table declared; `interact.cook` stub (defs in = defs out) | `sf_interaction` | IN27 | headless exact: Free→Reserved→Occupied→Free and Reserved→Free (release, lease expiry; `renew` extends); only the holder occupies; higher priority preempts Reserved (old user re-queued at the head, or `Invalidated(Preempted)` without a queue), equal/lower refused, Occupied never preempted; group conflicts (and preempting across a group only when all are Reserved and lower); queue order (priority, since, `UserKey`), `QueueFull`, head promoted in the same tick on release and on each invalidation, ticket expiry; `UserBusy`; a hand claim only while Occupied and within `reach`, at most `hand_max`, all released with the body claim; a permuted same-tick batch gives the same result; each invalidation reason releases once, emits one event (move within tolerance keeps the claim); entrance nearest-valid, fallback, `None`, side-order ties; exit prefers the entry side; `rank_verbs` order and `requires` filter; defs serde round trip; tunables registered with ranges |
 | IN31 | Shell: index on cell load, claims on `FixedUpdate`, focus best verb + hold list with stable focus (switch margin + dwell, frozen while held), `Activate` → `Activated` (+ verb) → gates → default | `sf_interaction_bevy` | IN0 | headless: handled suppresses the default; gate refusal; script `Activate` runs gates + default once |
 | IN32 | Adapter defs (MG4 census) + each existing class's activation as a default verb, Classic switches | `mw_interaction` | IN31, IN29 | exact per class, behaviour unchanged; def counts |
 | IN2 | Player sits and stands: Interaction move, `Seated` owner, side entrances, Kimodo sit clips | `sf_interaction`, `sf_action` | IN31 | exact: claim/occupy/release via `step`; sanity: pelvis on the seat, no capsule through it; owner IN-2 |
@@ -411,6 +411,20 @@ IN27-IN30 and TV0b are stage 0). IN5 is folded into IN9 (owner 2026-11-11). The 
 
 Visual checks go in `bevyrrowind/docs/visual-checks/interaction.md` (prefix IN-) with camera, time, flags and what to
 look for; agents never judge them from screenshots.
+
+## As built (IN0a, 2026-11-25)
+
+`superfargoth/crates/sf_interaction` (`def.rs`, `claims.rs`, `params.rs`, `tests_claims.rs`; 26 exact tests). Departures
+from the text above, all kept: exclusion groups are **bit masks** (a plain id could not express a bench whose ends
+both exclude the middle but not each other); `TagId` is local with `sf_action`'s FNV-1a hash (values match),
+`TagFilter { all, any, none }`, `Tick` a local `u64`. **Invalidation by scope**: owner/slot reasons (`OwnerDestroyed`,
+`OwnerMoved`, `OwnerUnloaded`, `SlotDisabled`) also end that slot's tickets and promote nobody; user reasons and lease
+expiry promote the queue head the same tick. Queue edges: a preempted user facing a full queue gets
+`Invalidated(Preempted)`; `enqueue` = claim else ticket (so it can preempt); a claim on a free slot whose queue head
+ranks equal or higher is `Taken`. Extra refusals `NoQueue` (also for players), `NotHolder`, `NotOccupied`,
+`OutOfReach`, `HandsFull`, `NoHold`. Hand claims emit no events; `Exited` is the shell's. `SlotTerms::of(def, params)`
+fills default queue capacities; the shell (IN31) binds `InteractParams` from `interact.*` and `tick_hz` from the
+fixed step.
 
 ## Owner questions
 
