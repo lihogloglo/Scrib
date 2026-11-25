@@ -3,6 +3,67 @@
 Moved here to keep [ai.md](ai.md) inside its size budget. Newest slice first; the module docs in
 `superfargoth/crates/sf_ai/src/` are the detailed reference.
 
+## AI8b2: sight system `sf_ai_bevy` (2026-11-25)
+
+`perception.rs` (tunables, components, record kinds), `sight.rs` (resources, LOS adapter, plugin, systems),
+`sight_tests.rs` (19 pass + 1 measurement; clippy clean, census clean, no new dep). Components: `AiObserver { eye_m }`
+(requires `AiAwareness`, `AiSightTimer`), optional `AiPerceptionProfile` / `AiPerceptionStates`, cached
+`AiEffectivePerception`, `Perceivable { target, chest_m, head_m }`. Resources: `AiPerceptionSettings` (all 38
+`ai.perception.*` / `ai.awareness.*` tunables, `add_perception_tunables`), `AiPerceptClock`, `AiRays`, `AiSightCache`,
+`AiPerceptionStateDefs`. `AiSightPlugin<G: GroundProbe>` in `FixedUpdate` (`AiPerceptionSystems::Sight`, before
+`ControllerSystems::Drive`): begin_tick → resolve_profiles → queue_sight (stagger, XZ grid cell = lose range, gain,
+cache or ray request; merged deferred requests sum their gain) → cast_rays (`ProbeLos`: one batched probe; game =
+`sf_physics_bevy::Physics`, characters never block) → apply_sight (`ActorKey` order) + meter update. Records
+`sf.ai.perception_profile` / `sf.ai.perception_state` (`register_perception_kinds`, `load_perception_states`). Choices:
+"already seen" (switches to `lose_m`) = contact within two check periods; visibility placeholder
+`VISIBILITY_UNMODELLED = 1.0` until AI8d; `max_rays_per_tick` bound to Floor 24 (no `sim.cpu_tier` groups yet).
+Measured 0.037 ms/tick for 48 observers × 4 static targets, fake LOS, 60 Hz (cache absorbs most rays). Not covered:
+worldspace/interior filtering, tier 1 (AI9), `ai.stats` ray counts. Game wiring (bevyrrowind) is its own slice.
+
+## AI8b1: sight maths core `sf_ai::sight` (2026-11-25)
+
+Built to "Sight gain" and "Cost and budget". `sight.rs` + `tests_sight.rs` (14 tests; crate 108 pass, clippy clean,
+census unchanged). Types: `SightBudget` (tunables `skip_gain` 0.01, `sight_period_s` 0.1, `tier1_period_s` 1.0,
+`max_rays_per_tick` 24 = Floor, `sight_cache_s` 0.25, `cache_move_m` 0.5; Guess), `seconds_to_ticks`, `SightCheck`,
+`sight_rate` / `sight_gain`, `apply_darkness`, stagger (`actor_hash` splitmix64, `due`, `SightTimer` with `force`),
+`RayKind` (Sight, Light, Concern), `RayRequest`, `LosRay`, `LineOfSight` (batch `cast`, also any `FnMut`),
+`LosOutcome`, `RayQueue` (`push` merges same owner/kind/subject, `cancel`, `process` in two batches: oldest requests'
+next ray, then head rays of chests just blocked), `RayTickStats`, `SightCache`. Choices where the spec was silent:
+`skip_gain` compares gain per second (frame- and period-independent); `near_m` and `peripheral_mul` read from
+`SightConfig`; 3D cone angle (UE); a blocked chest out of budget casts only its head next tick; a full queue or cache
+refuses (fixed capacity, `prune` frees the cache); `SightTimer::poll` counts at most one period (no burst after a
+tier change); results sorted by (owner, kind, subject).
+
+## AI8g: perception profile core `sf_ai::profile` (2026-11-25)
+
+Built to "Perception profile (per individual)" (AI0g). `profile.rs` + `tests_profile.rs` (13 tests; crate 94 pass,
+clippy clean, census unchanged). Types: `PerceptionField` (9, `ALL`, `name`, `range`), `PerceptionProfile` (ratios,
+default 1.0, missing serde fields read 1.0, unknown fields rejected, `validate` → `PerceptionRangeError` naming every
+bad field), `PerceptionState` (optional fields + `duration_s`, `until(clock)`), `StateEntry`, `PushOutcome`
+(`Added`/`Refreshed`/`Replaced`/`Full`), `PerceptionStates` (inline 4, `push`/`clear`/`expire`/`next_expiry`),
+`SightConfig` / `SearchConfig` (10 base tunables, bound from `ai.perception.*` in sf_ai_bevy later; `skip_gain` left
+for AI8b), `SightParams`, `SearchParams`, `EffectivePerception` (`Copy`, `needs_rebuild`) and `resolve`. Choices where
+the spec was silent: a full array of conditions refuses the push (`Full`: conditions are never evicted; timed entries
+go earliest `until` first, lowest slot on ties); a condition counts as the latest expiry on refresh; unknown state ids
+count as 1; entries already due are ignored by `resolve` before `expire` runs; a NaN product falls back to 1.0;
+`duration_s` must be finite and ≥ 0. Not done: `sf_records` kind registration (AI8b2 / adapter). Groggy kept as built.
+
+## AI8e: shared knowledge `Notify` (2026-11-25)
+
+Built to "Awareness" (Notify line). `perception.rs` + `tests_notify.rs` (9 tests; crate 81 pass, clippy clean, census
+unchanged). Types: `Notify { about, lkp, lkp_tick, confidence, hops }` (+ `relay()` = hops + 1, the caller shouts
+again), `Stimulus::Notify { noise, notify }`, `PendingNotify`, `NotifyDelivered`, `StimulusOutcome::Queued { due }`,
+`AwarenessConfig::notify_delay_ticks` (`ceil((d / notify_speed_mps + notify_react_s) / tick_s)`, f64),
+`AwarenessMeter::update_with(cfg, now, on_delivered)` (`update` delivers and drops the reports). Four config fields
+(`notify_speed_mps` 6, `notify_react_s` 0.8, `notify_confidence_mul` 0.7, `notify_max_hops` 3; Guess). Serde added
+on the meter and its entries (pending notifies included; the meter is still not in the save). Choices where the spec
+was silent: a delivery raises to `min(confidence, Searching)`, never lowers; LKP replaced only by an as-recent
+`lkp_tick` (hearsay keeps its age); the delay uses the heard distance (closed doors slow the news); a shout wakes a
+sleeper only with `asleep_wake_m` of reach left, the delivery still waits; `hops > max` is `Ignored` but the sound can
+still wake; one pending notify per target, at most `max_entries` targets (best confidence, then earlier due, then fewer
+hops; a tie keeps the queued one), delivered in (due, target) order; the shout's own sound is a separate
+`Stimulus::Noise` the caller sends.
+
 ## AI8a: awareness core `sf_ai::perception` (2026-11-25)
 
 Built to "Perception and stimuli" (AI0b). `perception.rs` + `tests_perception.rs` (12 tests; crate 72 pass, clippy
@@ -18,7 +79,7 @@ Touch raises to the Searching floor, damage from a known attacker alerts at once
 sourceless or non-revealing noise fills the distraction slot (replaced if as loud or older than `distraction_ttl_s`);
 eviction drops lowest level, then oldest gain, then highest target, after settling all entries; `PlayerDetection.band`
 = highest band over counting actors. New tunables (Guess): `distraction_ttl_s` 10, `alert_alertness` 1.5,
-`groggy_alertness` 0.5. Not built: `Notify` (AI8e; the spec does not yet say how much a notify raises the meter).
+`groggy_alertness` 0.5. `Notify`: AI8e above.
 
 ## AI6: move executors `MoveTo`, `Wait`, `Face` and HTN `PlanRunner` (2026-11-18)
 

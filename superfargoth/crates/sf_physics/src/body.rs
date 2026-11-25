@@ -1,7 +1,7 @@
 //! Body handles, descriptions, events and world parameters.
 
 use glam::Vec3;
-use sf_controller::SurfaceId;
+use sf_controller::{GroundBody, SurfaceId};
 use sf_coords::{WorldPos, WorldTransform};
 
 use crate::layer::Layer;
@@ -20,6 +20,26 @@ impl BodyId {
     /// world (audio rate limits) without depending on this crate.
     pub fn to_bits(self) -> u64 {
         u64::from(self.generation) << 32 | u64::from(self.index)
+    }
+
+    /// The id whose [`Self::to_bits`] are `bits`. A forged or stale id is
+    /// simply dead in the world (generations never repeat a removed body).
+    pub fn from_bits(bits: u64) -> Self {
+        #[allow(clippy::cast_possible_truncation)]
+        Self { index: bits as u32, generation: (bits >> 32) as u32 }
+    }
+}
+
+/// The ground probe names bodies by their bits ([`sf_controller::GroundHit::body`]).
+impl From<BodyId> for GroundBody {
+    fn from(id: BodyId) -> Self {
+        Self(id.to_bits())
+    }
+}
+
+impl From<GroundBody> for BodyId {
+    fn from(body: GroundBody) -> Self {
+        Self::from_bits(body.0)
     }
 }
 

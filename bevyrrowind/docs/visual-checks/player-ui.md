@@ -86,7 +86,7 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Known: no typed names (generated, not stored: sf/meta has no name field), no thumbnails, UTC dates.
 - Owner 2026-10-30: save, overwrite and load work; thumbnails missing (known gap, now wanted). Status: confirmed with follow-up.
 
-### IN-1: Keymap controls, rebind, gamepad, sneak hold vs toggle (`cargo dev view "Seyda Neen"`, 10:00)
+### KM-1 (was IN-1): Keymap controls, rebind, gamepad, sneak hold vs toggle (`cargo dev view "Seyda Neen"`, 10:00)
 - F10 opens the keybinds screen (UI + gameplay rows). Rebind Jump (keyboard slot) to J, close with F10 or Esc; J jumps,
   Space doesn't. Quit, start again: J still jumps (saved in `profiles/<profile>.toml`, `[bindings.gameplay]`).
 - Gamepad (Xbox layout): left stick walks (dead zone, no drift), right stick looks at a steady rate, A jumps, X uses

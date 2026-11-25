@@ -26,10 +26,12 @@ formula), no ambushes, exploration-only reveal; operators are replaced here too 
   (services-adapter.md "Build plan"; ROADMAP 2.7).
 - **Routes, stops, operators, vehicles:** none; travel is a menu row (§1, gap 1). TV-R1 research running.
 - **Seats, decks:** `interaction.md` (c) designs `SeatLink`, four vehicle kinds, IN7, IN10, IN11; ROADMAP 3.11 `[ ]`.
-  `GroundHit` (`sf_controller/src/probe.rs:56`) has no ground body, so nothing can carry a rider yet.
+  `GroundHit` carries the ground body, its point velocity and angular velocity (IN20, done 2026-11-25).
 - **Nav:** `humanoid`, `large` baked (ledger 2026-11-18); NV12 a straight-line stub (nav research §2: road graph);
   AI10 waits for NV12. **Clock:** `skip(ms)` (`clock.md`). **Maps:** no spec. **Co-op:** N1-N8 parked `[p]`.
 - **Owner:** interaction 2026-11-11 (mounts first, mounted combat later); DECISIONS 2026-11-25; section 7 answers.
+- **Frozen (owner 2026-11-25):** ships (vessels spec SHP-0 and after; ship questions stay open) and mount research
+  (TV-R2). IN11 goes ahead as generic moving-platform support.
 
 ## 3. Decisions
 
@@ -74,7 +76,7 @@ formula), no ambushes, exploration-only reveal; operators are replaced here too 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
 | TV-R1 | OpenMW (file + commit): providers, `DODT` counts per kind, placements, propylons, Mark/Recall (running: `travel-data.md`) | docs | - | counts per kind |
-| TV-R2 | Quadruped gaits (Morrowind creature clips, N-leg IK, crates), mount practice, deck-local nav | docs | - | note, reuse check |
+| TV-R2 | Quadruped gaits (Morrowind creature clips, N-leg IK, crates), mount practice, deck-local nav | docs | - | **parked** (owner 2026-11-25: no mount research for now) |
 | TV0 | New spec `travel.md`: decisions 1-2, 7-10, saves, budgets, reuse check, industry comparison | docs | - | doccheck |
 | TV0b | `interaction.md` (c) rewrite: decisions 3-6, passenger state; rows IN7, IN10, IN11, IN20-IN26 | docs | TV0, TV-R2 | doccheck |
 | TV0c | `services-adapter.md` "Travel": networks (strider star, boats, guides, gondolas), operator templates, options | docs | TV-R1, TV0 | doccheck |
@@ -107,8 +109,8 @@ formula), no ambushes, exploration-only reveal; operators are replaced here too 
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| IN20 | `GroundHit` carries the ground body and point velocity; kinematic velocity from the tick pose delta | `sf_physics`, `sf_controller` | - | exact on a turning kinematic box |
-| IN11 | Based movement: walk on a moving, turning, bobbing deck (decision 4) | `sf_controller` | IN20 | idle drift in tolerance, jump lands on the spot, 30/144 fps alike, rebase; ms |
+| IN20 | `GroundHit` carries the ground body and point velocity; kinematic velocity from the tick pose delta | `sf_physics`, `sf_controller` | - | **done 2026-11-25** (4 exact tests, 30/144 Hz) |
+| IN11 | Based movement on any moving body (lifts, platforms, cart beds, decks; owner 2026-11-25): walk on a moving, turning, bobbing base (decision 4) | `sf_controller` | IN20 | idle drift in tolerance, jump lands on the spot, 30/144 fps alike, rebase; ms |
 | IN21 | Deck presentation: drawn pose, foot IK, camera interpolated base-local | `sf_controller_bevy`, `sf_camera` | IN11 | drawn offset constant at rest; owner IN-11 (`level:` deck) |
 | IN7 | Seat links on a moving owner: create/persist/delete, seat modes, dismount spot, jump off (rail half dropped) | `sf_interaction` | IN2, IN20 | exact transitions; lands on navmesh |
 | IN23 | Seat IK: pelvis to seat, feet to footrest/stirrup/deck, hands to rail/reins | `sf_anim_graph` | IN7, Kimodo clips | pelvis in tolerance; owner IN-23 |

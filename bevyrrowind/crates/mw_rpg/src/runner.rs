@@ -1,65 +1,25 @@
 //! The game's result runner (rpg-adapter.md "As built (W3)"): INFO result scripts run in
-//! `mw_script`'s native interpreter as the speaker, reading `sf_rpg` state (quests, the
-//! context player's inventory) and, through [`MwWorld`], what `mw_rpg` cannot own (globals,
-//! script variables, items held by world actors). A run is side-effect free: it returns
-//! [`ResultEffect`]s in call order and the host applies them on its tick (net rules 2, 5).
-//! Inside one run, reads see the run's own earlier writes (an overlay), as in the original
-//! engine where every call takes effect at once.
+//! `mw_script`'s native interpreter as the speaker. The results host ([`RunHost`]) only binds
+//! the interpreter's calls onto the game API ([`crate::api`]): reads through a [`GameView`] of
+//! `sf_rpg` state and the host's [`MwWorld`], the run's own writes seen by its later reads, and
+//! [`ResultEffect`]s ([`GameOp`](crate::api::GameOp)s) in call order that the host applies on
+//! its tick (net rules 2, 5).
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use mw_script::ast::{Call, Ident, Target as AstTarget, VarRef, VarType};
 use mw_script::functions::Function;
-use mw_script::interp::{Host, Interpreter, Locals, MessageArg, store};
-use mw_script::{Env, FunctionTable, MemberLookup, Parsed, SourceKind, StatCall, parse_and_resolve};
-use mw_ui::message::{MessageArg as UiArg, message_box_from_args};
+use mw_script::interp::{Host, Interpreter, Locals, MessageArg};
+use mw_script::{
+    Env, FunctionTable, MemberLookup, Parsed, SourceKind, StatCall, parse_and_resolve,
+};
+use mw_ui::message::MessageArg as UiArg;
 use sf_records::RecordId;
-use sf_rpg::{ActorKey, CharacterRpg, Choice, ConversationCtx, WorldRpg};
+use sf_rpg::{CharacterRpg, Choice, WorldRpg};
 
-use crate::filter::ActorFacts;
-use crate::result::{ResultCall, ResultEffect, ResultError, ResultRunner, Target};
-use crate::script_stats::StatOverlay;
-use crate::stats::{MwSheets, NoSheets};
-use crate::text::GlobalNumber;
-
-/// A script variable and its declared type.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ScriptVar {
-    pub ty: VarType,
-    pub value: f32,
-}
-
-/// World-side reads the runner needs and `mw_rpg` does not own. The host implements it
-/// over its world (ECS, placement overlay); tests use doubles.
-pub trait MwWorld {
-    /// A global (GLOB); `None`: no such global (reads 0, writes are dropped).
-    fn global(&self, name: &RecordId) -> Option<GlobalNumber>;
-    /// A script variable of `target` (the speaker's locals, `id.var`, `id->` objects);
-    /// `None`: no script or no such variable (reads 0, writes are dropped).
-    fn var(&self, ctx: &ConversationCtx, target: &Target, name: &RecordId) -> Option<ScriptVar>;
-    /// Items held by `target` when it is not the context player (the speaker, `id->`
-    /// actors and containers); the player's come from its `CharacterRpg`.
-    fn item_count(&self, ctx: &ConversationCtx, target: &Target, item: &RecordId) -> u64;
-
-    /// The character sheets the stat functions read and write (stats.md S7). Default: none,
-    /// so every stat read is neutral and writes are dropped.
-    fn sheets(&self) -> &dyn MwSheets {
-        &NoSheets
-    }
-
-    /// The actor `target` names (`None`: the player, or no such actor). Default: the speaker.
-    fn actor(&self, ctx: &ConversationCtx, target: &Target) -> Option<ActorKey> {
-        (*target == Target::Speaker).then_some(ctx.speaker)
-    }
-
-    /// What the records say about the actor `target` names (faction and record rank, NPC or
-    /// creature); `None` for the player. Default: nothing known.
-    fn facts(&self, ctx: &ConversationCtx, target: &Target) -> Option<&ActorFacts> {
-        let _ = (ctx, target);
-        None
-    }
-}
+use crate::api::{self, GameRun, GameView, MwWorld, Target};
+use crate::result::{ResultCall, ResultEffect, ResultError, ResultRunner};
 
 /// What the runner reads: `sf_rpg` world state, the context player's character, the world.
 #[derive(Clone, Copy)]
@@ -189,16 +149,15 @@ impl ResultRunner for MwResultRunner<'_> {
             });
             return Ok(Vec::new());
         }
-        let mut host = RunHost {
+        let view = GameView {
             ctx: call.ctx,
-            state: self.state,
+            world: self.state.world,
+            player: self.state.player,
+            env: self.state.env,
+        };
+        let mut host = RunHost {
+            run: GameRun::new(view),
             reports,
-            effects: Vec::new(),
-            stages: HashMap::new(),
-            items: HashMap::new(),
-            vars: HashMap::new(),
-            globals: HashMap::new(),
-            stats: StatOverlay::default(),
         };
         let mut locals = Locals::new(&parsed.script);
         interp
@@ -207,7 +166,7 @@ impl ResultRunner for MwResultRunner<'_> {
                 response: call.response.clone(),
                 message: e.to_string(),
             })?;
-        Ok(host.effects)
+        Ok(host.run.into_ops())
     }
 }
 
@@ -217,10 +176,7 @@ struct WorldEnv<'a>(&'a dyn MwWorld);
 
 impl Env for WorldEnv<'_> {
     fn global(&self, key: &str) -> Option<VarType> {
-        self.0.global(&RecordId::new(key)).map(|g| match g {
-            GlobalNumber::Int(_) => VarType::Long,
-            GlobalNumber::Float(_) => VarType::Float,
-        })
+        self.0.global(&RecordId::new(key)).map(api::global_type)
     }
     fn object_exists(&self, _: &str) -> Option<bool> {
         None
@@ -230,107 +186,30 @@ impl Env for WorldEnv<'_> {
     }
 }
 
-fn rid(id: &Ident) -> RecordId {
-    RecordId::new(&id.key)
-}
-
-fn target(t: &AstTarget) -> Target {
-    match t {
-        AstTarget::Implicit => Target::Speaker,
-        AstTarget::Explicit(id) => object(id),
-    }
-}
-
-fn object(id: &Ident) -> Target {
-    if id.key == "player" {
-        Target::Player
-    } else {
-        Target::Actor(rid(id))
-    }
-}
-
-#[allow(clippy::cast_possible_truncation)]
-fn to_f32(v: f64) -> f32 {
-    v as f32
-}
-
-/// One run: reads with the overlay of this run's writes, effects in call order.
+/// One run: each interpreter call converts its arguments and calls the game API.
 struct RunHost<'a> {
-    ctx: &'a ConversationCtx,
-    state: ResultState<'a>,
+    run: GameRun<'a>,
     reports: &'a mut Reports,
-    effects: Vec<ResultEffect>,
-    stages: HashMap<RecordId, i32>,
-    items: HashMap<(Target, RecordId), i64>,
-    vars: HashMap<(Target, RecordId), f32>,
-    globals: HashMap<RecordId, f32>,
-    /// The run's copies of the sheets it changed.
-    stats: StatOverlay,
 }
 
 impl RunHost<'_> {
-    /// The quest stage this run sees.
-    fn get_stage(&self, quest: &RecordId) -> i32 {
-        self.stages
-            .get(quest)
-            .copied()
-            .unwrap_or_else(|| self.state.world.quests.stage(quest))
-    }
-
-    /// Where a variable lives: `(None, name)` a global, `(Some(target), name)` a script
-    /// variable of `target`; `None` for what the interpreter keeps itself.
-    fn owner(var: &VarRef) -> Option<(Option<Target>, &Ident)> {
-        match var {
-            VarRef::Global(name) => Some((None, name)),
-            VarRef::Speaker(name) | VarRef::Name(name) => Some((Some(Target::Speaker), name)),
-            VarRef::Member { object: o, var } => Some((Some(object(o)), var)),
-            VarRef::Local(_) | VarRef::Undeclared(_) => None,
-        }
-    }
-
     fn unknown(&mut self, owner: Option<&Target>, name: &Ident) {
-        let what = match owner {
-            None => format!("global {}", name.key),
-            Some(Target::Speaker) => format!("speaker.{}", name.key),
-            Some(Target::Player) => format!("player.{}", name.key),
-            Some(Target::Actor(a)) => format!("{a}.{}", name.key),
-        };
-        self.reports.push(ResultReport::UnknownVariable(what));
-    }
-
-    fn count(&self, target: &Target, item: &RecordId) -> i64 {
-        let base = match target {
-            Target::Player => self.state.player.loadout.count(item),
-            other => self.state.env.item_count(self.ctx, other, item),
-        };
-        let delta = self
-            .items
-            .get(&(target.clone(), item.clone()))
-            .copied()
-            .unwrap_or(0);
-        i64::try_from(base)
-            .unwrap_or(i64::MAX)
-            .saturating_add(delta)
+        self.reports
+            .push(ResultReport::UnknownVariable(api::unknown_name(
+                owner, name,
+            )));
     }
 }
 
 impl Host for RunHost<'_> {
     fn get(&mut self, var: &VarRef) -> f64 {
-        let Some((owner, name)) = Self::owner(var) else {
+        let Some((owner, name)) = api::owner(var) else {
             return 0.0;
         };
-        let key = rid(name);
+        let key = api::rid(name);
         let value = match &owner {
-            None => self
-                .globals
-                .get(&key)
-                .copied()
-                .or_else(|| self.state.env.global(&key).map(GlobalNumber::as_f32)),
-            Some(t) => self
-                .vars
-                .get(&(t.clone(), key.clone()))
-                .copied()
-                .or_else(|| self.state.env.var(self.ctx, t, &key).map(|v| v.value)),
+            None => self.run.global(&key),
+            Some(t) => self.run.var(t, &key),
         };
         value.map_or_else(
             || {
@@ -342,133 +221,72 @@ impl Host for RunHost<'_> {
     }
 
     fn set(&mut self, var: &VarRef, value: f64) {
-        let Some((owner, name)) = Self::owner(var) else {
+        let Some((owner, name)) = api::owner(var) else {
             return;
         };
-        let key = rid(name);
-        let ty = match &owner {
-            None => self.state.env.global(&key).map(|g| match g {
-                GlobalNumber::Int(_) => VarType::Long,
-                GlobalNumber::Float(_) => VarType::Float,
-            }),
-            Some(t) => self.state.env.var(self.ctx, t, &key).map(|v| v.ty),
+        let key = api::rid(name);
+        let known = match &owner {
+            None => self.run.set_global(&key, value),
+            Some(t) => self.run.set_var(t, &key, value),
         };
-        let Some(ty) = ty else {
+        if !known {
             self.unknown(owner.as_ref(), name);
-            return;
-        };
-        let value = to_f32(store(ty, value));
-        match owner {
-            None => {
-                self.globals.insert(key.clone(), value);
-                self.effects
-                    .push(ResultEffect::SetGlobal { name: key, value });
-            }
-            Some(target) => {
-                self.vars.insert((target.clone(), key.clone()), value);
-                self.effects.push(ResultEffect::SetLocal {
-                    target,
-                    name: key,
-                    value,
-                });
-            }
         }
     }
 
     fn journal(&mut self, quest: &Ident, index: i32) {
-        let quest = rid(quest);
-        let current = self.get_stage(&quest);
-        self.stages.insert(quest.clone(), current.max(index));
-        self.effects.push(ResultEffect::Journal { quest, index });
+        self.run.journal(&api::rid(quest), index);
     }
 
     fn set_journal_index(&mut self, quest: &Ident, index: i32) {
-        let quest = rid(quest);
-        self.stages.insert(quest.clone(), index);
-        self.effects
-            .push(ResultEffect::SetJournalIndex { quest, index });
+        self.run.set_journal_index(&api::rid(quest), index);
     }
 
     fn get_journal_index(&mut self, quest: &Ident) -> i32 {
-        self.get_stage(&rid(quest))
+        self.run.quest_stage(&api::rid(quest))
     }
 
     fn add_topic(&mut self, topic: &Ident) {
-        self.effects.push(ResultEffect::AddTopic(rid(topic)));
+        self.run.add_topic(api::rid(topic));
     }
 
     fn choice(&mut self, choices: Vec<(String, i32)>) {
-        self.effects.push(ResultEffect::Choices(
+        self.run.choice(
             choices
                 .into_iter()
                 .map(|(label, value)| Choice { label, value })
                 .collect(),
-        ));
+        );
     }
 
     fn goodbye(&mut self) {
-        self.effects.push(ResultEffect::Goodbye);
+        self.run.goodbye();
     }
 
     fn add_item(&mut self, target: &AstTarget, item: &Ident, count: i32) {
-        let Ok(count @ 1..) = u32::try_from(count) else {
-            return;
-        };
-        if item.key.is_empty() {
-            return;
-        }
-        let (target, item) = (self::target(target), rid(item));
-        *self
-            .items
-            .entry((target.clone(), item.clone()))
-            .or_default() += i64::from(count);
-        self.effects.push(ResultEffect::AddItem {
-            target,
-            item,
-            count,
-        });
+        self.run
+            .add_item(api::target(target), api::rid(item), count);
     }
 
     /// Removes up to `count`: fewer when the holder has fewer (verify against the oracle).
     fn remove_item(&mut self, target: &AstTarget, item: &Ident, count: i32) {
-        let (target, item) = (self::target(target), rid(item));
-        let held = self.count(&target, &item);
-        let Ok(count @ 1..) = u32::try_from(i64::from(count).min(held)) else {
-            return;
-        };
-        *self
-            .items
-            .entry((target.clone(), item.clone()))
-            .or_default() -= i64::from(count);
-        self.effects.push(ResultEffect::RemoveItem {
-            target,
-            item,
-            count,
-        });
+        self.run
+            .remove_item(api::target(target), api::rid(item), count);
     }
 
     fn get_item_count(&mut self, target: &AstTarget, item: &Ident) -> i32 {
-        let n = self.count(&self::target(target), &rid(item));
+        let n = self.run.item_count(&api::target(target), &api::rid(item));
         i32::try_from(n.max(0)).unwrap_or(i32::MAX)
     }
 
     fn set_disposition(&mut self, target: &AstTarget, value: i32) {
-        self.effects.push(ResultEffect::SetDisposition {
-            target: self::target(target),
-            value,
-        });
+        self.run.set_disposition(api::target(target), value);
     }
 
     fn mod_disposition(&mut self, target: &AstTarget, delta: i32) {
-        self.effects.push(ResultEffect::ModDisposition {
-            target: self::target(target),
-            delta,
-        });
+        self.run.mod_disposition(api::target(target), delta);
     }
 
-    /// Formats as `OpenMW` (`mw_ui::message::message_box_from_args`: values first, then as many
-    /// buttons as there are quoted strings among the rest, at most 10). Text defines
-    /// (`^PCName`) are left for the UI, as `OpenMW` expands them after formatting.
     fn message_box(&mut self, format: &str, args: &[MessageArg]) {
         let args: Vec<UiArg> = args
             .iter()
@@ -478,23 +296,15 @@ impl Host for RunHost<'_> {
                 MessageArg::Word(s) => UiArg::Word(s.clone()),
             })
             .collect();
-        let message = message_box_from_args(format, &args);
-        self.effects.push(ResultEffect::MessageBox {
-            text: message.text,
-            buttons: message.buttons,
-        });
+        self.run.message_box(format, &args);
     }
 
     fn play_sound(&mut self, sound: &Ident) {
-        self.effects.push(ResultEffect::PlaySound(rid(sound)));
+        self.run.play_sound(api::rid(sound));
     }
 
     fn stat(&mut self, target: &AstTarget, call: &StatCall) -> Option<f64> {
-        let target = self::target(target);
-        Some(
-            self.stats
-                .call(self.ctx, self.state.env, &target, call, &mut self.effects),
-        )
+        Some(self.run.stat(&api::target(target), call))
     }
 
     fn unhandled(&mut self, function: &Function, _call: &Call) -> f64 {

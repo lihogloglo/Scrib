@@ -11,8 +11,8 @@ ported code cites file + commit in its module docs, gets a `superfargoth/THIRD_P
 
 - **`mw_ai`** (exists, Bevy-free, hakari `final-excludes`): `pathgrid`, `wander`, `methods` (`WanderVocabulary`,
   `WanderDriver`, `wander_library`; `PathWalkScaffold` removed in MA3). Gains: `packages` (AI_W/T/E/F/A → directives), `policy` (the OpenMW `StackPolicy`), `settings`
-  (Hello/Fight/Flee/Alarm considerations), `awareness` (the `AwarenessModel`), `fast_forward`, `schedules` (loader,
-  anchors, quest-safety validator), `nav` (agent classes, area table, pathgrid links, door approach points), and the
+  (Hello/Fight/Flee/Alarm considerations), `awareness` (the `DetectionModel`), `perception` (profile, AI0g),
+  `fast_forward`, `schedules` (loader, anchors, quest-safety validator), `nav` (agent classes, area table, pathgrid links, door approach points), and the
   Morrowind HTN method set as data (`bevyrrowind/data/ai/methods/*.ron`).
 - **`mw_rpg::crime`** (Bevy-free; crime is a content mechanic): offences, witnesses, bounty, guards, arrest. Not a new
   `mw_crime` crate (decided 2026-11-08, `superfargoth/docs/research/ai-nav-decisions-2026-11-08.md` (h)): OpenMW keeps
@@ -87,7 +87,7 @@ followTargetThroughDoors, alwaysActive) map to `Directive` fields and `ParamBag`
 90; "later" or "stub" today): `AIWander`, `AITravel`, `AIEscort(Cell)`, `AIFollow(Cell)`, `AIActivate` push
 directives; `GetAIPackageDone`, `GetCurrentAIPackage` read the stack (MA2); `StartCombat`/`StopCombat`, `GetTarget`,
 `GetAttacked`, `Face` (MA2/MA10); `GetDetected` (awareness) and `GetLineOfSight` (perception via `portal_query`)
-(MA5); `Get/Set/ModHello|Fight|Flee|Alarm` on the sheet (MA4); crime's `PayFine`, `PayFineThief`, `GoToJail` (MA6).
+(MA5); `Get/Set/ModHello|Fight|Flee|Alarm` on the sheet (MA4); crime's `PayFine`, `PayFineThief`, `GoToJail` (crime-adapter A3; MA6 only routes guards).
 
 ## AI settings (stats + considerations)
 
@@ -100,8 +100,38 @@ initialised from the NPC/creature AIDT. Considerations in `mw_ai::settings`:
 - **Flee** (Flee drive): `vanillaRateFlee` (`aicombataction.cpp` 457-492), `updateFleeing` (`aicombat.cpp` 149-250),
   intimidation raising Flee (`mechanicsmanagerimp.cpp` 664-708). The rating is ported; flee movement is modern (nav
   `Goal::Away`, toward allies or a door).
-- **Awareness** (`AwarenessModel`): `awarenessCheck` (`mechanicsmanagerimp.cpp` 1603) with its sneak, attribute,
-  fatigue, chameleon/invisibility and facing terms; a modern light-level term is a later option behind the same model.
+- **Awareness** (`DetectionModel`): `awarenessCheck` (`mechanicsmanagerimp.cpp` 1603) with its sneak, attribute,
+  fatigue, chameleon/invisibility and facing terms; light enters only through `VisibilityFactors` (AI8d, crime LW0b), never inside MA5.
+- **Perception profile** (`mw_ai::perception`, AI0g; ai.md "Perception profile"): presets and state records in
+  `bevyrrowind/data/ai/perception.ron`, curves as `mw.perception.*` tunables (source `Guess` unless OpenMW gives the
+  number; OpenMW lines below checked on a local checkout at `4e718b50`, `awarenessCheck` at 1603 as at `b8285cc9`).
+  Split for **Meter**: `awarenessCheck`'s observer half becomes the profile, its target half (sneak term, chameleon,
+  invisibility) stays in `DetectionRules::concealment`, its facing test is `f_cone`.
+  - *Stats:* `obs = Sneak + 0.2 Agility + 0.1 Luck - Blind` (OpenMW `obsTerm`, `mechanicsmanagerimp.cpp` 1651;
+    creatures use the record's Stealth skill, `creature.cpp` `getSkill` 725-732); `x = obs / obs_ref`; `sight_gain` and
+    `hearing` = `clamp(1 + slope × (x - 1), mul_min, mul_max)` with `sight_slope` / `hearing_slope`. Willpower →
+    `search_ttl` (`willpower_slope`), Intelligence → `search_error` (`1 - int_slope × (Int / attr_ref - 1)`), same clamp.
+    Refilled when a term moves by ≥ `refill_step` (Blind on and off included).
+  - *Traits* (preset rows by race, creature type, or id): Khajiit `darkness` 0.5 (their Eye of Night power; vanilla
+    Night Eye only brightens the player's view, so the NPC trait is a modern reading); undead `darkness` 0.3, daedra 0.5;
+    beasts (CREA type Creature) `hearing` 1.3, `sight_cone` 1.2; Argonians none (water breathing is not perception). All
+    `Guess`; a mod row can make a blind creature (`sight_gain` 0).
+  - *States:* **tired** (condition): `sight_gain` × OpenMW's fatigue term `fFatigueBase - fFatigueMult × (1 - fatigue /
+    max)` (`creaturestats.cpp` 39-53, applied to `obsTerm` as OpenMW does), re-pushed per `refill_step` of the fraction.
+    **drunk** (timed): while an active effect sourced from an item in the `alcohol` list (sujamma, flin, greef, mazte,
+    shein, skooma, moon sugar) lasts, or `drunk_s` from a tavern drink activity (MA8): `sight_gain` 0.7, `alertness` 0.7,
+    `decay` 1.3, `search_error` 1.5. **injured** (condition, health fraction < `injured_below`): `sight_gain` 0.85,
+    `search_ttl` 0.6. **fleeing** (condition, while MA4's Flee holds): `sight_cone` 0.7, `hearing` 1.2, `search_ttl` 0.
+    **on duty** (condition, guard class as OpenMW's crime code `isClass(victim, "guard")`, 1193, while awake and not
+    off-shift in MA8): `alertness` 1.2, `decay` 0.7, `search_ttl` 1.5. State numbers live in the records (data, `Guess`).
+  - **Classic** (MA5): the roll already holds `obsTerm`, Blind and the observer fatigue term, so the stat part, `tired`
+    and every sight field (`sight_*`, `darkness`, `alertness` on sight) of profile and states are not applied: MA5
+    stays exact vs the formula, and drunk, injured, fleeing and on duty have no vanilla number to bend its odds with.
+    Their hearing, decay and search fields still apply, since Classic keeps the framework meter there (vanilla has no
+    hearing or search rule).
+  - Tunables (`mw.perception.*`, net `Gameplay`): `obs_ref` 30 (≈ a commoner: Sneak 15, Agility 40, Luck 40), `attr_ref`
+    50, `sight_slope` 0.5, `hearing_slope` 0.3, `willpower_slope` 0.5, `int_slope` 0.4, `mul_min` / `mul_max` 0.5 / 2,
+    `refill_step` 0.1 (fraction of the term), `injured_below` 0.5, `drunk_s` 300.
 
 ## Crime, witnesses, guards (`mw_rpg::crime`)
 
@@ -180,8 +210,8 @@ filters through a new function family; named enemies remembering and returning a
 | **MA2** packages | AI_* records and MWScript functions → directives, OpenMW `StackPolicy`, `GetAIPackageDone` | exact stack orders vs OpenMW cases; script tests per function | AI4 |
 | **MA3** wander methods (**built 2026-11-18**) | Morrowind wander/idle method set on `sf_ai`; `PathWalkScaffold` removed | headless: wanderers stay within radius; idle chances exact (`roll_idle_with` vs OpenMW `getRandomIdle` at b8285cc; `drive_tests.rs` runs the real Bevy `drive`) | AI6 |
 | **MA4** settings | Hello/Fight/Flee stats + considerations | exact ratings vs OpenMW formulas | AI7 |
-| **MA5** awareness | `awarenessCheck` port as `AwarenessModel` | exact vs formula cases | AI8 |
-| **MA6** crime | `mw_rpg::crime` port (no `sf_ai` dep), guards' *Pursue* via glue | scripted theft: witnesses, bounty, guard pursues | MA5 |
+| **MA5** awareness | `awarenessCheck` port as `DetectionModel` Classic; Meter profile split (AI0g) | exact vs formula cases; Classic ignores profile sight fields | AI8 |
+| **MA6** crime | glue to `mw_crime` (crime-adapter; no `sf_ai` dep there): guards' *Pursue* | scripted theft: witnesses, bounty, guard pursues | MA5 |
 | **MA7** fast-forward | `fastForward` rules | exact placement for wanderers and travellers | AI10 |
 | **MA8** schedules | data pack (three patterns, guards unscheduled), anchors, validator, `ai.schedules` setting | validator report per pattern on a real install; classic = vanilla stacks; unresolved anchors keep vanilla | AI10, AI11, AI12 |
 | **MA9** doors | escort/follow/pursue through doors, follower fallback | headless: follower through the Census door, guard pursues out | AI12 |

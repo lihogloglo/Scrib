@@ -23,7 +23,7 @@ impl GroundProbe for Boxes {
                 .filter_map(|&(lo, hi)| slab(origin, q.dir, lo, hi))
                 .filter(|(t, _)| *t <= q.max)
                 .min_by(|a, b| a.0.total_cmp(&b.0))
-                .map(|(t, normal)| GroundHit { point: q.origin.offset(q.dir * t), normal, distance: t, surface: SurfaceId::DEFAULT });
+                .map(|(t, normal)| GroundHit::new(q.origin.offset(q.dir * t), normal, t, SurfaceId::DEFAULT));
         }
     }
 }

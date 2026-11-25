@@ -553,3 +553,48 @@ fn vanilla_corpus_interprets() {
     }
     assert!(result_errors.is_empty(), "{} results failed", result_errors.len());
 }
+
+/// DQ-2: call sites the native interpreter binds (a builtin or `Host::stat`) / total, by
+/// family, over every live script and every dialogue result, statically (coverage.rs); the
+/// old M5 `live` share beside it for comparison. Prints the busiest unbound functions.
+/// Counts and names only.
+#[test]
+#[ignore = "measurement: DQ-2 interpreter coverage"]
+fn vanilla_corpus_interpreter_coverage() {
+    use mw_script::{CallSites, Origin};
+
+    let Ok((install, _)) = MorrowindInstall::detect(None) else {
+        eprintln!("no Morrowind install detected; skipping");
+        return;
+    };
+    let table = FunctionTable::vanilla();
+    let corpus = load(&install);
+    let mut live: BTreeMap<String, &str> = BTreeMap::new();
+    for (_, id, text, _) in &corpus.scripts {
+        live.insert(id.to_lowercase(), text);
+    }
+    let locals = live
+        .iter()
+        .map(|(id, text)| {
+            let p = parse(text, SourceKind::Script, table);
+            let vars = p.script.locals.iter().map(|l| (l.name.key.clone(), l.ty)).collect();
+            (id.clone(), vars)
+        })
+        .collect();
+    let env = CorpusEnv { corpus: &corpus, locals };
+    let mut sites = CallSites::default();
+    for text in live.values() {
+        let p = parse_and_resolve(text, SourceKind::Script, table, &env);
+        sites.add_parsed(&p, Origin::Script, table);
+    }
+    for (_, _, _, text) in &corpus.results {
+        let p = parse_and_resolve(text, SourceKind::DialogueResult, table, &env);
+        sites.add_parsed(&p, Origin::DialogueResult, table);
+    }
+    eprintln!(
+        "{} live scripts, {} dialogue results",
+        live.len(),
+        corpus.results.len()
+    );
+    eprintln!("{}", sites.report(table).bound_report(15));
+}

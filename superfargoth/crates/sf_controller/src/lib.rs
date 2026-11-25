@@ -54,7 +54,7 @@ pub use intent::{Gait, GaitSpeeds, LocomotionIntent};
 pub use motion::{MotionState, SpringParams, TurnRates, forward, spring_character, spring_yaw, turn_toward, wrap_angle};
 pub use mover::{KinematicMover, Locomotion, MoveInput, MoverMode, MoverParams, RootMotion, separate, separate_moved};
 pub use path::{ArrivalParams, PathFollower, PathMode, PathNode, PathOutput};
-pub use probe::{GroundHit, GroundProbe, HeightSurface, Nearest, ProbeQuery, SurfaceId, TerrainProbe};
+pub use probe::{GroundBody, GroundHit, GroundProbe, HeightSurface, Nearest, ProbeQuery, SurfaceId, TerrainProbe};
 pub use statics::{COLLISION_FORMAT, CollisionBuilder, CollisionMesh, StaticId, StaticShape, StaticWorld};
 pub use trajectory::{LocomotionParams, TRAJECTORY_TIMES, Trajectory, TrajectoryPoint};
 

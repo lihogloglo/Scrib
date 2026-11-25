@@ -1964,3 +1964,13 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-25 (gameplay-roadmaps-3, owner): NPC perception is per individual: a `PerceptionProfile` (data, moddable)
   scales the global awareness/sight/hearing/search tunables; the game fills it from stats, race/creature traits, role
   and temporary states (drunk, tired, on duty). Spec slice before AI8b/AI8f.
+- 2026-11-25 (gameplay-roadmaps-4, owner): interaction roadmap answers: towns burn only through authored stages,
+  thrown objects hurt (capped, assault if seen, off in Classic), barricades later, NPCs and player share workstations
+  (no new crafting), home decorating much later. Jobs are mod data (TOML, like MU cultures): new jobs, no recompile.
+- 2026-11-25 (gameplay-roadmaps-4, owner): solo jail passes the sentence's days of game time, as Morrowind does;
+  in co-op the shared clock never moves (crime.md Co-op 6).
+- 2026-11-25 (gameplay-roadmaps-5, owner): ships frozen for a while (SHP lane and its questions stay open; a
+  clean-room rewrite may give insights later, read under the clean-room rule), no mount research (TV-R2 parked);
+  crime and perception questions wait. IN11 is generic moving-platform support (lifts, carts, decks).
+- 2026-11-25 (gameplay-roadmaps-5, owner): once the perception and hearing slices land, a controlled test scene
+  (the arena reused) shows cones, NPC states and noise/impact events (ai.md AI47).

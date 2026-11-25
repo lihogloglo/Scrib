@@ -21,6 +21,13 @@
 //!   entries, five [`AwarenessBand`]s with hysteresis, decay and the Alerted hold, the
 //!   [`Distraction`] slot, asleep and groggy), fed [`Stimulus`] inputs, and the HUD's
 //!   [`player_detection`].
+//! - `AI8e` (shared knowledge): a shout's [`Notify`] queued per hearer as a [`PendingNotify`] and
+//!   delivered after travel and reaction time, at most to Searching ([`NotifyDelivered`]).
+//! - `AI8g` (perception profile): [`profile`], the per-individual [`PerceptionProfile`], its
+//!   timed and condition [`PerceptionStates`], and [`resolve`] into the cached [`EffectivePerception`].
+//! - `AI8b1` (sight maths): [`sight`], the per-check [`sight_gain`], [`apply_darkness`], the
+//!   staggered [`SightTimer`], the shared [`RayQueue`] behind the caller's [`LineOfSight`], and the
+//!   [`SightCache`].
 //!
 //! The console command `ai.trace` and BRP live in `sf_ai_bevy` (AI3): actor references and the
 //! console context are the shell's.
@@ -31,7 +38,9 @@ pub mod exec;
 pub mod htn;
 pub mod ids;
 pub mod perception;
+pub mod profile;
 pub mod save;
+pub mod sight;
 pub mod state;
 pub mod trace;
 
@@ -54,10 +63,21 @@ pub use htn::{
 };
 pub use ids::{ConsiderationId, DirectiveId, DriveId, InputId, MethodId, OperatorId, TaskId};
 pub use perception::{
-    Awareness, AwarenessBand, AwarenessConfig, AwarenessMeter, Distraction, HeardNoise, LastSeen, PerceptClock,
-    PerceptTarget, PlayerDetection, Stimulus, StimulusOutcome, player_detection,
+    Awareness, AwarenessBand, AwarenessConfig, AwarenessMeter, Distraction, HeardNoise, LastSeen, Notify,
+    NotifyDelivered, PendingNotify, PerceptClock, PerceptTarget, PlayerDetection, Stimulus, StimulusOutcome,
+    player_detection,
+};
+pub use profile::{
+    EffectivePerception, OutOfRange, PERCEPTION_STATES_CAPACITY, PerceptionField, PerceptionProfile, PerceptionRangeError,
+    PerceptionState, PerceptionStates, PushOutcome, SearchConfig, SearchParams, SightConfig, SightParams, StateEntry,
+    resolve,
 };
 pub use save::{AI_SECTION, AI_VERSION, ActorSave, AiSave, AiSaveError};
+pub use sight::{
+    LineOfSight, LosOutcome, LosRay, RayKind, RayQueue, RayQueueFull, RayRequest, RayResult, RaySubject, RayTickStats,
+    SightBudget, SightCache, SightCheck, SightTimer, actor_hash, apply_darkness, due, seconds_to_ticks, sight_gain,
+    sight_rate, stagger_phase,
+};
 pub use sf_ids::ActorKey;
 pub use sf_rpg::GameTime;
 pub use state::{BitKey, IntKey, KeyKind, KeySet, RefKey, StateKey, StateKeyError, StateKeys, Target, WorldState};
@@ -78,6 +98,12 @@ mod tests_exec;
 #[cfg(test)]
 mod tests_htn;
 #[cfg(test)]
+mod tests_notify;
+#[cfg(test)]
 mod tests_perception;
 #[cfg(test)]
+mod tests_profile;
+#[cfg(test)]
 mod tests_save;
+#[cfg(test)]
+mod tests_sight;

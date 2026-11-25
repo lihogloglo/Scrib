@@ -15,6 +15,8 @@
 //!   `debug`), `ai.trace [n] [id]`, `ai.directives [id]` (AI4: the stack, top first),
 //!   `ai.tiers` (provisional until the AI9 allocator), `ai.stats`;
 //!   `ai.gizmos` on/off (feature `debug`). `ai.facts` waits for AI13.
+//! - Perception (AI8b2): [`AiSightPlugin`] runs sight on the fixed tick over the app's ground probe
+//!   ([`sight`]); components, tunables and record kinds in [`perception`].
 //! - BRP: [`brp_trace`] answers [`BRP_TRACE_METHOD`] with the store as JSON. This crate doesn't add
 //!   `bevy_remote` (one `RemotePlugin` per app, owned by the game's dev tools, and hakari keeps its
 //!   HTTP server out of every other build): the app registers [`brp_trace_system`] (see its docs).
@@ -41,6 +43,8 @@ mod console;
 pub mod exec;
 #[cfg(feature = "debug")]
 mod gizmos;
+pub mod perception;
+pub mod sight;
 
 pub use exec::{
     AiExecPlugin, AiExecSettings, AiExecTick, AiExecutor, AiSystems, EXEC_ARRIVE_DIST_M,
@@ -49,9 +53,20 @@ pub use exec::{
 };
 #[cfg(feature = "debug")]
 pub use gizmos::AiGizmoVar;
+pub use perception::{
+    AiAwareness, AiEffectivePerception, AiObserver, AiPerceptionProfile, AiPerceptionSettings, AiPerceptionStateDefs,
+    AiPerceptionStates, AiSightTimer, PERCEPTION_PROFILE_KIND, PERCEPTION_STATE_KIND, PERCEPTION_TUNABLES, Perceivable,
+    add_perception_tunables, load_perception_states, register_perception_kinds,
+};
+pub use sight::{
+    AiPerceptClock, AiPerceptionSystems, AiRays, AiSightCache, AiSightPlugin, LosScratch, ProbeLos, VISIBILITY_UNMODELLED,
+    seen_recently,
+};
 
 #[cfg(test)]
 mod exec_tests;
+#[cfg(test)]
+mod sight_tests;
 #[cfg(test)]
 mod tests;
 

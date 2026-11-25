@@ -1,6 +1,7 @@
 # Crime adapter: Morrowind crime, law, stealth, locks and traps on `sf_crime` (`mw_crime`)
 
-Status: spec written 2026-11-10; nothing built. Framework: [crime.md](../../../superfargoth/docs/specs/crime.md)
+Status: spec written 2026-11-10, revised 2026-11-25 (LW0e: walked reports, A6 into MA5, options; plan in the
+[crime roadmap](../../../docs/roadmaps/crime.md), "decision N" = its §3); nothing built. Framework: [crime.md](../../../superfargoth/docs/specs/crime.md)
 (`Ownership`, `StolenLedger`, `OffenceDef`, `assess`, `LockRules`, `DetectionRules`, arrest and jail flow). Also
 [stats-adapter.md](stats-adapter.md) ("Factions, reputation, bounty, disposition": bounty is the `bounty` counter,
 `MwGmst`, fatigue term, `UseSkill`), [services-adapter.md](services-adapter.md) (A7 stolen-goods veto waits for
@@ -18,9 +19,10 @@ numbers at that commit, read from the raw sources 2026-11-10. Abbreviations: **M
 > **Agent summary.** New Bevy-free crate `mw_crime` implements the framework rule traits with OpenMW's numbers:
 > `isOwned` (owner / faction + rank / global), the stolen-items map, the offence table (trespass, pickpocket, assault,
 > murder, theft, sleeping in an owned bed), `commitCrime` witness logic, `reportCrime` per-witness disposition and
-> fight terms, guard pursuit at `iCrimeThreshold`, pay / jail / confiscate, `pickLock`, `probeTrap`, pickpocket odds
-> and `awarenessCheck`. **Quirks to keep in the classic column**: a bounty is added whenever any non-reporting-exempt
-> actor in `fAlarmRadius` has Alarm >= 100, seen or not; stolen entries never shrink on sale; pickpocket and
+> fight terms, guard pursuit at `iCrimeThreshold`, pay / jail / confiscate, `pickLock`, `probeTrap`, pickpocket odds.
+> `awarenessCheck` is ported once, in `mw_ai` (ai-adapter MA5). Bounty lands when a walking report is delivered, in
+> both presets (owner 2026-11-25). **Quirks to keep in the classic column**: any non-reporting-exempt actor in
+> `fAlarmRadius` with Alarm >= 100 reports, seen or not; stolen entries never shrink on sale; pickpocket and
 > awareness use integer rolls `0..=99`; jail skill loss lives in a Lua handler. Bounty is already a stat and
 > `GetPCCrimeLevel`/`Set`/`Mod` already run (S7); `PayFine`, `PayFineThief`, `GoToJail` are `later` and land here.
 > Read "Ownership", "Offences", "Guards and jail", "Locks", "GMSTs", "Options", "Tests", "Build plan".
@@ -131,7 +133,8 @@ calls `notifyMurder` on the victim (MM 1233-1234).
 3. `canReportCrime(actor)` (MM 1204-1225): not the player, is an NPC, alive, not already in combat **with the victim**,
    not knocked down, not a follower of the player.
 4. A candidate **saw** it iff: `(actor == victim && victimAware)`, or `(type == Murder && actor != victim)` (hearing
-   suffices), or `(LOS(player, actor) && awarenessCheck(player, actor))` (the AI seam: `WitnessQuery`). A theft or
+   suffices), or `(LOS(player, actor) && awarenessCheck(player, actor))` (the AI seam: `WitnessQuery`; the check is
+   MA5's port in `mw_ai`). A theft or
    pickpocket witness says `thief` (dialogue bark, `say`).
 5. If anyone saw: `reportCrime`. Else if `Assault` with a victim: a `guard` victim not already pursuing reports with
    an empty faction; otherwise `startCombat(victim, player)` (the victim fights back without a bounty).
@@ -142,8 +145,10 @@ Returns `crimeSeen`.
 Per witness the framework's `ReactionRules` is this port. Let `alarm = Alarm base`, `alarmTerm = alarm / 100`,
 `isVictim`, `isGuard`, `cur = derived disposition`, `disp` the offence's disposition (victim value for the victim).
 
-- **Reported** (bounty added) iff **any** reportable candidate in radius, seen or not, has `alarm >= 100`
-  (MM 1316-1325; trespassers get the `intruder` bark). Quirk: not tied to who saw it.
+- **Reported** iff **any** reportable candidate in radius, seen or not, has `alarm >= 100` (MM 1316-1325; trespassers
+  get the `intruder` bark). Quirk: not tied to who saw it. That candidate is the reporter in `ReportPlan`; it walks
+  to a guard (crime.md "Reports"), and everything OpenMW does at once on report happens at `ReportDelivered`
+  (owner 2026-11-25: no instant report in Classic either; disposition and fight terms below stay at the offence).
 - **Disposition modifier** (integer cast, MM 1355-1390): Theft: `int(disp x alarmTerm)`. Pickpocket: guard with
   `alarm >= 100`: `int(disp)`; victim guard: permanent `int(disp x alarmTerm)`; victim other: permanent `int(disp)`.
   Assault: victim non-guard: permanent `int(disp)`; `alarm >= 100`: `int(disp)`; victim guard: permanent
@@ -156,7 +161,7 @@ Per witness the framework's `ReactionRules` is this port. Let `alarm = Alarm bas
   (`mwmechanics/combat.cpp` 567-596), times `alarmTerm`; cap so `Fight + fight <= 100`, floor 0; if `Fight + fight >= 100`
   start combat, set the base Fight to `Fight + int(fight)`, set Alarmed.
 - Any witness with a change gets `crimeId = newCrimeId()` (the pardon key, framework `CrimeLedger`).
-- If reported: `bounty = max(0, bounty + amount)`; expulsion: a victim NPC with a primary faction the player belongs
+- On delivery: `bounty = max(0, bounty + amount)`; expulsion: a victim NPC with a primary faction the player belongs
   to expels the player (`expell(faction, true)`), else the offence's named faction; an assault victim not yet fighting
   starts combat with the player and gets the crime id (MM 1469-1505).
 
@@ -174,7 +179,7 @@ if `bounty >= iCrimeThreshold x iCrimeThresholdMultiplier` start combat (and kee
 push `AiPursue`; set Alarmed and a new crime id (1177-1198). Werewolf players are skipped. Witnesses whose crime id
 `<= paidCrimeId` calm down: guards stop pursuit, everyone stops combat, Alarmed/attacked reset, base Fight restored,
 crime disposition modifier 0, id -1 (1203-1223; also on dialogue open, `mwgui/dialogue.cpp` 797-801). Maps to
-`LawRules::stance` (thresholds) plus the AI behaviour; ours is event-driven, not a per-frame poll.
+the `LawRules::stance` ladder (`iCrimeThreshold` → `Arrest`, `× iCrimeThresholdMultiplier` → `Attack`) plus the AI behaviour; ours is event-driven, not a per-frame poll.
 
 **Arrest** (`aipursue.cpp` 30-79): the pursuing guard stops when the player's bounty is 0, the target is dead or
 hidden (magical hiding needs an awareness check); it paths to the player (tolerance 100 units), and when reached with
@@ -241,9 +246,13 @@ faction)`. Callers: pick, probe (`security.cpp` 55, 105) and the **Open** spell 
 beyond `getMaxActivationDistance()` of the object (telekinesis) detonates the trap spell at the object; else it is cast
 **on the activator** at the activator's position; then the trap is cleared. Scripts: `Lock [level]`: level defaults to the
 current one, or 100 if never set (`miscextensions.cpp` 332-357); `Unlock`: only if locked (363-372); `GetLocked`: `locked`.
-`mw_rpg` implements these on `LockState`.
+`mw_crime` gives these rules; DQ-7 runs the opcodes on crime's `LockState` (decision 8). Modern lock
+minigame: the `pickLock` term `x` sets `LockRules::window` (width, jam rate; decision 9); Classic is the roll.
 
-## Stealth and awareness (A6)
+## Stealth and awareness (reference; the port is MA5 in `mw_ai`)
+
+Superseded 2026-11-25: slice A6 (`mw_crime::stealth`, scaffold witnesses). `awarenessCheck` is ported once, by
+ai-adapter MA5 in `mw_ai` (decision 14); `mw_crime` reads no awareness. The OpenMW reading stays here for A2 and A4.
 
 `isSneaking` (MM 372-382): the Sneak stance and (the character controller reports sneaking, or the actor is airborne
 and not swimming or flying). Ours: the `Sneak` mode flag (action.md) is the stance; the airborne clause is classic.
@@ -259,9 +268,9 @@ y         = obsTerm * obsFatigueTerm * (angle(observer facing, to target) > 90 d
 noticed   = roll0to99 >= x - y          (cached roll variant for repeat checks)
 ```
 
-(So `concealment = x - y`; a character not sneaking has `x = Chameleon` only.) Maps one to one to
-`DetectionRules::concealment`; the classic model compares the roll, the modern Meter derives a fill rate from it.
-The `useCache` variant (`creaturestats` `awarenessRoll`, one roll per actor per interval) is the AI lane's to keep.
+(A character not sneaking has `x = Chameleon` only.) Classic (MA5): `concealment = x - y` against `sf_ai`'s one
+seeded roll per sight check. Meter (MA5, ai-adapter "Perception profile"): `y` moves into the observer's
+`PerceptionProfile`, `concealment = x`, facing is `f_cone`. The `useCache` variant (`awarenessRoll`) is the AI lane's.
 
 ## GMSTs read (expected Morrowind.esm values; U = from memory, **unverified**, check in the `#[ignore = "needs Morrowind.esm"]` test)
 
@@ -288,15 +297,17 @@ The `useCache` variant (`creaturestats` `awarenessRoll`, one roll per actor per 
 | Option | Modern default | Classic (OpenMW) |
 |---|---|---|
 | Stolen ledger | reconciled on inventory change (no stale entries) | never shrinks except on pay (1079-1135) |
-| Who reports | witnesses who saw or heard, with `alarm >= 100` | any reporter in radius (1316-1325) |
-| Detection model | classic roll for NPCs; Meter + sneak eye for guards once AI8 exists | roll `0..=99` |
+| Stolen cool-down | entries age out (days, distance), decision 11 | never |
+| Who reports | witnesses who saw or heard, with `alarm >= 100`; they walk to a guard | any reporter in radius (1316-1325), also walking (owner 2026-11-25) |
+| Detection model | Meter (framework default) + one sneak eye; observers differ by `PerceptionProfile` (MA5) | one seeded roll `0..=99` per sight check (MA5) |
+| Locks, pickpocket | lock minigame, pickpocket timer ("auto" rolls) | rolls (A5, A4) |
 | Prompt | owned/stolen marker on the crosshair and item rows | none (item names only) |
-| Jail time | skill loss as documented (-1 each, except Sneak/Security), shown in the release message | same; handler unverified |
-| Co-op jail | game time skipped for the jailed player only | n/a |
+| Jail | days credited in a short local scene, confiscation, reputation hit, no skill loss (decision 12) | skill loss as documented (-1 each, except Sneak/Security; handler unverified), shown at release; time: crime.md open question 1 |
+| Co-op jail | short local scene, days credited, the shared clock never moves (crime.md Co-op 6) | same |
 
 ## MWScript mapping
 
-TODO (unfinished 2026-11-10): full mapping. Short form: `PayFine`/`PayFineThief`/`GoToJail`/`GetPCInJail` route to crime commands (A3); `Lock`/`Unlock`/`GetLocked` to `LockState` (A5); `Set/ModPCCrimeLevel` record the crime id at 0 (A2); dialogue globals are written before each dialogue open.
+TODO (unfinished 2026-11-10): full mapping. Short form: `PayFine`/`PayFineThief`/`GoToJail`/`GetPCInJail` route to crime commands (A3); `Lock`/`Unlock`/`GetLocked` to `LockState` (A5 rules, DQ-7 opcodes); `Set/ModPCCrimeLevel` record the crime id at 0 (A2); dialogue globals are written before each dialogue open.
 
 ## Tests (exact; synthetic records and GMSTs unless noted)
 
@@ -315,7 +326,8 @@ GMSTs for tests: `fCrimeStealing` 1, `iCrimeThreshold` 1000, `iCrimeThresholdMul
 - **Offence table**: theft arg 150 -> 150; arg 0 -> 1; `fCrimeStealing` 0.5 and arg 1 -> 1; pickpocket 25 etc.
 - **Witness**: murder reported without LOS; assault forces victim aware; follower and dead and knocked-down excluded;
   no witness plus guard victim -> report, else victim combat.
-- **Reported**: alarm 100 beyond sight still adds bounty (classic); modern requires a witness; bounty never below 0.
+- **Reported**: alarm 100 beyond sight still makes a reporter (classic); modern requires a witness; bounty only on
+  delivery (a cancelled report adds none), never below 0.
 - **Disposition**: theft arg 100, `fDispStealing` -0.5, alarm 50: `int(-50 x 0.5) = -25`; modifier -80 with cur 30
   clamps to -30; permanent victim edits base.
 - **Fight**: assault witness, Fight 30, alarm 100, `iFightAttacking` 50, disp -30 (bias 16), distance bias 40: fight
@@ -330,7 +342,7 @@ GMSTs for tests: `fCrimeStealing` 1, `iCrimeThreshold` 1000, `iCrimeThresholdMul
   quality 1.5 level 30: 52.5; probe cost 20: `x = 52`; uses 1 -> tool removed; key unlocks and disarms with no
   trespass; owned unlocked-but-once-locked object is trespass; Open spell emits `UnlockAttempted`; `Lock` with no
   argument on a never-locked object uses 100; `Unlock` keeps the level.
-- **Awareness**: sneaking, Sneak 40 Agi 50 Luck 50, no boots, distance 500: `x = 45 x 1.5 = 67.5`; observer
+- **Awareness** (MA5's cases, run in `mw_ai`): sneaking, Sneak 40 Agi 50 Luck 50, no boots, distance 500: `x = 45 x 1.5 = 67.5`; observer
   Sneak 30 Agi 40 Luck 40 in front: `y = 63`, target 4.5, roll 4 safe, 5 seen; behind: `y = 21`, target 46.5, roll 46 safe,
   47 seen; not sneaking always seen; Invisibility: 104.5 never seen; dead observer never.
 - **Needs Morrowind.esm** (`#[ignore]`): GMST values above; the arrest greeting globals exist with those names.
@@ -339,22 +351,24 @@ TODO (unfinished 2026-11-10): this spec is ~28 KB, over the ~25 KB budget; move 
 
 ## Build plan (one deliverable per slice; framework LW1-LW5 first)
 
+Order, dependencies and checks: [crime roadmap](../../../docs/roadmaps/crime.md) §4.
+
 | Slice | Deliverable |
 |---|---|
 | **A0** | Reference data: `ANAM/BNAM/CNAM/INDX/FLTV/KNAM/TNAM` into the world model; `LockState` load rule; `MwCrimeGmst`; tests |
 | **A1** | `mw_crime::ownership`: `isOwned`, `isAllowedToUse`, stolen map, `StolenVeto` for services A7; tests |
-| **A2** | `mw_crime::offence`: table, `commitCrime` witness logic, `reportCrime` per-witness rules, `recordCrimeId` on S7 bounty writes; tests |
+| **A2** | `mw_crime::offence`: table, `commitCrime` witness logic, `reportCrime` per-witness rules (bounty at delivery), `recordCrimeId` on S7 bounty writes; tests |
 | **A3** | Guards, pay, jail: `LawRules`, `PayFine`/`PayFineThief`/`GoToJail`, dialogue globals, `JailRules`, bed rule; tests |
 | **A4** | Pickpocket rule and pickpocket window host path |
 | **A5** | `mw_crime::locks`: `pickLock`, `probeTrap`, trap rule, key flow, Open spell, `Lock`/`Unlock` scripts; NPC `crime_modifier` into `DerivedDisposition`; tests |
-| **A6** | `mw_crime::stealth`: `awarenessCheck` as `DetectionRules`; scaffold witnesses wired |
-| **A7** | Host wiring (`sf_crime_bevy`), saves, prompt marker, visual-check entry (awaiting owner) |
-| A8 | Options UI, werewolf bounty, Meter model with AI8 |
+| ~~A6~~ | Dropped 2026-11-25: `awarenessCheck` is MA5 (`mw_ai`); no scaffold witnesses |
+| ~~A7~~ | Not in the roadmap: host, saves and prompt are framework LW6-LW9; `mw_crime` adds rows in LW13 (noise), LW16 (recognition) |
+| A8 | Options UI for `MwCrimeOptions` (roadmap Stage 5); werewolf bounty later (werewolf lane) |
 
 ## Open questions (owner)
 
-1. **Stolen ledger**: reconcile (default) or classic stale entries. Pending.
-2. **Detection**: classic roll (default) now, Meter once AI8. Pending.
+1. **Stolen ledger**: answered 2026-11-25 (decision 11): reconcile + cool-down in Modern, permanent in Classic.
+2. **Detection**: answered 2026-11-25 (decision 6, owner Q1): Meter + one sneak eye by default, roll in Classic.
 3. **Jail skill loss**: documented rule (default); confirm against the game when the handler is found. Pending.
-4. **Fences**: no fence in Morrowind content; modern fence offer off (default). Pending.
+4. **Fences**: answered 2026-11-25 (decision 11): framework on, Morrowind off (no fence in content; a mod may add one).
 5. GMSTs marked U and the global names need no decision: the first owner run with Morrowind.esm confirms them.

@@ -28,6 +28,6 @@ impl NpcStates {
 
     /// Base plus modifier, clamped to 0..=100.
     pub fn disposition(&self, npc: ActorKey, base: i32) -> i32 {
-        (base + self.modifier(npc)).clamp(0, 100)
+        crate::api::disposition(base, self.modifier(npc))
     }
 }

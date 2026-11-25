@@ -35,6 +35,7 @@ fn cfg() -> AwarenessConfig {
         distraction_ttl_s: 2.0,
         alert_alertness: 1.5,
         groggy_alertness: 0.5,
+        ..AwarenessConfig::default()
     }
 }
 

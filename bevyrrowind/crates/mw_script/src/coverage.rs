@@ -1,6 +1,11 @@
 //! The coverage report (scripting-adapter.md "Coverage report", M5 W2): call sites per
 //! function in the translated corpus, with each function's M5 [`Status`], summed by family
 //! and by status. Names and counts only, never script text.
+//!
+//! DQ-2 ("Function status"): each row also carries what the native interpreter does with the
+//! function today ([`Binding`], from the interpreter's own dispatch), and [`BoundReport`] prints
+//! call sites bound / total by family and origin. The `Status` column is the October Luau
+//! plan, kept for comparison only.
 
 use std::collections::BTreeMap;
 use std::fmt::{self, Write as _};
@@ -8,6 +13,7 @@ use std::fmt::{self, Write as _};
 use crate::Parsed;
 use crate::ast::{Arg, ArithOp, Expr, StmtKind, VarRef, VarType};
 use crate::functions::{FunctionTable, Returns, Status};
+use crate::interp::Binding;
 use crate::resolve::{Env, MemberLookup};
 
 /// Where a call site is.
@@ -59,6 +65,7 @@ impl CallSites {
                 function: name.clone(),
                 family,
                 status,
+                binding: Binding::of(name),
                 scripts,
                 results,
             });
@@ -78,6 +85,8 @@ pub struct Row {
     pub function: String,
     pub family: String,
     pub status: Status,
+    /// What the interpreter does with it today.
+    pub binding: Binding,
     pub scripts: u32,
     pub results: u32,
 }
@@ -134,6 +143,103 @@ impl fmt::Display for Split {
     }
 }
 
+/// Call sites bound by the interpreter / total, by origin (DQ-2).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Bound {
+    pub scripts: u32,
+    pub scripts_bound: u32,
+    pub results: u32,
+    pub results_bound: u32,
+    /// Bound call sites (both origins) that go through [`crate::Host::stat`].
+    pub via_stat: u32,
+    /// Call sites (both origins) whose old M5 status is `live`, for comparison.
+    pub old_live: u32,
+}
+
+impl Bound {
+    fn add(&mut self, r: &Row) {
+        self.scripts += r.scripts;
+        self.results += r.results;
+        if r.binding.is_bound() {
+            self.scripts_bound += r.scripts;
+            self.results_bound += r.results;
+        }
+        if matches!(r.binding, Binding::Stat(_)) {
+            self.via_stat += r.total();
+        }
+        if r.status == Status::Live {
+            self.old_live += r.total();
+        }
+    }
+
+    pub fn total(&self) -> u32 {
+        self.scripts + self.results
+    }
+
+    pub fn bound(&self) -> u32 {
+        self.scripts_bound + self.results_bound
+    }
+}
+
+/// `part` of `whole` in percent (0 when `whole` is 0).
+fn percent(part: u32, whole: u32) -> f64 {
+    if whole == 0 {
+        0.0
+    } else {
+        100.0 * f64::from(part) / f64::from(whole)
+    }
+}
+
+/// The DQ-2 table: bound / total by family, a total line, and the busiest unbound functions.
+pub struct BoundReport<'a> {
+    coverage: &'a Coverage,
+    top_unbound: usize,
+}
+
+impl fmt::Display for BoundReport<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let cell = |bound: u32, total: u32| format!("{bound}/{total}");
+        let line = |f: &mut fmt::Formatter<'_>, name: &str, b: &Bound| {
+            writeln!(
+                f,
+                "  {name:<12} {:>13} {:>13} {:>13} {:>6.1} % {:>6} {:>6.1} %",
+                cell(b.scripts_bound, b.scripts),
+                cell(b.results_bound, b.results),
+                cell(b.bound(), b.total()),
+                percent(b.bound(), b.total()),
+                b.via_stat,
+                percent(b.old_live, b.total()),
+            )
+        };
+        writeln!(
+            f,
+            "MWScript interpreter coverage (DQ-2): call sites bound / total (bound = builtin or Host::stat)"
+        )?;
+        writeln!(
+            f,
+            "  {:<12} {:>13} {:>13} {:>13} {:>8} {:>6} {:>8}",
+            "family", "scripts", "results", "total", "% bound", "stat", "old live"
+        )?;
+        for (family, b) in self.coverage.bound_by_family() {
+            line(f, &family, &b)?;
+        }
+        line(f, "TOTAL", &self.coverage.bound())?;
+        writeln!(f, "\ntop {} unbound functions (scripts / results / total):", self.top_unbound)?;
+        for r in self.coverage.rows.iter().filter(|r| !r.binding.is_bound()).take(self.top_unbound) {
+            writeln!(
+                f,
+                "  {:<24} {:<12} {:>6} {:>6} {:>6}",
+                r.function,
+                r.family,
+                r.scripts,
+                r.results,
+                r.total()
+            )?;
+        }
+        Ok(())
+    }
+}
+
 /// The coverage report: one row per called function, busiest first.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Coverage {
@@ -148,6 +254,31 @@ impl Coverage {
             s.add(r.status, r.total());
         }
         s
+    }
+
+    /// All call sites bound by the interpreter / total.
+    pub fn bound(&self) -> Bound {
+        let mut b = Bound::default();
+        for r in &self.rows {
+            b.add(r);
+        }
+        b
+    }
+
+    /// Bound / total by family, busiest first.
+    pub fn bound_by_family(&self) -> Vec<(String, Bound)> {
+        let mut map: BTreeMap<&str, Bound> = BTreeMap::new();
+        for r in &self.rows {
+            map.entry(&r.family).or_default().add(r);
+        }
+        let mut v: Vec<(String, Bound)> = map.into_iter().map(|(k, b)| (k.to_owned(), b)).collect();
+        v.sort_by(|a, b| b.1.total().cmp(&a.1.total()).then_with(|| a.0.cmp(&b.0)));
+        v
+    }
+
+    /// The DQ-2 table, listing the `top_unbound` busiest unbound functions.
+    pub fn bound_report(&self, top_unbound: usize) -> BoundReport<'_> {
+        BoundReport { coverage: self, top_unbound }
     }
 
     /// Call sites by family (busiest first), each split by status.

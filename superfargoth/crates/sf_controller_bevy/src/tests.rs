@@ -28,14 +28,12 @@ impl GroundProbe for Flat {
             *o = (q.dir.y < -1e-6)
                 .then(|| bottom / -q.dir.y)
                 .filter(|t| (0.0..=q.max).contains(t))
-                .map(|t| GroundHit {
-                    point: q
-                        .origin
-                        .offset(q.dir * t - Vec3::Y * (q.half_height + q.radius)),
-                    normal: Vec3::Y,
-                    distance: t,
-                    surface: SurfaceId::default(),
-                });
+                .map(|t| GroundHit::new(
+                    q.origin.offset(q.dir * t - Vec3::Y * (q.half_height + q.radius)),
+                    Vec3::Y,
+                    t,
+                    SurfaceId::default(),
+                ));
         }
     }
 }

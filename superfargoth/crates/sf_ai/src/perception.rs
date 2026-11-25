@@ -13,10 +13,16 @@
 //!   starts `decay_delay_s` after the last gain, at the current band's rate, integrated across
 //!   band changes so a tier that updates less often ends at the same level (tier invariance).
 //! - [`player_detection`]: the HUD sneak eye's `PlayerDetection { level, band }` for one player.
+//! - `AI8e` shared knowledge: a shout or alarm is a heard noise carrying a [`Notify`]
+//!   ([`Stimulus::Notify`]). A hearer queues it as a [`PendingNotify`] due `ceil((distance /
+//!   notify_speed_mps + notify_react_s) / tick_s)` ticks later, confidence × `notify_confidence_mul`,
+//!   only while `hops ≤ notify_max_hops`; [`AwarenessMeter::update_with`] delivers it, raising the
+//!   target at most to Searching. No telepathy: only hearers get it; relaying is the caller shouting
+//!   [`Notify::relay`] again.
 //!
-//! Not saved (ai.md "Saves"): no serde on the meter; [`AwarenessMeter::raise_to_floor`] seeds a
-//! loaded directive's band floor. Only [`PlayerDetection`] and [`AwarenessBand`] carry serde (the
-//! replicated HUD value, ai.md "Net").
+//! Not in the save (ai.md "Saves"): [`AwarenessMeter::raise_to_floor`] seeds a loaded directive's
+//! band floor. The meter and its entries carry serde (pending notifies included) for inspection and
+//! net snapshots; [`PlayerDetection`] is the replicated HUD value (ai.md "Net").
 
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -66,7 +72,7 @@ impl AwarenessBand {
 }
 
 /// Where and how surely the target was last placed (ai.md `LastSeen`).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LastSeen {
     pub pos: WorldPos,
     /// Logical tick of the placement.
@@ -78,7 +84,7 @@ pub struct LastSeen {
 }
 
 /// One actor's awareness of one target (ai.md `Awareness`).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Awareness {
     pub target: PerceptTarget,
     /// 0..1.
@@ -94,7 +100,7 @@ pub struct Awareness {
 }
 
 /// The investigate-the-spot slot filled by non-revealing noises (ai.md `Distraction`).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Distraction {
     pub at: WorldPos,
     pub tick: u64,
@@ -137,6 +143,48 @@ pub struct HeardNoise {
     pub distance_m: f32,
 }
 
+/// Shared knowledge carried by a shout or alarm (ai.md "Notify"): who it is about, where they
+/// were last placed and how surely, and how many relays it has been through.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Notify {
+    pub about: PerceptTarget,
+    /// The last known position being passed on.
+    pub lkp: WorldPos,
+    /// Spec gap: the tick `lkp` was placed (hearsay keeps its age: a relay never looks fresher
+    /// than the sighting it passes on).
+    pub lkp_tick: u64,
+    /// 0..1, as sent (a hearer multiplies it by `notify_confidence_mul`).
+    pub confidence: f32,
+    /// Relays so far (0 for the first shout).
+    pub hops: u8,
+}
+
+impl Notify {
+    /// The notify a receiver shouts on: same knowledge (its received confidence), `hops + 1`.
+    #[must_use]
+    pub fn relay(self) -> Self {
+        Self { hops: self.hops.saturating_add(1), ..self }
+    }
+}
+
+/// A heard [`Notify`] waiting for its delivery tick (confidence already × `notify_confidence_mul`).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PendingNotify {
+    /// Logical tick it is delivered on.
+    pub due: u64,
+    /// The notify as received.
+    pub notify: Notify,
+}
+
+/// One delivery made by [`AwarenessMeter::update_with`]: the notify as received (the caller
+/// decides whether to relay it, [`Notify::relay`]) and what it did to the meter.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NotifyDelivered {
+    pub due: u64,
+    pub notify: Notify,
+    pub outcome: StimulusOutcome,
+}
+
 /// One perception input to an [`AwarenessMeter`] (ai.md "Stimuli").
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Stimulus {
@@ -149,6 +197,10 @@ pub enum Stimulus {
     Touch { by: PerceptTarget, at: WorldPos },
     /// Hurt: always perceived, always wakes; `by` is `None` for sourceless damage.
     Damage { by: Option<PerceptTarget>, at: WorldPos },
+    /// A shout or alarm heard as `noise` (its `distance_m` also times the delivery), carrying
+    /// `notify`. Only queues a delivery; the shout's own sound is a separate [`Stimulus::Noise`]
+    /// if the caller wants it applied.
+    Notify { noise: HeardNoise, notify: Notify },
 }
 
 /// What [`AwarenessMeter::apply`] did with a stimulus.
@@ -158,7 +210,9 @@ pub enum StimulusOutcome {
     Raised(AwarenessBand),
     /// A non-revealing noise filled the [`Distraction`] slot.
     Distraction,
-    /// A non-revealing noise was quieter than the current distraction.
+    /// A non-revealing noise was quieter than the current distraction; or a notify past
+    /// `notify_max_hops`, no better than the one already pending about its target, or arriving
+    /// with `max_entries` other targets pending.
     Ignored,
     /// Not heard (beyond reach), or too faint to wake a sleeper.
     Unheard,
@@ -168,6 +222,8 @@ pub enum StimulusOutcome {
     Evicted,
     /// Sourceless damage: woke the actor, no entry.
     Woke,
+    /// A heard notify was queued for delivery on tick `due`.
+    Queued { due: u64 },
     /// NaN, infinite or negative input: nothing changed.
     Invalid,
 }
@@ -213,6 +269,14 @@ pub struct AwarenessConfig {
     pub alert_alertness: f32,
     /// Spec gap ("lower while groggy"): sight alertness multiplier while groggy.
     pub groggy_alertness: f32,
+    /// How fast a shout's news travels along the path, m/s (range 0.5-50).
+    pub notify_speed_mps: f32,
+    /// A hearer's reaction time before a notify lands, seconds (range 0-5).
+    pub notify_react_s: f32,
+    /// A hearer's confidence = the sent confidence × this, ratio (range 0-1).
+    pub notify_confidence_mul: f32,
+    /// A notify is received only while its hops are at most this, count (range 0-8).
+    pub notify_max_hops: u8,
 }
 
 impl Default for AwarenessConfig {
@@ -254,6 +318,14 @@ impl Default for AwarenessConfig {
             alert_alertness: 1.5,
             // tunables: const (bound from ai.awareness.groggy_alertness in sf_ai_bevy; Guess)
             groggy_alertness: 0.5,
+            // tunables: const (bound from ai.awareness.notify_speed_mps in sf_ai_bevy; Guess)
+            notify_speed_mps: 6.0,
+            // tunables: const (bound from ai.awareness.notify_react_s in sf_ai_bevy; Guess)
+            notify_react_s: 0.8,
+            // tunables: const (bound from ai.awareness.notify_confidence_mul in sf_ai_bevy; Guess)
+            notify_confidence_mul: 0.7,
+            // tunables: const (bound from ai.awareness.notify_max_hops in sf_ai_bevy; Guess)
+            notify_max_hops: 3,
         }
     }
 }
@@ -320,6 +392,20 @@ impl AwarenessConfig {
             return None;
         }
         Some(self.noise_gain * (1.0 - d / reach))
+    }
+
+    /// Ticks from hearing a notify `distance_m` away to its delivery: `ceil((distance_m /
+    /// notify_speed_mps + notify_react_s) / tick_s)`, or `None` on invalid input.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // checked finite and ≥ 0; `as` saturates
+    pub fn notify_delay_ticks(&self, distance_m: f32, tick_s: f32) -> Option<u64> {
+        let positive = |x: f32| valid(x) && x > 0.0;
+        if !valid(distance_m) || !valid(self.notify_react_s) || !positive(self.notify_speed_mps) || !positive(tick_s) {
+            return None;
+        }
+        // f64 so a whole number of ticks is not rounded up by f32 error.
+        let s = f64::from(distance_m) / f64::from(self.notify_speed_mps) + f64::from(self.notify_react_s);
+        let delay = (s / f64::from(tick_s)).ceil();
+        delay.is_finite().then_some(delay as u64)
     }
 }
 
@@ -399,8 +485,8 @@ impl Awareness {
     }
 }
 
-/// One actor's perception memory (ai.md "Awareness"). Not saved.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// One actor's perception memory (ai.md "Awareness"). Not in the save (serde for inspection).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AwarenessMeter {
     /// Sorted by target (deterministic iteration).
     entries: Vec<Awareness>,
@@ -408,6 +494,10 @@ pub struct AwarenessMeter {
     asleep: bool,
     /// Tick of the last wake (groggy for `groggy_s` from it).
     woke: Option<u64>,
+    /// Heard notifies not yet delivered, sorted by (due, about); at most one per target and at
+    /// most `max_entries` in all.
+    #[serde(default)]
+    pending: Vec<PendingNotify>,
 }
 
 impl AwarenessMeter {
@@ -438,6 +528,11 @@ impl AwarenessMeter {
                 .then(a.last_gain.cmp(&b.last_gain))
                 .then(b.target.cmp(&a.target))
         })
+    }
+
+    /// Heard notifies awaiting delivery, in delivery order (due, then target).
+    pub fn pending(&self) -> &[PendingNotify] {
+        &self.pending
     }
 
     pub fn distraction(&self) -> Option<&Distraction> {
@@ -485,7 +580,26 @@ impl AwarenessMeter {
 
     /// Advances every entry to `now` (hold, decay), drops entries decayed to 0 and expires an
     /// old distraction. Call once per perception tick; [`Self::apply`] settles its own entry.
+    /// Delivers due notifies too, discarding the reports ([`Self::update_with`] keeps them).
     pub fn update(&mut self, cfg: &AwarenessConfig, now: PerceptClock) {
+        self.update_with(cfg, now, |_| {});
+    }
+
+    /// [`Self::update`], first delivering every pending notify due by `now` (in (due, target)
+    /// order, each at its own due tick) and reporting each to `on_delivered`.
+    pub fn update_with(
+        &mut self,
+        cfg: &AwarenessConfig,
+        now: PerceptClock,
+        mut on_delivered: impl FnMut(&NotifyDelivered),
+    ) {
+        let due = self.pending.partition_point(|p| p.due <= now.tick);
+        for k in 0..due {
+            let p = self.pending[k];
+            let outcome = self.deliver(cfg, &p.notify, PerceptClock::new(p.due, now.tick_s));
+            on_delivered(&NotifyDelivered { due: p.due, notify: p.notify, outcome });
+        }
+        self.pending.drain(..due);
         for e in &mut self.entries {
             e.settle(cfg, now);
         }
@@ -514,6 +628,7 @@ impl AwarenessMeter {
                 })
             }
             Stimulus::Noise(noise) => self.hear(cfg, &noise, now),
+            Stimulus::Notify { noise, notify } => self.hear_notify(cfg, &noise, &notify, now),
             Stimulus::Touch { by, at } => {
                 if !valid_pos(at) {
                     return StimulusOutcome::Invalid;
@@ -597,6 +712,86 @@ impl AwarenessMeter {
                 }
             }
         }
+    }
+
+    fn hear_notify(
+        &mut self,
+        cfg: &AwarenessConfig,
+        noise: &HeardNoise,
+        notify: &Notify,
+        now: PerceptClock,
+    ) -> StimulusOutcome {
+        if !valid(noise.loudness_m)
+            || !valid(noise.distance_m)
+            || !valid_pos(noise.at)
+            || !valid_pos(notify.lkp)
+            || !valid(notify.confidence)
+            || notify.confidence > CERTAIN
+        {
+            return StimulusOutcome::Invalid;
+        }
+        if cfg.noise_gain(noise).is_none() {
+            return StimulusOutcome::Unheard;
+        }
+        if self.asleep {
+            // The asleep rule of `hear`: only a shout with `asleep_wake_m` of reach left wakes.
+            if noise.loudness_m - noise.distance_m < cfg.asleep_wake_m {
+                return StimulusOutcome::Unheard;
+            }
+            self.wake(now.tick);
+        }
+        if notify.hops > cfg.notify_max_hops {
+            return StimulusOutcome::Ignored;
+        }
+        let Some(delay) = cfg.notify_delay_ticks(noise.distance_m, now.tick_s) else {
+            return StimulusOutcome::Invalid;
+        };
+        let received = Notify { confidence: notify.confidence * cfg.notify_confidence_mul, ..*notify };
+        self.queue(cfg, PendingNotify { due: now.tick.saturating_add(delay), notify: received })
+    }
+
+    /// Queues `p`: one pending notify per target (higher confidence wins, then earlier due, then
+    /// fewer hops; a tie keeps the one already queued), at most `max_entries` targets pending.
+    fn queue(&mut self, cfg: &AwarenessConfig, p: PendingNotify) -> StimulusOutcome {
+        let about = p.notify.about;
+        if let Some(i) = self.pending.iter().position(|q| q.notify.about == about) {
+            let old = self.pending[i];
+            let better = p
+                .notify
+                .confidence
+                .total_cmp(&old.notify.confidence)
+                .then(old.due.cmp(&p.due))
+                .then(old.notify.hops.cmp(&p.notify.hops))
+                .is_gt();
+            if !better {
+                return StimulusOutcome::Ignored;
+            }
+            self.pending.remove(i);
+        } else if self.pending.len() >= cfg.max_entries {
+            return StimulusOutcome::Ignored;
+        }
+        let at = self.pending.partition_point(|q| (q.due, q.notify.about) < (p.due, about));
+        self.pending.insert(at, p);
+        StimulusOutcome::Queued { due: p.due }
+    }
+
+    /// Lands a received notify at its due tick: the level rises to `min(confidence, searching)`
+    /// (never lowering, so never past Searching by itself); the LKP is taken when it is at least
+    /// as recent as the entry's.
+    fn deliver(&mut self, cfg: &AwarenessConfig, n: &Notify, at: PerceptClock) -> StimulusOutcome {
+        let level = n.confidence.min(cfg.searching);
+        let seen = LastSeen { pos: n.lkp, tick: n.lkp_tick, velocity: Vec3::ZERO, confidence: n.confidence };
+        let t = at.tick;
+        self.raise(cfg, n.about, seen, at, |e| {
+            if e.level < level {
+                e.level = level;
+                e.last_gain = t;
+            }
+            if seen.tick >= e.last_seen.tick {
+                e.last_seen = seen;
+            }
+            e.band = cfg.next_band(e.band, e.level);
+        })
     }
 
     /// Finds or inserts `target`'s entry, settles it to `now`, runs `f`, then evicts the lowest

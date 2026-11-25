@@ -170,6 +170,12 @@ mw_rpg_bevy / mw_scripts_bevy appliers on the host tick (the only ECS writers)
 
 ### The game API (`mw_rpg::api`)
 
+As built (DQ-4b1a, 2026-11-25): `api.rs` holds `GameView` (base reads), `Overlay`, `GameRun` (reads see the run's
+writes; `ops()`), serde `GameOp` (`ResultEffect` is an alias), `Target { Speaker, Player, Actor }` (= `SelfRef`,
+`Player`, `Id`; the rename is mechanical, 29 uses in `mw_rpg_bevy`), and the pure rules; `RunHost` only forwards.
+`Target::Speaker` resolves through `ConversationCtx.speaker`: the script host (DQ-4b1b) gives a local script a ctx
+whose speaker is its instance.
+
 - **Shape.** `GameView` answers reads; a run produces `GameOp`s in call order and mutates nothing; an overlay
   makes later reads in the same run see its writes (as built for results, as in the original engine). Ops are
   serde data, so a run is replayable and the host is authoritative (net rule: presentation never feeds gameplay).
@@ -209,6 +215,16 @@ schedules them. Reference OpenMW `apps/openmw/mwscript/globalscripts.cpp`, `mwwo
   kept; `StopScript` stops after the current run (OpenMW `GlobalScripts`, verify both in DQ-4). Start scripts
   (SSCR) start on a new game; a loaded save restores the running set and starts SSCR entries it lacks (a mod added
   since).
+- **As built (DQ-4a, 2026-11-25, `mw_script::instances`):** `ScriptSet` (lower-cased ids, inert scripts listed with
+  their diagnostics) and `GlobalInstances` (`start`/`stop`/`is_running`, `tick(set, interp, host)` in start order,
+  `take_reports`, `snapshot`/`load` by name and type with `LoadReport`s). `StartScript`/`StopScript`/`ScriptRunning`
+  are builtins through `Host::script(target, ScriptOp, id)`; inside a run they queue and apply after it (dropped on a
+  fault), `ScriptRunning` sees the queue. Hosts that run instances implement `InstanceHost` (`begin_run` seeds
+  `Random` and the implicit target; `end_run(committed = false)` drops the buffered game ops on a step-limit fault).
+  Step limit = tunable `mw.script.step_limit` (100k, 1k-10M, Guess). Checked against OpenMW `globalscripts.cpp` @
+  `c31b4efc`: same no-op start, restart keeps locals and takes the new target, stop lets the run finish, failed run
+  stops, load drops unknown scripts. Departures (deterministic, net-ready): OpenMW runs globals in hash-map order and
+  applies Start/Stop at the call; ours run in start order, a restart takes a new sequence number (moves to the end).
 - **Local instances**, one per placed reference whose base record has a script, keyed by `PlacementId`; also
   spawned references and items in the player's inventory (key `(holder, StackId)`; OnPCAdd/OnPCEquip need them).
   Created when the reference first enters the script-active region, with zeroed locals.
@@ -270,7 +286,12 @@ local instance: one store, not a copy.
 Stubs return neutral values so scripts take their "not applicable" branch (the temple shrine asks the player's
 Temple rank; the neutral −1 charges the non-member donation and proceeds). `functions.txt`'s `status` column
 (`live`/`stub`/`later`) is the October Luau plan, not what runs (W2's 55.9 % "live" counted it): DQ-2 adds what the
-interpreter binds and prints call sites bound / total by family. Today, by family:
+interpreter binds and prints call sites bound / total by family. **Measured 2026-11-25 (DQ-2):** 16776 of 26704 call
+sites bound (62.8 %; the old `live` column claims 81.7 %): results 13026 / 15342 (84.9 %, the part that runs today),
+scripts 3750 / 11362 (static: object and global scripts run from DQ-4/DQ-5). The bound set is `interp::Binding::of`
+(the dispatch itself; stat functions count as bound through `Host::stat`, 1475 sites). Top unbound: `Disable`,
+`Enable`, `SetFight`, `StartCombat`, `ShowMap`, `GetDisabled`, `GetDistance`, `MenuMode`, `OnActivate`, `AIWander`.
+Today, by family:
 
 | Family | Today | Next |
 |---|---|---|
@@ -293,8 +314,9 @@ interpreter binds and prints call sites bound / total by family. Today, by famil
 - **Corpus (real install, as built)**: every vanilla script and result parses (0 unrecoverable, counts by rule);
   every result runs once against a neutral host. Counts only: vanilla text is never committed (Bethesda content);
   goldens use our own fixtures.
-- **Coverage (DQ-2)**: `#[ignore = "measurement: ..."]` prints call sites bound / total by family over scripts and
-  results; the number goes in the roadmap and starts `docs/ledger/dialogue-quests.md`.
+- **Coverage (DQ-2, as built)**: `vanilla_corpus_interpreter_coverage` (`mw_script/tests/real_install.rs`, ignored
+  measurement) prints call sites bound / total by family and origin, the old `live` share and the top unbound
+  functions; `Coverage::bound_report`. Each run's total goes in `docs/ledger/dialogue-quests.md`.
 - **Headless fixtures, exact**: start order, `StopScript`, restart keeps locals, save round trip by name (DQ-4);
   ticks only in the active region, locals survive unload and save (DQ-5); `OnActivate` once, default suppression,
   `Activate` passthrough (DQ-6); each world op (DQ-7); message-box state machine, `GetSecondsPassed` timers (DQ-8).

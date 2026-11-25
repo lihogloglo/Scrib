@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::ast::{Call, Ident, Target, VarRef, VarType};
 use crate::functions::Function;
-use crate::interp::{Host, Interpreter, Locals, MessageArg, RunError, store};
+use crate::interp::{Host, Interpreter, Locals, MessageArg, RunError, ScriptOp, store};
 use crate::statfn::StatCall;
 use crate::{Env, FunctionTable, MemberLookup, SourceKind, parse_and_resolve};
 
@@ -123,6 +123,14 @@ impl Host for Recorder {
             call.value
         ));
         Some(7.0)
+    }
+    /// Answers script control when `stats` is on (logged, value 1), like `stat`.
+    fn script(&mut self, target: &Target, op: ScriptOp, script: &Ident) -> Option<f64> {
+        if !self.stats {
+            return None;
+        }
+        self.log.push(format!("script {} {op:?} {}", who(target), script.key));
+        Some(1.0)
     }
     fn unhandled(&mut self, function: &Function, _call: &Call) -> f64 {
         self.log.push(format!("unhandled {}", function.name));
@@ -460,4 +468,93 @@ fn every_builtin_is_a_live_table_function() {
             "functions.txt status column"
         );
     }
+}
+
+/// `Binding::of` is the interpreter's real dispatch: for every table function, a bare call
+/// reaches `Host::unhandled` exactly when its binding is `Unbound`, and `Host::stat` when it
+/// is `Stat`.
+#[test]
+fn binding_matches_the_dispatch_for_every_function() {
+    use crate::ast::{Script, Stmt, StmtKind};
+    use crate::functions::FnId;
+    use crate::interp::Binding;
+
+    let t = FunctionTable::vanilla();
+    let interp = Interpreter::new(t);
+    let mut bound = 0;
+    for (i, f) in t.functions.iter().enumerate() {
+        let call = Call {
+            target: Target::Implicit,
+            function: FnId(u16::try_from(i).unwrap()),
+            args: Vec::new(),
+            line: 1,
+        };
+        let script = Script {
+            kind: SourceKind::DialogueResult,
+            name: None,
+            locals: Vec::new(),
+            body: vec![Stmt { kind: StmtKind::Call(call), line: 1 }],
+        };
+        let mut host = Recorder { stats: true, ..Recorder::default() };
+        let mut l = Locals::new(&script);
+        interp.run(&script, &mut l, &mut host).unwrap();
+        let binding = Binding::of(&f.name);
+        let unhandled = host.log.iter().any(|e| e.starts_with("unhandled "));
+        assert_eq!(unhandled, binding == Binding::Unbound, "{}: {binding:?} {:?}", f.name, host.log);
+        if let Binding::Stat(_) = binding {
+            assert!(host.log.first().is_some_and(|e| e.starts_with("stat ")), "{}", f.name);
+        }
+        if let Binding::Builtin(
+            crate::Builtin::StartScript | crate::Builtin::StopScript | crate::Builtin::ScriptRunning,
+        ) = binding
+        {
+            assert!(host.log.first().is_some_and(|e| e.starts_with("script ")), "{}", f.name);
+        }
+        bound += usize::from(binding.is_bound());
+    }
+    assert_eq!(bound, 140 + crate::Builtin::ALL.len(), "stat functions + builtins");
+}
+
+/// DQ-2 counts: bound / total by family and origin from parsed fixtures.
+#[test]
+fn bound_report_counts_by_family_and_origin() {
+    use crate::coverage::{CallSites, Origin};
+
+    let t = FunctionTable::vanilla();
+    let mut sites = CallSites::default();
+    let result = parse_and_resolve(
+        "Journal \"a_quest\" 10\nset gold_short to Random 5\nModStrength 1\n",
+        SourceKind::DialogueResult,
+        t,
+        &Globals,
+    );
+    sites.add_parsed(&result, Origin::DialogueResult, t);
+    let script = parse_and_resolve(
+        "Begin s\nif ( Random 10 > 5 )\nJournal \"a_quest\" 20\nendif\nEnd s\n",
+        SourceKind::Script,
+        t,
+        &Globals,
+    );
+    sites.add_parsed(&script, Origin::Script, t);
+    let report = sites.report(t);
+    let all = report.bound();
+    assert_eq!(
+        (all.scripts, all.scripts_bound, all.results, all.results_bound, all.via_stat),
+        (2, 1, 3, 2, 1)
+    );
+    let random = report.rows.iter().find(|r| r.function == "Random").unwrap();
+    assert!(!random.binding.is_bound());
+    let family = |name: &str| {
+        report
+            .bound_by_family()
+            .into_iter()
+            .find(|(f, _)| f == name)
+            .unwrap()
+            .1
+    };
+    let journal = t.function(t.get("Journal").unwrap()).family.clone();
+    let j = family(&journal);
+    assert_eq!((j.total(), j.bound()), (2, 2));
+    let text = report.bound_report(5).to_string();
+    assert!(text.contains("TOTAL") && text.contains("Random"), "{text}");
 }

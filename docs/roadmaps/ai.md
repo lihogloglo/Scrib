@@ -86,6 +86,7 @@ Stages 1-3 in order; 4-9 start as their other-lane needs land (cross-lane: `orde
 | ID | Deliverable | Crates | Depends | Verify |
 |---|---|---|---|---|
 | AI0b | ai.md "Perception" rewrite (decisions 2, 3, 14) | docs | - | review; crime LW4 links |
+| AI0g | `PerceptionProfile` per individual: multipliers + timed states; Morrowind mapping in ai-adapter (DECISIONS 2026-11-25) | docs | AI0b | **done 2026-11-25** (ai.md 195-235, ai-adapter 105-134) |
 | AI0c | ai.md interrupt table, build order, tier additions, 3D movers, industry fixes (KCD = BTs, not GOAP) | docs | - | doccheck |
 | AI0d | Followers and companions section (directive, commands, stealth, downed; adapter `AI_F`/`AI_E`) | docs | - | review |
 | AI0e | ai.md "Memory": gossip, reputation per faction and settlement | docs | - | review |
@@ -99,14 +100,19 @@ Ends with: a Balmora guard spots a sneaking player in light, not in shadow, chec
 |---|---|---|---|---|
 | MA2 | AI_* records + MWScript AI functions to directives, OpenMW `StackPolicy` | `mw_ai` | AI4 | exact vs OpenMW cases |
 | AI8a | Awareness core: meter, bands, `LastSeen`, bounded per-player entries, `Stimulus::Noise` | `sf_ai` | AI0b | exact curves, eviction, serde |
-| AI8b | Sight: grid prefilter, cone, batched LOS, ray cap, stagger, cache | `sf_ai_bevy` | AI8a | headless exact; ms as measurement test |
-| AI8c | Hearing by `portal_query::path_distance`; emitters from action `noise`, gait, surface | `sf_ai_bevy` | AI8a, IN18 | exact attenuation through a door |
+| AI8g | Profile core: `PerceptionProfile`, timed `PerceptionStates`, `EffectivePerception` resolve | `sf_ai` | AI0g | **done 2026-11-25** (13 exact tests) |
+| AI8b1 | Sight maths core: gain terms, cone and range from `EffectivePerception`, stagger, ray queue with cap, cache rule | `sf_ai` | AI8g | **done 2026-11-25** (14 exact tests) |
+| AI8b2 | Sight system: grid prefilter, batched physics rays, profile/record registration, `ai.perception.*` binding | `sf_ai_bevy` | AI8b1 | **done 2026-11-25** (0.037 ms/tick, 48×4, fake LOS) |
+| MA14 | Sight wiring in the game: `AiSightPlugin::<Physics>`, `AiObserver` on NPCs, `Perceivable` on players, record load (forced checks on damage/notify = MA15) | `mw_ai`, `bevyrrowind` | AI8b2 | headless: a guard's meter rises facing the player, not behind a wall |
+| MA15 | Forced sight checks (`SightTimer::force`) on damage taken and on `Notify` arrival | `mw_ai`, `mw_walkers_bevy` | MA14 | headless: hit from behind turns the NPC's check due this tick |
+| AI8c | Hearing by `portal_query::path_distance`; emitters from action `noise`, gait, surface | `sf_ai_bevy` | AI8a (action emitters arrive with IN18) | exact attenuation through a door |
 | AI8d | `VisibilityFactors` + host `LightExposure` | `sf_ai`, `sf_ai_bevy` | AI8a | exact: equal at 30/144 fps |
-| AI8e | Shared knowledge: `Notify` from shouts and alarms | `sf_ai` | AI8a | exact arrival ticks, 3-room graph |
+| AI8e | Shared knowledge: `Notify` from shouts and alarms | `sf_ai` | AI8a | **done 2026-11-25** (9 exact tests) |
 | AI8f | HTN `search`: LKP, look, widen, give up on ttl | `sf_ai` | AI8a, AI6 | headless: reaches LKP, quits at ttl |
 | MA5 | `awarenessCheck` port as Classic gain | `mw_ai` | AI8a | exact vs formula |
 | MA4 | Hello/Fight/Flee/Alarm considerations; greeting via AI8 | `mw_ai` | AI7, AI8b | exact vs OpenMW |
 | AI26 | Perception gizmos (cone, meter, LKP), `ai.perception` | `sf_ai_bevy` | AI8b | owner **AI-3** (Balmora guard, light vs shadow) |
+| AI47 | Perception test scene (owner 2026-11-25, after AI8c/d/f, AI26, IN18): reuse the arena, AI26 gizmos plus NPC state labels and noise/impact rings, scripted light, cover and throw cases | `bevyrrowind` (`level:`) | AI26, AI8c, AI8d, AI8f, IN18 | owner **AI-11** (every case visible in one controlled scene) |
 
 ### Stage 2: a day in town
 
@@ -224,7 +230,7 @@ optional `sf_crowd` (Q2), Nemesis content.
 | Lane | AI needs | AI provides |
 |---|---|---|
 | Crime | LW2b report/recognition/heat, LW4 `DetectionRules` (+noise, disguise), LW5, LW10 | AI8a-d Meter for LW4; `WitnessQuery` impl retiring `ScaffoldWitnesses` (LW9); AI22 reporter; AI29 heat; AI23; AI43 `Wanted` spread; MA5, MA6 |
-| Interaction | IN0 (priority, door/ladder/workstation slots), IN2, IN3, IN9, IN14, IN16, IN17 fire/wet, IN18 `NoiseEvent`, IN19 `Lit` + snuff/relight (IN18, IN19 proposed) | AI14 = IN8; AI31; AI24; AI27 dusk lamps; AI28 reactions |
+| Interaction | IN0 (priority, door/ladder/workstation slots), IN2, IN3, IN9, IN14, IN16, IN17 fire/wet, IN18 `NoiseEvent`, IN19 `Lit` + snuff/relight (IN17, IN18, IN19 proposed; owned by interaction.md) | AI14 = IN8; AI31; AI24; AI27 dusk lamps; AI28 reactions |
 | Combat | C6, C2c knockdown, action `noise` | AI15, AI36, AI37, AI8e, MA10 |
 | Travel | TV1, TV4 | AI4 + AI15 (TV9 ambush), AI6 (TV17), AI10 `fast_forward` (skip, TV21), AI45, AI46 |
 | Dialogue-quests | DQ-23 rule DB, DQ-25 presenter, scripts running AI functions | MA2 + `GetAIPackageDone`, MA4 Hello, MA5 `GetDetected`, AI30/AI42 cues, AI43/AI44 facts for DQ-23, AI11 validator |
@@ -233,8 +239,8 @@ optional `sf_crowd` (Q2), Nemesis content.
 
 ## 7. Owner questions
 
-1. **Per-NPC awareness indicator** (white/yellow/red over the NPC, direction wedge off-screen) in Modern? Recommended:
-   yes; Classic shows only the sneak icon (shared with crime LW8).
+1. **Per-NPC awareness indicator** in Modern? **Answered (owner 2026-11-25): a Skyrim-style sneak eye** (reads max
+   awareness), not per-NPC markers; see the answers below.
 2. **Ambient crowd extras** for big generated cities? Recommended: parked; framework option later, off for Morrowind.
 3. **Sleeping NPCs** in beds at night, hearing only loud noise (night burglary as stealth play)? Recommended: yes in
    Modern (KCD2, Skyrim); Classic keeps vanilla placement.

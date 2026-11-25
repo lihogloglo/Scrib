@@ -4,6 +4,8 @@
 //! the game's [`MwResults`] over a host [`MwWorld`]) and defines Morrowind's equipment slots
 //! ([`MwEquipRules`]). The PC stat filter functions read the host's sheets ([`MwSheets`]).
 
+/// The game API scripts run against (scripting-adapter.md "The game API").
+pub mod api;
 mod barter;
 /// Morrowind's calendar globals from the game clock ([`calendar::globals`], clock.md C3).
 pub mod calendar;
@@ -42,7 +44,8 @@ pub use persuasion::{
     speechcraft_use,
 };
 pub use result::{ResultCall, ResultEffect, ResultError, ResultRunner, Target};
-pub use runner::{MwResultRunner, MwResults, MwWorld, ResultReport, ResultState, ScriptVar};
+pub use api::{GameOp, GameRun, GameView, MwWorld, ScriptVar};
+pub use runner::{MwResultRunner, MwResults, ResultReport, ResultState};
 pub use services::{
     BarterPriceIn, BarterTerms, EffectiveValueIn, FollowerPricing, HaggleIn, HaggleOut, PartyTerms, RULE_BARTER_HAGGLE,
     RULE_BARTER_PRICE, RULE_IDS, RULE_REPAIR_PRICE, RULE_SPELL_PRICE, RULE_TRAINING, RULE_TRAVEL, RepairPriceIn,
@@ -59,6 +62,8 @@ pub use text::{GlobalNumber, Macro, MacroSource, expand, format_global};
 /// Script variable types ([`ScriptVar`]), from `mw_script`.
 pub use mw_script::ast::VarType;
 
+#[cfg(test)]
+mod api_tests;
 #[cfg(test)]
 mod runner_tests;
 #[cfg(test)]

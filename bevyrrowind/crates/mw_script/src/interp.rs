@@ -22,9 +22,23 @@ use crate::ast::{
 use crate::functions::{Function, FunctionTable, Returns};
 use crate::lexer::CmpOp;
 use crate::statfn::{StatCall, StatFn};
+use sf_tunables::{AnyDef, Def, Lifetime, Net, Scope, Source, Unit, def};
 
-/// Statements and loop tests one run may execute before it is stopped.
-pub const DEFAULT_STEP_LIMIT: u32 = 100_000;
+/// `mw.script.step_limit`: statements and loop tests one run may execute before it is stopped
+/// ([`RunError::StepLimit`]). Vanilla scripts finish in far fewer; only a `While` that never ends
+/// reaches it. [`Interpreter::new`] starts from the default; the host sets
+/// [`Interpreter::step_limit`] from the tunable store.
+pub const STEP_LIMIT: Def<u32> = def!(count "mw.script.step_limit" = 100_000)
+    .range(1_000, 10_000_000)
+    .unit(Unit::Count)
+    .help("Statements one legacy script run may execute before it is stopped and reported")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .net(Net::Gameplay)
+    .lifetime(Lifetime::Live);
+
+/// The interpreter's tunables (the catalogue list).
+pub const SCRIPT_TUNABLES: &[&dyn AnyDef] = &[&STEP_LIMIT];
 
 /// The functions the interpreter dispatches to typed [`Host`] methods.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -42,10 +56,13 @@ pub enum Builtin {
     ModDisposition,
     MessageBox,
     PlaySound,
+    StartScript,
+    StopScript,
+    ScriptRunning,
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 13] = [
+    pub const ALL: [Builtin; 16] = [
         Builtin::Journal,
         Builtin::SetJournalIndex,
         Builtin::GetJournalIndex,
@@ -59,6 +76,9 @@ impl Builtin {
         Builtin::ModDisposition,
         Builtin::MessageBox,
         Builtin::PlaySound,
+        Builtin::StartScript,
+        Builtin::StopScript,
+        Builtin::ScriptRunning,
     ];
 
     /// The function table's canonical name.
@@ -77,7 +97,41 @@ impl Builtin {
             Builtin::ModDisposition => "ModDisposition",
             Builtin::MessageBox => "MessageBox",
             Builtin::PlaySound => "PlaySound",
+            Builtin::StartScript => "StartScript",
+            Builtin::StopScript => "StopScript",
+            Builtin::ScriptRunning => "ScriptRunning",
         }
+    }
+}
+
+/// How the interpreter runs a function: the dispatch [`Interpreter::new`] builds and the call
+/// path follows (stat functions first, then builtins, then [`Host::unhandled`]). The DQ-2
+/// coverage report counts a call site as bound when its function is not [`Binding::Unbound`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Binding {
+    /// A stat, faction or crime function, sent to [`Host::stat`] (falls to
+    /// [`Host::unhandled`] only when the host answers `None`).
+    Stat(StatFn),
+    /// A typed [`Host`] method.
+    Builtin(Builtin),
+    /// No binding: [`Host::unhandled`], the neutral value.
+    Unbound,
+}
+
+impl Binding {
+    /// The binding of a function table name (case-insensitive).
+    pub fn of(name: &str) -> Binding {
+        if let Some(s) = StatFn::from_name(name) {
+            return Binding::Stat(s);
+        }
+        Builtin::ALL
+            .into_iter()
+            .find(|b| b.name().eq_ignore_ascii_case(name))
+            .map_or(Binding::Unbound, Binding::Builtin)
+    }
+
+    pub fn is_bound(self) -> bool {
+        self != Binding::Unbound
     }
 }
 
@@ -92,6 +146,17 @@ pub enum MessageArg {
     Str(String),
     /// A bare word as written ([`Arg::Word`]).
     Word(String),
+}
+
+/// A global script control call, as [`Host::script`] receives it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ScriptOp {
+    /// `[ref->]StartScript id`.
+    Start,
+    /// `StopScript id`.
+    Stop,
+    /// `ScriptRunning id`: 1 or 0.
+    Running,
 }
 
 /// What the interpreter needs from the game. Ids arrive as written (`Ident::key` is the
@@ -127,6 +192,15 @@ pub trait Host {
     /// goes to [`Host::unhandled`] like any other function. Default: `None`.
     fn stat(&mut self, target: &Target, call: &StatCall) -> Option<f64> {
         let _ = (target, call);
+        None
+    }
+
+    /// `StartScript`, `StopScript` or `ScriptRunning` on `script` (`target` is the `ref->` of a
+    /// `StartScript`). The call reads the returned value (`ScriptRunning` only). `None`: this
+    /// host doesn't run global scripts, and the call goes to [`Host::unhandled`]. Default:
+    /// `None`. [`crate::instances::GlobalInstances::tick`] answers these itself.
+    fn script(&mut self, target: &Target, op: ScriptOp, script: &Ident) -> Option<f64> {
+        let _ = (target, op, script);
         None
     }
 
@@ -229,22 +303,24 @@ struct Run<'r, 't> {
 
 impl<'t> Interpreter<'t> {
     pub fn new(table: &'t FunctionTable) -> Self {
-        let mut builtins = vec![None; table.functions.len()];
-        for b in Builtin::ALL {
-            if let Some(id) = table.get(b.name()) {
-                builtins[usize::from(id.0)] = Some(b);
-            }
+        let mut builtins = Vec::with_capacity(table.functions.len());
+        let mut stat_fns = Vec::with_capacity(table.functions.len());
+        for f in &table.functions {
+            let binding = Binding::of(&f.name);
+            builtins.push(match binding {
+                Binding::Builtin(b) => Some(b),
+                _ => None,
+            });
+            stat_fns.push(match binding {
+                Binding::Stat(s) => Some(s),
+                _ => None,
+            });
         }
-        let stat_fns = table
-            .functions
-            .iter()
-            .map(|f| StatFn::from_name(&f.name))
-            .collect();
         Self {
             table,
             builtins,
             stat_fns,
-            step_limit: DEFAULT_STEP_LIMIT,
+            step_limit: STEP_LIMIT.default_value(),
         }
     }
 
@@ -499,7 +575,20 @@ impl Run<'_, '_> {
                 self.host.message_box(format, &args);
             }
             Builtin::PlaySound => self.host.play_sound(&id(0)),
+            Builtin::StartScript => return self.script_call(ScriptOp::Start, call, &id(0)),
+            Builtin::StopScript => return self.script_call(ScriptOp::Stop, call, &id(0)),
+            Builtin::ScriptRunning => return self.script_call(ScriptOp::Running, call, &id(0)),
         }
         0.0
+    }
+
+    /// `StartScript` / `StopScript` / `ScriptRunning` through [`Host::script`], else
+    /// [`Host::unhandled`]; only `ScriptRunning` has a value.
+    fn script_call(&mut self, op: ScriptOp, call: &Call, script: &Ident) -> f64 {
+        let value = match self.host.script(&call.target, op, script) {
+            Some(v) => v,
+            None => self.host.unhandled(self.interp.table.function(call.function), call),
+        };
+        if op == ScriptOp::Running { value } else { 0.0 }
     }
 }

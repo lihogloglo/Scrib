@@ -79,7 +79,21 @@ impl PhysicsProbe<'_> {
             normal = -normal;
         }
         let body = w.id_of_collider(collider)?;
-        Some((body, GroundHit { point: w.to_world(point), normal, distance, surface }))
+        let hit = GroundHit::new(w.to_world(point), normal, distance, surface);
+        Some((body, self.moving(body, point).map_or(hit, |(v, angular)| hit.on_body(body.into(), v, angular))))
+    }
+
+    /// Point velocity at `point` (engine frame) and angular velocity of the
+    /// `body`, unless it never moves (fixed, held). Dynamic bodies:
+    /// the solver's velocities after the last step. Kinematic bodies: rapier
+    /// sets them each step from the target pose delta over the step
+    /// (`interpolate_velocity`: linear of the centre of mass, angular as the
+    /// delta rotation's scaled axis), so they are the tick's motion, rotation
+    /// included, whatever the frame rate.
+    fn moving(&self, body: BodyId, point: Vec3) -> Option<(Vec3, Vec3)> {
+        let w = self.world;
+        let rb = w.engine.bodies.get(w.live(body)?.handle)?;
+        (!rb.is_fixed()).then(|| (rb.velocity_at_point(point), rb.angvel()))
     }
 
     fn mesh_surface(&self, c: ColliderHandle, triangle: u32) -> SurfaceId {

@@ -75,12 +75,16 @@ them; activators, doors, shrines and start scripts work.
 | ID | Deliverable | Crates | Depends | Verify |
 |---|---|---|---|---|
 | DQ-1 | Spec: rewrite scripting-adapter "Decision", "Instances, scheduling, state", M5 table for the interpreter (spec slice) | docs | – | doc review; doccheck |
-| DQ-2 | Coverage report over scripts + results by family and status (extends `vanilla_corpus_interprets`) | `mw_script` | DQ-1 | `#[ignore = "measurement"]` prints % call sites live |
-| DQ-3 | Main-quest trace test (decision 3) | `mw_rpg`, `mw_rpg_bevy` | DQ-1 | measurement: furthest stage per quest |
-| DQ-4 | Global + start scripts: `StartScript`/`StopScript`/`ScriptRunning`, SSCR, per-tick order, locals saved | `mw_script`, `mw_scripts_bevy` | DQ-1 | headless fixtures: order, stop, save round trip |
-| DQ-5 | Local scripts on placements in the active cells, locals in the placement overlay | `mw_scripts_bevy` | DQ-4 | headless: tick only in active cells, survive unload + save |
-| DQ-6 | Edge events: `OnActivate` replacing default activation + `Activate`, `OnPCAdd/Drop/Equip` | `mw_scripts_bevy` | DQ-5, interaction lane `Activated` | headless exact; owner MS-4, MS-5 |
-| DQ-7 | World functions on the host: `Enable/Disable`, `Lock/Unlock`, `GetDistance`, `Position*`/`SetPos`/`GetPos`, `PlaceAtPC/PlaceItem` | `mw_rpg_bevy` | DQ-5 | headless per function |
+| DQ-2 | Coverage report over scripts + results by family and status (extends `vanilla_corpus_interprets`) | `mw_script` | DQ-1 | **done 2026-11-25:** 62.8 % bound (results 84.9 %) |
+| DQ-3 | Main-quest trace test (decision 3) | `mw_rpg`, `mw_rpg_bevy` | DQ-1 | **done 2026-11-25:** 9 of 355 stages (A1_/A2_/B_/C_); `DQ3_QUEST=<id>` explains one quest |
+| DQ-3b | New game without chargen applies the chargen captain's "duties" result (journal `A1_1` 1, Caius' package, gold), not only its topics (`mw_rpg_bevy/src/dialogue.rs:522` `skip_chargen`) | `mw_rpg_bevy` | DQ-3 | DQ-3 total rises past A1_1 index 10; headless: package in inventory |
+| DQ-4a | Global instances core: `StartScript`/`StopScript`/`ScriptRunning`, start order, step-limit fault, save by name | `mw_script` | DQ-1 | **done 2026-11-25** (10 exact tests) |
+| DQ-4b1a | `mw_rpg::api` (`GameView`, serde `GameOp`, overlay, pure rules) extracted from `RunHost`; results host only binds | `mw_rpg` | DQ-4a | **done 2026-11-25** (DQ-3 still 9 of 355; 7 rule tests) |
+| DQ-4b1b | Script host on `mw_rpg::api` implementing `mw_script::InstanceHost` | `mw_rpg` | DQ-4b1a | fixture global script edits journal + items |
+| DQ-4b2 | Game wiring: SSCR at new game and on load, `FixedUpdate` tick, script save section | `mw_scripts_bevy` | DQ-4b1b | headless: SSCR started, survives save |
+| DQ-5 | Local scripts on placements in the active cells, locals in the placement overlay | `mw_scripts_bevy` | DQ-4b2 | headless: tick only in active cells, survive unload + save |
+| DQ-6 | Edge events: `OnActivate` replacing default activation + `Activate`, `OnPCAdd/Drop/Equip` | `mw_scripts_bevy` | DQ-5, IN31 (activation contract; `Activated` exists) | headless exact; owner MS-4, MS-5 |
+| DQ-7 | World functions on the host: `Enable/Disable`, `Lock/Unlock`, `GetDistance`, `Position*`/`SetPos`/`GetPos`, `PlaceAtPC/PlaceItem` | `mw_rpg_bevy` | DQ-5, crime A0/A5 (locks) | headless per function |
 | DQ-8 | UI functions: modal `MessageBox` + `GetButtonPressed`, `MenuMode`, `GetSecondsPassed`, `FadeIn/Out` | `mw_scripts_bevy`, `mw_ui` | DQ-5 | headless state machine; owner MS-5 |
 | DQ-9 | Dialogue from scripts: `ForceGreeting`, `Choice`/`Goodbye` outside results, real `GetDisposition` | `mw_rpg_bevy` | DQ-5 | headless; owner DJ-3 |
 | DQ-10 | Faction/rank/reputation results verified on real data (join Blades, `PCRaiseRank`) | `mw_rpg` | DQ-3 | real-install exact test |
@@ -171,7 +175,7 @@ Stage 6, seam only today.
 
 ## 6. Dependencies on other lanes
 
-- **Interaction:** generic `Activated` message and lock state (DQ-6, DQ-7).
+- **Interaction:** activation contract IN31 (DQ-6). **Crime:** `LockState` (crime-adapter A0/A5) for `Lock`/`Unlock` (DQ-7).
 - **AI:** MA2 packages + script AI functions, MA4 Hello/Fight/Flee, MA5 detection, MA6 jail (ai-adapter). Gossip
   spreading reputation (owner 2026-11-25) is AI-owned; it writes reputation facts this lane's rules read (DQ-23).
 - **Combat:** death and hit events (DQ-12); interrupts consume combat start (DQ-31).

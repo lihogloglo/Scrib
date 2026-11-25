@@ -1156,7 +1156,7 @@ fn locomotion_round_trips_through_postcard() {
     loco.deflect = Vec3::X;
     loco.slide = Vec3::new(0.0, 0.0, 0.5);
     assert!(loco.moved != RootDelta::ZERO && loco.trajectory[4].offset != Vec3::ZERO);
-    let grounded = Locomotion { grounded: Some(GroundHit { point: p(1.0, 0.0, 2.0), normal: Vec3::Y, distance: 0.45, surface: SurfaceId(3) }), ..loco.clone() };
+    let grounded = Locomotion { grounded: Some(GroundHit::new(p(1.0, 0.0, 2.0), Vec3::Y, 0.45, SurfaceId(3))), ..loco.clone() };
     for (i, mode) in [MoverMode::Ground, MoverMode::Fly { hover: Some(0.5) }, MoverMode::Swim { surface: 1.25 }].into_iter().enumerate() {
         let l = Locomotion { mode, ..if i == 0 { grounded.clone() } else { loco.clone() } };
         let bytes = postcard::to_allocvec(&l).unwrap();

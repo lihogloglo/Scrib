@@ -51,6 +51,13 @@ impl ProbeQuery {
     }
 }
 
+/// The body a cast hit, as the probe's physics layer names it (opaque here:
+/// `sf_physics` maps its `BodyId` to and from these bits). The mover keeps it
+/// to stand on a moving base (UE `MovementBase`, Jolt `CharacterVirtual`
+/// ground body).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct GroundBody(pub u64);
+
 /// The first contact of a cast.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GroundHit {
@@ -61,9 +68,35 @@ pub struct GroundHit {
     /// Distance the cast travelled before touching (≤ `max`).
     pub distance: f32,
     pub surface: SurfaceId,
+    /// The body hit; `None` for ground without one (height fields, the
+    /// static collision world). Runtime only, like the two velocities: a body
+    /// id means nothing in another session, so saves skip all three and a
+    /// loaded hit is static until the next probe.
+    #[serde(skip)]
+    pub body: Option<GroundBody>,
+    /// Velocity of the ground at `point`, m/s (`v + ω × (point − com)`):
+    /// zero for static ground. A kinematic body's is its last tick's pose
+    /// delta over the tick, rotation included.
+    #[serde(skip)]
+    pub velocity: Vec3,
+    /// Angular velocity of the ground body, rad/s, world axes (zero for static).
+    #[serde(skip)]
+    pub angular_velocity: Vec3,
 }
 
 impl GroundHit {
+    /// A hit on static ground: no body, no velocity.
+    pub fn new(point: WorldPos, normal: Vec3, distance: f32, surface: SurfaceId) -> Self {
+        Self { point, normal, distance, surface, body: None, velocity: Vec3::ZERO, angular_velocity: Vec3::ZERO }
+    }
+
+    /// The same hit on `body`, moving with point velocity `velocity` (m/s) and
+    /// angular velocity `angular_velocity` (rad/s).
+    #[must_use]
+    pub fn on_body(self, body: GroundBody, velocity: Vec3, angular_velocity: Vec3) -> Self {
+        Self { body: Some(body), velocity, angular_velocity, ..self }
+    }
+
     /// Walkable for a mover whose slope limit has this cosine. Walkability
     /// belongs to the mover, not the probe (it depends on the character).
     pub fn walkable(&self, min_normal_y: f32) -> bool {
@@ -167,12 +200,12 @@ impl<T: HeightSurface> TerrainProbe<T> {
             }
             let center = q.origin.offset(Vec3::NEG_Y * (distance + q.half_height));
             let point = center.offset(-n * q.radius);
-            return Some(GroundHit { point, normal: n, distance, surface: s.surface(point) });
+            return Some(GroundHit::new(point, n, distance, s.surface(point)));
         }
         let (distance, normal) = s.raycast(q.origin, q.dir, q.max)?;
         let point = q.origin.offset(q.dir * distance);
         let normal = if normal.dot(q.dir) > 0.0 { -normal } else { normal };
-        Some(GroundHit { point, normal, distance, surface: s.surface(point) })
+        Some(GroundHit::new(point, normal, distance, s.surface(point)))
     }
 }
 

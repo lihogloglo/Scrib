@@ -22,6 +22,7 @@ pub mod coverage;
 pub mod diag;
 pub mod emit;
 pub mod functions;
+pub mod instances;
 pub mod interp;
 pub mod lexer;
 mod parser;
@@ -30,10 +31,17 @@ pub mod statfn;
 
 pub use ast::{Script, SourceKind};
 pub use diag::{Diagnostic, Diagnostics, Rule, Severity};
-pub use coverage::{CallSites, Coverage, OracleFlags, Origin, oracle_flags};
+pub use coverage::{Bound, BoundReport, CallSites, Coverage, OracleFlags, Origin, oracle_flags};
 pub use emit::{emit_dialogue, emit_script};
 pub use functions::{FnId, FunctionTable, Status};
-pub use interp::{Builtin, Host, Interpreter, Locals, MessageArg, RunError};
+pub use instances::{
+    GlobalInstance, GlobalInstances, GlobalsSnapshot, InstanceHost, LoadReport, LocalType, Report,
+    SavedGlobal, SavedLocal, ScriptSet,
+};
+pub use interp::{
+    Binding, Builtin, Host, Interpreter, Locals, MessageArg, RunError, SCRIPT_TUNABLES, STEP_LIMIT,
+    ScriptOp,
+};
 pub use resolve::{Env, MemberLookup, NoEnv};
 pub use statfn::{Dynamic, StatCall, StatFn};
 
@@ -79,3 +87,6 @@ mod tests;
 
 #[cfg(test)]
 mod interp_tests;
+
+#[cfg(test)]
+mod instances_tests;

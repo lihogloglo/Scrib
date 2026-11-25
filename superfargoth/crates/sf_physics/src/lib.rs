@@ -55,3 +55,5 @@ mod carry_tests;
 mod churn_tests;
 #[cfg(test)]
 mod contact_tests;
+#[cfg(test)]
+mod ground_velocity_tests;

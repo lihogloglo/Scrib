@@ -46,7 +46,7 @@ impl GroundProbe for Wall {
             let reach = z0 + q.dir.z * q.max;
             *o = (self.up && z0 < 4.0 && reach >= 4.0 && q.dir.z > 0.0).then(|| {
                 let distance = (4.0 - z0) / q.dir.z;
-                GroundHit { point: q.origin.offset(q.dir * distance), normal: Vec3::NEG_Z, distance, surface: SurfaceId::default() }
+                GroundHit::new(q.origin.offset(q.dir * distance), Vec3::NEG_Z, distance, SurfaceId::default())
             });
         }
     }
@@ -81,7 +81,7 @@ fn spawn(app: &mut App, id: CharacterId, z: f32) -> Entity {
     let params = MoverParams::default();
     let character = ActionCharacter::new(id, ActionState::new(RuleKey::of("loco")), CharacterParams::default());
     let mut loco = Locomotion::new(WorldPos::ORIGIN.offset(Vec3::Z * z), 0.0);
-    loco.grounded = Some(GroundHit { point: loco.position, normal: Vec3::Y, distance: 0.0, surface: SurfaceId::default() });
+    loco.grounded = Some(GroundHit::new(loco.position, Vec3::Y, 0.0, SurfaceId::default()));
     let body = ActionBody::new(loco, params, WorldPos::ORIGIN);
     app.world_mut().spawn((character, body, Transform::default())).id()
 }
@@ -169,7 +169,7 @@ fn a_wall_refuses_the_lock_and_a_traversal_breaks_it_until_touchdown() {
     {
         let mut body = app.world_mut().get_mut::<ActionBody>(player).unwrap();
         body.loco.traversing = false;
-        body.loco.grounded = Some(GroundHit { point: body.loco.position, normal: Vec3::Y, distance: 0.0, surface: SurfaceId::default() });
+        body.loco.grounded = Some(GroundHit::new(body.loco.position, Vec3::Y, 0.0, SurfaceId::default()));
     }
     run(&mut app, 2);
     assert_eq!(lock_of(&app, player), Some(TargetId(DUMMY.0)));

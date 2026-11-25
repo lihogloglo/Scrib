@@ -300,7 +300,7 @@ impl StaticWorld {
             normal = -normal;
         }
         let point = self.anchor.offset(o + q.dir * hit.time_of_impact);
-        Some(GroundHit { point, normal, distance: hit.time_of_impact, surface: p.shape.surface(hit.subshape) })
+        Some(GroundHit::new(point, normal, hit.time_of_impact, p.shape.surface(hit.subshape)))
     }
 
     fn sweep(&self, q: &ProbeQuery, o: Vec3) -> Option<GroundHit> {
@@ -342,7 +342,7 @@ impl StaticWorld {
         // Shape-1 results are in the query's frame, which is world-aligned.
         let normal = (-hit.normal1).normalize_or(-q.dir);
         let point = self.anchor.offset(o + q.dir * hit.time_of_impact + hit.witness1 * p.scale);
-        Some(GroundHit { point, normal, distance: hit.time_of_impact, surface: p.shape.surface(hit.subshape2) })
+        Some(GroundHit::new(point, normal, hit.time_of_impact, p.shape.surface(hit.subshape2)))
     }
 }
 

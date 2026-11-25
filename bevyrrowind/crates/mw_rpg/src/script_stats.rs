@@ -42,7 +42,7 @@ use sf_rpg::{ActorKey, ConversationCtx};
 use sf_stats::{ApplyCtx, Cause, CauseKind, PlayerKey, Rules, Sheet, SheetRead, StatIdx, StatOp, StatOwner};
 
 use crate::result::{ResultEffect, Target};
-use crate::runner::MwWorld;
+use crate::api::MwWorld;
 use crate::stats::MwSheets;
 
 /// Whose sheet a call reads or writes.

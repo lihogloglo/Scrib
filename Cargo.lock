@@ -5809,7 +5809,10 @@ name = "mw_script"
 version = "0.1.0"
 dependencies = [
  "mw_install",
+ "serde",
+ "serde_json",
  "sf_script",
+ "sf_tunables",
  "sf_vfs",
  "tes3",
 ]

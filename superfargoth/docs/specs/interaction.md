@@ -25,7 +25,7 @@ Crimson Desert.
 
 Concretely: player and NPCs sit, lie, lean and use counters through the same points; furniture is pulled out, moved,
 carried; crates break and spill; buildings take authored damage; creatures are ridden; the player rides travel
-vehicles and later walks on moving decks. All of it saves, replicates (host-authoritative, net.md) and fits ≤ 11 ms.
+vehicles and later walks on moving decks. All of it saves, replicates (host-authoritative, net.md) and fits the frame target (≤ 8.3 ms median, ≤ 11 ms p99).
 The adapter says which records become interactable; the framework names none.
 
 ## Reuse check (CONTRIBUTING rule 0)
@@ -282,7 +282,7 @@ state. **Save**: the rider's `CharacterSave` / `sf/ai` activity holds its seat (
 its actor save; vehicles' positions are overlay moved or spawned placements; a rail vehicle saves its route progress
 in the `interaction` blob. **Risk**: medium (mounts: clips and quadruped locomotion), high (walk-on vehicles).
 
-## Budgets (High preset, RTX 4060 laptop, ≤ 11 ms median; targets to measure)
+## Budgets (High preset, RTX 4060 laptop, ≤ 8.3 ms median, ≤ 11 ms p99; targets to measure)
 
 Index rebuild < 1 ms per cell on the loader (off the frame path); claims and slot follow < 0.05 ms per tick; debris
 ≤ 48 awake bodies per region and 6 breaks per tick, then queued (measure the physics step); held props and riders one

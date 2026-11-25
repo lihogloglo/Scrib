@@ -192,6 +192,47 @@ nothing); outdoors one upward ray for roof cover. One sample per player per tick
 it feeds `DetectIn.light`, the HUD and the `dark` world-state key (< `dark_threshold` at an actor: NPCs react to
 darkness). Rendered light never enters (net rule 3); equal at 30 and 144 fps (AI8d).
 
+### Perception profile (per individual)
+
+Owner 2026-11-25 (DECISIONS): every actor perceives with its own multipliers on the global tunables; the game fills
+them (AI0g). The framework knows only fields and record ids, never a stat or a race.
+
+- **`PerceptionProfile`** (`sf_ai`, serde): a record type in `sf_records` (presets mods author: a race, creature
+  type, role) and the actor's component (the adapter's product of presets and its own stat curves). Fields are ratios,
+  default **1.0** each, so an actor without one behaves exactly as today; range checked at load:
+  `sight_range` (× `sight_range_m`, `lose_sight_range_m`; `near_m` unscaled) 0-4; `sight_cone` (× both half-angles,
+  ≤ 180°) 0-2; `sight_gain` (× `rate`) 0-4; `darkness` (how much darkness lowers sight: AI8b feeds `light' = 1 - (1 -
+  light) × darkness` to `VisibilityFactors.light`; 0 sees in the dark, 1 normal, 2 night-blind) 0-2; `hearing` (it *is*
+  the per-actor `hearing_mul`: × noise reach) 0-4; `alertness` (× sight gain and `noise_gain`) 0-4; `decay` (× the three
+  band decays; < 1 holds suspicion longer) 0-4; `search_ttl` (× `search_ttl_s`: persistence) 0-4; `search_error`
+  (× `search_error_m` and `search_widen_mps`: < 1 guesses closer to the true position and widens slower) 0-4.
+  Not scaled: band thresholds, `band_hysteresis`, `alert_hold_s`, `noise_cap`, `max_entries` (a band means the same for
+  everyone, so the HUD eye reads one scale; hearing alone still never alerts).
+- **Temporary states** (`PerceptionStates`, inline array of 4, a capacity const, no heap): `PerceptionState` records
+  (game-named: drunk, tired, injured, fleeing, on duty) carry the same fields (missing = 1). An entry is `{ state:
+  RecordId, until: Option<u64 /* tick */>, source: Option<RecordId> }`: `Some` is timed (`duration_s` from the record
+  or the pusher, expires on the host tick), `None` a condition the adapter holds and removes. The same state again
+  refreshes `until` (later wins), never stacks; different states multiply; a full array replaces the entry that expires
+  first. Effective field = profile × Π states, clamped to the field's range.
+- **Groggy (option, decided in AI8b):** AI8a's built-in groggy (`AwarenessMeter::groggy`, `groggy_s`,
+  `groggy_alertness`) may become a framework `groggy` state pushed on `wake()` (`alertness` = `groggy_alertness`,
+  timed `groggy_s`), so a preset can make heavy sleepers; the effective config then sets `groggy_alertness` = 1 so it is
+  never applied twice. Keeping it as built is equally valid: nothing else depends on the choice.
+- **Hook: a cached resolved view, not scaling at each call.** `EffectivePerception` (component, `Copy`, ~120 B) holds
+  a scaled `AwarenessConfig` copy, `SightParams { range_m, lose_m, central_half_deg, peripheral_half_deg, rate,
+  darkness }`, `hearing_mul`, `SearchParams { ttl_s, error_m, widen_mps }` and `next_expiry`. Rebuilt only when the
+  profile or states change, `next_expiry ≤ tick` (one compare per actor per tick) or a tunable reloads: no per-tick
+  allocation or multiply (UE keeps per-instance sense configs the same way). Actors with neither profile nor states
+  have no component and read the global config. Hook points, AI8a unchanged (it already takes `&AwarenessConfig`;
+  callers pass `&eff.cfg`): `cfg.decay_curious / decay_suspicious / decay_searching` × `decay` (read by `update` and
+  `apply` through `settle`); `cfg.noise_gain` × `alertness` (read by `noise_gain`). AI8b's gain uses `eff.sight.rate`
+  (= `rate` × `sight_gain` × `alertness`), its range for the grid prefilter and `f_dist`, its cone for `f_cone`,
+  `darkness` on `light` before `DetectionRules::concealment`; `AwarenessMeter::alertness` stays the band/groggy factor
+  on top. AI8c passes `HeardNoise.loudness_m` = reach × `eff.hearing_mul` × `weather_mask`, so `noise_gain` and the
+  sleeper rule (`asleep_wake_m`) read it unchanged. AI8f reads `eff.search`.
+- **Ownership:** the adapter writes `PerceptionProfile` (on spawn, load, and when its inputs change past its own
+  steps) and pushes or clears states; `sf_ai_bevy` resolves. Floor share unchanged (rebuilds are events, not ticks).
+
 ### Cost and budget
 
 Tier 2 sight, staggered by `hash(ActorKey)` over `sight_period_s` (damage, noise or notify force a check next tick):
@@ -209,7 +250,8 @@ checks per tick (≤ 10 rays) plus ≤ 3 light rays per player: fits Floor's cap
 ### Tunables (`ai.perception.*`, `ai.awareness.*`; net `Gameplay`, scope `Dev`)
 
 Unit = name suffix (`_m`, `_s`, `_deg`, `_mps`; `rate` and decays in 1/s; others ratio or count). Source `Guess`
-unless noted; `hearing_mul` is per-actor data, not a tunable.
+unless noted; `hearing_mul` and the other `PerceptionProfile` / `PerceptionState` fields are per-actor data
+(records), not tunables.
 
 | Names | Defaults | Ranges |
 |---|---|---|
@@ -227,13 +269,16 @@ unless noted; `hearing_mul` is per-actor data, not a tunable.
 | `sight_period_s` / `tier1_period_s` / `sight_cache_s` / `cache_move_m` | 0.1 / 1.0 / 0.25 / 0.5 | 0.02-10, 0-5 |
 | `max_rays_per_tick` Floor / Medium / High / Ultra / Dedicated (group `sim.cpu_tier`) | 24 / 32 / 48 / 64 / 96 | 4-512 |
 | `witness_radius_m` / `witness_max` / `max_entries` (8: earlier spec) | 25 / 32 / 8 | 1-100, 1-256, 1-64 |
+| `search_ttl_s` / `search_error_m` / `search_widen_mps` (AI8f globals the profile scales) | 30 / 3 / 0.5 | 0-300, 0-30, 0-5 |
 
 ### Net, saves, HUD
 
 - **Net**: all of it is host-only (rule 5); a remote player is another target with its own `LightExposure` and
   emitters. Clients get only "Co-op"'s replicated set and their own `PlayerDetection`.
 - **Saves**: awareness, LKP, distraction, caches and light are not saved ("Saves"); a running `Search`, `Report` or
-  combat directive is (LKP in its params), and on load its actor starts at that directive's band floor.
+  combat directive is (LKP in its params), and on load its actor starts at that directive's band floor. The base
+  `PerceptionProfile` and condition states are derived (the adapter refills them on load); only timed states are saved
+  (`{ state, remaining_s, source }`); `EffectivePerception` is rebuilt. Profile and states are host-only gameplay state.
 - **HUD** (owner 2026-11-25: Skyrim-style sneak eye, no per-NPC markers): `PlayerDetection { level, band }` per player
   = max level toward that player over tier 2 and 1 actors that count (not allies or followers); crime.md's
   `StealthView.exposure` derives from its band. Presentation reads it (smooths client-side), never feeds back.
@@ -260,7 +305,9 @@ unless noted; `hearing_mul` is per-actor data, not a tunable.
 | UE AIPerception | sight/lose-sight radius, peripheral angle, `ReportNoiseEvent`, max traces per tick, max age | **match** (fixed caps) |
 | KCD2 | gear-driven visibility and noise, dark nights, sleepers wake to noise | **match** |
 | Skyrim | one sneak eye, light level, armour noise, sleepers less perceptive | **match** (`PlayerDetection`) |
-
+| Thief (Dark Engine) / The Dark Mod | per-AI vision and hearing abilities and search diligence; TDM per-AI `acuity_vis` / `acuity_aud` | **match** (`PerceptionProfile`, `search_ttl`) |
+| Cyberpunk 2077 | per-NPC sense preset record (`sensePreset`, e.g. `Senses.Relaxed`) | **match** (profile presets are records) |
+| MGSV | per-soldier gear and time of day change perception (night-vision goggles, helmets) | **match** (`darkness` from a state or preset) |
 ## Memory and relationships (Nemesis-style; owner decision 7)
 
 A host-side **fact store**, the social layer every NPC queries and systems append to.
