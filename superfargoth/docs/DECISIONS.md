@@ -1955,3 +1955,7 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   empty the streets and people seek cover where they can; crowd extras and companion opinions parked for later.
 - 2026-11-25 (gameplay-roadmaps-2, owner): stealth awareness UI = a Skyrim-style sneak eye (overall detection), no
   per-NPC markers over heads or off-screen wedges.
+- 2026-11-25 (gameplay-roadmaps-2, owner): dialogue questions 1-5 of docs/roadmaps/dialogue-quests.md taken as recommended.
+  Travel: ships are walkable moving decks (Sea of Thieves), players may leave any vehicle anywhere; mounts steer like RDR2
+  (inertia, procedural legs); operators always replaced (no place cut off); natural sit/stand on creatures and vehicles is
+  the big interaction slice; until it lands, travel = instant teleport (fade, time spent).

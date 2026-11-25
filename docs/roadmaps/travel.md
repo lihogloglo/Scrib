@@ -3,178 +3,198 @@
 Research: `docs/research/gameplay-2026-11-25/travel.md` (the "§n" references below). Specs it drives:
 `superfargoth/docs/specs/services.md` (list services), `interaction.md` "(c) Mounts and vehicles", a new
 `superfargoth/docs/specs/travel.md`, a new `map.md`, and `bevyrrowind/docs/specs/services-adapter.md` "Travel".
-Visual checks: new file `bevyrrowind/docs/visual-checks/travel.md` (prefixes TV-, MAP-).
+Visual checks: new file `bevyrrowind/docs/visual-checks/travel.md` (prefixes TV-, MAP-; IN- in `interaction.md`).
 
 ## 1. Player-facing goal
 
-**Modern preset.** Pay the caravaner, climb aboard, and the strider walks its route through the live world; hold
-to skip and the ride's hours pass. Hop off on land. Ambushes can stop a ride, kill the driver, wreck the cart; you
-walk on. Boats sail the same way; guild guides, propylons, Mark/Recall and Intervention teleport. No free teleport
-to discovered places unless turned on. A world map paints as you explore and takes your pins; a whistle calls your
-mount, which can ride a road to a pin by itself.
+**Modern preset, early (Stage 1).** Every Morrowind network works: pay a caravaner, shipmaster, guild guide or
+gondolier, fade, the hours pass, you arrive with your followers. Mark, Recall, Intervention and propylons teleport.
+A killed operator is always replaced: no place is ever cut off.
 
-**Classic option.** Morrowind's menu: pick a destination, pay, fade, arrive with the hours passed
-(`services-adapter.md` "Travel" formula), no ambushes, exploration-only map reveal.
+**Modern preset, done.** Stand or sit on the strider as it walks its route through the live world; hold to skip.
+Walk a boat's deck as it sails. Leave any vehicle anywhere, even overboard at sea (allowed, not advised). Ambushes can
+wreck a ride. Mounts steer like RDR2 horses, come to a whistle, ride a road to a pin. No free teleport unless turned
+on. A world map paints as you explore and takes your pins.
+
+**Classic option.** Morrowind's menu: pick, pay, fade, arrive with the hours passed (`services-adapter.md` "Travel"
+formula), no ambushes, exploration-only reveal; operators are replaced here too (owner Q4).
 
 ## 2. Where we are (2026-11-25)
 
-- **Services:** SV1-SV3a (`ServiceEffect::Teleport`/`PassTime`) built, unit-tested, untested in game; adapter A1
-  rules (incl. `mw.services.travel`) and the list host path (TR1, A3) headless only; PUI-SV3/SV4 awaiting owner.
-- **Travel service A4** (destinations, teleport with followers, time pass, `GetPCTraveling`): not started
-  (services-adapter.md "Build plan"; ROADMAP 2.7 "next ... travel/spells").
-- **Routes, stops, operators, vehicles:** none exist; travel is a menu row (§1, gap 1).
-- **Seats:** `interaction.md` (c) designs `SeatLink`, four vehicle kinds, IN7 (rail) and IN10 (mount); ROADMAP
-  3.11 `[ ]`, nothing built.
-- **Nav:** `humanoid` and `large` classes baked (ledger 2026-11-18), ring, queries, corridor (NV4c, NV6, NV8). NV12 is
-  a straight-line stub; nav research §2 proposes NV12 = road/route graph. AI10 (`fast_forward`) waits for NV12.
-- **Clock:** `clock.md` has host-owned `skip(ms)` for rest, wait, train and travel.
-- **Maps:** no spec; only the `ShowMap` opcode is named in the quests research.
-- **Co-op:** N1-N8 parked `[p]` (ROADMAP); services' co-op rule: travel time is a party rest vote, else skipped.
-- **Owner decisions:** interaction answers 2026-11-11 (4: general mount mechanic first, mounted combat later; 5:
-  ride-along modern, fade Classic); DECISIONS 2026-11-25 (ambushes can wreck the cart, skipped rides spend game time,
-  no free teleport by default, whistle for the mount).
+- **Services:** SV1-SV3a (`ServiceEffect::Teleport`/`PassTime`) unit-tested, untested in game; A1 rules (incl.
+  `mw.services.travel`), TR1, A3 headless only; PUI-SV3/SV4 awaiting owner. **A4** (travel service): not started
+  (services-adapter.md "Build plan"; ROADMAP 2.7).
+- **Routes, stops, operators, vehicles:** none; travel is a menu row (§1, gap 1). TV-R1 research running.
+- **Seats, decks:** `interaction.md` (c) designs `SeatLink`, four vehicle kinds, IN7, IN10, IN11; ROADMAP 3.11 `[ ]`.
+  `GroundHit` (`sf_controller/src/probe.rs:56`) has no ground body, so nothing can carry a rider yet.
+- **Nav:** `humanoid`, `large` baked (ledger 2026-11-18); NV12 a straight-line stub (nav research §2: road graph);
+  AI10 waits for NV12. **Clock:** `skip(ms)` (`clock.md`). **Maps:** no spec. **Co-op:** N1-N8 parked `[p]`.
+- **Owner:** interaction 2026-11-11 (mounts first, mounted combat later); DECISIONS 2026-11-25; section 7 answers.
 
 ## 3. Decisions
 
-1. **One data model, two presenters** (§1-2; DD2, KCD2). `TravelNetwork { stops, routes }`, `Route { a, b, path:
-   RouteRef, speed, price_rule, schedule: Always | OnCall | Timetable }`; operator = an ordinary actor (killable,
-   can be absent); vehicle = an entity with seats. Classic = today's `Teleport` + `PassTime` row; modern = board and
-   ride (the row gains an optional route). New Bevy-free `sf_travel` (+ thin `sf_travel_bevy`): services,
-   interaction, AI tier 0 and the map all read networks.
-2. **Skip is a time skip, never a cut** (owner 2026-11-25; RDR2/KCD2): the vehicle jumps to the stop and the clock
-   advances by the remaining ride time through `skip(ms)`; tier-0 actors catch up through AI10 `fast_forward` once it
-   exists (before AI10, schedules and purses see the clock as after a rest).
-3. **Route paths are baked** (`RouteRef = Road | Spline | Baked`). Striders: a `large`-class Detour path between
-   stops at bake, simplified to an arc-length spline; boats: grid search on the water mask; 10x world: Magna Urbis
-   roads via NV12. Travel reads roads, never makes them (owner 2026-11-24).
-4. **Strider = rail vehicle** (kind 1, §4), not a walk-on deck. Departs from IN7: the passenger seat may use a
-   standing idle until IN2's sit clips exist.
-5. **Cost**: one transform per vehicle in the ring, a number outside it; strider speed is below what streaming
-   handles for horses and flight (1.2 bench). Hitches/min from one run's gauges.
-6. **Encounters** (§2, owner): per-route `encounter_table` (hazard per km by time of day), host-seeded fixed-tick
-   roll; spawn out of view ahead, vehicle halts, operator and vehicle are targets; a wreck leaves the player at a
-   reachable road point or last stop. A skipped ride stops at the ambush point with a warning.
-7. **Gates and cost** (§3): `TravelCost { gold, hours, needs, encounter_risk }` is a rule; gates (alerted hostiles,
-   a `no_travel` fact, undiscovered destination, interior rules in the adapter) apply to services and to teleport
-   effects alike. Free "travel anywhere discovered" exists as an opt-in setting, off by default (owner 2026-11-25).
-8. **Magic and scripted teleports are not networks**: Mark/Recall/Intervention are `effects.md` teleport requests
-   using a `RecallAnchor` and a nearest-tagged-place query; propylons are MWScript `Position*` activators; guild
-   guides are A4's interior-provider case (0 h).
-9. **Mounts** (§4, owner: whistle): `RiderToMount` maps the rider's `Command` to the mount's `MoveIntent` (Unreal
-   possession), same for remote players and NPC riders. Whistle = nav route to the caller, out-of-view fallback past
-   a range; stamina, buck-off, door dismount. One road route query serves auto-ride, guidance line and ETAs.
-10. **Map** (§5): baked once (heights, tints, coast, roads, towns, names) into a tile pyramid; style = data profile;
-    fog = a saved `MapReveal` bitset drawn over it. Pins with icon + text. Compass framework default; Morrowind: no
-    quest markers (owner 2026-11-25).
-11. **Co-op** (§6): vehicles are host state; departure when the party is seated, a window ends or the leader
-    confirms; skip needs all riders and is refused while anyone is on foot; teleport-to-host; mounts follow.
-12. **Tunables**: ride speed, boarding window, hop-off wait, hazard rates, whistle range, reveal radius (`Guess`).
+1. **One data model** (§1-2; DD2, KCD2): `TravelNetwork { stops, routes }`, `Route { a, b, path, speed, price_rule,
+   schedule: Always | OnCall | Timetable }`; operator = an ordinary actor; vehicle = motion source + passenger places.
+2. **Instant first = a ride skipped at boarding** (owner 2026-11-25): until Stage 3 lands, every trip in every preset
+   is A4's fade (price, followers, route time through `skip(ms)`); TV6 later adds a presenter on the same networks.
+   Paths are baked (`large` nav paths, water-mask search, Magna Urbis roads via NV12; read, never made).
+3. **Vehicle = motion x place** (replaces "strider = rail vehicle"; owner Q2, Q5). Motion: route-driven kinematic body
+   (bob/roll are part of its pose, a pure function of tick and route, so co-op agrees), a mount controller, later a
+   physics body (kind 3, buoyancy 3.7). Place: walkable deck or seat. Ships are decks, never a disguised mount;
+   characters put no force on a deck (Sea of Thieves, memory).
+4. **Moving decks = based movement** (Sea of Thieves; UE `MovementBase` / Mover 2.0 based movement; Jolt
+   `CharacterVirtual` ground velocity): the probe returns the ground body and point velocity (rapier via `sf_physics`;
+   the mover is ours, so is the carry); the mover keeps a base-local pose, applies the base's tick delta first,
+   collides in that frame, leaves with the point velocity. Drawing, camera, saves, replication are base-relative.
+5. **Seats = attach + IK** (spec (c) `SeatLink`; RDR2 mount by side; UE socket attach + Control Rig IK): mode
+   `Sit | Stand | Astride`; pelvis to seat, feet to footrest/stirrup/deck, hands to rail/reins; leave by a dismount
+   spot or jump off with the point velocity, anywhere (owner Q2). Land vehicles wait (tunable), boats sail on (Q6).
+6. **Mounts steer like RDR2 horses** (owner Q5): a `MoverParams` profile (speed, slow acceleration, momentum, turn
+   rate falling with speed, gait ladder on sprint taps); `RiderToMount` maps the rider's `Command` (Unreal possession)
+   for players, remote players and NPC riders. Legs: N-leg foot placement over the creature's own gaits, pelvis/spine
+   pitch and roll from foot heights (Bereznyak "IK Rig", GDC 2016; UE Control Rig). Whistle, stamina, buck-off.
+7. **Operators always replaced, every preset** (owner Q4): network slices register operators with TV26; a vacant stop
+   keeps arrivals; a replacement (adapter template) spawns when the stop is next out of view, after a minimum delay;
+   a load check logs stops with no live or pending operator.
+8. **Cost**: a vehicle is one transform in the ring, a number outside. **Encounters** (§2, real rides only):
+   per-route hazard per km by time of day, host-seeded tick roll, spawn ahead out of view; a wreck leaves the player
+   at a reachable road point; a skipped ride stops at the ambush.
+9. **Gates** (§3): `TravelCost { gold, hours, needs, encounter_risk }` rule; gates (alerted hostiles, `no_travel`,
+   undiscovered, adapter interior rules) for services and teleport effects; "travel anywhere discovered" opt-in, off.
+   Mark/Recall/Intervention are effect teleports (`RecallAnchor`, nearest tagged place); propylons are `Position*`.
+10. **Map** (§5): baked tile pyramid, data style profile, saved `MapReveal` fog, pins; Morrowind compass without quest
+    markers. **Co-op** (§6): vehicles are host state; departure when all are aboard, a window ends or the leader
+    confirms; skip needs everyone aboard. **Tunables** (`Guess`): speeds, windows, waits, hazards, ranges, delays,
+    mount profile, deck tolerances.
 
 ## 4. Stages
 
-### Stage 0: specs (docs only)
+### Stage 0: specs and research (docs only)
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| TV-R1 | Research (OpenMW file + commit): travel providers and `DODT` counts, strider/boat placements, strider mesh animations, propylon scripts, Mark/Recall/Intervention | docs | - | note with counts per kind |
-| TV0 | New spec `travel.md`: decisions 1-3, 5-8, 11-12, with saves, budgets, reuse check, industry comparison | docs | - | doccheck links |
-| TV0b | `interaction.md` (c) rewrite: kind-1 passenger pose, `RiderToMount`, whistle, stamina, buck-off, NPC riders; IN7/IN10 rows amended | docs | TV0 | doccheck |
-| TV0c | `services-adapter.md` "Travel": network mapping (striders `OnCall` star, boats, guides), Classic/Modern option rows, route bake | docs | TV-R1, TV0 | doccheck |
+| TV-R1 | OpenMW (file + commit): providers, `DODT` counts per kind, placements, propylons, Mark/Recall (running: `travel-data.md`) | docs | - | counts per kind |
+| TV-R2 | Quadruped gaits (Morrowind creature clips, N-leg IK, crates), mount practice, deck-local nav | docs | - | note, reuse check |
+| TV0 | New spec `travel.md`: decisions 1-2, 7-10, saves, budgets, reuse check, industry comparison | docs | - | doccheck |
+| TV0b | `interaction.md` (c) rewrite: decisions 3-6, passenger state; rows IN7, IN10, IN11, IN20-IN26 | docs | TV0, TV-R2 | doccheck |
+| TV0c | `services-adapter.md` "Travel": networks (strider star, boats, guides, gondolas), operator templates, options | docs | TV-R1, TV0 | doccheck |
 
-### Stage 1: a silt strider ride end to end (player-usable)
-
-| ID | Deliverable | Crate | Depends | Verify |
-|---|---|---|---|---|
-| A4 | Classic fade travel: destinations, price/hours, teleport with followers, `GetPCTraveling` one frame | `mw_rpg`, `mw_rpg_bevy` | A1, A3 host path | exact headless; owner PUI-SV5 (Seyda Neen caravaner to Balmora) |
-| TV1 | `sf_travel` core: networks, routes, `RideState` stepping, ETA, skip math (remaining ms, arrival stop), saves | `sf_travel` | TV0 | exact: arrival tick, skip lands at stop with exact ms, round trip |
-| TV2 | Generic route bake step: nav path polyline to arc-length spline with ground clearance | `sf_travel` (bake fn) | TV1 | exact on a synthetic heightfield: length, clearance, no self-crossing |
-| TV3 | Strider routes baked from `large`-class paths between stop anchors | `mw_bake` | TV2, TV0c | log: routes built/failed, bake ms |
-| TV4 | Ride runtime: vehicle on `FixedUpdate` + interpolation, depart/arrive events, hold-to-skip through `skip(ms)`, off-ring progress | `sf_travel_bevy` | TV1, IN7 | headless: same arrival at 30/144 fps; skip clock delta exact |
-| TV5 | Strider networks from records: star `OnCall` network, operator = provider NPC, vehicle = nearest strider placement | `mw_rpg` | TV1, TV-R1 | exact on synthetic records; log counts on the game data |
-| TV6 | Modern presenter in game: "Board" row, seat on the strider, ride, skip, arrive, dismount at the stop; Classic keeps A4 | `mw_rpg_bevy`, `bevyrrowind` | A4, TV3-TV5, IN0, IN7 | owner TV-1 (Seyda Neen to Balmora, skip halfway); hitches/min during the ride from one run's gauges |
-
-### Stage 2: risk and rules on the road
+### Stage 1: instant travel on every network (player-usable)
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| TV7 | Encounter tables + seeded tick roll; skip resolves to "ambush at fraction f" | `sf_travel` | TV1 | exact: same seed same result; hazard per km |
-| TV8 | Hop off mid-route on land vehicles; vehicle waits, then continues; re-board at a stop | `sf_travel_bevy` | TV4, IN7 | headless: dismount spot on navmesh; vehicle resumes |
-| TV9 | Ambush runtime: halt, spawn out of view ahead, operator/vehicle damageable, wreck, anti-strand, skip warning | `sf_travel_bevy` | TV7, AI15, AI4 | headless: wreck leaves player at a reachable road point; owner TV-2 |
-| TV10 | `TravelCost` rule + gates for services and teleport effect requests | `sf_travel`, `sf_rpg` | TV1 | exact per gate (alerted, `no_travel`, undiscovered) |
-| TV11 | Morrowind encounter tables from region creature lists; Modern/Classic defaults (owner Q1) | `mw_rpg` | TV7, TV9 | exact on synthetic regions; owner TV-3 (Modern ride with an ambush) |
+| TV1 | `sf_travel` core: networks, stops, operators, `RideState`, ETA, skip math (instant = skip at boarding), saves | `sf_travel` | TV0 | exact: arrival tick, skip ms, round trip |
+| TV5 | Networks from records, every provider kind (widened 2026-11-25, was striders); operators registered with TV26 | `mw_rpg` | TV1, TV0c | exact synthetic; log counts per kind |
+| A4 | Instant travel, every preset: price, hours (Classic formula, Modern route time), fade, followers, `GetPCTraveling` | `mw_rpg(_bevy)` | A1, A3, TV5 | exact; owner PUI-SV5 + TV-1 (a trip per kind) |
+| TV10 | `TravelCost` rule + gates for services and teleport effects | `sf_travel`, `sf_rpg` | TV1 | exact per gate |
+| TV26 | Operator replacement: vacancy, out-of-view spawn after the delay, orphan-stop check | `sf_travel`, `mw_rpg` | TV5 | exact; log 0 orphan stops on game data |
+| TV14 | `RecallAnchor` (saved) + nearest-tagged-place query | `sf_travel` | TV1 | exact; round trip |
+| TV15 | Mark, Recall, Divine/Almsivi Intervention on TV14 + TV10 | effects adapter | TV14, E-slices | exact per effect |
 
-### Stage 3: the rest of Morrowind's network
-
-| ID | Deliverable | Crate | Depends | Verify |
-|---|---|---|---|---|
-| TV12 | Generic water-route bake: grid search on the water mask with coast clearance | `sf_travel` (bake fn), `mw_bake` | TV2 | exact on a synthetic island; log routes built/failed |
-| TV13 | Boats: shipmaster networks, boat vehicle on the water surface (wave bob presentation only), board/ride/skip | `mw_rpg`, `mw_rpg_bevy` | TV12, TV6 | owner TV-4 (Ebonheart to Sadrith Mora by boat) |
-| TV14 | `RecallAnchor` (saved) + nearest-tagged-place query (straight or road distance) | `sf_travel` | TV1 | exact: nearest of a tagged set; save round trip |
-| TV15 | Mark, Recall, Divine/Almsivi Intervention handlers on TV14 + TV10 gates | effects adapter | TV14, effects E-slices | exact headless per effect |
-
-### Stage 4: maps
+### Stage 2: maps (no dependency on rides)
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| MAP0 | New spec `map.md`: layers, `MapReveal`, pins, baked pyramid, compass/guidance settings, profiles | docs | TV0 | doccheck |
-| MAP1 | `MapReveal` core: coarse bitset per layer, reveal radius/region, place discovery events, save section | `sf_map` | MAP0 | exact: reveal sets, round trip |
-| MAP2 | Map bake: hillshade, region tint, coast, roads, settlements, names into a tile pyramid | `sf_map` (bake), `mw_bake` | MAP0 | log: bake ms (< few minutes), MiB; owner MAP-1 |
-| MAP3 | World map screen: pan/zoom, fog mask, discovered places, player pins with icon + text, `ShowMap`/`FillMap` | `sf_ui_screens`, `mw_rpg_bevy` | MAP1, MAP2 | headless view-model; owner MAP-2 |
-| MAP4 | Compass strip (framework default; Morrowind: places only, no quest markers) | `sf_ui_screens` | MAP1 | owner MAP-3 |
-| MAP5 | Morrowind painted map profile + reveal rule (owner Q3) | `mw_*` data | MAP2, MAP3 | owner MAP-4 |
-| TV16 | Opt-in "travel anywhere discovered" from the map, off by default, through TV10 gates | `sf_travel_bevy` | MAP3, TV10 | exact: off by default; gated |
+| MAP0 | New spec `map.md`: layers, `MapReveal`, pins, pyramid, compass/guidance, profiles | docs | TV0 | doccheck |
+| MAP1 | `MapReveal` core: bitset per layer, reveal radius/region, discovery events, save | `sf_map` | MAP0 | exact; round trip |
+| MAP2 | Map bake: hillshade, tint, coast, roads, settlements, names into a tile pyramid | `sf_map`, `mw_bake` | MAP0 | log bake ms, MiB; owner MAP-1 |
+| MAP3 | Map screen: pan/zoom, fog, places, pins, `ShowMap`/`FillMap` | `sf_ui_screens`, `mw_rpg_bevy` | MAP1, MAP2 | view-model; owner MAP-2 |
+| MAP4 | Compass strip (Morrowind: places only) | `sf_ui_screens` | MAP1 | owner MAP-3 |
+| MAP5 | Morrowind painted profile + reveal rule (owner Q3) | `mw_*` data | MAP2, MAP3 | owner MAP-4 |
+| TV16 | Opt-in "travel anywhere discovered", off by default, gated | `sf_travel_bevy` | MAP3, TV10 | exact: off; gated |
 
-### Stage 5: mounts and riding the roads
-
-| ID | Deliverable | Crate | Depends | Verify |
-|---|---|---|---|---|
-| TV17 | Whistle: mount paths to the caller, out-of-view fallback beyond range | `sf_interaction`, `sf_ai` | IN10, AI6 | headless: arrives or fallback; never in view |
-| TV18 | Mount stamina, buck-off on a heavy hit, auto-dismount at doors (mount left tied, saved) | `sf_interaction` | IN10 | exact thresholds; sanity: rider lands on navmesh |
-| TV19 | Auto-ride along the road graph to a pin or stop (cruise), hands-off camera | `sf_travel_bevy` | NV12 (road graph), MAP3, TV17 | headless on a synthetic road graph; owner TV-5 (`level:` greybox, guar profile) |
-| TV20 | Guidance line along the same road route (third map/compass setting) | `sf_ui_screens` | TV19, MAP4 | owner MAP-5 |
-| TV21 | NPC riders and caravans on roads; off-screen on the road graph (tier 0) | `sf_ai`, `sf_travel` | TV19, AI10 | headless tier invariance; owner TV-6 |
-
-### Stage 6: co-op travel (waits for net N1-N5, parked)
+### Stage 3: standing, sitting and walking on moving things (interaction lane, framework)
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| TV22 | Boarding window, leader confirm, left-behind players stay at the stop | `sf_travel_bevy` | TV6, N-slices | loopback: departure rules exact |
-| TV23 | Seated skip vote; refused while a party member is on foot | `sf_travel_bevy` | TV22 | loopback exact |
-| TV24 | Teleport-to-host to a safe road point; riders' mounts follow on arrival | `sf_travel_bevy` | TV22, TV17 | loopback exact |
-| TV25 | A far rider as a second streaming/nav anchor | streaming, `sf_nav_bevy` | NV5, TV22 | headless residency set exact |
+| IN20 | `GroundHit` carries the ground body and point velocity; kinematic velocity from the tick pose delta | `sf_physics`, `sf_controller` | - | exact on a turning kinematic box |
+| IN11 | Based movement: walk on a moving, turning, bobbing deck (decision 4) | `sf_controller` | IN20 | idle drift in tolerance, jump lands on the spot, 30/144 fps alike, rebase; ms |
+| IN21 | Deck presentation: drawn pose, foot IK, camera interpolated base-local | `sf_controller_bevy`, `sf_camera` | IN11 | drawn offset constant at rest; owner IN-11 (`level:` deck) |
+| IN7 | Seat links on a moving owner: create/persist/delete, seat modes, dismount spot, jump off (rail half dropped) | `sf_interaction` | IN2, IN20 | exact transitions; lands on navmesh |
+| IN23 | Seat IK: pelvis to seat, feet to footrest/stirrup/deck, hands to rail/reins | `sf_anim_graph` | IN7, Kimodo clips | pelvis in tolerance; owner IN-23 |
+| IN24 | Passenger state `{ vehicle, seat or base-local pose }`: save, `Boarded`/`Left`, base-relative replication | `sf_interaction`, `sf_save` | IN7, IN11 | exact: mid-ride save/load |
+| IN22 | Deck-local nav: navmesh in the vehicle frame; NPCs walk a moving deck | `sf_nav(_bevy)` | IN11 | NPC walks bow to stern under way |
 
-### Later (not scheduled)
+### Stage 4: real rides, striders and boats (needs Stage 3)
 
-Timetable vehicles (boats on a schedule), physics carts/rowboats (kind 3), walk-on decks (IN11), local map, bond,
-ride camera, operator replacement (Q4).
+| ID | Deliverable | Crate | Depends | Verify |
+|---|---|---|---|---|
+| TV2 | Route bake: nav polyline to arc-length spline with ground clearance | `sf_travel` | TV1 | exact synthetic heightfield |
+| TV3 | Strider routes from `large`-class paths between stops | `mw_bake` | TV2, TV0c | log built/failed, ms |
+| TV4 | Ride runtime: kinematic deck on `FixedUpdate`, depart/arrive, hold-to-skip, off-ring progress | `sf_travel_bevy` | TV1, IN11 | same arrival at 30/144 fps; skip delta exact |
+| TV6 | Modern presenter: "Board", stand or sit on the strider, followers aboard, skip, arrive | `mw_rpg_bevy`, `bevyrrowind` | A4, TV3, TV4, IN7, IN21, IN24 | owner TV-2 (Seyda Neen to Balmora); hitches/min |
+| TV8 | Leave any vehicle anywhere (Q2): land vehicles wait then go on, boats sail on; re-board at a stop | `sf_travel_bevy` | TV4, IN7, IN11 | exit on navmesh or water; vehicle resumes |
+| TV12 | Water-route bake on the water mask with coast clearance | `sf_travel`, `mw_bake` | TV2 | exact synthetic island; log |
+| TV13 | Boats as walk-on decks: ridden routes, tick-pure bob/roll, crew on deck nav | `mw_rpg(_bevy)` | TV12, TV6, IN22 | owner TV-3 (Ebonheart to Sadrith Mora) |
+
+### Stage 5: risk on the road (needs real rides)
+
+| ID | Deliverable | Crate | Depends | Verify |
+|---|---|---|---|---|
+| TV7 | Encounter tables + seeded tick roll; skip resolves to "ambush at f" | `sf_travel` | TV1 | exact: same seed same result |
+| TV9 | Ambush runtime: halt, spawn ahead out of view, operator/vehicle damageable, wreck, anti-strand | `sf_travel_bevy` | TV7, TV8, AI15, AI4 | reachable road point; owner TV-4 |
+| TV11 | Morrowind tables from region creature lists; Modern on, Classic off (Q1) | `mw_rpg` | TV7, TV9 | exact; owner TV-5 |
+
+### Stage 6: mounts and riding the roads
+
+| ID | Deliverable | Crate | Depends | Verify |
+|---|---|---|---|---|
+| IN25 | Mount locomotion profile (RDR2): speed, inertia, turn rate by speed, gait ladder | `sf_controller`, `sf_action` | TV-R2 | exact stop distance, turn radius |
+| IN26 | Procedural quadruped legs: N-leg foot placement, pelvis/spine pitch-roll, stride warp | `sf_anim_graph` | TV-R2 | no foot through a slope; owner IN-26 (guar) |
+| IN10 | Creature mount: mount/dismount by side, `RiderToMount`, astride seat, mounted gaits | `sf_interaction` | IN7, IN23, IN25, IN26 | exact hand-off; owner IN-10 |
+| TV17 | Whistle: mount paths to the caller, out-of-view fallback | `sf_interaction`, `sf_ai` | IN10, AI6 | arrives or fallback, never in view |
+| TV18 | Stamina, buck-off on a heavy hit, door dismount (mount tied, saved) | `sf_interaction` | IN10 | exact thresholds; lands on navmesh |
+| TV19 | Auto-ride the road graph to a pin or stop, hands-off camera | `sf_travel_bevy` | NV12, MAP3, TV17 | synthetic road graph; owner TV-6 |
+| TV20 | Guidance line along the same route | `sf_ui_screens` | TV19, MAP4 | owner MAP-5 |
+| TV21 | NPC riders and caravans on roads, tier 0 off-screen | `sf_ai`, `sf_travel` | TV19, AI10 | tier invariance; owner TV-7 |
+
+### Stage 7: co-op travel (waits for net N1-N5, parked)
+
+| ID | Deliverable | Crate | Depends | Verify |
+|---|---|---|---|---|
+| TV22 | Boarding window, leader confirm, left-behind players stay | `sf_travel_bevy` | TV6, IN24, N-slices | loopback exact |
+| TV23 | Skip vote; refused while anyone is not aboard | `sf_travel_bevy` | TV22 | loopback exact |
+| TV24 | Teleport-to-host to a safe road point; mounts follow | `sf_travel_bevy` | TV22, TV17 | loopback exact |
+| TV25 | A far rider as a second streaming/nav anchor | streaming, `sf_nav_bevy` | NV5, TV22 | residency set exact |
+
+**Later:** timetable boats, physics carts/rowboats (kind 3), mounted combat, flying mounts, local map, mount bond,
+ride camera. **Dropped (owner 2026-11-25):** the standing-idle strider passenger (old decision 4) and IN7's rail half
+(route motion is TV4).
 
 ## 5. Spec changes (as spec slices, before build)
 
-- TV0: new `superfargoth/docs/specs/travel.md`; services.md "List services" and "Co-op" point to it (the row's
-  `Teleport` + `PassTime` is the Classic presenter; the "arrives instantly" co-op fallback stays for Classic).
-- TV0b: `interaction.md` (c) and IN7/IN10 rows. TV0c: `services-adapter.md` "Travel" and "Options".
-- MAP0: new `map.md`. The NV12 change (road/route graph) is the nav lane's spec slice; this lane only reads it.
+- TV0: new `superfargoth/docs/specs/travel.md`; services.md "List services" and "Co-op" point to it (`Teleport` +
+  `PassTime` is the instant presenter for every preset until TV6). TV0b: `interaction.md` (c) and its build rows.
+  TV0c: `services-adapter.md` "Travel", "Options". MAP0: new `map.md`. NV12 and IN22 are reviewed by the nav lane.
 
 ## 6. Dependencies on other lanes
 
-- **Interaction:** IN0 and IN7 before TV4/TV6 (Stage 1 blocks on them); IN10 before Stage 5; IN11 for walk-on decks.
-- **Nav:** NV12 as road/route graph (nav research §2) before TV19-TV21; NV5 before TV25. Stages 1-3 need no new nav
-  work (baked `large` paths and water mask).
-- **AI:** AI4 directives and AI15 combat before TV9; AI6 before TV17; AI10 `fast_forward` for full catch-up on skip
-  (TV4 works before it, with clock-only catch-up) and before TV21.
-- **Effects / scripting:** effects teleport requests for TV15; scripting `Position*` opcodes for propylons.
-- **Anim:** quadruped locomotion and rider clips for IN10; IN2 sit clips upgrade the strider passenger pose.
-- **Provides:** route ETAs and road queries to AI tier 0; `TravelCost` gates to effects; map reveal, pins and place
-  discovery to dialogue-quests (`ShowMap`, markers) and worldgen (the 10x map).
+- **Interaction lane owns** TV0b and every IN row: Stage 3 (IN20, IN11, IN21, IN7, IN23, IN24, IN22) and the mount
+  body (IN25, IN26, IN10), on IN0 and IN2; no lane roadmap yet, so these rows are its plan. **Travel owns** TV*, MAP*,
+  A4. Stages 1-2 need nothing from interaction; Stage 4 waits for Stage 3, Stage 5 for Stage 4, TV17-TV18 for IN10.
+- **Anim:** sit, stand and astride rider clips (enter/exit by side, gait-matched loops) from Kimodo (owner), not combat
+  clips, for IN7, IN23, IN10; creature gaits are Morrowind's own; IN26 extends `FootPlacement`/`StrideWarp` to N legs
+  (the anim lane may take it and TV-R2's gait part).
+- **Physics / water:** IN20 body velocities; buoyancy 3.7 for kind 3 only; swimming 3.6 before overboard is checked.
+- **Nav:** NV12 before TV19-TV21, NV5 before TV25. **AI:** AI4 and AI15 before TV9, AI6 before TV17, AI10 before
+  TV21. **Effects / scripting:** TV15 requests, `Position*` propylons. **Net:** N1-N5 before Stage 7.
+- **Provides:** ETAs and road queries to AI tier 0; gates to effects; map reveal and pins to dialogue-quests and
+  worldgen.
 
 ## 7. Owner questions (each with a recommended answer)
 
-1. **In Modern Morrowind, can strider and boat rides be ambushed?** Recommended: yes, rare and scaled by the region's
-   danger (cliff racers, bandits on the Ascadian Isles road); never in Classic.
-2. **Can players leave a moving vehicle mid-route?** Recommended: yes on land (strider, cart), no at sea or in the air.
-3. **Morrowind map reveal: exploration only (vanilla), or also guides, bought maps and towers?** Recommended: both in
-   Modern (exploring paints, buying a regional map or asking a guide reveals a region); exploration only in Classic.
-4. **If the player kills a caravaner or shipmaster, does someone replace them?** Recommended: Modern, a new operator
-   arrives after a few game days; Classic, never (vanilla).
-5. **Mount bond (the mount grows calmer and stronger with use, RDR2-style)?** Recommended: yes, later, as a data stat
-   on the mount; not needed for the first whistle and ride.
+1. **Can Modern strider and boat rides be ambushed?** Recommended: yes, rare, scaled by region danger; never in
+   Classic. **Answered 2026-11-25:** yes, as recommended.
+2. **Can players leave a moving vehicle mid-route?** Recommended: on land only. **Answered 2026-11-25:** "No: players
+   can always leave a vehicle, also a ship at sea (walk off, jump overboard: allowed, not advised). Ships are walkable
+   moving decks (Sea of Thieves), never "a mount disguised as a ship"."
+3. **Map reveal: exploration only, or also guides and bought maps?** Recommended: both in Modern, exploration in
+   Classic. **Answered 2026-11-25:** yes, as recommended.
+4. **Is a killed caravaner or shipmaster replaced?** Recommended: Modern only. **Answered 2026-11-25:** "Operators are
+   always replaced, in every preset: a place must never be cut off from the travel network."
+5. **Mount bond (RDR2-style)?** Recommended: later, a data stat. **Answered 2026-11-25:** "Mounts (horses etc.) steer
+   like RDR2 horses: faster, more inertia, procedural leg animation. The character sits or stands naturally on the
+   creature or vehicle, and walks on moving decks: that is the big interaction slice. Plan all of it now; until that
+   slice lands, travel is an instant teleport (fade, game time spent)." Applied in sections 3-4; bond stays "Later".
+6. **Leaving a boat at sea: does it sail on or come about for you?** Recommended: sails on to its stop (fare spent);
+   land vehicles wait a short while, then go on.

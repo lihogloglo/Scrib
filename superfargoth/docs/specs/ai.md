@@ -140,18 +140,125 @@ set registered under the same task ids (e.g. an `AiWander` port in `mw_rules`), 
 
 ## Perception and stimuli
 
-- **Sight**: cone, range, LOS (`portal_query::line_of_sight`, batched rays, ≤ 2 per check); adapter
-  `AwarenessModel` modifiers (sneak, light, invisibility).
-- **Hearing**: `Stimulus { tick, kind: Sound { loudness } | Touch | Damage | Notify(record), source, at }`, reach by
-  `portal_query::path_distance` (doors attenuate); action.md's `noise: Loud` emits one.
-- **Detection is per player** (net.md): `Awareness { target, level, last_seen: Location, tick }`, bounded (8 entries,
-  lowest dropped). It feeds world-state keys.
-- **Event-time queries are tier-independent**: crime witnesses, alarms and greetings run a full check over every
-  simulated actor in range when the event happens, whatever their tier.
-- Generic crime hook: `OffenceObserved { offender, kind: RecordId, witnesses, at, tick }`; bounty, guards and arrest
-  are adapter rules.
-- **World reactions** (noticing changed objects, suspicion, investigate/report/tidy, NPC culprits, reset):
-  [world-reactions.md](world-reactions.md), slices AI19-AI25 and AIM2 there.
+As designed (AI0b, roadmap decisions 2, 3, 14); built by AI8a-AI8f. Host-only, fixed tick; pure maths in `sf_ai`,
+queries (grid, rays, path distance) in `sf_ai_bevy`.
+
+### Stimuli
+
+- **Targets**: `PerceptTarget = Player(PlayerKey) | Actor(ActorRef)`; every player, local or remote, is one target
+  with the same emitters; actors only when flagged (hostiles; companions, who obey stealth). Sight is polled (below).
+- **Noise** (input, UE `ReportNoiseEvent` shape): `NoiseEvent { tick, at, space, kind: NoiseKindId, loudness_m,
+  source: Option<PerceptTarget>, reveals_source }`; `loudness_m` = open-air reach from `NoiseKind` records × surface and
+  gear. Emitters: action states (`noise: Loud`, action.md), gait, landing, combat, and interactions (IN18: thrown,
+  dropped, smashed objects, picks, bashed locks, doors). Footsteps reveal their source; a thrown cup does not (`at` =
+  where it landed).
+- **Darkness**: IN19 `LightChanged { light, on, at, culprit }` (a `Lit` snuffed or relit) reaches actors in the room or
+  with LOS to it: `Darkened` concern (AI28), relit by the dusk-lamp method (AI27).
+- `Touch`, `Damage` (always perceived, always wake) and `Notify`. All are events (net rule 8).
+
+### Awareness
+
+`Awareness { target, level: f32 /* 0..1 */, band, last_seen: LastSeen { pos, tick, velocity, confidence }, last_gain }`
+per actor, bounded (`max_entries`, lowest evicted), plus one `Distraction { at, tick, loudness_m }` slot (loudest
+recent wins). Bands: **Unaware**, **Curious** (look toward), **Suspicious** (turn, step toward LKP), **Searching** (HTN
+`search` at LKP: look, widen, give up on ttl; AI8f), **Alerted** (level 1, latched: drives pick combat, report or flee).
+A band is entered at its threshold and left below it minus `band_hysteresis`; Alerted holds while the target is seen,
+then drops to the Searching floor after `alert_hold_s`. Decay starts `decay_delay_s` after the last gain, per band
+rate. Bands and `LastSeen` feed world-state keys and drives.
+
+- **Sight gain** per check: `rate × dt × f_dist × f_cone × visibility × alertness`; `f_dist` linear from 1 at `near_m`
+  to 0 at range (`lose_sight_range_m` once seen, UE-style); `f_cone` 1 central, `peripheral_mul` peripheral, 0 behind;
+  `visibility = clamp(1 - concealment / 100, 0, 1)` from `DetectionRules::concealment` (crime.md), fed `VisibilityFactors
+  { light, stance, speed_mps, size, noise_mul, disguise, modifiers: [(StatId, f32)] }`; `alertness` higher from
+  Suspicious up, lower while groggy.
+- **Noise gain**: heard iff `path_distance(at → listener)` plus `closed_door_m` per closed door ≤ `loudness_m ×
+  hearing_mul × weather_mask`. A revealing noise raises the source's entry by `noise_gain × (1 - d / reach)`, capped at
+  `noise_cap` (hearing alone never alerts), LKP = `at` with `noise_confidence`; a non-revealing one fills `Distraction`
+  (investigate the spot; owner: thrown or smashed objects draw attention).
+- **Notify** (shared knowledge, no telepathy): a shout or alarm is a `NoiseEvent` carrying `Notify { about, lkp,
+  confidence, hops }`; listeners who hear it get it at `tick + (path_distance / notify_speed_mps + notify_react_s)`,
+  confidence × `notify_confidence_mul`, `hops ≤ notify_max_hops`; it raises at most to Searching.
+- **Asleep** (bed activity; night workers keep their schedule, owner 2026-11-25): no sight; only noise received at ≥
+  `asleep_wake_m` wakes, as do Touch and Damage, then `groggy_s` of low alertness. Rain and storms scale sight range
+  (`weather_sight_mul`) and mask noise (`weather_mask`); storms also send people to cover (AI27).
+- **Models** (`DetectionModel`, crime.md): **Meter** (above; framework default) or **Classic**: per sight check one
+  seeded roll `hash(actor, target, tick)` against concealment sets level 1 on success, else nothing.
+
+### Light exposure (from game state, never the GPU)
+
+`LightExposure` (0..1), pure: a sky term from clock, weather and interior flag, plus `Lit` sources (IN19: radius,
+intensity, on) within `light_search_m`, the strongest `light_rays` each checked by one LOS ray (occluded adds
+nothing); outdoors one upward ray for roof cover. One sample per player per tick (other targets on demand, cached);
+it feeds `DetectIn.light`, the HUD and the `dark` world-state key (< `dark_threshold` at an actor: NPCs react to
+darkness). Rendered light never enters (net rule 3); equal at 30 and 144 fps (AI8d).
+
+### Cost and budget
+
+Tier 2 sight, staggered by `hash(ActorKey)` over `sight_period_s` (damage, noise or notify force a check next tick):
+**grid prefilter** (same space or an open portal) → **cone and range** → skip below `skip_gain` → **rays**: chest,
+then head only if blocked (≤ 2). Sight, light and concern-discovery rays (world-reactions step 4) share one queue
+capped at `max_rays_per_tick` (UE `MaxTracesPerTick`), oldest first, overflow next tick; batched on workers, applied
+in `ActorKey` order; cached `sight_cache_s` unless a side moves > `cache_move_m`. Hearing: grid by straight-line
+reach, then `path_distance`.
+**Tier 1**: sight every `tier1_period_s` and hearing by distance + same space, no rays or paths. **Tier 0**: none.
+**Event-time queries** (witnesses, alarms, greetings) stay tier-independent: a full check over every simulated actor
+within `witness_radius_m`, outside the cap, nearest first up to `witness_max`. Floor share 0.15 ms per tick (sight,
+hearing, light); `ai.stats` reports perception ms per tier and rays issued/deferred. 48 tier-2 actors at 10 Hz ≈ 5
+checks per tick (≤ 10 rays) plus ≤ 3 light rays per player: fits Floor's cap.
+
+### Tunables (`ai.perception.*`, `ai.awareness.*`; net `Gameplay`, scope `Dev`)
+
+Unit = name suffix (`_m`, `_s`, `_deg`, `_mps`; `rate` and decays in 1/s; others ratio or count). Source `Guess`
+unless noted; `hearing_mul` is per-actor data, not a tunable.
+
+| Names | Defaults | Ranges |
+|---|---|---|
+| `sight_range_m` / `lose_sight_range_m` / `near_m` (Industry: UE SightRadius, LoseSightRadius) | 30 / 36 / 3 | 1-200 |
+| `central_half_deg` / `peripheral_half_deg` / `peripheral_mul` | 30 / 80 / 0.35 | 0-180, 0-1 |
+| `rate` (full visibility at `near_m`) / `skip_gain` | 2.0 / 0.01 | 0.05-20, 0-1 |
+| band thresholds Curious / Suspicious / Searching; `band_hysteresis` | 0.1 / 0.35 / 0.65; 0.05 | 0-1, 0-0.3 |
+| `alert_hold_s` / `decay_delay_s`; decay Curious / Suspicious / Searching | 6 / 3; 0.10 / 0.05 / 0.02 | 0-60, 0-1 |
+| `noise_gain` / `noise_cap` / `noise_confidence` / `closed_door_m` | 0.5 / 0.65 / 0.5 / 8 | 0-1, 0-50 |
+| storm `weather_mask` / `weather_sight_mul` | 0.6 / 0.6 | 0-1 |
+| `notify_speed_mps` / `notify_react_s` / `notify_confidence_mul` / `notify_max_hops` (gossip, decision 8) | 6 / 0.8 / 0.7 / 3 | 0.5-50, 0-5, 0-1, 0-8 |
+| `asleep_wake_m` / `groggy_s` | 12 / 4 | 0-100, 0-30 |
+| `light_search_m` / `light_rays` / `dark_threshold` | 15 / 2 / 0.15 | 1-60, 0-4, 0-1 |
+| `sight_period_s` / `tier1_period_s` / `sight_cache_s` / `cache_move_m` | 0.1 / 1.0 / 0.25 / 0.5 | 0.02-10, 0-5 |
+| `max_rays_per_tick` Floor / Medium / High / Ultra / Dedicated (group `sim.cpu_tier`) | 24 / 32 / 48 / 64 / 96 | 4-512 |
+| `witness_radius_m` / `witness_max` / `max_entries` (8: earlier spec) | 25 / 32 / 8 | 1-100, 1-256, 1-64 |
+
+### Net, saves, HUD
+
+- **Net**: all of it is host-only (rule 5); a remote player is another target with its own `LightExposure` and
+  emitters. Clients get only "Co-op"'s replicated set and their own `PlayerDetection`.
+- **Saves**: awareness, LKP, distraction, caches and light are not saved ("Saves"); a running `Search`, `Report` or
+  combat directive is (LKP in its params), and on load its actor starts at that directive's band floor.
+- **HUD** (owner 2026-11-25: Skyrim-style sneak eye, no per-NPC markers): `PlayerDetection { level, band }` per player
+  = max level toward that player over tier 2 and 1 actors that count (not allies or followers); crime.md's
+  `StealthView.exposure` derives from its band. Presentation reads it (smooths client-side), never feeds back.
+
+### Crime, reactions, adapter
+
+- Crime hook: `OffenceObserved { offender, kind: RecordId, witnesses, at, tick }`, each witness with its band and
+  visibility (crime's recognition input). Reporting is a walking, interruptible `Report` directive in both presets
+  (owner 2026-11-25: never instant); bounty, guards and arrest are adapter rules.
+- **World reactions** (concerns, suspicion from `Awareness` entries): [world-reactions.md](world-reactions.md),
+  AI19-AI25, AIM2.
+- **Adapter seam**: the game implements `DetectionRules` and picks `DetectionModel`; the framework knows no sneak skill
+  or magic effect (`VisibilityFactors.modifiers` carries stat ids the adapter reads). Bevyrrowind's is the OpenMW
+  `awarenessCheck` port in `mw_ai` (MA5, `mechanicsmanagerimp.cpp` 1603 at `b8285cc9`, ai-adapter.md: sneak, attributes,
+  fatigue, chameleon, invisibility, facing), light term optional.
+
+### Industry comparison
+
+| Reference | Technique | Ours |
+|---|---|---|
+| TLOU2 | graded awareness, searching state; companions obey stealth | **match** |
+| Hitman | suspicion meter, shared knowledge, distraction throws, disguise | **match** (Notify, `Distraction`, `disguise`) |
+| AC Shadows | stance, distance, light; snuffable lights; weather; per-enemy meter | **match**; per-enemy meter **differs** (owner: one eye) |
+| UE AIPerception | sight/lose-sight radius, peripheral angle, `ReportNoiseEvent`, max traces per tick, max age | **match** (fixed caps) |
+| KCD2 | gear-driven visibility and noise, dark nights, sleepers wake to noise | **match** |
+| Skyrim | one sneak eye, light level, armour noise, sleepers less perceptive | **match** (`PlayerDetection`) |
 
 ## Memory and relationships (Nemesis-style; owner decision 7)
 

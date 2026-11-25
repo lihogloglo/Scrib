@@ -191,3 +191,5 @@ Stage 6, seam only today.
 4. Co-op: other players near a conversation see its lines, only the player who started it chooses? **Recommend yes.**
 5. Morrowind (no markers): the tracked quest's latest journal line shown on the HUD in Modern, hidden in Classic?
    **Recommend yes.**
+
+Owner answers 2026-11-25: all five yes, as recommended.
