@@ -53,13 +53,27 @@ placement ends at the far handoff if far-eligible, else its ring's unload radius
 **Reveal.** A cell group stays `Visibility::Hidden` until `reveal` in the `Upload` stage (`stream.rs:1575`); `RevealGate`
 (`reveal.rs`) is what loading and door fades wait on.
 
-**Re-homing a placement (AI10c3b1).** `Streaming::rehome` (`stream.rs:666`) moves one placement's entry from loaded
+**Re-homing a placement (AI10c3b1).** `Streaming::rehome` (`stream.rs:677`) moves one placement's entry from loaded
 cell A's Active list to cell B's (only when B is Active: `Rehomed::listed`) and returns B's near group and origin
 (`Rehomed`, `stream.rs:463`); the caller swaps `ChildOf`, the local transform and its own frame fields in the same
 system, after which B's Deactivate runs the hook and B's near unload despawns the entity (`despawn_item` despawns
-every direct child of the group, `stream.rs:1850`). It refuses, changing nothing, when `from == to`, either cell is
-not resident, B has no revealed near group, a stage of either cell is in flight (`in_flight`, `stream.rs:692`) or a
+every direct child of the group, `stream.rs:1946`). It refuses, changing nothing, when `from == to`, either cell is
+not resident, B has no revealed near group, a stage of either cell is in flight (`in_flight`, `stream.rs:775`) or a
 static scene covers the id.
+
+**Spawning one placement into a loaded cell (AI10c3c1).** `Streaming::spawn_into(world, spawners, ws, cell,
+placement)` (`stream.rs:727`, result `SpawnedInto { entities, listed }`, `stream.rs:485`) is the only way a placement
+joins a cell after its fetch: a batch under the cell's near group and the class spawner's `spawn` (`spawn_single`,
+`stream.rs:1845`, shared with `spawn_promoted`), and when the cell is Active the spawner's `activate` plus a push to
+its Active list (`listed`), so its Deactivate and near unload treat it like a loaded one. At Near only nothing is
+listed: the cell's activation fetch rebuilds its list from index + overlay, so the caller keeps the overlay right.
+It refuses (`None`, nothing changed, safe to retry next frame) when the cell is not resident or has no near group, a
+stage of the cell is in flight, the id is already in its Active list or drawn by one of its static scenes, no
+spawner takes the placement, or the spawner needs a model that is not loaded and ready (it starts no model load and
+runs no `prepare`; a ready model gets one more user, released with the near group). A spawner that draws nothing (0
+entities) is still a success. At Near only it cannot see a twin from the cell's own load: the caller spawns only ids
+that load did not hold. Caller: an exclusive system outside `StreamingSystems::Drive`, `PlacementSpawners` cloned,
+then `world.resource_scope(|world, mut streaming: Mut<Streaming>| streaming.spawn_into(..))`. First caller: AI10c3c2b.
 
 **Worldspace left behind (CW-9, on by default (owner 2026-11-17)).** Indoors the exterior stays resident: the residency-cache ghost
 (`scheduler.rs` `linger`) keeps its full rings while the player stands within 32 m of the way back (a small interior:

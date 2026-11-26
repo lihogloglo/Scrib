@@ -332,6 +332,11 @@ impl PlacementSpawner for TagSpawner {
     fn needs_model(&self, _: &IndexedPlacement) -> bool {
         false
     }
+    fn activate(&self, world: &mut World, cx: &ActivateCx<'_>, p: &IndexedPlacement) {
+        if let Some(mut calls) = world.get_resource_mut::<Activated>() {
+            calls.0.push((p.placement.id, cx.cell));
+        }
+    }
     fn deactivate(&self, world: &mut World, cx: &ActivateCx<'_>, p: &IndexedPlacement) {
         if cx.discard {
             world.resource_mut::<Discards>().0 += 1;
@@ -345,6 +350,10 @@ impl PlacementSpawner for TagSpawner {
 /// Every [`TagSpawner`] `deactivate` call with its cell, when the resource is present (`AI10c3b1`).
 #[derive(Resource, Default)]
 struct Deactivated(Vec<(PlacementId, IVec3)>);
+
+/// Every [`TagSpawner`] `activate` call with its cell, when the resource is present (`AI10c3c1`).
+#[derive(Resource, Default)]
+struct Activated(Vec<(PlacementId, IVec3)>);
 
 fn tagged(app: &mut App, id: PlacementId) -> Vec<WorldPos> {
     app.world_mut().query::<&Tagged>().iter(app.world()).filter(|t| t.0 == id).map(|t| t.1).collect()
@@ -1304,4 +1313,144 @@ fn rehome_waits_while_a_stage_of_either_cell_runs() {
 
     settle_steady(&mut app);
     assert!(deactivated(&app).contains(&(item, CELL_A)), "A's stage kept the item");
+}
+
+/// A placement the index never held, at `x` on the anchors' line (`AI10c3c1`): `TagSpawner` class,
+/// no model.
+fn walker(key: &str, x: f64) -> IndexedPlacement {
+    IndexedPlacement {
+        placement: Placement {
+            id: PlacementId::from_key("test", key.as_bytes()),
+            base: RecordRef::new("thing", key),
+            model: None,
+            transform: WorldTransform::from_pos(at_x(x)),
+            class: PlacementClass::Dynamic,
+            flags: PlacementFlags::empty(),
+        },
+        radius: 0.0,
+    }
+}
+
+/// [`Streaming::spawn_into`] the way a game's exclusive system calls it.
+fn spawn_into(app: &mut App, cell: IVec3, p: IndexedPlacement) -> Option<SpawnedInto> {
+    let spawners = app.world().resource::<PlacementSpawners>().clone();
+    app.world_mut().resource_scope(|world, mut streaming: Mut<Streaming>| streaming.spawn_into(world, &spawners, &ws(), cell, p))
+}
+
+fn entity_count(app: &mut App) -> usize {
+    app.world_mut().query::<Entity>().iter(app.world()).count()
+}
+
+fn activated(app: &App) -> Vec<(PlacementId, IVec3)> {
+    app.world().resource::<Activated>().0.clone()
+}
+
+fn active_ids(app: &App, cell: IVec3) -> Option<Vec<PlacementId>> {
+    app.world().resource::<Streaming>().active_ids(&ws(), cell)
+}
+
+/// Into an Active cell: spawned under the cell's near group through a batch, at the cell-relative
+/// pose, listed and activated once; the cell's deactivation then deactivates it once and its near
+/// unload despawns it.
+#[test]
+fn spawn_into_an_active_cell_lists_activates_and_unloads_with_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut app, visual, gameplay) = two_cells(dir.path(), StreamingConfig::default(), BORDER_X, BORDER_X);
+    app.init_resource::<Activated>();
+    assert_eq!(level_of(&app, CELL_B), Level::Active);
+    let p = walker("walker", IN_B_X);
+    let id = p.placement.id;
+    let pos = p.placement.transform.pos;
+    let before = app.world().resource::<Streaming>().stats();
+
+    assert_eq!(spawn_into(&mut app, CELL_B, p), Some(SpawnedInto { entities: 1, listed: true }));
+    let body = body_of(&mut app, id);
+    let batch = app.world().get::<ChildOf>(body).unwrap().parent();
+    let near = app.world().resource::<Streaming>().group_entity(&ws(), CELL_B, Level::Near);
+    assert_eq!(Some(app.world().get::<ChildOf>(batch).unwrap().parent()), near, "a batch under B's near group");
+    assert_eq!(app.world().get::<Transform>(body).unwrap().translation, Partition::STREAMING.cell_origin(CELL_B).delta_f32(pos));
+    assert_eq!(activated(&app), [(id, CELL_B)]);
+    assert!(active_ids(&app, CELL_B).unwrap().contains(&id));
+    let after = app.world().resource::<Streaming>().stats();
+    assert_eq!((after.entities_spawned - before.entities_spawned, after.placements_spawned - before.placements_spawned), (2, 1));
+
+    move_anchor(&mut app, gameplay, AWAY_X);
+    assert_eq!(level_of(&app, CELL_B), Level::Near);
+    assert_eq!(deactivated(&app).iter().filter(|c| c.0 == id).collect::<Vec<_>>(), [&(id, CELL_B)], "B deactivated it once");
+    assert!(app.world().get_entity(body).is_ok());
+
+    move_anchor(&mut app, visual, AWAY_X);
+    assert!(app.world().get_entity(body).is_err(), "B's near unload despawned it");
+    assert!(app.world().get_entity(batch).is_err());
+    assert_eq!(deactivated(&app).iter().filter(|c| c.0 == id).count(), 1);
+    assert_eq!(activated(&app), [(id, CELL_B)]);
+}
+
+/// Into a Near-only cell: spawned, nothing listed, no `activate`; the near unload despawns it.
+#[test]
+fn spawn_into_a_near_cell_spawns_without_listing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut app, visual, gameplay) = two_cells(dir.path(), StreamingConfig::default(), IN_A_X, BORDER_X);
+    app.init_resource::<Activated>();
+    assert_eq!(level_of(&app, CELL_B), Level::Near);
+    let p = walker("walker", IN_B_X);
+    let id = p.placement.id;
+
+    assert_eq!(spawn_into(&mut app, CELL_B, p), Some(SpawnedInto { entities: 1, listed: false }));
+    let body = body_of(&mut app, id);
+    assert!(activated(&app).is_empty());
+    assert_eq!(active_ids(&app, CELL_B), None);
+
+    move_anchor(&mut app, gameplay, AWAY_X);
+    move_anchor(&mut app, visual, AWAY_X);
+    assert!(app.world().get_entity(body).is_err(), "B's near unload despawned it");
+    assert!(deactivated(&app).iter().all(|c| c.0 != id), "never deactivated");
+}
+
+/// Refusals change nothing: an unloaded or far cell, an id already listed (the second call of a
+/// pair), no spawner, a model that is not ready, a stage of the cell in flight.
+#[test]
+fn spawn_into_refusals_change_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = StreamingConfig { placements_per_item: 1, ..StreamingConfig::default() };
+    config.scheduler.budgets.deactivate_ms = 1e-9;
+    let (mut app, _, gameplay) = two_cells(dir.path(), config, BORDER_X, BORDER_X);
+    app.init_resource::<Activated>();
+    let (item, _) = item_and_crate();
+    let unchanged = |app: &mut App, cell: IVec3, p: IndexedPlacement, why: &str| {
+        let (entities, list) = (entity_count(app), active_ids(app, cell));
+        assert_eq!(spawn_into(app, cell, p), None, "{why}");
+        assert_eq!((entity_count(app), active_ids(app, cell)), (entities, list), "{why}: nothing changed");
+    };
+
+    unchanged(&mut app, IVec3::new(50, 0, 50), walker("walker", IN_B_X), "cell not resident");
+    let mut listed = walker("item", IN_A_X);
+    listed.placement.id = item;
+    unchanged(&mut app, CELL_A, listed, "id already in A's Active list");
+    assert!(spawn_into(&mut app, CELL_B, walker("walker", IN_B_X)).is_some());
+    unchanged(&mut app, CELL_B, walker("walker", IN_B_X), "second call: already listed");
+    let mut marker = walker("marker", IN_B_X);
+    marker.placement.class = PlacementClass::Marker;
+    unchanged(&mut app, CELL_B, marker, "no spawner for markers");
+    let mut statue = walker("statue", IN_B_X);
+    statue.placement.class = PlacementClass::Static;
+    statue.placement.model = Some(VfsPath::new("never-loaded.mdl").unwrap());
+    unchanged(&mut app, CELL_B, statue, "the static spawner needs a model that is not ready");
+    assert_eq!(activated(&app).len(), 1, "only the accepted call activated");
+
+    app.world_mut().entity_mut(gameplay).insert(to_grid(at_x(IN_B_X)));
+    let running = |app: &App| {
+        app.world()
+            .resource::<Streaming>()
+            .scheduler()
+            .requests()
+            .any(|r| r.cell == CELL_A && r.stage == sf_world::Stage::Deactivate && r.running)
+    };
+    let mut frames = 0;
+    while !running(&app) {
+        app.update();
+        frames += 1;
+        assert!(frames < 500, "A's deactivation never started");
+    }
+    unchanged(&mut app, CELL_A, walker("late", IN_A_X), "a stage of A in flight");
 }

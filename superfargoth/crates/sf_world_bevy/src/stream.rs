@@ -480,6 +480,17 @@ impl Rehomed {
     }
 }
 
+/// What a [`Streaming::spawn_into`] did (`AI10c3c1`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpawnedInto {
+    /// The entities the placement's spawner made (under a batch entity of its own). 0 is a
+    /// success: a load spawns, lists and activates such a placement the same way.
+    pub entities: u32,
+    /// The placement joined the cell's Active list and its `activate` hook ran (the cell is
+    /// Active): the cell's deactivation runs its `deactivate` hook once. `false` at `Level::Near`.
+    pub listed: bool,
+}
+
 /// The streaming runtime (one per app).
 #[derive(Resource)]
 pub struct Streaming {
@@ -688,6 +699,78 @@ impl Streaming {
         Some(Rehomed { parent, origin, listed })
     }
 
+    /// Spawns one placement into the already loaded `cell` of `ws` (`AI10c3c1`): a placement
+    /// that arrives in a resident cell (a bodiless actor walking into it, say) gets its entity
+    /// at once instead of at the cell's next fetch. Same shape as a load: the class spawner's
+    /// `spawn` into a batch under the cell's `Level::Near` group (so that cell's near unload
+    /// despawns it), with the cell's pose and ends; when the cell is Active, the placement
+    /// joins its Active list and the class spawner's `activate` runs with the cell's
+    /// [`ActivateCx`] ([`SpawnedInto::listed`]), so the cell's deactivation runs `deactivate`
+    /// once. At `Level::Near` nothing is listed or activated: the cell's activation fetch
+    /// builds its list from index + overlay, so keeping the overlay right (the placement in
+    /// this cell) is the caller's, as is any later bookkeeping of the placement.
+    ///
+    /// Takes `&mut World` with the resource out of it: call it from an exclusive system,
+    /// outside [`crate::StreamingSystems::Drive`], through
+    /// `world.resource_scope(|world, mut streaming: Mut<Streaming>| ...)` with a clone of
+    /// [`PlacementSpawners`] (as the driver does).
+    ///
+    /// Refuses (`None`, nothing spawned or changed; cheap and safe to retry on a later frame)
+    /// when `cell` is not resident in `ws` or has no revealed `Level::Near` group, when a
+    /// stage of the cell is in flight, when the placement's id is already in the cell's
+    /// Active list or drawn by a static scene of the cell (no twin through this call), when
+    /// no spawner takes the placement, or when its class spawner `needs_model` and the model
+    /// is not loaded and ready. Gaps: this call starts no model load (actors need none; a
+    /// ready model gets one more user, held by the near group, released at its unload), runs
+    /// no spawner `prepare` asset, and at `Level::Near` cannot see a twin the cell's own load
+    /// spawned (no list there): the caller only spawns ids its cell's load did not hold.
+    pub fn spawn_into(
+        &mut self,
+        world: &mut World,
+        spawners: &PlacementSpawners,
+        ws: &WorldspaceId,
+        cell: IVec3,
+        placement: IndexedPlacement,
+    ) -> Option<SpawnedInto> {
+        if self.in_flight(ws, cell) {
+            return None;
+        }
+        let key = (ws.clone(), cell);
+        let resident = self.rt.cells.get(&key)?;
+        let group = resident.groups.get(&Level::Near)?.entity;
+        let id = placement.placement.id;
+        if resident.groups.values().any(|g| g.covered.contains(&id))
+            || resident.active.as_ref().is_some_and(|list| list.iter().any(|p| p.placement.id == id))
+        {
+            return None;
+        }
+        let class = spawners.for_class(placement.placement.class);
+        let needs_model = placement.placement.model.is_some() && class.is_some_and(|s| s.needs_model(&placement));
+        if needs_model && self.rt.loaded_model(&placement).is_none() {
+            return None;
+        }
+        spawners.spawner_for(&placement, self.rt.loaded_model(&placement))?;
+        let cell_entity = resident.entity;
+        if needs_model && let Some(model) = placement.placement.model.clone() {
+            let ray_tracing_lod = world.get_resource::<RayTracingVariants>().and_then(|v| v.lod_for(self.rt.info(ws).partition));
+            self.rt.acquire_model(&model, ray_tracing_lod);
+            let near = self.rt.cells.get_mut(&key).and_then(|c| c.groups.get_mut(&Level::Near)).expect("checked above");
+            near.models.push(model); // the near unload releases it with the group's models
+        }
+        let entities = self.rt.spawn_single(world, spawners, ws, cell, group, &placement);
+        let listed = self.rt.cells.get(&key).is_some_and(|c| c.active.is_some());
+        if listed {
+            if let Some(s) = class {
+                let cx = ActivateCx { worldspace: ws, cell, cell_entity, discard: false };
+                s.activate(world, &cx, &placement);
+            }
+            if let Some(list) = self.rt.cells.get_mut(&key).and_then(|c| c.active.as_mut()) {
+                Arc::make_mut(list).push(placement);
+            }
+        }
+        Some(SpawnedInto { entities, listed })
+    }
+
     /// A stage of `cell` is in flight: some request on it holds engine work.
     fn in_flight(&self, ws: &WorldspaceId, cell: IVec3) -> bool {
         self.rt.work.keys().filter_map(|id| self.scheduler.request(*id)).any(|r| r.cell == cell && r.worldspace == *ws)
@@ -697,6 +780,13 @@ impl Streaming {
     #[cfg(test)]
     pub(crate) fn group_entity(&self, ws: &WorldspaceId, cell: IVec3, level: Level) -> Option<Entity> {
         self.rt.cells.get(&(ws.clone(), cell)).and_then(|c| c.groups.get(&level)).map(|g| g.entity)
+    }
+
+    /// The ids in a resident cell's Active list; `None` when it has none (tests).
+    #[cfg(test)]
+    pub(crate) fn active_ids(&self, ws: &WorldspaceId, cell: IVec3) -> Option<Vec<PlacementId>> {
+        let list = self.rt.cells.get(&(ws.clone(), cell))?.active.as_ref()?;
+        Some(list.iter().map(|p| p.placement.id).collect())
     }
 
     /// Users of a model's slot; `None` once no slot is left (tests).
@@ -1743,27 +1833,33 @@ impl Runtime {
     /// Spawns a promoted placement into a batch of its own under the near
     /// group (already revealed), then tells the scene to stop drawing it.
     fn spawn_promoted(&mut self, world: &mut World, spawners: &PlacementSpawners, pending: &PendingPromotion, p: &IndexedPlacement) {
-        let info = self.info(&pending.worldspace);
-        let ends = self.ends(world, &pending.worldspace, pending.cell, &info);
-        let layers = world
-            .resource::<WorldspaceRegistry>()
-            .get(&pending.worldspace)
-            .map_or_else(RenderLayers::default, |e| dynamic_layer(e.layer));
-        let at = PlaceAt {
-            worldspace: &pending.worldspace,
-            cell: pending.cell,
-            level: Level::Near,
-            layers: &layers,
-            origin: info.partition.cell_origin(pending.cell),
-            ends: &ends,
-        };
-        let batch = world.spawn((Transform::IDENTITY, Visibility::Inherited, ChildOf(pending.group))).id();
-        let n = self.spawn_placement(world, &at, batch, spawners, p);
-        self.stats.entities_spawned += u64::from(n) + 1;
-        self.stats.placements_spawned += 1;
+        self.spawn_single(world, spawners, &pending.worldspace, pending.cell, pending.group, p);
         if let Some(scene) = self.scene.0.clone() {
             scene.promoted(world, &pending.worldspace, pending.cell, p.placement.id);
         }
+    }
+
+    /// Spawns one placement of a resident cell into a batch of its own under the cell's
+    /// revealed near group `group`, with the cell's pose and ends (a promotion, or
+    /// [`Streaming::spawn_into`]). Returns the entities the spawner made.
+    fn spawn_single(
+        &mut self,
+        world: &mut World,
+        spawners: &PlacementSpawners,
+        worldspace: &WorldspaceId,
+        cell: IVec3,
+        group: Entity,
+        p: &IndexedPlacement,
+    ) -> u32 {
+        let info = self.info(worldspace);
+        let ends = self.ends(world, worldspace, cell, &info);
+        let layers = world.resource::<WorldspaceRegistry>().get(worldspace).map_or_else(RenderLayers::default, |e| dynamic_layer(e.layer));
+        let at = PlaceAt { worldspace, cell, level: Level::Near, layers: &layers, origin: info.partition.cell_origin(cell), ends: &ends };
+        let batch = world.spawn((Transform::IDENTITY, Visibility::Inherited, ChildOf(group))).id();
+        let n = self.spawn_placement(world, &at, batch, spawners, p);
+        self.stats.entities_spawned += u64::from(n) + 1;
+        self.stats.placements_spawned += 1;
+        n
     }
 
     /// The last stage of a load: queue the static scene's writes, then reveal
