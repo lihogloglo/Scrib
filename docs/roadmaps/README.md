@@ -7,7 +7,7 @@ the spec (design and as-built detail). Research behind each one: `docs/research/
 
 **Status 2026-11-25:** research done for every lane (anim + `anim-diagnosis.md`, combat, ai, nav, dialogue-quests,
 crime, interaction, travel) plus `ecswind.md` (the owner's earlier sim, ideas only). Written: [ai.md](ai.md),
-[dialogue-quests.md](dialogue-quests.md), [travel.md](travel.md), [interaction.md](interaction.md), [crime.md](crime.md), [anim.md](anim.md) (2026-11-25). Later (owner): combat, nav, then order.md.
+[dialogue-quests.md](dialogue-quests.md), [travel.md](travel.md), [interaction.md](interaction.md), [crime.md](crime.md), [anim.md](anim.md) (2026-11-25), [combat.md](combat.md) (2026-11-26). Next: nav, then order.md.
 
 | Lane | File | Specs it drives |
 |---|---|---|
