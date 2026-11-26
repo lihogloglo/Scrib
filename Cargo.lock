@@ -5723,6 +5723,7 @@ dependencies = [
  "sf_controller",
  "sf_controller_bevy",
  "sf_coords",
+ "sf_interaction_bevy",
  "sf_level",
  "sf_mods",
  "sf_physics",

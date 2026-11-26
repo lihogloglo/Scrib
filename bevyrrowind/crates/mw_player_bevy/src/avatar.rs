@@ -51,8 +51,8 @@ use bevy_time::Fixed;
 use bevy_transform::prelude::*;
 use std::collections::HashMap;
 
-use sf_action::{RuleKey, SlotKey, Tick};
-use sf_action_bevy::{ActionBody, ActionCharacter};
+use sf_action::{RuleKey, SlotAliases, SlotKey, Tick};
+use sf_action_bevy::{ActionAliases, ActionBody, ActionCharacter};
 use sf_anim::{RootDelta, RootMotionMode};
 use sf_anim_bevy::{AnimLod, AnimTier, Animator};
 use sf_anim_graph::{MontageClip, SlotId, SlotRequest};
@@ -128,7 +128,11 @@ pub struct PlayerFeed {
 /// A move's slot clip playing in the montage slot (traversal or combat).
 #[derive(Clone, Copy, Debug)]
 struct Traversal {
+    /// The rule's slot (`ActionOutput::slot`).
     key: SlotKey,
+    /// The clip slot playing: `key` through the character's aliases (`interact.sit.enter` ->
+    /// `seat.chair.b48.enter.front`), else `key` itself.
+    clip: SlotKey,
     slot: SlotId,
     /// The move, the tick it started and its chain index the clip belongs to (a move restarted
     /// by itself, a roll chained into a roll, is a new play: it blends in again).
@@ -176,6 +180,12 @@ impl PlayerFeed {
     pub fn traversal(&self) -> Option<SlotKey> {
         self.traversal.map(|t| t.key)
     }
+
+    /// The clip slot playing for [`Self::traversal`] (its rule slot through the aliases).
+    #[cfg(test)]
+    pub(crate) fn traversal_clip(&self) -> Option<SlotKey> {
+        self.traversal.map(|t| t.clip)
+    }
 }
 
 /// The dressed character under the body (`player` record), tagged [`PlayerAvatar`].
@@ -219,7 +229,10 @@ pub(crate) fn feed<G: GroundProbe + Resource>(
     loco_ab: Option<Res<LocoAb>>,
     ground: Option<Res<G>>,
     mut probes: Local<FootProbes>,
-    mut players: Query<(&ActionBody, &ActionCharacter, &Transform, &mut PlayerFeed), Or<(With<PlayerBody>, With<TrainingDummy>)>>,
+    mut players: Query<
+        (&ActionBody, &ActionCharacter, Option<&ActionAliases>, &Transform, &mut PlayerFeed),
+        Or<(With<PlayerBody>, With<TrainingDummy>)>,
+    >,
     slots: Option<Res<AvatarSlots>>,
     builtin: Local<AvatarSlots>,
     mut animators: Query<(&mut Animator, Option<&Transform>)>,
@@ -231,7 +244,7 @@ pub(crate) fn feed<G: GroundProbe + Resource>(
     let dt = time.delta_secs();
     let alpha = fixed.overstep_fraction().clamp(0.0, 1.0);
     probes.clear();
-    for (body, character, transform, mut feed) in &mut players {
+    for (body, character, aliases, transform, mut feed) in &mut players {
         let feed = &mut *feed;
         let Some((entity, (mut animator, body_transform))) = feed.animator.and_then(|e| animators.get_mut(e).ok().map(|a| (e, a))) else {
             feed.last = None;
@@ -300,7 +313,7 @@ pub(crate) fn feed<G: GroundProbe + Resource>(
         } else {
             probes.queue(entity, a, drawn, scale, settings);
         }
-        traversal(feed, a, character, slots, body.warp_progress(), alpha);
+        traversal(feed, a, character, aliases.map(|x| &x.0), slots, body.warp_progress(), alpha);
     }
     if let Some(ground) = ground.as_deref()
         && !probes.is_empty()
@@ -318,11 +331,13 @@ pub(crate) fn feed<G: GroundProbe + Resource>(
 /// body's move progress at its previous and current tick (`ActionBody::warp_progress`): lerped
 /// by the same `alpha` as the drawn body, the clip stays on it however many ticks ran. A Clip
 /// move's progress runs over its whole slot chain (attack, then recovery): each slot plays from
-/// the chain progress minus the clips before it (`slots`' durations).
+/// the chain progress minus the clips before it (`slots`' durations). The rule's slot plays the
+/// clip its `aliases` bind it to (a seat's `interact.sit.*`); a changed alias restarts the play.
 pub(crate) fn traversal(
     feed: &mut PlayerFeed,
     a: &mut Animator,
     character: &ActionCharacter,
+    aliases: Option<&SlotAliases>,
     slots: &AvatarSlots,
     ticks: Option<(f32, f32)>,
     alpha: f32,
@@ -340,21 +355,22 @@ pub(crate) fn traversal(
         let p = if curr < prev { curr } else { prev + (curr - prev) * alpha };
         (p - offset).max(0.0)
     };
-    match (moving.zip(out.slot), feed.traversal.as_mut()) {
-        (Some((p, key)), Some(t)) if t.key == key && t.rule == out.rule && t.since == character.state.started => {
+    let moving = moving.zip(out.slot).map(|(p, key)| (p, key, aliases.map_or(key, |al| al.resolve(key))));
+    match (moving, feed.traversal.as_mut()) {
+        (Some((p, key, clip)), Some(t)) if t.key == key && t.clip == clip && t.rule == out.rule && t.since == character.state.started => {
             a.instance.set_slot_progress(t.slot, progress(p, t.offset));
         }
-        (Some((p, key)), current) => {
+        (Some((p, key, clip)), current) => {
             let current = current.map(|t| *t);
             // The next slot of the same move's chain starts where the previous clip ended.
             let offset = match current {
-                Some(t) if t.rule == out.rule && t.since == character.state.started && out.chain > t.chain => t.offset + slots.duration(t.key),
+                Some(t) if t.rule == out.rule && t.since == character.state.started && out.chain > t.chain => t.offset + slots.duration(t.clip),
                 _ => 0.0,
             };
             let previous = current.map(|t| t.slot);
-            feed.traversal = start(a, slots, key, blend_in).map(|slot| {
+            feed.traversal = start(a, slots, clip, blend_in).map(|slot| {
                 a.instance.set_slot_progress(slot, progress(p, offset));
-                Traversal { key, slot, rule: out.rule, since: character.state.started, chain: out.chain, offset }
+                Traversal { key, clip, slot, rule: out.rule, since: character.state.started, chain: out.chain, offset }
             });
             if feed.traversal.is_none()
                 && let Some(slot) = previous

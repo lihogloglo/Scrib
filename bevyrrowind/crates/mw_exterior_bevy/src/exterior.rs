@@ -1834,7 +1834,14 @@ fn player_clips(store: &Store, manifest: &Manifest) -> mw_player_bevy::PlayerCli
             return mw_player_bevy::PlayerClips::default();
         }
     };
-    let wanted = mw_player_bevy::player_slots();
+    // The player's own slots, then every baked seat clip (AN26c2: the seat rules play them
+    // through the character's `interact.sit.*` aliases).
+    let mut wanted = mw_player_bevy::player_slots();
+    for (name, _) in &graph.slot_clips {
+        if mw_player_bevy::is_seat_clip(name) && !wanted.contains(name) {
+            wanted.push(name.clone());
+        }
+    }
     let slots: Vec<_> = wanted
         .iter()
         .filter_map(|slot| {

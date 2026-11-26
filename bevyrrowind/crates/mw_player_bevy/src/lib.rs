@@ -146,6 +146,21 @@ pub fn player_slots() -> Vec<String> {
     TRAVERSAL_SLOTS.iter().chain(&draw).map(|s| (*s).to_owned()).chain(combat).collect()
 }
 
+/// The prefix of the game's seat clip slots: families `seat.floor|stool|chair|bench`
+/// (`mw_interaction` `defs.rs` `seat_family`), named by the contract of
+/// [`sf_interaction_bevy::SeatClipSets`] (`<family>.b<cm>.{enter.<side>, loop, exit.<side>}`).
+const SEAT_CLIP_PREFIX: &str = "seat.";
+/// The seat family whose clips stand in for a family with none (`mw_interaction`'s chair family).
+const SEAT_FALLBACK_FAMILY: &str = "seat.chair";
+
+/// Whether `name` is one of the game's seat clip slots (named `seat.<family>...`, families
+/// `seat.floor|stool|chair|bench` from `mw_interaction` `defs.rs` `seat_family`; naming contract
+/// of [`sf_interaction_bevy::SeatClipSets`]). The host loads every baked one with [`player_slots`].
+#[must_use]
+pub fn is_seat_clip(name: &str) -> bool {
+    name.starts_with(SEAT_CLIP_PREFIX)
+}
+
 /// A baked slot clip: its length and root track (action.md B2a; a cooked clip is a `RootPath`).
 /// A traversal slot without one refuses its move (`Refused::NoRootPath`: the mantle falls back to
 /// a plain jump); a combat slot without one is dropped by the sheet.
@@ -154,8 +169,8 @@ pub struct SlotClip {
     pub clip: Arc<Clip>,
 }
 
-/// The clips of [`player_slots`] the host could load, and the skeleton they were cooked for
-/// (the weapon socket tracks are sampled on it).
+/// The clips of [`player_slots`] and the seat clips ([`is_seat_clip`]) the host could load, and
+/// the skeleton they were cooked for (the weapon socket tracks are sampled on it).
 #[derive(Default)]
 pub struct PlayerClips {
     pub slots: Vec<SlotClip>,
@@ -169,10 +184,14 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: Play
     }
     let reach_m = activate_reach_m(db.as_deref());
     let sheet = combat::load_sheet(&clips);
+    let seat_names = clips.slots.iter().map(|c| &c.slot).filter(|s| is_seat_clip(s)).cloned();
+    let avatar_slots = avatar::AvatarSlots::new(player_slots().into_iter().chain(seat_names), clips.slots.iter().map(|c| (c.slot.clone(), c.clip.duration)));
+    let seat_sets = sf_interaction_bevy::SeatClipSets::from_names(clips.slots.iter().map(|c| c.slot.as_str()), SEAT_FALLBACK_FAMILY);
     mw_controls_bevy::add(app);
     app.add_plugins((SfActionPlugin::<Physics>::default(), ActionInputPlugin, SfCameraPlugin::<Physics>::default()))
         .insert_resource(rules(&clips.slots, sheet.as_ref()))
-        .insert_resource(avatar::AvatarSlots::new(player_slots(), clips.slots.iter().map(|c| (c.slot.clone(), c.clip.duration))))
+        .insert_resource(avatar_slots)
+        .insert_resource(seat_sets)
         .insert_resource(PlayerMode { on: start_on, paused: false, body: None, last_ground: None })
         .init_resource::<RestoreBody>()
         .init_resource::<ArrivalSpot>()
@@ -211,8 +230,8 @@ fn activate_reach_m(db: Option<&RecordDb>) -> f32 {
 
 /// The base, traversal and combat move rules and the slot table the chooser times windows with.
 /// Scaffold `PlayerSlots`: fixed clip lengths until B1's animation feed reports the real ones; the
-/// traversal slots take their baked clips' lengths, the `sheet`'s slots its timings, and every
-/// baked slot its root track.
+/// traversal and seat slots take their baked clips' lengths (a seat `loop` clip loops), the
+/// `sheet`'s slots its timings, and every baked slot its root track.
 fn rules(clips: &[SlotClip], sheet: Option<&CompiledSheet>) -> ActionRules {
     let mut slots = SlotTable::new()
         .with("loco.move", SlotInfo::looping())
@@ -226,6 +245,11 @@ fn rules(clips: &[SlotClip], sheet: Option<&CompiledSheet>) -> ActionRules {
     for c in clips {
         if TRAVERSAL_SLOTS.contains(&c.slot.as_str()) {
             slots = slots.with(&c.slot, SlotInfo::once(c.clip.duration));
+        } else if is_seat_clip(&c.slot) {
+            // A seat clip is timed under its own name: the seat rules reach it through the
+            // character's aliases (`interact.sit.*`, `sf_action::Aliased`).
+            let info = if c.slot.split('.').any(|s| s == "loop") { SlotInfo::looping() } else { SlotInfo::once(c.clip.duration) };
+            slots = slots.with(&c.slot, info);
         }
         let root: Arc<dyn RootPath + Send + Sync> = c.clip.clone();
         slots = slots.with_root(&c.slot, root);

@@ -54,6 +54,7 @@ sf_console_bevy.workspace = true
 sf_controller.workspace = true
 sf_controller_bevy.workspace = true
 sf_coords.workspace = true
+sf_interaction_bevy.workspace = true
 sf_physics.workspace = true
 sf_physics_bevy = { workspace = true, features = ["controller"] }
 sf_records.workspace = true

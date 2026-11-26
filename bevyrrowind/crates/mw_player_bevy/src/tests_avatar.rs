@@ -29,19 +29,26 @@ impl CompileSource for Clips {
     }
 }
 
+/// The short walk cycle every fixture clip is.
+fn walk_clip(skeleton: &Skeleton) -> Clip {
+    let src = gait(skeleton, "walk", 1.0, 1.4, 0.5, 0.6, &[("thigh_l", "foot_l", 0.0), ("thigh_r", "foot_r", 0.5)]);
+    let rules = ClipRules { looping: Looping::Whole, ..ClipRules::default() };
+    cook_clip(skeleton, &src, &rules, &CookSettings::default()).unwrap()
+}
+
 /// A graph with the humanoid's montage slot and the waist mantle as a slot clip.
 fn asset() -> Arc<AnimAsset> {
     let skeleton = biped();
-    let src = gait(&skeleton, "walk", 1.0, 1.4, 0.5, 0.6, &[("thigh_l", "foot_l", 0.0), ("thigh_r", "foot_r", 0.5)]);
-    let rules = ClipRules { looping: Looping::Whole, ..ClipRules::default() };
-    let clip = cook_clip(&skeleton, &src, &rules, &CookSettings::default()).unwrap();
+    let clip = walk_clip(&skeleton);
     let ron = r#"(
         params: [(name: "moving", kind: Bool(false)), (name: "on_ground", kind: Bool(true)), (name: "jumping", kind: Bool(false))],
         clips: {"walk": (source: "walk"), "traverse.mantle.waist": (source: "climb"),
-                "attack.sword_1h.light1": (source: "a1"), "attack.sword_1h.light1_rec": (source: "a1r")},
+                "attack.sword_1h.light1": (source: "a1"), "attack.sword_1h.light1_rec": (source: "a1r"),
+                "seat.chair.b48.enter.front": (source: "se"), "seat.chair.b48.exit.front": (source: "sx")},
         nodes: {"walk": Clip(clip: "walk"), "full_slot": Slot(slot: "full", input: "walk", group: None, mask: None)},
         layers: [(node: "full_slot")],
-        slot_clips: ["traverse.mantle.waist", "attack.sword_1h.light1", "attack.sword_1h.light1_rec"],
+        slot_clips: ["traverse.mantle.waist", "attack.sword_1h.light1", "attack.sword_1h.light1_rec",
+                     "seat.chair.b48.enter.front", "seat.chair.b48.exit.front"],
     )"#;
     let graph = compile_str("avatar", ron, &skeleton, &mut Clips(clip.clone())).unwrap();
     let clips = graph.clips.iter().map(|_| Arc::new(clip.clone())).collect();
@@ -102,17 +109,89 @@ fn mantle_progress_plays_the_slot_then_hands_back() {
         character.output.tick = Tick(tick);
         character.output.warp = Some(WarpOutput { root: RootPose::IDENTITY, progress, settle: false });
         let ticks = Some(((progress - 1.0 / 60.0).max(0.0), progress));
-        avatar::traversal(&mut feed, &mut animator, &character, &AvatarSlots::default(), ticks, 1.0);
+        avatar::traversal(&mut feed, &mut animator, &character, None, &AvatarSlots::default(), ticks, 1.0);
         animator.update(1.0 / 60.0, AnimTier::A0);
         let time = animator.instance.montage(slot).expect("the mantle plays").time;
         assert!((time - progress).abs() < 1e-3, "playhead {time} follows progress {progress}");
     }
     assert!(feed.traversal().is_some());
     character.output.warp = None;
-    avatar::traversal(&mut feed, &mut animator, &character, &AvatarSlots::default(), None, 1.0);
+    avatar::traversal(&mut feed, &mut animator, &character, None, &AvatarSlots::default(), None, 1.0);
     animator.update(1.0 / 60.0, AnimTier::A0);
     assert!(feed.traversal().is_none());
     assert!(animator.instance.montage(slot).is_none(), "back to locomotion");
+}
+
+/// `AN26c2`: a seat rule's slot plays the clip the character's aliases bind it to; a rebound alias
+/// restarts the play; with no aliases the rule slot has no clip and nothing plays.
+#[test]
+fn an_aliased_seat_slot_plays_its_bound_clip() {
+    const FRONT: &str = "seat.chair.b48.enter.front";
+    const OTHER: &str = "seat.chair.b48.exit.front";
+    let mut animator = Animator::new(asset());
+    let slot = animator.asset.graph.slot("full").expect("full slot");
+    let slots = AvatarSlots::new(player_slots().into_iter().chain([FRONT.to_owned(), OTHER.to_owned()]), []);
+    let enter = SlotKey::of("interact.sit.enter");
+    let mut aliases = sf_action::SlotAliases::new();
+    aliases.bind(enter, SlotKey::of(FRONT));
+    let mut feed = PlayerFeed::default();
+    let mut character = ActionCharacter::new(PLAYER_CHARACTER, ActionState::new(RuleKey::of("loco")), CharacterParams::default());
+    character.output.slot = Some(enter);
+    let mut step = |feed: &mut PlayerFeed, animator: &mut Animator, aliases: Option<&sf_action::SlotAliases>, tick: u32| {
+        #[allow(clippy::cast_precision_loss, reason = "small")]
+        let progress = tick as f32 / 60.0;
+        character.output.tick = Tick(tick);
+        character.output.warp = Some(WarpOutput { root: RootPose::IDENTITY, progress, settle: false });
+        avatar::traversal(feed, animator, &character, aliases, &slots, Some((progress, progress)), 1.0);
+        animator.update(1.0 / 60.0, AnimTier::A0);
+        progress
+    };
+    for tick in 0..8u32 {
+        let progress = step(&mut feed, &mut animator, Some(&aliases), tick);
+        let time = animator.instance.montage(slot).expect("the seat enter plays").time;
+        assert!((time - progress).abs() < 1e-3, "playhead {time} follows progress {progress}");
+        assert_eq!(feed.traversal(), Some(enter), "the feed reports the rule slot");
+        assert_eq!(feed.traversal_clip(), Some(SlotKey::of(FRONT)));
+    }
+    aliases.bind(enter, SlotKey::of(OTHER));
+    step(&mut feed, &mut animator, Some(&aliases), 8);
+    assert!(animator.instance.montage(slot).is_some(), "the rebound clip plays");
+    assert_eq!(feed.traversal(), Some(enter), "still the rule slot");
+    assert_eq!(feed.traversal_clip(), Some(SlotKey::of(OTHER)), "a rebound alias restarts the play");
+
+    let mut fresh = PlayerFeed::default();
+    let mut bare = Animator::new(asset());
+    step(&mut fresh, &mut bare, None, 0);
+    assert!(fresh.traversal().is_none(), "no aliases: interact.sit.enter has no clip");
+    assert!(bare.instance.montage(slot).is_none());
+}
+
+/// `AN26c2`: a baked seat clip is timed and rooted under its own name, so the seat rule's slot
+/// reaches both through the character's aliases (`sf_action::Aliased`); a `loop` clip loops.
+#[test]
+fn seat_clips_answer_the_aliased_seat_slot() {
+    use sf_action::{Aliased, SlotAliases, SlotSource};
+    const ENTER: &str = "seat.chair.b48.enter.left";
+    const LOOP: &str = "seat.chair.b48.loop";
+    assert!(is_seat_clip(ENTER));
+    assert!(!is_seat_clip("traverse.mantle.waist"));
+    let clip = Arc::new(walk_clip(&biped()));
+    let clips = [SlotClip { slot: ENTER.into(), clip: clip.clone() }, SlotClip { slot: LOOP.into(), clip: clip.clone() }];
+    let enter = SlotKey::of("interact.sit.enter");
+    let mut aliases = SlotAliases::new();
+    aliases.bind(enter, SlotKey::of(ENTER));
+
+    let with = rules(&clips, None);
+    let seen = Aliased { base: &*with.slots, aliases: &aliases };
+    let info = seen.slot(enter).expect("the aliased seat slot has a SlotInfo");
+    assert_eq!(info.length, Some(sf_action::ClockTime::from_secs(clip.duration)));
+    let root = seen.root(enter).expect("the aliased seat slot has a root path");
+    assert!((root.duration() - clip.duration).abs() < 1e-6, "root {} vs clip {}", root.duration(), clip.duration);
+    assert_eq!(with.slots.slot(SlotKey::of(LOOP)).expect("the loop clip is timed").length, None, "a loop clip loops");
+
+    let without = rules(&[], None);
+    let seen = Aliased { base: &*without.slots, aliases: &aliases };
+    assert!(seen.slot(enter).is_none() && seen.root(enter).is_none(), "no baked clip: the seat slot answers None");
 }
 
 #[test]
@@ -261,14 +340,14 @@ fn a_clip_chain_plays_each_slot_from_its_own_start() {
         character.output.slot = Some(SlotKey::of(key));
         character.output.chain = chain;
         character.output.clip = Some(ClipOutput { delta: Vec3::ZERO, yaw: 0.0, progress });
-        avatar::traversal(&mut feed, &mut animator, &character, &slots, Some((progress, progress)), 1.0);
+        avatar::traversal(&mut feed, &mut animator, &character, None, &slots, Some((progress, progress)), 1.0);
         animator.update(1.0 / 60.0, AnimTier::A0);
         let time = animator.instance.montage(slot).expect("the attack plays").time;
         assert!((time - local).abs() < 1e-3, "{key}: playhead {time} vs {local}");
         assert_eq!(feed.traversal(), Some(SlotKey::of(key)));
     }
     character.output.clip = None;
-    avatar::traversal(&mut feed, &mut animator, &character, &slots, None, 1.0);
+    avatar::traversal(&mut feed, &mut animator, &character, None, &slots, None, 1.0);
     animator.update(1.0 / 60.0, AnimTier::A0);
     assert!(feed.traversal().is_none());
 }
