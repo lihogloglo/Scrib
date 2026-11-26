@@ -22,7 +22,8 @@ with no build time or crates taken from other lanes. **Owner go for Stage A (202
   `sf_bigworld_bevy` holds only the BW-2 bench example.
 - **The ceiling bench tripped the stop rule** (BW-2, 2026-11-26): the worst-case stand costs 13.97 ms GPU on the
   slot path with plain alpha-masked PBR trees and cards, against a 2.0 ms budget. BW-2b priced the standard fixes:
-  the same slots cost 1.84 ms once nothing is alpha-tested or cast into the cascades. Stage B waits for the owner.
+  the same slots cost 1.84 ms once nothing is alpha-tested or cast into the cascades. Those fixes are now the
+  design (spec "Fill rules"; expected 2.5-3.3 ms at stand density). Stage B waits for the owner.
 - Generated worlds draw every scattered tree as an entity: 7.21 M flora ran at 26 fps (owner run, 2026-11-19). The
   static scene, precombine and far field are off there (scaffold `WorldgenPlacementStatics`).
 - Placement exists and is deterministic per 256 m tile (`sf_worldgen::scatter`).
@@ -41,8 +42,11 @@ with no build time or crates taken from other lanes. **Owner go for Stage A (202
   eidolon pattern), so Bevy's stock preprocess does frustum and hi-Z culling in every view.
 - **Bevy meshlets rejected** for T0/T1: opaque only, no wind, per-instance CPU upload every frame. Re-checked for the
   opaque T2 only.
-- **Shadows:** T0 and T1 cast into cascades within ~500 m. T2 receives the terrain far shadow map. Wind stops below
-  40 px, so cascades stay cacheable (UE 5.7, Chlorophyll).
+- **Shadows (owner 2026-11-26):** tree shadows come from shadow-only slot ranges within ~500 m: a shadow LOD for T0
+  and a simple opaque proxy for T1. Impostor cards cast nothing. T2 receives the terrain far shadow map. Wind stops
+  below 40 px, so cascades stay cacheable (UE 5.7, Chlorophyll).
+- **The alpha test runs once,** in the camera prepass; the main pass tests depth-equal and never discards
+  (`Material::specialize`, no Bevy patch).
 - **New crates only:** `sf_bigworld`, `sf_bigworld_bevy`, `mw_bigworld_bevy`. Other lanes' crates are read or hooked,
   never edited ("Hooks" in the spec).
 
@@ -61,11 +65,16 @@ with no build time or crates taken from other lanes. **Owner go for Stage A (202
   path: opaque content that casts nothing costs 1.84 ms (model 1.75). Recommended: keep the slot path, no standalone
   pass; impostors out of the cascades with an opaque shadow proxy, geometry leaves and a shadow LOD at T0, a
   depth-equal main pass for the impostor (spec "As built" BW-2b, "Risks").
+- [ ] **BW-2c** depth-equal main pass for today's `ImpostorMaterial` (`sf_lod_bevy`, granted by meta 2026-11-26),
+  with a counter of main-pass draws that no prepass drew. Verify: pipeline-descriptor test; counter 0; owner look.
+- [p] **BW-2d** bench arms for the shadow LOD, the trimmed hull and the depth-equal main pass. One run, on meta's go.
 
 **Stage B: a forest in a framework example scene** (owner looks, synthetic content).
 - [p] **BW-3** GPU producer. Depends on BW-1, BW-2. Verify: GPU twin test.
 - [p] **BW-4** slot impostor material and atlas capture. Verify: naga compile tests; owner look `BW-impostor`.
 - [p] **BW-5** T0 mesh tier with crossfade and wind. Verify: owner look `BW-near`.
+- [p] **BW-5b** shadow ranges: T0 shadow LOD and T1 opaque proxy on the shadow-only layer. Verify: slot-span test;
+  owner look `BW-shadow` (proxy on / off / card shadows).
 - [p] **BW-6** tile streaming on tasks. Verify: headless flight with a hitch count.
 
 **Stage C: to the horizon.**
@@ -97,3 +106,5 @@ None pending: BW-0 is the spec. As-built detail goes into the spec as each slice
 1. **Vanilla Morrowind trees** stay on today's static scene and far field. Moving them to this path is a later option
    ("maybe for Morrowind too if it's performant, not important"): the BW-2 and BW-10 numbers decide whether to propose it.
 2. **Tree models for the 10x world:** Morrowind's own tree models first; the ez-tree generator port comes later.
+3. **Far tree shadows (BW1):** yes to "the fastest option": a simple opaque proxy casts for the trees past the mesh
+   tier, not each impostor card (0.29 ms against 1.24 ms on the bench). The A/B stays for the owner check.

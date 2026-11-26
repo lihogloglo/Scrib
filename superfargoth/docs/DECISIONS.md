@@ -2079,3 +2079,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (specs-8, WG-E2): nature scatter v2 = rules + point processes (suitability hats, stand mosaic, Thomas
   clusters with size marks, bounded-round competition, layers by light), not an ecosystem simulation; the result is a
   hash-cached product, no longer computed at world load (`worldgen-scatter.md`; research WG-R).
+- 2026-11-26 (bigworld-5, owner BW1): far tree shadows come from a simple opaque proxy on the shadow-only layer,
+  not from each impostor card. The slot path stays, with six fill rules: the alpha test runs once, in the camera
+  prepass, and the main pass tests depth-equal through `Material::specialize` (`big-world-rendering.md` "Fill rules").

@@ -1,7 +1,9 @@
 # Big-world rendering: millions of trees and dense scatter (`sf_bigworld`, `sf_bigworld_bevy`)
 
-Status: **BW-1 built** (the Bevy-free core `sf_bigworld`, 2026-11-26; "As built"); nothing draws yet. Owner go for
-Stage A (BW-1, BW-2) 2026-11-26. Lane roadmap: [docs/roadmaps/bigworld.md](../../../docs/roadmaps/bigworld.md)
+Status: **BW-1 built, BW-2 and BW-2b measured** (2026-11-26; "As built"): the Bevy-free core `sf_bigworld` exists, the
+ceiling bench tripped the stop rule, and the fixes it priced are the "Fill rules" under "Design". Nothing draws in game
+yet. Owner go for Stage A (BW-1, BW-2) 2026-11-26. **Owner 2026-11-26 (BW1): far tree shadows come from a simple
+opaque proxy, not from each impostor card** ("the fastest option"; the A/B stays for the owner check). Lane roadmap: [docs/roadmaps/bigworld.md](../../../docs/roadmaps/bigworld.md)
 (later build slices `[p]` until the owner's go). Owner brief (2026-11-26): render a world about 10x Vvardenfell with on the
 order of 10 million trees and dense statics, the way Chlorophyll, UE5 Nanite foliage and PCG, Decima, RDR2 and Cyberpunk
 do, within the frame target. It runs **on the side**: new crates only, and no build time or crates taken from other lanes.
@@ -127,8 +129,8 @@ High preset: DLSS Q internal `H` = 960, fov_y = 60° (`sf_camera/src/comfort.rs:
 
 | Tier | Shown while | High (12 m tree, 8 m crown) | Representation | Shadows |
 |---|---|---|---|---|
-| T0 mesh | height ≥ `mesh.switch_px` (80 px) | 0 → ~125 m | cooked LOD chain (meshopt), alpha-tested leaves, wind | casts in every cascade it reaches; wind only inside T0 |
-| T1 impostor | crown width ≥ `aggregate.switch_px` (3 px) | ~125 m → ~2.2 km | octahedral impostor, one card per tree, 12×12 frames, depth + normal, 3-frame blend, dither fade | casts with impostor depth inside the cascade range (~500 m); none past it |
+| T0 mesh | height ≥ `mesh.switch_px` (80 px) | 0 → ~125 m | cooked LOD chain (meshopt), geometry leaves where the model has them (alpha-card leaves are tested once, fill rule 5), wind | casts through a shadow LOD of its chain, in its own slot range (fill rule 4); wind only inside T0 |
+| T1 impostor | crown width ≥ `aggregate.switch_px` (3 px) | ~125 m → ~2.2 km | octahedral impostor, one card per tree on a trimmed hull, 12×12 frames, depth + normal, 3-frame blend, dither fade; flat card depth (no `frag_depth`) | the card casts nothing; inside the cascade range (~500 m) an opaque proxy casts for it (fill rules 1, 2); none past it |
 | T2 aggregate | below that | ~2.2 km → horizon | per-tile canopy proxy (opaque, baked), quadtree levels by pixel error | receives the terrain far shadow map; casts nothing |
 
 Rules:
@@ -136,6 +138,41 @@ Rules:
   tiers, with its fade in the slot's `tag`. That is the same no-hole rule as the far field's lead bands.
 - T2 tiles keep the far field's `VisibilityRange` lead bands, so a coarser level is drawn fully before a finer one
   fades out.
+
+### Fill rules: where the alpha test and the cascades are paid (BW-2b; owner 2026-11-26)
+
+The ceiling bench showed that the slot path is cheap and that alpha-tested content cast into cascades is not ("Cost
+model", "Tripped"). Six rules follow, each a standard technique. Sources and `path:line`:
+`superfargoth/docs/research/far-vegetation-fill-2026-11-26.md` (part 1 industry: the HZD talk details and the UE
+cvar come from secondary sources there; part 3 the Bevy code-read). The ms are BW-2b's `stand` spans at High.
+
+1. **T1 impostor cards cast into no cascade** (`NotShadowCaster` on the batch). UE far LODs and billboards cast
+   nothing; HZD keeps shadow casters apart from the visual meshes. Measured: the cards' cascade spans go from 1.24 ms
+   to 0, and the bookkeeping from 1.20 to 0.83 ms, because the cards leave four views.
+2. **Far tree shadows come from an opaque shadow proxy (owner 2026-11-26, BW1: "the fastest option").** Between the
+   mesh end and `shadow.mesh_range_m` the producer also writes each tree into a shadow slot range: a low-poly opaque
+   crown per species that only the lights see, on the shadow-only `RenderLayers` layer every worldspace already has
+   (`docs/wiki/engine/streaming.md`). An opaque caster takes the depth-only pipeline, with no fragment shader.
+   Proxy for its cost: the opaque cards' cascade spans, 0.29 ms (masked cards: 1.24 ms). `bigworld.shadow.proxy`
+   turns it off; `bigworld.shadow.impostors` turns the cards' own masked shadows back on, which is the owner's A/B.
+3. **T0 leaves are geometry where the model has them** (Chlorophyll F17: trees fully triangles). Measured: the
+   trees' prepass + main fall from 2.93 to 0.40 ms without the alpha test. A model with alpha-card leaves keeps its
+   mask and follows rule 5.
+4. **T0 casts through a shadow LOD.** The visual T0 batch casts nothing; a lower level of the same chain sits in a
+   shadow slot range on the shadow-only layer (HZD: one fixed shadow LOD per cascade). Its leaves are opaque
+   there. Full meshes in three cascades cost 2.74 ms opaque and 4.33 ms masked; the shadow LOD is not priced.
+5. **The alpha test runs once, in the camera prepass.** A masked material on this path (the impostor, alpha-card
+   leaves) has a mask-only prepass, and a main pass at depth-equal with no depth write and no discard (UE
+   `r.EarlyZPassOnlyMaterialMasking`). In Bevy 0.20 that is `Material::specialize`, with no patch to the vendored
+   `bevy_pbr`. It holds only if both vertex stages mark the position `@invariant`, the camera prepass writes the
+   rasterised depth (so no `frag_depth`: the impostor's depth frames feed the frame blend and the lighting only),
+   and the view has a depth prepass (a view without one keeps the stock state and the discard). Proxy for its
+   cost: the cards' main pass, 0.16 ms opaque against 2.73 ms masked; the masked prepass stays near 1.0 ms.
+6. **The impostor card is a trimmed hull,** not a quad: 4 to 8 vertices per species keep 52-60 % of the quad's area
+   (Persson, Avalanche). Not priced.
+
+Shadow ranges are ordinary slot ranges, so the producer, materialize and Bevy's per-view preprocess treat them like
+any other; no pass of our own.
 
 ### Data flow (one frame)
 
@@ -151,14 +188,16 @@ Rules:
    exists.
 3. **Producer** (our compute pass in `GpuInstanceBatchSystems::Publish`, the eidolon pattern):
    - one workgroup per resident tile; one tile-AABB test first;
-   - then per instance: tier from distance and screen size, fade, and a frustum test **only past the shadow range**,
-     because nothing past it can cast into a cascade;
-   - atomic bump-allocate into the slot span of its (species, tier, LOD level) range of a `GpuBatchedMesh3d`, writing
-     the 64 B slot.
+   - then per instance: tier from distance and screen size, fade, and a frustum test. Visual ranges are seen by the
+     camera only (fill rules 1 and 4), so they take the test everywhere. Shadow ranges (the T0 shadow LOD, the T1
+     proxy) hold every instance inside `shadow.mesh_range_m`, untested: a tree behind the camera still casts;
+   - atomic bump-allocate into the slot span of its (species, tier, LOD level, visual or shadow) range of a
+     `GpuBatchedMesh3d`, writing the 64 B slot.
    Inactive slots are written `is_active = 0`. The producer's CPU twin is the same function in `sf_bigworld`; GPU tests
    check them against each other (the groundcover `wgsl_twin` pattern).
 4. **Bevy draws.** `materialize`, then the stock per-view preprocess (frustum, hi-Z), then multi-draw indirect: one batch
-   per (species, tier) and material. Camera, cascades and lamp faces all come for free.
+   per (species, tier) and material, plus the shadow batches on the shadow-only layer. Camera, cascades and lamp faces
+   all come for free.
 5. **T2** canopy tiles are ordinary `Mesh3d` entities with `VisibilityRange`, a few hundred at most (count in "Cost
    model").
 
@@ -241,12 +280,12 @@ passes are bandwidth-bound. Densities: **avg** 60/ha everywhere, **stand** 400/h
 Groundcover's 0.8 ms is separate. Anchors: Horizon's placement is 0.25 ms; Decima's visibility was 1-2 ms on a GPU
 about 6× slower; Chlorophyll's whole dense-forest frame on a 3080 is ~12.5 ms.
 
-| Preset | mesh.switch_px | aggregate.switch_px | T1 end (8 m crown) | atlas | T0 shadows | Expected GPU (avg / stand) |
+| Preset | mesh.switch_px | aggregate.switch_px | T1 end (8 m crown) | atlas | Tree shadows | First model, GPU (avg / stand) |
 |---|---|---|---|---|---|---|
-| Ultra | 50 | 2 | ~3.3 km | 2048² | T0 + T1 | 0.9 / 3.0 ms |
-| High | 80 | 3 | ~2.2 km | 1024² | T0 + T1 | 0.55 / 1.95 ms |
-| Medium | 120 | 4 | ~1.7 km | 1024² | T0 only | 0.4 / 1.3 ms |
-| Low | 200 | 6 | ~1.1 km | 512² | T0 within 60 m | 0.25 / 0.7 ms |
+| Ultra | 50 | 2 | ~3.3 km | 2048² | shadow LOD + proxy | 0.9 / 3.0 ms |
+| High | 80 | 3 | ~2.2 km | 1024² | shadow LOD + proxy | 0.55 / 1.95 ms |
+| Medium | 120 | 4 | ~1.7 km | 1024² | shadow LOD only | 0.4 / 1.3 ms |
+| Low | 200 | 6 | ~1.1 km | 512² | shadow LOD within 60 m | 0.25 / 0.7 ms |
 
 At Medium and Low, `ppr` drops with the internal resolution and the distances shrink with it.
 
@@ -261,6 +300,21 @@ of the two fill rows were wrong, not the slot path. Two rows broke: preprocess (
 bookkeeping) and raster + fragment (10×, the fill of alpha-masked quads lit by `StandardMaterial` in the camera and
 three cascades). Materialize holds. The preset table above is the unmeasured model. What is known and what is not:
 "Risks".
+
+**Expected with the fill rules (stand, High).** Sums of BW-2b's measured spans and of proxies for what no arm ran;
+not measured as one arm. The slot path stays, with no standalone pass (BW-2b's recommendation, folded in
+2026-11-26).
+
+| Item | GPU ms | Basis |
+|---|---|---|
+| Bookkeeping, 254 k slots, cards in the camera view only | 0.83 | measured (`stand/cards.noshadow`); the shadow ranges (~31 k trees within 500 m, four views) come on top, not priced |
+| T1 camera prepass, masked | ~1.0 | measured (1.00) |
+| T1 main pass, depth-equal | ~0.2 | proxy: opaque cards 0.16 (masked 2.73); the real impostor shader costs more per pixel |
+| T1 shadow proxy | ~0.3 | proxy: opaque cards' cascade spans 0.29 (masked 1.24) |
+| T0 prepass + main, geometry leaves | ~0.4 | measured (`stand/trees.opaque`: 0.29 + 0.10); alpha-card leaves by rule 5 are not priced |
+| T0 shadow LOD | 0 to 2.74 | not priced; 2.74 is the full opaque meshes |
+| Trimmed hull | about −0.4 on T1 | BW-2b's estimate (T1 2.0 → 1.6), not priced |
+| **Total** | **about 2.5-3.3** | BW-2b's estimate: under the 3.5 ms stop limit, over the 2.0 ms budget for worst-case stands |
 
 ## Tunables (`tunables.md`; prefix `bigworld.`, group `Group::Foliage`)
 
@@ -278,7 +332,9 @@ All `Source::Guess` unless noted. Presets as in the table above.
 | `bigworld.mesh.max_instances` | 4 096 | 256-64 k | count | Guess | Restart |
 | `bigworld.impostor.atlas_px` | 1024 | 256-4096 | px | Industry: Fortnite 2048², 12×12 | Restart (rebake) |
 | `bigworld.impostor.frames` | 12 | 4-16 | count | Industry: Fortnite 12×12 | Restart (rebake) |
-| `bigworld.shadow.impostors` | true | bool | - | Guess | Live |
+| `bigworld.shadow.impostors` | false | bool | - | Ledger 2026-11-26 (BW-2b: masked cards in the cascades 1.24 ms); `true` is the owner's A/B arm | Live |
+| `bigworld.shadow.proxy` | true | bool | - | Owner(2026-11-26), BW1 | Live |
+| `bigworld.shadow.mesh_lod_bias` | 1 | 0-4 | levels | Guess (HZD: one fixed shadow LOD per cascade) | Live |
 | `bigworld.shadow.mesh_range_m` | 500 | 0-2000 | m | Reference: cascade reach today (~504 m, far-field.md) | Live |
 | `bigworld.wind.min_px` | 40 | 0-400 | px | Industry: UE `DefaultAnimationMinScreenSize` 0.1 | Live |
 | `bigworld.aggregate.error_px` | 1.0 | 0.5-8 | px | Reference: far-field one-pixel budget | Restart (rebake) |
@@ -288,7 +344,7 @@ Not tunables (`const`): the 16 B instance layout, the 64 B slot (vendored), the 
 
 ## Counters (`sf_diag`)
 
-`bigworld/tiles/{t0,t1,t2}`, `bigworld/instances/{t0,t1}` (ring), `bigworld/slots/{t0,t1}` (written),
+`bigworld/tiles/{t0,t1,t2}`, `bigworld/instances/{t0,t1}` (ring), `bigworld/slots/{t0,t1,shadow}` (written),
 `bigworld/overflow`, `bigworld/upload_bytes`, `bigworld/tile_gen_ms` (tasks), and GPU passes `bigworld_producer`,
 `bigworld_materialize` (the vendored pass, attributed per batch).
 
@@ -302,9 +358,12 @@ is the owner's (visual checks `BW-`). Build slices wait for the owner's go (road
 | BW-0 | This spec + lane roadmap + SYSTEMS row | docs | - |
 | BW-1 | `sf_bigworld` core: tile keys, ring planner with hysteresis, tier bands from the px rule, 16 B instance pack/unpack, `InstanceSource` trait + a synthetic jittered-grid source | NEW `sf_bigworld` (Bevy-free, hakari final-excludes) | exact: pack round-trip, band math vs the formula, planner determinism and hysteresis; `#[ignore = "measurement"]` prints ring counts at avg/stand per preset |
 | BW-2 | Ceiling bench: example `forest_ceiling`, N slots (10⁵, 3·10⁵, 10⁶) of a 1.5 k-tri alpha-masked tree and of a card, CPU-filled once, camera + 4 cascades | NEW `sf_bigworld_bevy` (example only) | orchestrator runs it, one run per arm: GPU ms of materialize, preprocess per view, prepass, main; decides the stop rule |
+| BW-2c | Fill rule 5 on today's impostor: `ImpostorMaterial` gets the depth-equal main pass through `Material::specialize`, the discard stays only for views without a depth prepass | `sf_lod_bevy` (granted by meta 2026-11-26) | pipeline-descriptor test (main: `Equal`, no depth write; prepass and shadow unchanged; no depth prepass: stock); a counter of main-pass draws that no prepass drew under `OcclusionCulling`, expected 0; the far field's impostor visual check re-opened for the owner |
+| BW-2d | Bench arms for what BW-2b did not price: shadow LOD, trimmed hull, the depth-equal main pass | `sf_bigworld_bevy` (example only) | orchestrator runs it, one run, on meta's go |
 | BW-3 | GPU producer: tile pool upload, per-tile + per-instance tier/fade/frustum, slot writes into ranges | `sf_bigworld_bevy` | GPU twin test vs the `sf_bigworld` CPU function (slot counts and order-free sets); headless timing at 10⁶ pool instances |
-| BW-4 | Slot impostor material: octahedral 3-frame blend, depth, prepass/shadow variant, dither fade from `tag`; atlas capture at `atlas_px` | `sf_bigworld_bevy` (+ `sf_lod::impostor` read-only) | naga compile of every variant; capture test (coverage, depth range); owner look `BW-impostor` (example scene) |
-| BW-5 | T0 mesh tier: LOD chain levels as ranges, crossfade with T1, wind in vertex and prepass | `sf_bigworld_bevy` | slot-span test per level; owner look `BW-near` (example scene, walk-in) |
+| BW-4 | Slot impostor material on a trimmed hull: octahedral 3-frame blend, mask-only prepass, depth-equal main pass (no discard, no `frag_depth`), dither fade from `tag`, casts nothing; atlas capture at `atlas_px` | `sf_bigworld_bevy` (+ `sf_lod::impostor` read-only) | naga compile of every variant; capture test (coverage, depth range); owner look `BW-impostor` (example scene) |
+| BW-5 | T0 mesh tier: LOD chain levels as ranges, geometry leaves or leaves masked once (fill rules 3, 5), crossfade with T1, wind in vertex and prepass | `sf_bigworld_bevy` | slot-span test per level; owner look `BW-near` (example scene, walk-in) |
+| BW-5b | Shadow ranges on the shadow-only layer: the T0 shadow LOD and the T1 opaque proxy inside `shadow.mesh_range_m` (fill rules 2, 4) | `sf_bigworld_bevy` | slot-span test (every instance inside the range is in exactly one shadow range, none in a camera view); ms per preset; owner look `BW-shadow` (proxy on / off / card shadows A/B) |
 | BW-6 | Tile streaming on tasks: generate, upload, evict, overflow thinning | `sf_bigworld_bevy` | headless: flight at 60 m/s over a synthetic world, no frame over 1.5× median from uploads, `tile_gen_ms` printed |
 | BW-7 | T2 canopy bake: voxel coverage, remesh, simplify to the error, prefiltered vertex attributes | `sf_bigworld` (feature `bake`) | bake time and bytes per tile printed (measurement); error-bound test vs the input coverage |
 | BW-8 | T2 runtime: canopy tile entities, lead-band crossfade with T1, far shadow map via `FarShadowExt` | `sf_bigworld_bevy` (+ `sf_lod_bevy` read-only) | no-hole test (coarser drawn before finer fades); owner look `BW-far` (example flight) |
@@ -347,17 +406,23 @@ slices append their detail there and keep a few lines here.
 - **Slot path ceiling: the path holds, the content did not** (BW-2, BW-2b, 2026-11-26). The stop rule tripped on
   `stand` (14.96 ms with focus). BW-2b shows why: with no alpha test and nothing cast into the cascades the same
   254 k slots cost 1.84 ms (model 1.75); bookkeeping is 0.83-1.25 ms (model 0.55). The standalone indirect pass
-  (own alpha-mask and shadow pipelines, a rule 4 cost) would buy back part of that bookkeeping only, so it is **not**
-  the recommended way out. BW-3 still waits for the owner's decision.
-- **Alpha test and cascade casting: the real cost, with standard fixes** (BW-2b table). (1) T1 impostors cast into no
-  cascade; shadows past the mesh tier come from an opaque proxy (HZD keeps shadow casters apart from visual meshes;
-  UE far LODs cast nothing and far shadows come from another system). (2) T0 leaves are geometry, not alpha cards
-  (Chlorophyll F17). (3) Near trees cast through a shadow LOD (2.74 ms as full meshes). (4) The impostor draws with a
-  masked prepass and a main pass that neither discards nor overdraws (depth-equal), on a trimmed hull. Open: (3) and
-  (4) are not priced by an arm; the look of far tree shadows from a proxy is the owner's to judge.
-  Code-read 2026-11-26: (4) needs no Bevy patch, `Material::specialize` reaches the main pass depth state; it
-  needs `@invariant` positions and no `frag_depth` in the camera prepass
-  ([research note, part 3](../research/far-vegetation-fill-2026-11-26.md)).
+  (own alpha-mask and shadow pipelines, a rule 4 cost) would buy back part of that bookkeeping only, so the slot
+  path stays, with the "Fill rules". BW-3 and later still wait for the owner's go.
+- **The fill rules are over budget at stand density, and half of them are not priced.** Expected 2.5-3.3 ms against
+  a 2.0 ms budget ("Cost model"). No arm ran the shadow LOD, the trimmed hull, the depth-equal main pass, the real
+  impostor shader or the shadow ranges' bookkeeping: BW-2d prices the first three.
+- **Alpha-card tree models.** Fill rule 3 needs geometry leaves. The 10x world starts with Morrowind's own tree
+  models (roadmap, owner answer 2), which have alpha-card leaves: they take rule 5 (the bench trees cost 3.07 ms
+  masked without shadows against 0.69 ms opaque; rule 5 should remove most of the 2.15 ms main pass, not the
+  0.78 ms prepass). Not priced.
+- **Depth-equal main pass** ([research note, part 3](../research/far-vegetation-fill-2026-11-26.md)). Not traced:
+  whether, with `OcclusionCulling`, the main pass can draw an instance that no prepass drew; with `Equal` it would
+  be missing for that frame. BW-2c counts it. The impostor loses per-pixel depth on the camera path (no
+  `frag_depth`): intersections with terrain and buildings are those of a flat card past ~125 m.
+- **Shadow-only ranges.** Not checked in code: that a batch on the shadow-only layer costs no preprocess in the
+  camera view, and how lamp (point and spot) views treat that layer. Check in BW-5b.
+- **The look of proxy shadows** is the owner's to judge (`BW-shadow`: proxy on, off, and the cards' own masked
+  shadows as the A/B). The proxy's shape per species (a low-poly crown) is content, baked with the species.
 - **Render-thread CPU per slot** (BW-2, dev profile, not conclusive): render busy rose 0.5 ms at 10⁵ slots and
   2.3 ms at 10⁶ (model ≤ 0.2 ms). Needs a release run.
 - **Meshlets for T2 only.** The canopy is opaque, which is the case where Bevy meshlets work. Re-check at BW-7: the DX12
