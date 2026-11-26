@@ -441,6 +441,12 @@ to the identity class then the base set) and drives the `Limp` op (before `FootP
 (after it, before `Lean`), both identity at weight 0. Per tier: A0 all layers, A1 class + bone ops, A2 class + speed
 match, A3 none; style share ≤ 3 µs of the 25 µs A0 character. Classic: no style.
 
+## Physics tint
+
+Short ragdoll-shaped motion over the clip (stagger, stumble, sway, sag): A0/A1 only, capped together with live
+takeovers, additive fallback over the cap and in Classic; physics never moves the root:
+[physics-tint.md](physics-tint.md) (AN39).
+
 ## Bevy integration (`sf_anim_bevy`)
 
 - Components: `Animator { graph, instance, params }` on the character root,

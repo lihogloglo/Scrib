@@ -122,6 +122,39 @@ app's debug driver: console `kill` (was `I`) kills the walker nearest the crossh
 "Ragdoll routing"; others: graph `dead` flag, root `Dead`, so mover `Held`, `Ragdoll`
 after a 0.4 s death clip); corpses drag by the grabbed limb through the P6 carry driver.
 
+### Physics tint on Delirium (AN39)
+
+Framework seam, states, cap and tunables: `../../../superfargoth/docs/specs/physics-tint.md`. `mw_delirium_bevy` is the
+provider: it inserts `TintCapable` on human walkers (`HUMAN_SKELETONS` with a `Mover`); beast races, creatures and
+action characters (the player, the dummy) get none, so they play the fallback.
+- **Light path, not a `Takeover`:** no `Held`, the root and graph stay live. The agent is built like a takeover start (two
+  posed frames, `bones_to_parts`, the floor), then each tick: `incoming` = `TintTarget` in the sim frame, `activePose` on
+  every tinted mask, `setStiffness` per mask = `delirium.tint.stiffness` x `ActiveTint.sample.strength`, the pelvis held
+  on the target by `hardConstraint` (AN38 variant G). Copy-back: parts to a local pose under the live root, `PhysicsPose`
+  with per-joint weights. Done: the agent is dropped; no `DeliriumHandedBack`, no root move. Masks: SPINE `us`, NECK `un`,
+  ARM_L/R `ul`/`ur`, LEG_L/R `ll`/`lr`.
+- **Per kind:** Stagger: `applyImpulse` on the struck part x `impulse_gain`. Stumble: `injury` on the hurt leg's mask at
+  the intensity. Sway: `leanInDirection` along `direction`; with `bodyBalance` on the legs and `armsOutOnPushTimeout` only
+  if AN40b step 1 passes. Sag: `bodyRelax` on `ub`, its dip values seeded from `staggerFall`'s wind-down (arms/spine 12 to
+  6/8, legs to 3; R§2).
+- **Cap and step:** `PhysicsBodies.takeovers` = live takeovers that still step (not settled corpses), every tick. Tints
+  step in the same `FixedUpdate` loop; `DeliriumStats.step_us` sums both, plus a `tints` count. A `DeliriumReaction` on a
+  tinted root promotes it: the takeover reuses the built agent, else starts as today.
+- **Bands (walkers' impacts, `HitRules`):** 1-10 N s `HitReact` (as today); 10 to `anim.tint.band.max_ns` a Stagger tint;
+  from there to `certain_fall` (100) today's push takeover; above, push + knockdown. `HitRules::takeover` becomes the band
+  top.
+- **Triggers (AN41):** combat `Medium` (combat-adapter.md) -> Stagger, intensity = momentum / `band.max_ns`, clamped.
+  Injury: a hit leaving health under `mw.tint.injury.health_frac` (0.35 of max) or costing over `mw.tint.injury.hit_frac`
+  (0.2) -> Stumble on the struck side (else by seed). Alcohol: an active effect from an `ALCH` in a RON alcohol list
+  (sujamma, flin, mazte, greef, shein, brandy) -> a Sway every `mw.tint.sway.interval_s` (6) +- `mw.tint.sway.jitter_s`
+  (3). Fatigue at or under `mw.tint.sag.fatigue_frac` (0.05 of max) -> Sag, held; it ends above that plus
+  `mw.tint.sag.hysteresis` (0.05); fatigue below 0 is Morrowind's knockout: the knockdown takeover promotes the Sag. All
+  Guess; `delirium.tint.stiffness` 12 (stand-in stagger value, R§2), Guess, replaced by AN38's stability at the dip.
+- **Fallbacks:** Stagger and Stumble: the `HitReact` kick (on the leg for Stumble). Sway and Sag: additive key-pose
+  `PoseSeq` clips (anim decision 9) under `tint.fallback.sway` / `.sag` (AN41c, data); unmapped, the kick plays.
+- **Classic:** `anim.tint.enabled` false: fallbacks only. Vanilla NPCs rarely drink; the player does, and is not tinted
+  (spec open question 2). Scene `anim-tint` (ANIM-14): Balmora, walking and idle NPCs, console hits and drains.
+
 ## Cloth
 
 **Decision (owner 2026-10-19, p10s; research `../superfargoth/docs/research/cloth/long-robes.md`): robes and skirts
