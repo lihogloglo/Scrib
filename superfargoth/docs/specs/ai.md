@@ -1,20 +1,18 @@
 # NPC AI: directives, drives, HTN behaviours, tiers (`sf_ai`)
 
-Status: **AI1-AI5 built (2026-11-08/09)**: `sf_ai` ids, trace, HTN core, directives, `sf/ai` save; `sf_ai_bevy` overlay; AI6 on not built. M7.
-Former open questions decided 2026-11-08 (owner-delegated): `../research/ai-nav-decisions-2026-11-08.md` (d, g, k, l).
-Crates (planned): `sf_ai` (Bevy-free: directives, drives, HTN, perception model, facts, tiers, trace), `sf_ai_bevy`
-(thin: fixed-tick systems, executors' glue to `sf_action`/`sf_controller`, debugger, console). Uses [nav.md](nav.md)
-(`sf_nav`) and the planned `sf_interaction`. Game side: [ai-adapter](../../../bevyrrowind/docs/specs/ai-adapter.md).
-Sources: `../research/npc-ai-2026-11-08.md` (approved), seamless research §4.2/§4.8, vision §4/§5/§7, ARCHITECTURE §1b,
-[action.md](action.md), [net.md](net.md), [combat.md](combat.md) C6.
+Status: slice status lives in [docs/roadmaps/ai.md](../../../docs/roadmaps/ai.md) §4; as-built notes in
+[ai-as-built.md](ai-as-built.md). M7. Delegated decisions 2026-11-08: `../research/ai-nav-decisions-2026-11-08.md`.
+Crates: `sf_ai` (Bevy-free: directives, drives, HTN, perception model, facts, tiers, trace), `sf_ai_bevy` (thin:
+fixed-tick systems, executor glue to `sf_action`/`sf_controller`, debugger, console). Uses [nav.md](nav.md) and
+`sf_interaction`. Game side: [ai-adapter](../../../bevyrrowind/docs/specs/ai-adapter.md). Sources:
+`../research/npc-ai-2026-11-08.md`, `../research/gameplay-2026-11-25/ai.md`, vision §4/§5/§7, ARCHITECTURE §1b, [action.md](action.md),
+[net.md](net.md), [combat.md](combat.md) C6.
 
 <!-- agent-summary -->
-> **Agent summary (2026-11-08).** AI1-AI5 (trace, HTN, overlay, directives, saves) built; the rest is design. Layers: directives (packages, schedules, quest orders) →
-> utility drives → one shared data-driven HTN method library → executors writing `Command` + `LocomotionIntent`.
-> Host-only, fixed tick. Tiers 2/1/0 under a budget that is a host CPU setting (never the graphics preset); tier 0
-> simulates logically so outcomes are tier-invariant. Perception through doors, a persistent memory/relationship fact
-> store (Nemesis-style, owner yes), an out-of-process LLM advisor seam (later). Debugger in slice AI1.
-> Read next: "Data model", "Tiers and budget", "Build plan"; shared-doc edits in the decisions note.
+> **Agent summary (2026-11-26).** Directives (packages, schedules, quest orders) → utility drives → one shared HTN
+> method library → executors writing `Command` + `LocomotionIntent`; host-only, fixed tick. "Interrupt contract" says
+> who pre-empts whom and how plans resume. Tiers 2/1/0 under fixed host-CPU caps; tier 0 is a planner-free state
+> machine, so outcomes are tier-invariant. Graded perception, a Nemesis-style fact store, an LLM seam (later).
 <!-- /agent-summary -->
 
 ## Goal
@@ -25,15 +23,12 @@ Non-goals: an LLM in the core, GOAP, flow fields, classic executors and combat (
 
 ## Owner decisions this spec implements (2026-11-08)
 
-1. Layering and the `sf_nav` + `sf_ai` (+ `sf_interaction`) split ("Architecture"). 2-3. Nav patches and the
-`navmesh-rs` spike (nav.md). 4. Vanilla NPCs get schedules, behind a seam allowing "no schedules" ("Directives").
-5. Caps are a **host CPU-tier setting**, never graphics; tier 0 simulates logically; clients vary only presentation
-("Tiers and budget"). 6. LLM later, out of process, seam now ("LLM advisor seam"). 7. Nemesis-style memory: yes, the
-patent is not a concern (owner decision) ("Memory"). 8. Combat modern first ("Combat AI"). 9. One label, M7 (M10 is
-combat; "Doc changes"). Also: GPL-3.0; no MP ceiling (server authority, headless builds, interest management, tier by the
-nearest player under a global budget); Steam Deck floor; seamless doors optional. Delegated (2026-11-08): fixed,
-provisional caps ("Tiers"); bounded cross-worldspace vendettas ("Memory"); far sides of open doors fully simulated
-("Tiers"); schedules after tier 0 ("Directives").
+1. `sf_nav` + `sf_ai` (+ `sf_interaction`) split. 2-3. Nav patches (nav.md). 4. Vanilla NPCs get schedules, behind a
+"no schedules" seam. 5. Caps are a **host CPU-tier setting**, never graphics; tier 0 simulates logically. 6. LLM later,
+out of process. 7. Nemesis-style memory: yes. 8. Combat modern first. 9. One label, M7. Also: GPL-3.0; no MP ceiling (tier by
+the nearest player, one global budget); Steam Deck floor. Delegated: fixed provisional caps, bounded cross-worldspace
+vendettas, far sides of open doors fully simulated, schedules after tier 0. Lane decisions since 2026-11-25:
+[docs/roadmaps/ai.md](../../../docs/roadmaps/ai.md) §3 (6: interrupts, 11: 3D movers, 13: tier additions here).
 
 ## Canonical technique
 
@@ -53,7 +48,7 @@ Principle: **content says what, AI decides how, the action layer does it, only t
 
 ```
 directives (stack per actor: record defaults, schedules, scripts, quests)  ← adapter StackPolicy
-   → drives (Directive, Combat, Flee, Pursue, React, Converse) scored by considerations, with hysteresis
+   → drives (Directive, Combat, Flee, Pursue, Notice, Converse) scored by considerations, with hysteresis
       → HTN: drive's root task decomposed through the method library (+ smart-object fragments)
          → operators (MoveTo, Traverse, UseSlot, Attack, Guard, Speak, Wait, Face...) → Command + LocomotionIntent
 perception (sight, hearing, stimuli; per player) and facts (memory, relationships, crime) feed the world state
@@ -116,6 +111,40 @@ Flee and Alarm rules are adapter considerations.
   comfort considerations (hunger, fatigue, weather) never feed offence or combat options: no option, nothing happens.
 - **As built (AI7):** `sf_ai::drive` — records, curves, `arbitrate`, `serving_for`, `ArbiterState`: [ai-as-built.md](ai-as-built.md) "AI7".
 
+### Interrupt contract (AI lane decision 6)
+
+Highest first: rows 1-4 are drives, row 5 the stack, rows 6-7 run inside the served directive; overlays pre-empt nothing.
+
+| # | Layer: raised by | Mechanism (shipped default) |
+|---|---|---|
+| 1 | **Combat, Flee**: Alerted on a hostile, damage, health, morale | drives, weight 5; the two compete on score (low health: Flee) |
+| 2 | **Pursue**: guard heat, chase to LKP (AI29) | drive, weight 4 |
+| 3 | **Converse**: a talk opens (pins tier 2) | drive, weight 3 |
+| 4 | **Notice**: a concern, a Curious or Suspicious band | drive, weight 2; Glance/Bark as overlays, heavy rungs push a `Reaction` directive |
+| 5 | **Stack**, modern rank Quest > Script > Memory > Reaction (Search, Investigate, Confront, Report, Tidy) > Schedule > Record | `Directive` drive, weight 1, floor 1 |
+| 6 | **Activity**: errand stage, operator post, schedule `UseSlot`, free-time pick (AI27) | HTN methods |
+| 7 | **Idle**: nothing scores above 0 (`DriveReason::Idle`), or the record default | |
+| - | **Overlays**: look-at, Glance, `BarkCue` (AI30), greeting | own channels |
+
+- **Scores decide; ranks are defaults.** Weights are IAUS levels in the shipped `sf.ai.drive` records (score, 0-10,
+  Guess after Dave Mark's 1/2/3/5): a faint Notice (product < floor / weight) never beats content. Momentum and
+  `commit_ticks` stop flip-flop.
+- **Pre-emption.** By a drive: `serving_for` sets `Serving::Suspended`, `Limit::For` stops counting (`Until` does not),
+  the runner drops its plan (`PlanRunner::clear`). In the stack: the lower directive waits, `For` paused.
+  `DirectiveSource` gains `Reaction` between `Schedule` and `Memory` (AI22), so reactions wait under quest and script
+  orders (quest safety); rows 1-3 don't.
+- **Resume = replan from the root, never restore** (Fluid HTN, Decima): the world moved, so the served directive's root
+  is decomposed fresh. `resume` continues a `Pause` split only within one unbroken run.
+- **Kept:** the stack (`For` left, params), progress executors write into params (errand stage, route progress, patrol
+  index, report target; methods read it, so a resumed errand skips done stages), awareness, LKP, facts, a held prop
+  (Combat stows or drops it, AI31). **Lost:** plan, cursor, MTR, operator state, look-at, the slot claim once the exit
+  ran (Converse and overlays stay seated if the slot allows; rows 1-2 take the fast exit).
+- **Monitoring is not pre-emption:** `Library::holds` false on the active step, or a dirty read key, replans the same
+  root. Ambient keys (`raining`, `night`) work this way: a free-time pick re-picks shelter, a work shift does not.
+- **Tier 0** runs no drives, only events (push, finish, window edge, fact, AI21 concerns); a promoted actor starts on
+  row 5. Morrowind's `StackPolicy` (OpenMW priorities) replaces row 5's ranks; Hello, Fight, Flee and Alarm are
+  considerations of rows 1-4. Host only; the trace logs each pre-emption with its `DriveReason`.
+
 ## Behaviours (HTN method library)
 
 - **One shared library**; archetypes are parameters plus method overrides, no per-archetype domains.
@@ -136,10 +165,15 @@ NPC's from AI or scripts").
 `MoveTo(goal, gait)` (path request, corridor, arrival; fails on `NoPath` or 3 s without progress), `Traverse(link)`
 (approach, open by activation rules, wait `passable`, cross the `Gate`; fade links only unseen), `UseSlot(slot)`
 (claim, approach, enter, loop, exit), `Attack/Guard/Dodge/Reposition` (moveset, C6), `Speak`, `Face`, `LookAt`,
-`Wait`, `Activate`, `Flee`.
+`Wait`, `Activate`, `Flee`, `FlyTo`, `SwimTo`.
 
-Fliers skip the navmesh (3D steer with probes); swimmers use water areas. The **classic executor slot**: an operator
-set registered under the same task ids (e.g. an `AiWander` port in `mw_rules`), never built early.
+**3D movers** (lane decision 11; Horizon Zero Dawn) never use the navmesh: `FlyTo` (AI34) and `SwimTo` (AI35) follow
+nav's flight and swim queries (nav.md "Volumes", NV13: 3D waypoints over the height field or a `WaterBody`, profile
+clamped), as `MoveTo` does its path: 3D corridor, yaw and pitch within the class's climb and dive limits, fail on
+`NoPath` or stall, hold at a `Partial` end (a fish at the band edge); `SwimTo` stays in `[bed + r, surface - r]`.
+**Levitation** is a class swap to the adapter's flier class, back to ground at a landing candidate. Amphibious ground
+classes swim on navmesh `water` polys. **Classic executor slot**: operators under the same task ids (an `AiWander`
+port in `mw_rules`), never built early.
 - **As built (AI6):** `sf_ai::exec` (`MoveTo`, `Wait`, `Face`, `PlanRunner`, `OperatorBindings`) + `sf_ai_bevy::exec` (`AiExecutor`, `AiExecPlugin`, tunables `ai.exec.*`): [ai-as-built.md](ai-as-built.md) "AI6".
 
 ## Perception and stimuli
@@ -331,30 +365,34 @@ fragment (approach, enter, loop, exit) with animation hooks. Until then the adap
 |---|---|---|---|---|
 | 2 full | allocator winners in the simulated set | 5-10 Hz staggered + events | nav corridor + ORCA + mover + probes | full, per player |
 | 1 reduced | next band in the simulated set | ~1 Hz staggered | corridor, mover without foot probes | distance + same space; event-time checks full |
-| 0 logical | everyone else, every worldspace | events (window edge, directive done, fact) | `(route, progress, until)` on `WorldGraph` + coarse graph, travel time | none |
+| 0 logical | everyone else, every worldspace | events (window edge, directive done, fact); no planner | `(route, progress, activity, until)` on `WorldGraph` + NV12, travel time | none |
 
 - **Allocator** (the `AnimBudget` pattern): significance from distance to the **nearest player of all**, visibility to
-  any player (through an open seamless doorway too), combat, dialogue and quest pins; hysteresis on both bands; one
-  **global** cap across regions, so four players in four towns share the budget. Caps are **fixed counts** per CPU
-  tier (UE MassLOD style), never adapted to measured time, so traces and the tier-invariance test reproduce;
-  `ai.stats` warns when the tick budget is exceeded (decisions (d)).
+  any player (open doorways too), combat, dialogue and quest pins; hysteresis on both bands; one **global** cap, so
+  four players in four towns share it. Caps are **fixed counts** per CPU tier (UE MassLOD), never adapted to measured
+  time, so traces reproduce. `ai.stats` warns over the tick budget and prints ms per tier (2, 1, 0) and the resolve
+  queue's length and µs, for AIM.
 - **Behind an open door** (decisions (k)): the far R0 around the mapped anchor joins the simulated set; its actors
   take tiers from the same allocator, physics steps, scripts run; no stand-in mode.
-- **Pins outrank caps**: combat, dialogue and scripted scenes stay tier 2; if pins exceed the cap it is exceeded and
-  `ai.stats` logs it, never a fighter demoted.
+- **Pins outrank caps**: combat, dialogue and scripted scenes stay tier 2; over the cap is logged, never demoted.
 - **Tier invariance** (the multiplayer rule): a tier changes how often and how precisely an actor is stepped, never
-  which rules apply. Directive completion, schedule activities at window edges, arrivals (from route length and
-  speed), crimes and facts follow one logical clock, so world outcomes match on every CPU tier; only fine-grained
-  motion differs.
-- **Promotion resolve**: compute where directive/schedule state puts the actor at tick `t` (route progress or
-  activity slot); snap to the nearest navmesh point on the route; claim the slot or an alternative; if a player could
-  see the spot within the near radius, delay or enter from an occluded approach (door, corner); never promote combat
-  in view. **Demotion** only out of view, past the outer band, never in combat or dialogue. Scripts see one actor in
-  every tier (KCD's rule).
+  which rules apply: completions, window edges, arrivals, crimes and facts follow one logical clock.
+- **Tier 0 is a state machine, no planner** (research §4; KCD2's LOD-unaware scripts): `LogicalState { route:
+  Option<RouteRef>, progress_m: f32, activity: Option<ActivityRef>, until: GameTime }`, stepped at events and at
+  `until`: the stack top's kind gives the next state (a route on `WorldGraph` + NV12, an activity slot, a wait). No
+  drives, HTN or perception run. Every `DirectiveKind` registers its tier-0 transition; one without it fails at load.
+- **Staggered first update** (UE Mass): an actor joining the simulated set (cell load, open door, promotion) gets
+  `first_decide_tick = tick + hash(ActorKey) % period` of its tier, for decisions and sight (AI9e).
+- **Promotion resolve**, queued nearest-first (distance to the nearest player), at most `ai.tier.promote_per_tick` per
+  tick (count, 1-64, Guess 4; a count, not a time budget, so traces reproduce); pins jump the queue; a queued actor
+  stays tier 0 and keeps advancing. Resolve: place the actor where its state puts it at tick `t`, snapped to the
+  navmesh on its route; claim the slot or an alternative; a spot a player could see waits or is entered from an
+  occluded approach (door, corner); never combat in view. **Demotion** only out of view, past the outer band, never in
+  combat or dialogue. Scripts see one actor in every tier (KCD).
 - **Fast-forward** (rest, wait, long travel): `fast_forward(actor, hours)` advances tier-0 state; the adapter keeps
   OpenMW's `fastForward` rules.
-- **CPU tier** = host setting `sim.cpu_tier` (auto from cores, overridable on servers), apart from the graphics
-  preset and `sf_scalability`'s player groups. Clients vary only presentation (animation LOD, interpolation).
+- **CPU tier** = host setting `sim.cpu_tier` (auto from cores, AI9d), apart from the graphics preset. Clients vary
+  only presentation.
 
 | CPU tier | Reference | Tier 2 / tier 1 caps | AI main-thread budget per tick |
 |---|---|---|---|
@@ -365,10 +403,9 @@ fragment (approach, enter, loop, exit) with animation hooks. Until then the adap
 | Dedicated | headless server, no render thread | 256 / 1000 at 8 cores, then measured per core (provisional) | ≤ 2.0 ms (provisional) |
 
 Floor split per tick (research §8): steering 0.20, perception 0.15, decisions 0.10, tier 0 0.05, facts 0.05 ms; paths
-0.30 ms on a worker. Two ticks run per 30 fps frame; animation has its own `AnimBudget`. Provisional rows are set by
-**AIM**: tier-2 counts 32-256 in Balmora and a Vivec canton, 1 and 4 players, AI + mover/probes + animation ms
-recorded together (tier 2's real cost is usually animation and probes: 128 × A0 ≈ 3.2 ms); the cap is the largest
-count whose sum fits the tier's character budget. In single-player Morrowind the cap rarely binds.
+0.30 ms on a worker; animation has its own `AnimBudget`. Lane decision 13 keeps these numbers. **AIM** sets the
+provisional rows: tier-2 counts 32-256 in Balmora and a Vivec canton, 1 and 4 players, AI + mover/probes + animation
+ms together (128 × A0 ≈ 3.2 ms); the cap is the largest count that fits the tier's character budget.
 
 ## Scheduling (time slicing)
 
@@ -396,15 +433,13 @@ facts, tiers, paths, claims. 6: per-player awareness and memory. 7: stable ids. 
 
 ## Saves
 
-Sections (owner-keyed, versioned, save.md): `sf/ai` per actor (directive stack, schedule cursor, tier-0 state
-`(route, progress, until)`, current activity and claim, drive and running directive id) and `sf/aimemory` (facts,
-relations). Not saved: plans, traces, awareness, path requests, `DirectiveDone` events (rebuilt on load; promotion
-resolve places actors). Belongs to the one state registry when it exists (vision §4.2.3).
-- **Section names are single-segment.** `sf_save` derives a section's family as the name up to the first `/`
-  (`sf_save::SectionKey::family`, resolved by family alone), so a second section named `sf/ai/...` would clash with
-  `sf/ai`'s spec, version and migration chain — registration either refuses it or it silently inherits the wrong
-  steps. Hence `sf/aimemory` for AI13. Multi-segment names are for *instances* of one family (`sf/character/<key>`,
-  declared with `SaveSection::family`), never for a second family (audit 2026-11-09).
+Sections (owner-keyed, versioned, save.md): `sf/ai` per actor (directive stack, schedule cursor, tier-0
+`LogicalState`, current activity and claim, drive and running directive id) and `sf/aimemory` (facts, relations). Not
+saved: plans, traces, awareness, path requests, `DirectiveDone` events (rebuilt on load; promotion resolve places
+actors). Belongs to the one state registry when it exists (vision §4.2.3).
+- **Section names are single-segment:** `sf_save::SectionKey::family` is the name up to the first `/`, so `sf/ai/...`
+  would share `sf/ai`'s migration chain; hence `sf/aimemory`. Multi-segment names are instances of one family
+  (`sf/character/<key>`), never a second family (audit 2026-11-09).
 - **As built (AI5):** one world section keyed by `ActorKey` (not overlay blobs), v1 = each actor's `SavedStack`; clock and key caveats: [ai-as-built.md](ai-as-built.md) "AI5".
 
 ## Scripting (Luau `@sf/ai`)
@@ -435,10 +470,11 @@ Per-actor **trace ring buffer** (64 decisions: tick, tier, drive and considerati
 
 | Technique | Industry | Ours | Verdict |
 |---|---|---|---|
-| Top layer | KCD II routines, RDR2 and Cyberpunk schedules, Skyrim procedure trees, OpenMW `AiSequence` | directive stack + `StackPolicy` | **match** |
+| Top layer | KCD II routines, RDR2 and Cyberpunk schedules (press only), Skyrim procedure trees, OpenMW `AiSequence` | directive stack + `StackPolicy` | **match** |
 | Reactions | UE AI Perception sources; Hitman, KCD II, RDR2 witnesses and suspicion | world-reactions.md concerns | **match** (planned) |
 | Selection | utility: Sims, GW2 IAUS, OpenMW combat ratings | drives + momentum | **match** |
-| Behaviours | HTN: Horizon, Transformers FoC, Killzone; GOAP: F.E.A.R., KCD II; BT/StateTree: UE, CryEngine | shared HTN library, MTR | **match** (HTN: designer control, cost) |
+| Behaviours | HTN: Horizon, Killzone 2, Transformers: Fall of Cybertron; GOAP: F.E.A.R., Transformers: War for Cybertron; BT: KCD 1 and 2 (CryEngine Modular Behavior Tree); StateTree: UE5 | shared HTN library, MTR | **match** (HTN: designer control, cost) |
+| Interrupts | Bethesda package priority, OpenMW combat on top of `AiSequence`, IAUS weight levels, HTN replan on resume (Fluid HTN) | drive bands + stack ranks, replan from root | **match** |
 | Schedules | Ultima VII, Gothic, Bethesda packages, KCD routines | records → directives | **match** |
 | Smart objects | Sims, UE Smart Objects, Skyrim furniture, A-Life smart terrains | `sf_interaction` | **match** (planned) |
 | Perception | UE AI Perception; OpenMW `awarenessCheck` | per player, through doors | **match** |
@@ -448,7 +484,8 @@ Per-actor **trace ring buffer** (64 decisions: tick, tier, drive and considerati
 | Debugging | UE Gameplay Debugger + Visual Logger, Guerrilla in-game HTN view | trace from slice 1 | **match**; recording later (P2) |
 
 Sources: research "Sources" (UESP, Warhorse GDC 2025/2026, Guerrilla, Humphreys, Orkin, IAUS, UE docs, OpenMW
-`b8285cc9`).
+`b8285cc9`); Humphreys, Game AI Pro ch. 12 (Fall of Cybertron's HTN replaced War for Cybertron's GOAP); CryEngine
+"Modular Behavior Tree" docs; `../research/gameplay-2026-11-25/ai.md` §1.
 
 ## Tests
 
@@ -457,16 +494,12 @@ activity log at window edges. Feel: sanity only; budgets as `#[ignore = "measure
 
 ## Build plan
 
-One deliverable plus its test per slice. Visual checks use prefix `AI-`.
-
-Plan, order, dependencies and status of every slice: [docs/roadmaps/ai.md](../../../docs/roadmaps/ai.md). Original AI0-AI18
-table and order: [ai-as-built.md](ai-as-built.md#original-build-plan-ai0-ai18-2026-11-08).
+The build order is [docs/roadmaps/ai.md](../../../docs/roadmaps/ai.md) §4 (stages, slices, dependencies, status); this
+spec holds no order of its own. One deliverable plus its test per slice; visual checks use prefix `AI-`. The original
+AI0-AI18 table is history: [ai-as-built.md](ai-as-built.md#original-build-plan-ai0-ai18-2026-11-08), as are the
+[shared-doc changes](ai-as-built.md#doc-changes-for-shared-files-2026-11-08).
 
 ## Open questions
 
 None open. Decided 2026-11-08 (`../research/ai-nav-decisions-2026-11-08.md`): (d) High 128 / 400 provisional fixed
 counts, set by AIM; (e) schedules after AI10-AI12 (patterns in the adapter); (g) vendettas cross worldspaces, bounded.
-
-## Doc changes for shared files
-
-Done; text moved: [ai-as-built.md](ai-as-built.md#doc-changes-for-shared-files-2026-11-08).
