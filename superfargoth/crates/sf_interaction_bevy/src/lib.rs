@@ -64,6 +64,7 @@ use smallvec::SmallVec;
 pub mod activate;
 pub mod focus;
 pub mod seat;
+pub mod seat_clips;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -79,6 +80,7 @@ pub use activate::{
 };
 pub use focus::{FocusCandidates, FocusState, PlayerFocus};
 pub use seat::{EndPoseFree, EndPoseTest, InteractionUser, SeatClips, SeatPhase, SeatSystems, SeatUse, SeatUses, seat_target};
+pub use seat_clips::{SIT_ENTER, SIT_EXIT, SIT_LOOP, SeatClipSets, SeatClipSystems, SeatSet, bind_seat_clips};
 
 // --- Tunables ---------------------------------------------------------------------------------
 
@@ -377,7 +379,12 @@ impl Plugin for InteractionPlugin {
             )
             .configure_sets(FixedUpdate, SeatSystems::Events.after(sf_action_bevy::ActionSystems::Step))
             .add_systems(Update, seat::seat_requests.in_set(SeatSystems::Request))
+            .configure_sets(
+                FixedUpdate,
+                SeatClipSystems.after(SeatSystems::Offer).before(sf_action_bevy::ActionSystems::Step),
+            )
             .add_systems(FixedUpdate, seat::seat_offers.in_set(SeatSystems::Offer))
+            .add_systems(FixedUpdate, bind_seat_clips.in_set(SeatClipSystems))
             .add_systems(FixedUpdate, seat::seat_events.in_set(SeatSystems::Events));
         bind!(app, PRIORITY_AMBIENT, |p, v| p.priority_ambient = to_u8(v));
         bind!(app, PRIORITY_SCHEDULE, |p, v| p.priority_schedule = to_u8(v));

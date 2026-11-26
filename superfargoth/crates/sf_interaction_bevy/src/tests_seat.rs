@@ -428,3 +428,150 @@ fn a_claim_lost_before_sitting_removes_the_clips_on_that_tick() {
     assert_eq!(clips(&app, p), None);
     assert!(app.world().resource::<SeatUses>().get(player()).is_none());
 }
+
+// --- Seat clip binder (AN26c) -------------------------------------------------------------------
+
+/// The test chair's clip names under the naming contract (family `seat.chair`, band 45 cm), with a
+/// second exit side for the latch.
+const CHAIR_ENTER: &str = "seat.chair.b45.enter.front";
+const CHAIR_LOOP: &str = "seat.chair.b45.loop";
+const CHAIR_EXIT: &str = "seat.chair.b45.exit.front";
+const CHAIR_EXIT_LEFT: &str = "seat.chair.b45.exit.left";
+
+/// The rules with a slot table that has no `interact.sit.*` entries: only the chair's own clips.
+fn aliased_rules() -> ActionRules {
+    let slots = SlotTable::new()
+        .with("loco.move", SlotInfo::looping())
+        .with("air.fall", SlotInfo::looping())
+        .with("air.jump", SlotInfo::once(0.3))
+        .with("air.land.normal", SlotInfo::once(0.25))
+        .with("air.land.hard", SlotInfo::once(0.5))
+        .with(CHAIR_ENTER, SlotInfo::once(0.5))
+        .with(CHAIR_LOOP, SlotInfo::looping())
+        .with(CHAIR_EXIT, SlotInfo::once(0.4))
+        .with(CHAIR_EXIT_LEFT, SlotInfo::once(0.4))
+        .with_root(CHAIR_ENTER, Arc::new(SitDown))
+        .with_root(CHAIR_EXIT, Arc::new(StandUp))
+        .with_root(CHAIR_EXIT_LEFT, Arc::new(StandUp));
+    let mut b = RuleSetBuilder::new();
+    b.add_ron(&Origin::Framework, BASE_RULES).add_ron(&Origin::Framework, SEAT_RULES);
+    ActionRules { rules: b.build().expect("base and seat rules"), slots: Box::new(slots) }
+}
+
+/// A side forced onto the user's `SeatClips.exit` after the offer (which follows `pick_exit`), for
+/// the latch test.
+#[derive(Resource, Default)]
+struct ForceExit(Option<Side>);
+
+fn force_exit(force: Res<ForceExit>, mut clips: Query<&mut SeatClips>) {
+    if let Some(side) = force.0 {
+        for mut c in &mut clips {
+            if c.exit != side {
+                c.exit = side;
+            }
+        }
+    }
+}
+
+/// [`app`] with the aliased rules, the chair's clip sets and the exit forcer.
+fn aliased_app() -> App {
+    let mut app = app();
+    app.insert_resource(aliased_rules())
+        .insert_resource(SeatClipSets::from_names([CHAIR_ENTER, CHAIR_LOOP, CHAIR_EXIT, CHAIR_EXIT_LEFT], "seat.chair"))
+        .init_resource::<ForceExit>()
+        .add_systems(FixedUpdate, force_exit.after(SeatSystems::Offer).before(SeatClipSystems));
+    app
+}
+
+fn alias_of(app: &App, e: Entity, rule: &str) -> Option<sf_action::SlotKey> {
+    app.world().get::<sf_action_bevy::ActionAliases>(e).unwrap().0.get(sf_action::SlotKey::of(rule))
+}
+
+fn no_aliases(app: &App, e: Entity) -> bool {
+    app.world().get::<sf_action_bevy::ActionAliases>(e).unwrap().0.is_empty()
+}
+
+fn playing(app: &App, e: Entity) -> Option<sf_action::SlotKey> {
+    app.world().get::<ActionCharacter>(e).unwrap().output.slot
+}
+
+/// [`seated`] through the aliases: the enter only has a root path through them, so a sit that
+/// starts proves the offer's tick bound them (a refused enter is not retried).
+fn seated_aliased() -> (App, Entity) {
+    let mut app = aliased_app();
+    let p = spawn(&mut app, 1, Vec3::ZERO, player(), PLAYER, 30);
+    frames(&mut app, 10);
+    assert!(no_aliases(&app, p), "nothing bound before a use");
+    app.world_mut().write_message(sit_command());
+    frames(&mut app, 2);
+    assert_eq!(claim(&app), Some((player(), Phase::Reserved)));
+    assert_eq!(clips(&app, p), Some(chair_clips()));
+    assert_eq!(alias_of(&app, p, ENTER), Some(sf_action::SlotKey::of(CHAIR_ENTER)), "bound on the offer's tick");
+    assert!(until(&mut app, 120, |a| mov(a, p) == RuleKey::of(LOOP)), "sat: {:?}", mov(&app, p));
+    frames(&mut app, 2);
+    (app, p)
+}
+
+#[test]
+fn an_aliased_sit_claims_then_the_body_sits_and_the_claim_is_occupied() {
+    let (app, p) = seated_aliased();
+    assert!(ever(&app, p, ENTER));
+    assert_eq!(claim(&app), Some((player(), Phase::Occupied)));
+    assert_eq!(kinds(&app), vec![(player(), EventKind::Claimed), (player(), EventKind::Entered)]);
+    assert_eq!(seat_kinds(&app, p), vec![sf_action::EventKind::SeatEntered(0)]);
+    assert_eq!(app.world().resource::<SeatUses>().get(player()).map(|u| u.phase), Some(SeatPhase::Seated));
+    let feet = app.world().get::<ActionBody>(p).unwrap().loco.position.to_f64().as_vec3();
+    assert!(feet.distance(Vec3::new(0.1, 0.0, 0.6)) < 1e-3, "{feet:?}");
+    assert_eq!(alias_of(&app, p, ENTER), Some(sf_action::SlotKey::of(CHAIR_ENTER)));
+    assert_eq!(alias_of(&app, p, LOOP), Some(sf_action::SlotKey::of(CHAIR_LOOP)));
+    assert_eq!(alias_of(&app, p, EXIT), Some(sf_action::SlotKey::of(CHAIR_EXIT)));
+}
+
+#[test]
+fn the_aliases_are_gone_the_tick_after_the_stand_up() {
+    let (mut app, p) = seated_aliased();
+    app.world_mut().resource_mut::<Presses>().0.push((p, ActionClass::Jump));
+    assert!(
+        until(&mut app, 120, |a| seat_kinds(a, p).contains(&sf_action::EventKind::SeatExited(0))),
+        "stood: {:?}",
+        mov(&app, p)
+    );
+    assert!(ever(&app, p, EXIT));
+    frames(&mut app, 1);
+    assert_eq!(clips(&app, p), None);
+    assert!(no_aliases(&app, p), "{:?}", app.world().get::<sf_action_bevy::ActionAliases>(p));
+    assert_eq!(claim(&app), None);
+}
+
+#[test]
+fn the_exit_alias_is_latched_while_the_stand_up_plays() {
+    let (mut app, p) = seated_aliased();
+    let (front, left) = (Some(sf_action::SlotKey::of(CHAIR_EXIT)), Some(sf_action::SlotKey::of(CHAIR_EXIT_LEFT)));
+    // Seated (the loop plays): a new exit side rebinds at once, and back.
+    app.world_mut().resource_mut::<ForceExit>().0 = Some(Side::Left);
+    frames(&mut app, 1);
+    assert_eq!(alias_of(&app, p, EXIT), left);
+    app.world_mut().resource_mut::<ForceExit>().0 = None;
+    frames(&mut app, 1);
+    assert_eq!(alias_of(&app, p, EXIT), front);
+    // Stand up; once the exit plays, the side changes under it: the alias keeps the front exit.
+    app.world_mut().resource_mut::<Presses>().0.push((p, ActionClass::Jump));
+    let exit = sf_action::SlotKey::of(EXIT);
+    assert!(until(&mut app, 60, |a| playing(a, p) == Some(exit)), "stand-up: {:?}", mov(&app, p));
+    app.world_mut().resource_mut::<ForceExit>().0 = Some(Side::Left);
+    let mut ticks = 0;
+    loop {
+        frames(&mut app, 1);
+        if playing(&app, p) != Some(exit) {
+            break;
+        }
+        assert_eq!(clips(&app, p).map(|c| c.exit), Some(Side::Left), "the side did change");
+        assert_eq!(alias_of(&app, p, EXIT), front, "rebound mid-move");
+        ticks += 1;
+        assert!(ticks < 120, "the stand-up never ended");
+    }
+    assert!(ticks > 1, "the latch was exercised over several ticks: {ticks}");
+    assert!(until(&mut app, 120, |a| mov(a, p) == RuleKey::of("loco")), "stood: {:?}", mov(&app, p));
+    frames(&mut app, 2);
+    assert!(no_aliases(&app, p));
+}

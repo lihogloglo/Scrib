@@ -78,7 +78,7 @@ use crate::{
 /// A character that uses slots (host-inserted, beside its `sf_action_bevy` character): who it is
 /// to the claims and to the scripts.
 #[derive(Component, Clone, Debug, PartialEq, Eq)]
-#[require(SeatAim)]
+#[require(SeatAim, sf_action_bevy::ActionAliases)]
 pub struct InteractionUser {
     pub user: UserKey,
     /// What `Activated.actor` names for this character (`sf_script_bevy::PLAYER` for the player).
