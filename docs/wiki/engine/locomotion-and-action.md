@@ -16,6 +16,9 @@ the camera follows the drawn body at frame rate and never feeds gameplay.
   to a priority-ordered `RuleSet`; `Owner` at `:64`: `Sim`, `Warp`, `Clip`), `BASE_RULES`, `TRAVERSAL_RULES`
   (mantle waist/high, vault), holds (guard), look limits, grip (`grip.rs`) and brace (`brace.rs`). State is plain
   serde with integer clocks and no singleton player (`state.rs`), so it is net-ready.
+  The resting intent (stick at rest, or a move that does not steer) has zero velocity and keeps the stance's gait:
+  `Gait::Sneak` in `Mode::Sneak` (crouch is held by its button, not by speed: the graph's `sneaking` and `sneak_idle`
+  follow it), `Walk` in every other mode (`step.rs` `rest`, ROADMAP 2.1f).
 - **Moving bases** (IN11a): on ground with a body, `Locomotion::ride_base` (`mover.rs:406`, first in `begin`) moves
   the feet with the base (rotation about its instantaneous centre from `GroundHit` point velocity and yaw rate) and
   turns yaw with it; `moved` excludes it, so an idle rider plays standing. Leaving keeps the base's horizontal

@@ -323,6 +323,36 @@ fn sneak_holds_by_default_and_toggles_when_set() {
     assert_eq!(sneak_modes(&toggle, 2), [(Sneak, Sneak), (Normal, Normal)], "toggle: a press on, the next off");
 }
 
+/// ROADMAP 2.1f: Ctrl held standing still (the real key, bindings and `sf_action` step) gives
+/// the intent the avatar feed turns into the graph's `sneaking` ([`crate::avatar::sneaking`]):
+/// on at zero velocity for as long as the key is held, off after release.
+#[test]
+fn sneak_key_held_standing_still_feeds_sneaking() {
+    let (mut app, player) = app(60);
+    let intent = |app: &App| app.world().get::<ActionCharacter>(player).unwrap().output.intent;
+    for _ in 0..10 {
+        app.update();
+    }
+    assert!(!avatar::sneaking(&intent(&app)), "standing, no key");
+    hold_key(&mut app, KeyCode::ControlLeft, true);
+    for f in 0..frames(60, 1.0) {
+        app.update();
+        if f < 3 {
+            continue; // the press reaches the step on the next fixed tick
+        }
+        assert_eq!(mode(&app, player), sf_action::Mode::Sneak);
+        let i = intent(&app);
+        assert!(avatar::sneaking(&i), "frame {f}: Ctrl held, standing still");
+        assert_eq!(i.desired_velocity, Vec3::ZERO);
+    }
+    hold_key(&mut app, KeyCode::ControlLeft, false);
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(mode(&app, player), sf_action::Mode::Normal);
+    assert!(!avatar::sneaking(&intent(&app)), "released");
+}
+
 #[test]
 fn rebinds_and_press_modes_round_trip_through_the_profile_file() {
     use mw_controls_bevy::Control;

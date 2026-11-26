@@ -511,6 +511,38 @@ fn modes_sneak_held_sprint_free_run_and_mode_gated_rules() {
     assert_eq!(sim.state.mode.mode, Mode::Normal);
 }
 
+/// ROADMAP 2.1f: crouch is a stance held by its button, independent of speed. Sneak held with
+/// the stick at rest keeps the sneak gait at zero velocity; Normal at rest stays `Walk`; a move
+/// that does not steer (an attack started crouched) keeps the stance too.
+#[test]
+fn sneak_at_rest_and_through_a_non_steering_move_keeps_the_sneak_gait() {
+    use sf_controller::Gait;
+    let mut sim = combat();
+    let mut crouch = cmd_press(ActionClass::Sneak);
+    sim.run(crouch);
+    crouch.buttons.pressed = ClassSet::EMPTY;
+    for _ in 0..30 {
+        let i = sim.run(crouch).intent;
+        assert_eq!(sim.state.mode.mode, Mode::Sneak);
+        assert_eq!(i.gait, Gait::Sneak, "sneak held, stick at rest");
+        assert_eq!(i.desired_velocity, Vec3::ZERO);
+    }
+    let mut swing = cmd_press(ActionClass::Light);
+    swing.buttons.held.insert(ActionClass::Sneak);
+    let out = sim.run(swing).clone();
+    assert!(started(&out, "light"));
+    assert_eq!(sim.state.mode.mode, Mode::Sneak);
+    assert_eq!(out.intent.gait, Gait::Sneak, "a non-steering move started crouched");
+    assert_eq!(out.intent.desired_velocity, Vec3::ZERO);
+    assert_eq!(sim.run(crouch).intent.gait, Gait::Sneak, "the attack runs on, sneak still held");
+    for _ in 0..60 {
+        sim.idle();
+    }
+    assert_eq!(sim.state.mode.mode, Mode::Normal);
+    let i = sim.idle().intent;
+    assert_eq!((i.gait, i.desired_velocity), (Gait::Walk, Vec3::ZERO), "Normal at rest");
+}
+
 // ---- Interaction prompt ----------------------------------------------------------------
 
 #[test]

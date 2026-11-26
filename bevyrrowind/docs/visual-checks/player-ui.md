@@ -282,3 +282,11 @@ Open visual checks: player, inventory, saves, input, dialogue and journal, conso
 - Tune: `mw_graphs/src/build.rs` humanoid `Lean` (up 0.3, max 0.15 rad, rise 0.2-1.2 m/s, counter head 0.9, upper arms 0.85).
   Not changed: the Kimodo walk's own backward arm swing on flat ground (clip style, separate issue).
 - Status: confirmed 2026-11-25 round 2 ("slope thing is all good"; round 1: "much better", lean only showed standing). Source: gameplay-roadmaps lean-fix (`docs/research/gameplay-2026-11-25/anim-diagnosis.md` §1).
+
+### PL-11: Sneak crouches standing still (ROADMAP 2.1f, 2026-11-26)
+- Kind: real location. `view "Seyda Neen" --hour 12`, F11 player, Tab third person. Owner bug: the crouch only showed
+  while walking. Now the resting movement keeps the sneak gait, so the graph plays `sneak_idle` standing.
+- Questions (yes/no): 1. Standing still, press sneak (Ctrl): does the character crouch at once? 2. Hold it 5 s without
+  moving: does it stay crouched without popping up? 3. Walk, then stop while still sneaking: does it stay crouched?
+- Proof line: `player: sneak on` on the press, `player: sneak off` on the release (edge only, `mw_player_bevy/src/avatar.rs`).
+- Status: awaiting owner. Source: gameplay-roadmaps-15 (2.1f).

@@ -59,7 +59,7 @@ use sf_anim_graph::{MontageClip, SlotId, SlotRequest};
 use sf_camera::ViewChoice;
 use sf_camera_bevy::PlayerCamera;
 use sf_character_bevy::{CharacterBody, RoleLayers, ViewModelSettings};
-use sf_controller::{CharacterFrame, Gait, GroundProbe};
+use sf_controller::{CharacterFrame, Gait, GroundProbe, LocomotionIntent};
 use sf_controller_bevy::{ControllerSettings, FeedGait, FeedValues, FootProbes, Mover};
 
 use mw_game_core::player::{LocoAb, PlayerAvatar, PlayerBody};
@@ -123,6 +123,14 @@ pub struct PlayerFeed {
     gait: FeedGait,
     traversal: Option<Traversal>,
     air: AirDebounce,
+    /// The last `sneaking` written to the graph (its edges are logged).
+    sneaking: bool,
+}
+
+/// The graph's `sneaking` param from the mover's intent: the sneak gait, standing still too
+/// (ROADMAP 2.1f: `sf_action` keeps the gait at rest, crouch is a stance).
+pub(crate) fn sneaking(intent: &LocomotionIntent) -> bool {
+    intent.gait == Gait::Sneak
 }
 
 /// A move's slot clip playing in the montage slot (traversal or combat).
@@ -295,7 +303,12 @@ pub(crate) fn feed<G: GroundProbe + Resource>(
         // The gait set's lanes (walk / jog / sprint) by the measured speed, m/s.
         a.set_float(gp::SPEED, v.speed);
         a.set_float(gp::TURN, v.turn);
-        a.set_bool(gp::SNEAKING, intent.gait == Gait::Sneak);
+        let sneak = sneaking(intent);
+        if sneak != feed.sneaking {
+            feed.sneaking = sneak;
+            bevy_log::info!("player: sneak {}", if sneak { "on" } else { "off" });
+        }
+        a.set_bool(gp::SNEAKING, sneak);
         // Locked on (not sprinting): the body holds a facing apart from its travel, so the
         // graph plays the strafe loops on the measured direction (`move`).
         a.set_bool(gp::STRAFING, intent.desired_facing.is_some());

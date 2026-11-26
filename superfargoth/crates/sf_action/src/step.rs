@@ -525,8 +525,8 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
     let lock = lock_facing(sense, facts.mode);
     out.intent = match (stick_active, cur.is_none_or(|i| steers(rules.at(i)))) {
         (true, true) => intent(p, facts.mode, stick, sense.yaw, lock),
-        (false, true) => LocomotionIntent { desired_facing: lock, ..LocomotionIntent::IDLE },
-        (_, false) => LocomotionIntent::IDLE,
+        (false, true) => rest(facts.mode, lock),
+        (_, false) => rest(facts.mode, None),
     };
     if state.clock.rate < RATE_ONE {
         out.intent.desired_velocity *= f32::from(state.clock.rate) / f32::from(RATE_ONE);
@@ -1036,4 +1036,12 @@ fn intent(p: &CharacterParams, mode: Mode, stick: Vec2, yaw: f32, lock: Option<f
     };
     let v = p.gaits.get(gait).velocity(input, yaw) * p.profile(mode).speed_scale;
     LocomotionIntent { desired_velocity: v, desired_facing: lock, gait }
+}
+
+/// At rest (no stick, or a move that does not steer): zero velocity, and the stance holds:
+/// sneak keeps [`Gait::Sneak`] (crouch is held by its button, not by speed), every other
+/// mode keeps the idle [`Gait::Walk`].
+fn rest(mode: Mode, facing: Option<f32>) -> LocomotionIntent {
+    let gait = if mode == Mode::Sneak { Gait::Sneak } else { Gait::Walk };
+    LocomotionIntent { desired_facing: facing, gait, ..LocomotionIntent::IDLE }
 }
