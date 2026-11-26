@@ -661,7 +661,7 @@ pub mod slot {
     pub const W: u32 = 0;
     pub const H: u32 = 1;
     /// Level-0 samples per guide cell when whole (else 0: the f32 affine map).
-    pub const CELL_S: u32 = 2;
+    pub const CELL_S: u32 = 2; // tunables: const (layout: GPU header slot index)
     pub const COL_CI: u32 = 3;
     pub const COL_CF: u32 = 4;
     pub const ROW_CI: u32 = 5;
@@ -670,28 +670,28 @@ pub mod slot {
     pub const COL_C: u32 = 8;
     pub const ROW_A: u32 = 9;
     pub const ROW_C: u32 = 10;
-    pub const SPACING: u32 = 11;
+    pub const SPACING: u32 = 11; // tunables: const (layout: GPU header slot index)
     pub const SEA: u32 = 12;
     pub const OCTAVES: u32 = 13;
     pub const WAVELENGTH: u32 = 14;
     pub const LACUNARITY: u32 = 15;
-    pub const GAIN: u32 = 16;
+    pub const GAIN: u32 = 16; // tunables: const (layout: GPU header slot index)
     pub const RELIEF: u32 = 17;
-    pub const MAX_AMP: u32 = 18;
+    pub const MAX_AMP: u32 = 18; // tunables: const (layout: GPU header slot index)
     pub const SLOPE_LO: u32 = 19;
     pub const SLOPE_HI: u32 = 20;
     pub const CURV_LO: u32 = 21;
     pub const CURV_HI: u32 = 22;
-    pub const SHARP: u32 = 23;
+    pub const SHARP: u32 = 23; // tunables: const (layout: GPU header slot index)
     pub const CARVE: u32 = 24;
-    pub const PHASE_FADE: u32 = 25;
-    pub const SHORE_RATIO: u32 = 26;
-    pub const CASCADE: u32 = 27;
+    pub const PHASE_FADE: u32 = 25; // tunables: const (layout: GPU header slot index)
+    pub const SHORE_RATIO: u32 = 26; // tunables: const (layout: GPU header slot index)
+    pub const CASCADE: u32 = 27; // tunables: const (layout: GPU header slot index)
     pub const SEED: u32 = 28;
     pub const BAND_LO: u32 = 29;
     pub const BAND_HI: u32 = 30;
     /// Word of the stamp section ([`crate::stamps::StampIndex::gpu_words`], after the heights); 0 = no stamps.
-    pub const STAMPS: u32 = 31;
+    pub const STAMPS: u32 = 31; // tunables: const (layout: GPU header slot index)
     /// The fallback look: 6 albedos (18 floats), then 5 breaks (10 floats).
     pub const LOOK: u32 = 32;
     /// Word of the layer macro section ([`crate::layers::LayerField::gpu_words`], after the stamps); 0 = none

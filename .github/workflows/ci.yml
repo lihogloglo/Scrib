@@ -106,9 +106,7 @@ jobs:
       - name: workspace-hack is current
         if: always()
         run: cargo hakari generate --diff && cargo hakari manage-deps --dry-run
-      # Red since before CI existed (2026-11-26: new candidate consts in sf_worldgen, sf_water, ...); reported,
-      # not blocking, until the census passes again (ROADMAP 1.14 line). Then drop continue-on-error.
+      # Blocking again since the census cleanup (2026-11-26): a crate's count of candidate consts may only go down.
       - name: tunables census
         if: always()
-        continue-on-error: true
         run: node tools/tunables-census.mjs --check

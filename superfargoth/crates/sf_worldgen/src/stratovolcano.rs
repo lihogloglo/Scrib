@@ -118,27 +118,27 @@ const S_FLANK_K: u64 = 17;
 /// Height stand-in for "no surface" in smooth max (maths: below any height).
 const NONE: f64 = f64::NEG_INFINITY;
 /// Distance stand-in for dry samples in the distance transform, samples² (maths: larger than any grid distance²).
-const EDT_FAR: f64 = 1e20;
+const EDT_FAR: f64 = 1e20; // tunables: const (sentinel: larger than any grid distance squared)
 /// Summit calibration: secant steps and stop tolerance, metres (maths: converges in 3-5 steps).
-const CALIB_STEPS: usize = 16;
-const CALIB_TOL_M: f64 = 1e-3;
+const CALIB_STEPS: usize = 16; // tunables: const (maths: a secant divergence guard, it converges in 3-5 steps to CALIB_TOL_M)
+const CALIB_TOL_M: f64 = 1e-3; // tunables: const (maths: secant stop tolerance, far below the DEM precision)
 /// Summit calibration window, share of the mean foot radius (layout: the summit lies within it by construction).
 const CALIB_WINDOW: f64 = 0.5;
 /// Fracture polyline segments (layout: smooth enough at any declared length).
 const FRACTURE_SEGMENTS: usize = 32;
 /// Apron measurement: rays and shortest usable segment, metres (report layout).
-const APRON_RAYS: usize = 64;
-const APRON_MIN_LEN_M: f64 = 2000.0;
+const APRON_RAYS: usize = 64; // tunables: const (measurement recipe: fixed so radial-profile reports compare across runs)
+const APRON_MIN_LEN_M: f64 = 2000.0; // tunables: const (measurement recipe: fixed so radial-profile reports compare across runs)
 /// Footprint bearings sampled to bound the edifice (layout).
-const FOOT_BEARINGS: usize = 720;
+const FOOT_BEARINGS: usize = 720; // tunables: const (maths: 0.5 deg sampling of the analytic footprint to bound it)
 /// Profile fit resolution (measurement layout): power exponent grid, exponential decay grid.
 const FIT_P: [f64; 3] = [0.3, 5.0, 0.01];
-const FIT_R0_STEPS: usize = 200;
+const FIT_R0_STEPS: usize = 200; // tunables: const (measurement recipe: profile fit grid, fixed so reports compare)
 /// Channel-structure measurement on the edifice window (report layout, as the S4 recipe: channels from 0.1 km²,
 /// 1 km coherence window, direction over 5 receivers).
-const STRUCTURE_THRESHOLD_M2: f64 = 1e5;
-const STRUCTURE_WINDOW_M: f64 = 1000.0;
-const STRUCTURE_DIR_STEPS: usize = 5;
+const STRUCTURE_THRESHOLD_M2: f64 = 1e5; // tunables: const (measurement recipe: the S4 channel-structure recipe)
+const STRUCTURE_WINDOW_M: f64 = 1000.0; // tunables: const (measurement recipe: the S4 channel-structure recipe)
+const STRUCTURE_DIR_STEPS: usize = 5; // tunables: const (measurement recipe: the S4 channel-structure recipe)
 /// Flank-slope measurement rings around the final summit, metres (report layout: WG-X brief, 5 / 10 / 15 km).
 // tunables: const (report layout)
 const FLANK_RINGS_M: [f64; 3] = [5000.0, 10000.0, 15000.0];

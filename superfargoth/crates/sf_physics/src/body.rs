@@ -228,7 +228,7 @@ impl PhysicsParams {
 impl Default for PhysicsParams {
     fn default() -> Self {
         Self {
-            hz: 60.0,
+            hz: 60.0, // tunables: const (fixed sim tick rate: the net contract, net.md Tick, as sf_action TICK_HZ)
             gravity: Vec3::new(0.0, -9.81, 0.0),
             rebase_distance: 512.0,
             mass_range: (0.2, 60.0),

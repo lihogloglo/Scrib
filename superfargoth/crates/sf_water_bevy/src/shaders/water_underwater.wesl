@@ -33,6 +33,7 @@ struct Underwater {
 @if(!MULTISAMPLED) @group(0) @binding(2) var scene_depth: texture_depth_2d;
 
 // sf_water::underwater::MIN_EXTINCTION (a division guard; the water draw floors sigma_t the same).
+// tunables: const (maths: division guard, mirrors sf_water underwater MIN_EXTINCTION)
 const MIN_EXTINCTION: f32 = 1e-4;
 
 struct UnderwaterOut {

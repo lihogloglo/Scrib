@@ -120,8 +120,8 @@ impl Default for FarFieldSettings {
             light_min_pixels: 2.5,
             proxy_depth_offset_px: 2.0,
             select_gate: Self::select_gate_quanta(sf_world::SELECT_GATE.default_value()),
-            emissive_nits: 1.0,
-            emissive_exposure_weight: 0.0,
+            emissive_nits: 1.0, // tunables: const (unit conversion: linear emissive to nits, the host sets its exposure calibration)
+            emissive_exposure_weight: 0.0, // tunables: const (external contract: Bevy exposure mode paired with emissive_nits)
         }
     }
 }

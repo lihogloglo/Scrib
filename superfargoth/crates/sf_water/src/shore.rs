@@ -7,6 +7,7 @@
 //! slope the shore waves shoal over (W-GERSTNER-DEPTH, [`ShoreField::bed_slope`]).
 
 use glam::DVec2;
+use sf_tunables::{Def, Group, Scope, Source, Unit, def};
 
 /// Tuning of the shore product and of the wave attenuation it drives.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -54,6 +55,141 @@ pub struct ShoreSettings {
     /// physically capped crests (`--off surfskew`, the A/B arm).
     pub surf_shape: SurfShape,
 }
+
+/// `water.surf.height_gain`: [`SurfShape::height_gain`].
+pub const SURF_HEIGHT_GAIN: Def<f32> = def!("water.surf.height_gain" = 1.5_f32)
+    .range(1.0, 2.5)
+    .unit(Unit::Ratio)
+    .help("Surf: the offshore significant height of the shore waves is multiplied by this (the swash keeps the sea's own)")
+    .source(Source::Owner("2026-11-17: the physical caps look tame; research 1.4-1.8"))
+    .scope(Scope::Dev)
+    .group(Group::Water);
+
+/// `water.surf.break_crest_min_m`: [`SurfShape::break_crest_min_m`].
+pub const SURF_BREAK_CREST_MIN_M: Def<f32> = def!("water.surf.break_crest_min_m" = 1.0_f32)
+    .range(0.0, 3.0)
+    .unit(Unit::Meters)
+    .help("Surf: up to this wave height the envelope takes the sharper min, so the wave stands up where it breaks (0 = smooth min)")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .group(Group::Water);
+
+/// `water.surf.break_sharpness`: [`SurfShape::break_sharpness`].
+pub const SURF_BREAK_SHARPNESS: Def<f32> = def!("water.surf.break_sharpness" = 8.0_f32)
+    .range(4.0, 16.0)
+    .unit(Unit::Ratio)
+    .help("Surf: exponent of the sharper min at the break line (4 = the smooth min's own)")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .group(Group::Water);
+
+/// `water.surf.gap_cell_m`: [`SurfShape::gap_cell_m`].
+pub const SURF_GAP_CELL_M: Def<f32> = def!("water.surf.gap_cell_m" = 24.0_f32)
+    .range(4.0, 128.0)
+    .unit(Unit::Meters)
+    .help("Surf: break gap patch size along the crest (the noise cell that masks the bore)")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .group(Group::Water);
+
+/// `water.surf_foam.bore_decay_rad`: [`SurfFoam::bore_decay_rad`].
+pub const SURF_FOAM_BORE_DECAY_RAD: Def<f32> = def!("water.surf_foam.bore_decay_rad" = 1.8_f32)
+    .range(0.1, 6.0)
+    .unit(Unit::None)
+    .help("Surf foam: phase behind the crest (rad) over which the bore foam falls to 1/e")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .group(Group::Water);
+
+/// `water.surf_foam.front_rad`: [`SurfFoam::front_rad`].
+pub const SURF_FOAM_FRONT_RAD: Def<f32> = def!("water.surf_foam.front_rad" = 0.3_f32)
+    .range(0.01, 1.5)
+    .unit(Unit::None)
+    .help("Surf foam: phase ahead of the crest (rad) over which the bore foam rises")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .group(Group::Water);
+
+/// `water.surf_foam.lace_cell_m`: [`SurfFoam::lace_cell_m`].
+pub const SURF_FOAM_LACE_CELL_M: Def<f32> = def!("water.surf_foam.lace_cell_m" = 1.4_f32)
+    .range(0.2, 8.0)
+    .unit(Unit::Meters)
+    .help("Surf foam: lace cell size, the cellular pattern's feature size")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .group(Group::Water);
+
+/// `water.surf_foam.lace_aged`: [`SurfFoam::lace_aged`].
+pub const SURF_FOAM_LACE_AGED: Def<f32> = def!("water.surf_foam.lace_aged" = 0.06_f32)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Surf foam: lace width of fully aged foam, in cells of the F2 - F1 distance")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .group(Group::Water);
+
+/// `water.surf_foam.albedo_aged`: [`SurfFoam::albedo_aged`].
+pub const SURF_FOAM_ALBEDO_AGED: Def<f32> = def!("water.surf_foam.albedo_aged" = 0.55_f32)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Surf foam: albedo of aged foam")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .group(Group::Water);
+
+/// `water.surf_foam.aged_tint`: [`SurfFoam::aged_tint`].
+pub const SURF_FOAM_AGED_TINT: Def<f32> = def!("water.surf_foam.aged_tint" = 0.6_f32)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Surf foam: share of the water body's hue in aged foam")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .group(Group::Water);
+
+/// `water.surf_foam.aged_opacity`: [`SurfFoam::aged_opacity`].
+pub const SURF_FOAM_AGED_OPACITY: Def<f32> = def!("water.surf_foam.aged_opacity" = 0.6_f32)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Surf foam: opacity of aged foam over the body")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .group(Group::Water);
+
+/// `water.surf_foam.bump_m`: [`SurfFoam::bump_m`].
+pub const SURF_FOAM_BUMP_M: Def<f32> = def!("water.surf_foam.bump_m" = 0.03_f32)
+    .range(0.0, 0.2)
+    .unit(Unit::Meters)
+    .help("Surf foam: relief height for its normal")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .group(Group::Water);
+
+/// `water.surf_foam.swash_residue_rad`: [`SurfFoam::swash_residue_rad`].
+pub const SURF_FOAM_SWASH_RESIDUE_RAD: Def<f32> = def!("water.surf_foam.swash_residue_rad" = 1.2_f32)
+    .range(0.1, 6.0)
+    .unit(Unit::None)
+    .help("Surf foam: phase (rad) over which the swash foam's residue fades through the backwash")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .group(Group::Water);
+
+/// `water.surf_foam.swash_spread`: [`SurfFoam::swash_spread`].
+pub const SURF_FOAM_SWASH_SPREAD: Def<f32> = def!("water.surf_foam.swash_spread" = 2.0_f32)
+    .range(0.0, 8.0)
+    .unit(Unit::Ratio)
+    .help("Surf foam: the swash widens the waterline foam's reach by up to this factor")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .group(Group::Water);
+
+/// `water.shore.foam_full_breaking`: [`ShoreSettings::foam_full_breaking`].
+pub const SHORE_FOAM_FULL_BREAKING: Def<f32> = def!("water.shore.foam_full_breaking" = 0.6_f32)
+    .range(0.1, 1.0)
+    .unit(Unit::Ratio)
+    .help("Shore foam: breaking ratio at which the shore foam band reaches full strength")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .group(Group::Water);
 
 /// The surf shape (SF-2; research `surf-and-foam-2026-11-17.md` "Surf", recommendation items 1-4).
 /// The breaking ratio before the smooth min, `b` = the shoaled amplitude (× openness, band fade and
@@ -121,7 +257,7 @@ impl Default for SurfShape {
     fn default() -> Self {
         Self {
             enabled: true,
-            height_gain: 1.5,
+            height_gain: SURF_HEIGHT_GAIN.default_value(),
             breaker_gamma: 0.78,
             steepen_start: 0.6,
             bore_start: 1.0,
@@ -129,9 +265,9 @@ impl Default for SurfShape {
             skew_steepen: 0.35,
             skew_bore: 0.6,
             bore_loop: 1.0,
-            break_crest_min_m: 1.0,
-            break_sharpness: 8.0,
-            gap_cell_m: 24.0,
+            break_crest_min_m: SURF_BREAK_CREST_MIN_M.default_value(),
+            break_sharpness: SURF_BREAK_SHARPNESS.default_value(),
+            gap_cell_m: SURF_GAP_CELL_M.default_value(),
             gap_share: 0.3,
             gap_feather: 0.08,
         }
@@ -236,23 +372,23 @@ impl Default for SurfFoam {
             enabled: true,
             birth_start: 0.5,
             birth_full: 0.85,
-            bore_decay_rad: 1.8,
-            front_rad: 0.3,
-            lace_cell_m: 1.4,
+            bore_decay_rad: SURF_FOAM_BORE_DECAY_RAD.default_value(),
+            front_rad: SURF_FOAM_FRONT_RAD.default_value(),
+            lace_cell_m: SURF_FOAM_LACE_CELL_M.default_value(),
             lace_fresh: 0.8,
-            lace_aged: 0.06,
+            lace_aged: SURF_FOAM_LACE_AGED.default_value(),
             feather: 0.05,
             lace_variation: 0.5,
             albedo_fresh: 0.85,
-            albedo_aged: 0.55,
-            aged_tint: 0.6,
-            aged_opacity: 0.6,
+            albedo_aged: SURF_FOAM_ALBEDO_AGED.default_value(),
+            aged_tint: SURF_FOAM_AGED_TINT.default_value(),
+            aged_opacity: SURF_FOAM_AGED_OPACITY.default_value(),
             glow: 0.8,
-            bump_m: 0.03,
-            swash_residue_rad: 1.2,
+            bump_m: SURF_FOAM_BUMP_M.default_value(),
+            swash_residue_rad: SURF_FOAM_SWASH_RESIDUE_RAD.default_value(),
             contact_calm: 0.2,
             contact_line: 0.15,
-            swash_spread: 2.0,
+            swash_spread: SURF_FOAM_SWASH_SPREAD.default_value(),
         }
     }
 }
@@ -271,7 +407,7 @@ impl Default for ShoreSettings {
             normal_floor: 0.5,
             beach_slope: 0.05,
             shore_waves: 1.0,
-            foam_full_breaking: 0.6,
+            foam_full_breaking: SHORE_FOAM_FULL_BREAKING.default_value(),
             surf_foam: SurfFoam::default(),
             surf_shape: SurfShape::default(),
         }

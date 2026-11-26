@@ -9424,6 +9424,7 @@ dependencies = [
  "sf_coords",
  "sf_records",
  "sf_terrain",
+ "sf_tunables",
  "sf_world",
  "spade",
 ]

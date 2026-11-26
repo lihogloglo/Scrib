@@ -51,6 +51,31 @@ pub use wet_tiles::WetTiles;
 use sf_coords::WorldPos;
 use sf_world::{RecordRef, Worldspace, WorldspaceId};
 
+/// This crate's tunables (declared beside their settings structs, whose `Default`s read them).
+pub const TUNABLES: &[&dyn sf_tunables::AnyDef] = &[
+    &body_mesh::LAKE_MAX_TRIANGLE_M2,
+    &body_mesh::LAKE_MIN_ANGLE_DEG,
+    &body_mesh::LAKE_MAX_STEINER,
+    &body_mesh::RIVER_SPACING_M,
+    &body_mesh::RIVER_CROSS_SAMPLES,
+    &body_mesh::RIVER_BANK_EXTEND_M,
+    &shore::SURF_HEIGHT_GAIN,
+    &shore::SURF_BREAK_CREST_MIN_M,
+    &shore::SURF_BREAK_SHARPNESS,
+    &shore::SURF_GAP_CELL_M,
+    &shore::SURF_FOAM_BORE_DECAY_RAD,
+    &shore::SURF_FOAM_FRONT_RAD,
+    &shore::SURF_FOAM_LACE_CELL_M,
+    &shore::SURF_FOAM_LACE_AGED,
+    &shore::SURF_FOAM_ALBEDO_AGED,
+    &shore::SURF_FOAM_AGED_TINT,
+    &shore::SURF_FOAM_AGED_OPACITY,
+    &shore::SURF_FOAM_BUMP_M,
+    &shore::SURF_FOAM_SWASH_RESIDUE_RAD,
+    &shore::SURF_FOAM_SWASH_SPREAD,
+    &shore::SHORE_FOAM_FULL_BREAKING,
+];
+
 /// Default CPU twin grid (water.md: 64²).
 pub const TWIN_RESOLUTION: usize = 64;
 

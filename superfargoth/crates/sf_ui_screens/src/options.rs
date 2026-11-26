@@ -95,7 +95,7 @@ pub const OPTIONS_FRAME: WindowFrame =
 
 /// The value column's width (px): the longest choice label at 1080p fits; longer ones clip, on
 /// one line, so a value change never resizes its row.
-const VALUE_WIDTH: f32 = 160.0;
+const VALUE_WIDTH: f32 = 160.0; // tunables: const (UI layout width, px)
 
 /// How a row edits its value.
 #[derive(Clone, Debug, PartialEq)]

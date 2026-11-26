@@ -121,7 +121,7 @@ impl Default for Params {
             budget: v("scatter.budget"),
             size_priority: v("scatter.size_priority"),
             census_step_m: v("scatter.census_step_m"),
-            sea_level_m: 0.0,
+            sea_level_m: 0.0, // tunables: const (a fact of the terrain the host passes, not a tunable)
         }
     }
 }

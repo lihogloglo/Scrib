@@ -35,7 +35,7 @@ use crate::widgets::{
 use crate::{is_target, on_target, screen_of};
 
 /// The pause window's width (px); a layout constant.
-const PAUSE_WIDTH: f32 = 280.0;
+const PAUSE_WIDTH: f32 = 280.0; // tunables: const (UI layout width, px)
 
 /// An entry of the pause menu.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

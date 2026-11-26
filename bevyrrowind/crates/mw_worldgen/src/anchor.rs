@@ -458,7 +458,7 @@ fn edt_1d(f: &[f64], out: &mut [f64], v: &mut [usize], z: &mut [f64]) {
 
 /// Distance in samples from each sample to the nearest `inside` one (exact Euclidean; large where none).
 pub fn distance_samples(inside: &[bool], w: usize, h: usize) -> Vec<f64> {
-    const FAR: f64 = 1e20;
+    const FAR: f64 = 1e20; // tunables: const (sentinel: larger than any squared grid distance)
     let mut g: Vec<f64> = inside.iter().map(|&i| if i { 0.0 } else { FAR }).collect();
     let n = w.max(h);
     let (mut f, mut out, mut v, mut z) = (vec![0.0; n], vec![0.0; n], vec![0usize; n], vec![0.0; n + 1]);

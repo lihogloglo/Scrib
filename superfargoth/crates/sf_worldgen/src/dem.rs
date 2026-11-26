@@ -45,11 +45,11 @@ const RASTER_PIXEL_IS_POINT: u16 = 2;
 /// EPSG code of WGS 84 geographic 2D.
 const EPSG_WGS84: u16 = 4326;
 /// Window margin around the sampled area, source pixels (the bicubic kernel reaches 2).
-const WINDOW_MARGIN_PX: f64 = 3.0;
+const WINDOW_MARGIN_PX: f64 = 3.0; // tunables: const (maths: the bicubic kernel reach plus one)
 /// Largest extent the local equirectangular frame is used for, metres (scale error ~ tan(lat0)·Δlat).
-const MAX_EXTENT_M: f64 = 200_000.0;
+const MAX_EXTENT_M: f64 = 200_000.0; // tunables: const (maths: validity bound of the local equirectangular frame, the extent range max)
 /// Tile alignment tolerance on the common lattice, source pixels.
-const ALIGN_TOL_PX: f64 = 1e-3;
+const ALIGN_TOL_PX: f64 = 1e-3; // tunables: const (maths: float tolerance of the lattice alignment check)
 
 /// A geographic raster: pixel centres on a regular lon/lat lattice, row 0 = north.
 #[derive(Debug, Clone)]

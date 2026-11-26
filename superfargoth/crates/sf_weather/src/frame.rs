@@ -179,7 +179,7 @@ impl Default for WeatherFrame {
             storms: Vec::new(),
             visibility_m: MAX_VISIBILITY_M,
             precip_tilt_max_deg: crate::UNCAPPED_DEG,
-            wind_mid_speed: 0.0,
+            wind_mid_speed: 0.0, // tunables: const (runtime state: the blended mean wind speed, computed every frame)
         }
     }
 }

@@ -1,16 +1,16 @@
 {
   "about": "Per-crate ratchet of tools/tunables-census.mjs --check: a crate's T count may only go down. Rewrite with --update-baseline only when counts went down (a migration slice).",
   "totals": {
-    "rows": 2179,
-    "T": 1239,
-    "C": 493,
-    "?": 447
+    "rows": 2858,
+    "T": 1228,
+    "C": 1136,
+    "?": 494
   },
   "crates": {
     "bevyrrowind": {
       "T": 2,
       "?": 1,
-      "C": 0,
+      "C": 4,
       "tunables": [
         "src/perf/cli.rs GPU_BUSY_PCT",
         "src/perf/cli.rs OTHER_CPU_LIMIT"
@@ -19,7 +19,7 @@
     "mw_actors": {
       "T": 2,
       "?": 2,
-      "C": 29,
+      "C": 31,
       "tunables": [
         "src/equip.rs SLOT_COUNT",
         "src/slots.rs PRT_COUNT"
@@ -39,10 +39,10 @@
     },
     "mw_ai": {
       "T": 5,
-      "?": 4,
-      "C": 2,
+      "?": 2,
+      "C": 33,
       "tunables": [
-        "src/scaffold.rs WALK_SLACK",
+        "src/packages.rs RECORD_PACKAGE_PRIORITY",
         "src/wander.rs IDLE_CHANCE_MULTIPLIER",
         "src/wander.rs MAX_WALK_SPEED",
         "src/wander.rs MIN_WALK_SPEED",
@@ -60,15 +60,14 @@
       ]
     },
     "mw_assets": {
-      "T": 12,
-      "?": 10,
+      "T": 11,
+      "?": 9,
       "C": 1,
       "tunables": [
         "src/cooked.rs CookedLodSettings.max_distance",
         "src/cooked.rs CookedLodSettings.tint_levels",
         "src/cooked.rs RAY_TRACING_LOD",
         "src/lights.rs FULL_MOONLIGHT_FLOOR_RATIO",
-        "src/lights.rs LightCalibration.exposure_floor_ev100",
         "src/lights.rs LightCalibration.lumens_per_radius_sq",
         "src/lights.rs LightCalibration.range_scale",
         "src/lights.rs LightCalibration.unshadowed_range_scale",
@@ -108,7 +107,7 @@
     "mw_bake": {
       "T": 21,
       "?": 11,
-      "C": 21,
+      "C": 23,
       "tunables": [
         "src/census.rs MAX_BANDS",
         "src/census.rs MAX_SPAN",
@@ -189,7 +188,7 @@
     "mw_devtools_bevy": {
       "T": 4,
       "?": 3,
-      "C": 1,
+      "C": 21,
       "tunables": [
         "src/live_ab.rs LiveAb.sun_shadows",
         "src/live_ab.rs TIME_SCALES",
@@ -221,8 +220,8 @@
     },
     "mw_environment_bevy": {
       "T": 5,
-      "?": 2,
-      "C": 1,
+      "?": 1,
+      "C": 3,
       "tunables": [
         "src/night_sky.rs DEG_PER_SIZE",
         "src/render.rs POINT_SHADOWS_DEFAULT",
@@ -234,7 +233,7 @@
     "mw_exterior_bevy": {
       "T": 7,
       "?": 1,
-      "C": 12,
+      "C": 27,
       "tunables": [
         "src/exterior.rs SUN_DEPTH_BIAS",
         "src/exterior.rs SUN_NORMAL_BIAS",
@@ -271,6 +270,12 @@
         "src/build.rs UNPLANT_ANGLE_DEG",
         "src/script.rs SCRIPT_PRIORITY"
       ]
+    },
+    "mw_interaction": {
+      "T": 0,
+      "?": 0,
+      "C": 2,
+      "tunables": []
     },
     "mw_nif": {
       "T": 6,
@@ -338,7 +343,7 @@
     "mw_rpg": {
       "T": 3,
       "?": 4,
-      "C": 7,
+      "C": 9,
       "tunables": [
         "src/barter.rs BarterOptions.cap_75",
         "src/training.rs TRAINING_HOURS",
@@ -353,16 +358,16 @@
     },
     "mw_saves_bevy": {
       "T": 0,
-      "?": 2,
-      "C": 2,
+      "?": 0,
+      "C": 3,
       "tunables": []
     },
     "mw_script": {
       "T": 1,
-      "?": 0,
-      "C": 1,
+      "?": 4,
+      "C": 3,
       "tunables": [
-        "src/interp.rs DEFAULT_STEP_LIMIT"
+        "src/aifn.rs FOLLOW"
       ]
     },
     "mw_stats": {
@@ -390,13 +395,13 @@
     "mw_viewers_bevy": {
       "T": 0,
       "?": 0,
-      "C": 12,
+      "C": 33,
       "tunables": []
     },
     "mw_walkers_bevy": {
       "T": 15,
       "?": 2,
-      "C": 1,
+      "C": 10,
       "tunables": [
         "src/physics.rs AUTO_FRAME_DELAY",
         "src/physics.rs BALL_MASS",
@@ -416,11 +421,10 @@
       ]
     },
     "mw_water": {
-      "T": 9,
+      "T": 8,
       "?": 7,
-      "C": 1,
+      "C": 3,
       "tunables": [
-        "src/lib.rs SEA_FETCH_M",
         "src/lib.rs UNIT_M",
         "src/lib.rs WaterIni.max_ripples",
         "src/lib.rs WaterIni.near_water_points",
@@ -434,7 +438,7 @@
     "mw_weather": {
       "T": 17,
       "?": 5,
-      "C": 1,
+      "C": 7,
       "tunables": [
         "src/ambient.rs FADE_STEPS",
         "src/cover.rs ASH_DEPTH_M",
@@ -476,6 +480,12 @@
         "src/worldspaces.rs PAIR_DISTANCE_M"
       ]
     },
+    "mw_worldgen": {
+      "T": 0,
+      "?": 2,
+      "C": 18,
+      "tunables": []
+    },
     "sf_action": {
       "T": 20,
       "?": 22,
@@ -515,7 +525,7 @@
     "sf_ai": {
       "T": 3,
       "?": 1,
-      "C": 2,
+      "C": 85,
       "tunables": [
         "src/directive.rs MAX_REACTIONS",
         "src/htn.rs SEARCH_DEPTH",
@@ -524,8 +534,8 @@
     },
     "sf_ai_bevy": {
       "T": 3,
-      "?": 2,
-      "C": 1,
+      "?": 4,
+      "C": 30,
       "tunables": [
         "src/gizmos.rs LINE_STEP",
         "src/gizmos.rs RING_RADIUS",
@@ -608,7 +618,7 @@
     "sf_anim_graph": {
       "T": 18,
       "?": 0,
-      "C": 6,
+      "C": 7,
       "tunables": [
         "src/asset.rs FootGuards.blend_halflife",
         "src/asset.rs FootGuards.foot_halflife",
@@ -639,7 +649,7 @@
     "sf_atmos": {
       "T": 34,
       "?": 40,
-      "C": 2,
+      "C": 12,
       "tunables": [
         "src/bank_edges.rs DEPTH_FLOOR",
         "src/bank_edges.rs DEPTH_SIGMA",
@@ -678,9 +688,9 @@
       ]
     },
     "sf_atmos_bevy": {
-      "T": 22,
+      "T": 17,
       "?": 12,
-      "C": 6,
+      "C": 12,
       "tunables": [
         "src/lib.rs SHADOW_ANCHOR_CELL",
         "src/lib.rs SHADOW_HALF_EXTENT",
@@ -698,12 +708,7 @@
         "src/shaders/fog.wesl MAX_EXPONENT",
         "src/shaders/fog_light.wesl GOLDEN_ANGLE",
         "src/shaders/fog_light.wesl SKY_FILL_SAMPLES",
-        "src/shaders/froxel_common.wesl MAX_FOG_LIGHTS",
-        "src/shaders/froxel_inject.wesl FAR_BIAS",
-        "src/shaders/froxel_inject.wesl FAR_BIAS_PER_M",
-        "src/shaders/froxel_inject.wesl FAR_FADE_START",
-        "src/shaders/froxel_inject.wesl FAR_PENUMBRA",
-        "src/shaders/froxel_inject.wesl FAR_PENUMBRA_MIN"
+        "src/shaders/froxel_common.wesl MAX_FOG_LIGHTS"
       ]
     },
     "sf_audio": {
@@ -890,7 +895,7 @@
     "sf_controller": {
       "T": 37,
       "?": 3,
-      "C": 4,
+      "C": 7,
       "tunables": [
         "src/avoid.rs AvoidParams.idle_speed",
         "src/avoid.rs AvoidParams.margin",
@@ -953,6 +958,12 @@
       "T": 0,
       "?": 3,
       "C": 0,
+      "tunables": []
+    },
+    "sf_crime": {
+      "T": 0,
+      "?": 0,
+      "C": 10,
       "tunables": []
     },
     "sf_diag": {
@@ -1045,6 +1056,18 @@
         "src/probe_update.wesl VIS_TEXELS"
       ]
     },
+    "sf_groundcover": {
+      "T": 0,
+      "?": 0,
+      "C": 10,
+      "tunables": []
+    },
+    "sf_groundcover_bevy": {
+      "T": 0,
+      "?": 0,
+      "C": 14,
+      "tunables": []
+    },
     "sf_ids": {
       "T": 1,
       "?": 4,
@@ -1052,6 +1075,18 @@
       "tunables": [
         "src/lib.rs MAX_PLAYERS"
       ]
+    },
+    "sf_interaction": {
+      "T": 0,
+      "?": 0,
+      "C": 16,
+      "tunables": []
+    },
+    "sf_interaction_bevy": {
+      "T": 0,
+      "?": 2,
+      "C": 1,
+      "tunables": []
     },
     "sf_level": {
       "T": 0,
@@ -1081,7 +1116,7 @@
     "sf_lod_bevy": {
       "T": 8,
       "?": 0,
-      "C": 1,
+      "C": 3,
       "tunables": [
         "src/lib.rs FarFieldSettings.l1_shadows",
         "src/lib.rs FarFieldSettings.light_min_pixels",
@@ -1133,7 +1168,7 @@
     "sf_nav": {
       "T": 3,
       "?": 1,
-      "C": 4,
+      "C": 21,
       "tunables": [
         "src/grid.rs MAX_TILE_CELLS",
         "src/types.rs MAX_AREAS",
@@ -1148,14 +1183,14 @@
     },
     "sf_nav_bevy": {
       "T": 0,
-      "?": 3,
+      "?": 5,
       "C": 0,
       "tunables": []
     },
     "sf_nav_recast": {
       "T": 9,
       "?": 4,
-      "C": 4,
+      "C": 5,
       "tunables": [
         "src/build.rs DETAIL_SAMPLE_MAX_ERROR_CELLS",
         "src/build.rs MAX_EDGE_LEN_M",
@@ -1171,7 +1206,7 @@
     "sf_physics": {
       "T": 41,
       "?": 3,
-      "C": 2,
+      "C": 3,
       "tunables": [
         "src/body.rs ITEM_DAMPING",
         "src/body.rs PhysicsParams.contact_force_threshold",
@@ -1217,7 +1252,7 @@
       ]
     },
     "sf_physics_bevy": {
-      "T": 23,
+      "T": 22,
       "?": 1,
       "C": 2,
       "tunables": [
@@ -1227,7 +1262,6 @@
         "src/debug.rs PhysicsDebug.radius",
         "src/lib.rs PhysicsSettings.debris_extent",
         "src/lib.rs PhysicsSettings.debris_mass",
-        "src/lib.rs PhysicsSettings.hz",
         "src/lib.rs PhysicsSettings.insert_batch",
         "src/lib.rs PhysicsSettings.insert_budget_ms",
         "src/lib.rs PhysicsSettings.item_batch",
@@ -1249,7 +1283,7 @@
     "sf_precip_bevy": {
       "T": 16,
       "?": 4,
-      "C": 2,
+      "C": 3,
       "tunables": [
         "src/lib.rs PrecipSlot.fall_speed",
         "src/lib.rs PrecipSlot.intensity",
@@ -1318,6 +1352,18 @@
         "src/translucent_fog.wesl FOG_MULTIPLY",
         "src/translucent_fog.wesl FOG_PREMULTIPLIED"
       ]
+    },
+    "sf_rockgen": {
+      "T": 0,
+      "?": 0,
+      "C": 47,
+      "tunables": []
+    },
+    "sf_rockgen_bevy": {
+      "T": 0,
+      "?": 0,
+      "C": 15,
+      "tunables": []
     },
     "sf_rpg": {
       "T": 0,
@@ -1416,7 +1462,7 @@
     "sf_sky": {
       "T": 31,
       "?": 24,
-      "C": 2,
+      "C": 13,
       "tunables": [
         "src/cascade_hold.rs CascadeHoldConfig.enabled",
         "src/cascade_hold.rs CascadeHoldConfig.hold_from",
@@ -1454,7 +1500,7 @@
     "sf_sky_bevy": {
       "T": 21,
       "?": 3,
-      "C": 2,
+      "C": 12,
       "tunables": [
         "src/lib.rs MEDIUM_UPDATE_STEPS",
         "src/lib.rs SkyCamera.exposure",
@@ -1490,7 +1536,7 @@
     "sf_surface": {
       "T": 58,
       "?": 29,
-      "C": 3,
+      "C": 19,
       "tunables": [
         "src/grid.rs CELL_M",
         "src/grid.rs SNOW_LINE_BLEND_M",
@@ -1555,7 +1601,7 @@
     "sf_surface_bevy": {
       "T": 47,
       "?": 26,
-      "C": 41,
+      "C": 55,
       "tunables": [
         "src/cover.rs COVER_SIZE",
         "src/cover.rs DERIVED_HEIGHT_PERCENTILES",
@@ -1609,7 +1655,7 @@
     "sf_terrain": {
       "T": 19,
       "?": 10,
-      "C": 14,
+      "C": 19,
       "tunables": [
         "src/bake.rs TerrainBakeConfig.fill_height",
         "src/bake.rs TerrainBakeConfig.min_top_level",
@@ -1621,9 +1667,9 @@
         "src/cdlod.rs RAISE_FADE_END",
         "src/cdlod.rs RAISE_FADE_START",
         "src/cdlod.rs RAISE_MAX_LOD",
-        "src/cdlod.rs RAISE_TEXEL_M",
         "src/clipmap.rs CLIPMAP_SIZE",
         "src/edits.rs BRICK_SAMPLES",
+        "src/gpu_fill.wgsl FILL_KIND_HEIGHTS",
         "src/product.rs MIN_EDGE",
         "src/pyramid.rs MAX_QUANT_STEP",
         "src/shadow.rs ShadowMarch.reach",
@@ -1633,9 +1679,9 @@
       ]
     },
     "sf_terrain_bevy": {
-      "T": 34,
-      "?": 2,
-      "C": 38,
+      "T": 32,
+      "?": 1,
+      "C": 46,
       "tunables": [
         "src/far_map.rs FAR_MAP_SIZE",
         "src/far_map.rs FAR_MAP_TEXEL",
@@ -1645,6 +1691,7 @@
         "src/lib.rs SHIFT_SETTLE_FRAMES",
         "src/lib.rs SLACK_M",
         "src/lib.rs TerrainSettings.blend_depth",
+        "src/lib.rs TerrainSettings.gpu_fill",
         "src/lib.rs TerrainSettings.max_loads",
         "src/lib.rs TerrainSettings.raise_m",
         "src/lib.rs TerrainSettings.snap",
@@ -1657,14 +1704,11 @@
         "src/shaders/common.wesl MIN_LOD",
         "src/shaders/common.wesl P_FAR",
         "src/shaders/common.wesl P_HEIGHT",
-        "src/shaders/common.wesl RAISE_FADE_END",
-        "src/shaders/common.wesl RAISE_FADE_START",
         "src/shaders/common.wesl RAISE_MAX_LOD",
-        "src/shaders/common.wesl RAISE_TEXEL_M",
         "src/shaders/common.wesl SIZE",
         "src/shaders/far_shadow.wesl FAR_BIAS_PER_M",
         "src/shaders/far_shadow.wesl FAR_FADE_START",
-        "src/shaders/far_shadow.wesl FAR_FIRST_PER_M",
+        "src/shaders/far_shadow.wesl FAR_FIRST_M",
         "src/shaders/far_shadow.wesl FAR_MAP_BIAS",
         "src/shaders/far_shadow.wesl FAR_MAP_PENUMBRA_MIN",
         "src/shaders/far_shadow.wesl FAR_MARCH_END",
@@ -1770,7 +1814,7 @@
     "sf_ui_screens": {
       "T": 7,
       "?": 5,
-      "C": 0,
+      "C": 2,
       "tunables": [
         "src/keybinds.rs CELL_WIDTH",
         "src/keybinds.rs LABEL_WIDTH",
@@ -1806,8 +1850,8 @@
     },
     "sf_water": {
       "T": 37,
-      "?": 15,
-      "C": 3,
+      "?": 39,
+      "C": 14,
       "tunables": [
         "src/lib.rs TWIN_RESOLUTION",
         "src/records.rs WaterOptics.refraction_strength",
@@ -1850,8 +1894,8 @@
     },
     "sf_water_bevy": {
       "T": 18,
-      "?": 8,
-      "C": 6,
+      "?": 13,
+      "C": 17,
       "tunables": [
         "src/lib.rs ClipmapSettings.base_spacing",
         "src/lib.rs ClipmapSettings.displacement_range",
@@ -1876,7 +1920,7 @@
     "sf_weather": {
       "T": 42,
       "?": 21,
-      "C": 36,
+      "C": 37,
       "tunables": [
         "src/frame.rs BORDER_BAND_M",
         "src/frame.rs LIGHTNING_BUCKET_HOURS",
@@ -1962,7 +2006,7 @@
     "sf_world": {
       "T": 21,
       "?": 1,
-      "C": 3,
+      "C": 5,
       "tunables": [
         "src/index.rs IndexParams.far_min_radius",
         "src/reader.rs DEFAULT_CAP",
@@ -1988,9 +2032,9 @@
       ]
     },
     "sf_world_bevy": {
-      "T": 24,
+      "T": 23,
       "?": 3,
-      "C": 5,
+      "C": 9,
       "tunables": [
         "src/debug.rs StreamingDebug.rings",
         "src/fade.rs FadeTransition.fade_secs",
@@ -1998,7 +2042,6 @@
         "src/fade.rs FadeTransition.max_hold_secs",
         "src/fade.rs FadeTransition.ready_margin_m",
         "src/fade.rs MIN_HOLD_FRAMES",
-        "src/matclass.rs FoldRules.flat_normal_map",
         "src/mesh_slabs.rs MeshSlabsPlugin.raise_cap",
         "src/reveal.rs RevealGate.gates_max_secs",
         "src/reveal.rs RevealGate.max_secs",
@@ -2017,6 +2060,12 @@
         "src/stream.rs StreamingConfig.placements_per_item",
         "src/stream.rs StreamingConfig.precombine"
       ]
+    },
+    "sf_worldgen": {
+      "T": 0,
+      "?": 13,
+      "C": 142,
+      "tunables": []
     }
   }
 }

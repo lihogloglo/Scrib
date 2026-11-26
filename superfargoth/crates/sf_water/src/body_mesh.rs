@@ -35,6 +35,8 @@ use spade::{
     AngleLimit, ConstrainedDelaunayTriangulation, Point2, RefinementParameters, Triangulation,
 };
 
+use sf_tunables::{Def, Group, Lifetime, Scope, Source, Unit, def};
+
 use crate::records::RiverPoint;
 
 /// Points closer than this are one point (input cleaning), metres.
@@ -101,6 +103,66 @@ impl BodyMesh {
     }
 }
 
+/// `water.lake.max_triangle_m2`: [`LakeMeshParams::max_triangle_area_m2`].
+pub const LAKE_MAX_TRIANGLE_M2: Def<f64> = def!("water.lake.max_triangle_m2" = 1024.0_f64)
+    .range(0.0, 10_000.0)
+    .unit(Unit::None)
+    .help("Lake triangulation: Steiner points split any triangle larger than this, m2 (0 = no area bound)")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .lifetime(Lifetime::Restart)
+    .group(Group::Water);
+
+/// `water.lake.min_angle_deg`: [`LakeMeshParams::min_angle_deg`].
+pub const LAKE_MIN_ANGLE_DEG: Def<f64> = def!("water.lake.min_angle_deg" = 20.0_f64)
+    .range(0.0, 30.0)
+    .unit(Unit::Degrees)
+    .help("Lake triangulation: smallest triangle angle refinement aims for (0 = no angle bound)")
+    .source(Source::Industry("Shewchuk's Triangle -q default; Ruppert's algorithm terminates up to ~20.7 deg"))
+    .scope(Scope::Dev)
+    .lifetime(Lifetime::Restart)
+    .group(Group::Water);
+
+/// `water.lake.max_steiner`: [`LakeMeshParams::max_steiner_vertices`].
+pub const LAKE_MAX_STEINER: Def<usize> = def!("water.lake.max_steiner" = 65_536_usize)
+    .range(0, 1_000_000)
+    .unit(Unit::Count)
+    .help("Lake triangulation: cap on the points refinement adds per lake (0 = the bare CDT of the outline)")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .lifetime(Lifetime::Restart)
+    .group(Group::Water);
+
+/// `water.river.spacing_m`: [`RiverMeshParams::spacing_m`].
+pub const RIVER_SPACING_M: Def<f64> = def!("water.river.spacing_m" = 4.0_f64)
+    .range(0.5, 64.0)
+    .unit(Unit::Meters)
+    .help("River ribbon: sample spacing along the centre line")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .lifetime(Lifetime::Restart)
+    .group(Group::Water);
+
+/// `water.river.cross_samples`: [`RiverMeshParams::cross_samples`].
+pub const RIVER_CROSS_SAMPLES: Def<u32> = def!("water.river.cross_samples" = 5_u32)
+    .range(2, 33)
+    .unit(Unit::Count)
+    .help("River ribbon: vertices across the strip (odd keeps a centre column)")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .lifetime(Lifetime::Restart)
+    .group(Group::Water);
+
+/// `water.river.bank_extend_m`: [`RiverMeshParams::bank_extend_m`].
+pub const RIVER_BANK_EXTEND_M: Def<f64> = def!("water.river.bank_extend_m" = 2.0_f64)
+    .range(0.0, 16.0)
+    .unit(Unit::Meters)
+    .help("River ribbon: the strip continues this far past each bank under the terrain")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .lifetime(Lifetime::Restart)
+    .group(Group::Water);
+
 /// Lake and pool triangulation. Every value is a tunable (`tunables.md`): unit and range in its doc.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LakeMeshParams {
@@ -121,9 +183,9 @@ pub struct LakeMeshParams {
 impl Default for LakeMeshParams {
     fn default() -> Self {
         Self {
-            max_triangle_area_m2: 1024.0,
-            min_angle_deg: 20.0,
-            max_steiner_vertices: 65_536,
+            max_triangle_area_m2: LAKE_MAX_TRIANGLE_M2.default_value(),
+            min_angle_deg: LAKE_MIN_ANGLE_DEG.default_value(),
+            max_steiner_vertices: LAKE_MAX_STEINER.default_value(),
         }
     }
 }
@@ -147,9 +209,9 @@ pub struct RiverMeshParams {
 impl Default for RiverMeshParams {
     fn default() -> Self {
         Self {
-            spacing_m: 4.0,
-            cross_samples: 5,
-            bank_extend_m: 2.0,
+            spacing_m: RIVER_SPACING_M.default_value(),
+            cross_samples: RIVER_CROSS_SAMPLES.default_value(),
+            bank_extend_m: RIVER_BANK_EXTEND_M.default_value(),
         }
     }
 }

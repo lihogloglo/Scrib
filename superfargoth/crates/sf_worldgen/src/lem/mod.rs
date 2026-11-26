@@ -96,7 +96,7 @@ pub struct LemParams<'a> {
 // tunables: const (numerics of the local Newton solve: Veloren / fastscapelib-fortran tolerance and relaxation)
 const NEWTON_TOL_M: f64 = 1.0e-3;
 const NEWTON_OMEGA: f64 = 0.875;
-const NEWTON_MAX_ITER: usize = 100;
+const NEWTON_MAX_ITER: usize = 100; // tunables: const (numerics of the local Newton solve: a divergence guard, it stops on NEWTON_TOL_M)
 
 /// p95 of land height above sea (`land` cells only).
 pub fn land_p95(h: &[f64], land: &[bool], sea: f64, buf: &mut Vec<f64>) -> f64 {

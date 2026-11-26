@@ -28,7 +28,7 @@ use bevy_render::{Extract, ExtractSchedule, RenderApp};
 use bevy_transform::components::GlobalTransform;
 use bevy_transform::TransformSystems;
 use sf_coords::WorldPos;
-use sf_tunables::{def, Cost, Def, Effect, FeatureSwitch, Group, Source, Unit};
+use sf_tunables::{def, Cost, Def, Effect, FeatureSwitch, Group, Scope, Source, Unit};
 use sf_water::{optics_index_at, sun_term, CameraMedium, MediumState, NearPlane, WaterKind, WaterSample};
 
 use crate::{WaterCamera, WaterLook, WaterRegionsInput, WaterSurface, WaterSystems};
@@ -71,6 +71,15 @@ pub const WATER_UNDERWATER_SKY_FILL: Def<f32> = def!(float "water.underwater.sky
     .source(Source::Guess)
     .group(Group::Water);
 
+/// `water.underwater.post`: [`WaterMediumSettings::post`], the underwater post (U3) on a camera fully
+/// under the water. Not in [`crate::TUNABLES`]: the host drives the field from its A/B switches
+/// (`--off underwater`), so a live binding would fight them.
+pub const WATER_UNDERWATER_POST: Def<bool> = def!(bool "water.underwater.post" = true)
+    .help("Draw the underwater post on a camera fully under the water; off = drawn as above the water (an A/B)")
+    .source(Source::Owner("2026-11-17: underwater pass, water.md \"Underwater\" Plan"))
+    .scope(Scope::Dev)
+    .group(Group::Water);
+
 /// The uniform's stand-in for "no water here" and "bed unknown" depths (metres; ±∞ on the CPU).
 pub const NO_WATER_DEPTH_M: f32 = 1.0e4; // tunables: const (format: a finite ∞ for the GPU)
 
@@ -95,7 +104,7 @@ impl Default for WaterMediumSettings {
         Self {
             enabled: WATER_UNDERWATER.default_value(),
             hysteresis_m: WATER_MEDIUM_HYSTERESIS_M.default_value(),
-            post: true,
+            post: WATER_UNDERWATER_POST.default_value(),
             kd_scale: WATER_UNDERWATER_KD_SCALE.default_value(),
             sky_fill: WATER_UNDERWATER_SKY_FILL.default_value(),
         }
