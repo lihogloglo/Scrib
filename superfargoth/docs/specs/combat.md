@@ -30,11 +30,8 @@ hit-stop clock, and a rules layer behind the hit event.** Sources: R1 `../resear
 Combat-Rewrite, MIT), R6 `../research/animation/06-souls-combat-feel.md`, R8 `../research/animation/08-industry-combat-responsiveness.md`,
 classic `../../../bevyrrowind/docs/research/combat-classic-openmw.md`. UE GAS keeps attributes apart from notifies, as our rules seam does.
 
-Reuse (rule 8): Bevy has no combat layer and no maintained crate covers clip windows, weapon sweeps and a rules seam. Hits
-are segment-capsule math on baked socket tracks, not physics shape casts (deterministic, host-side, LOD-proof). The ER
-rewrite is a reference, not a dependency (a monolithic sim with a one-slot buffer; we have the chooser and per-class buffer):
-we take its constants (with attribution, R1 flags) and its tests' shape. Lock-on math exists (`sf_camera::lockon`), and
-framing and trauma shake (`sf_camera_bevy`).
+C1 reuse rationale (segment-capsule hits on baked socket tracks, not physics casts; the ER rewrite as reference, not
+dependency; reused lock-on math and camera): [history](archive/combat-history.md) "Canonical technique: C1 reuse (moved 2026-11-26)".
 
 Numbers adopted (R1, R6, R8; roll 12 stamina, regen 45/s, hit-stop ~60 ms + ~0.1 s ease, guard 4 ticks and 80 deg, lock 15 m /
 break 20 m): [history](archive/combat-history.md) "Canonical technique: sources and adopted numbers"; live values in the sheet.
@@ -57,6 +54,8 @@ part a field on `Contact`, `Outcome` or `MoveSpec` or a new `source`, never a se
 | Push | Dark Messiah kick, hazard kills [M] | `Kick` class, `Environment` contacts with credit |
 | Views | Avowed one timing in both views [V gamedeveloper]; Chivalry 2, Mordhau: 3P is a camera option, feint/morph for all [V gamepressure] | one rules core, per-view profile |
 | Unseen hits | Doom/Arkham token caps, Arkham attacker icon [V Sulman]; Dead Island 2 cuts unseen damage | tokens + cues; no view-aware rule (owner Q9) |
+| Non-lethal | CP2077 blunt/fists knock out at 0, more damage kills, no surrender [V guides; official docs, waking unverified]; Dishonored per-action takedown [V]; M&B blunt wounds [unverified] | match CP2077 (tag at 0 + per-attack override); ahead: timed waking |
+| Yield, mercy | KCD/KCD2 yield, not bandits [V wiki]; Skyrim essential bleedout [V UESP], yield only in mods; RDR2 knockouts wake, witness bounty [V; honor unverified] | match KCD (AI37, humans); Finish prompt, leave = spare; witnessed finish = murder |
 
 ## Architecture
 
@@ -193,6 +192,7 @@ pub trait CombatRules: Send + Sync {
   wraps or replaces it (stat bands, C5).
 - `StandardRules` (C0a parts): poise damage = row `poise` x `Armor` scale; parry granted when offered; `combat.crit.*`
   multipliers; one damage entry of the content's default type, no buildup.
+- `outcome_at_zero` and `lethality` on `Contact` / `Outcome` (C20): "Non-lethal and mercy".
 
 ## Stamina economy
 
@@ -234,7 +234,8 @@ C2d, decision 3, owner Q1 (a tight window on raising the guard, riposte, both vi
 C2e, decision 4, owner Q5 (heavy damage, a short warped finisher, never a cutscene).
 - **Eligibility** (before `Step`, into `Sense.critical: Option<(CritKind, CharacterId)>`): `Backstab` = within
   `combat.crit.reach_m` inside the target's back cone (`.back_half_angle_deg`), or target `unaware` (content fills it from
-  perception, adapter hook); `Riposte` = target `poise_broken` or parried, in reach, in front. Never down, dead or mid-finisher.
+  perception, adapter hook); `Riposte` = target `poise_broken` or parried, in reach, in front. Never down, dead or mid-finisher
+  (`Finish` targets the Downed: "Non-lethal and mercy").
 - **Move**: Light with `Sense.critical` set requests class `Riposte`; sheet `backstab` / `riposte` moves (`classes:
   [Riposte]`, predicate `critical`, rank over `light1`) have `Critical` rows.
 - **Alignment**: the attacker is `Warp`-owned onto a victim-relative slot (`finisher.offset`), linear snap over
@@ -242,8 +243,8 @@ C2e, decision 4, owner Q5 (heavy damage, a short warped finisher, never a cutsce
   `Warp`-locked to the attacker. Both hold `IFrames(All)` while locked (ER [M]). A snap over `.max_snap_m` or a blocked end
   pose falls back to the normal attack.
 - **Damage**: `Contact.critical`; the rules multiply. The victim ends in `PhysicsTakeover` (death or knockdown).
-  Crime's sneak-attack multiplier is the content's backstab multiplier; stealth takedowns are backstabs tagging
-  `Knockout` (C15, C16).
+  Crime's sneak-attack multiplier is the content's backstab multiplier; stealth takedowns are backstabs, a non-lethal one
+  with the row override `lethality: NonLethal` (C20, C15, C16).
 - Tunables: `combat.crit.reach_m` (m, 0.5-3, Guess 1.5), `.back_half_angle_deg` (deg, 20-90, Guess 45), `.snap_s` (s,
   0.1-0.4, Reference ER), `.max_snap_m` (m, 0.3-2, Guess), `.backstab_mult` / `.riposte_mult` (1-5, Reference ER 2-3.5).
 
@@ -255,6 +256,37 @@ C12, decision 5, owner Q6. Fields on `Contact` and `Outcome`, no second pipeline
   `Outcome.buildup` goes to `sf_effects` as `(target, status, amount, credit)`; meters, procs and ticks are its own.
 - The adapter owns resistances (C0d, C13); Morrowind ships no buildup at first. 3 and 2 are capacities (consts); more types
   keep the largest, with a load warning.
+
+## Non-lethal and mercy
+
+C20, C21, decision 20 (owner 2026-11-26: fists hurt health, non-lethal damage at 0 downs, spare or finish as CP2077;
+research `gameplay-2026-11-25/combat-nonlethal.md`, C-R3). Marks Q10-Q15: pending owner, recommended answer designed in.
+- **`Lethality { Lethal, NonLethal }`** (Q10): row field `lethality: Option<_>` (per-attack override: takedown, finisher)
+  over the weapon's tag in the content's stats (fists, blunt, "subdue" items: `NonLethal`); default `Lethal`, no global
+  toggle. Copied to `Contact` and `Outcome`; a buildup or DoT carries its hit's lethality (`sf_effects` request field).
+- **Seam**: `CombatRules::outcome_at_zero(&self, contact, defender) -> AtZero { Death, Down(DownKind) }` when health
+  reaches 0. `StandardRules`: `NonLethal` -> `Down(Knockout)`, else `Death`; `Fighter.always_recover` (content: essential)
+  -> always `Down(Knockout)`. Classic (C5) answers with its own rules.
+- **`Downed { kind: DownKind { Knockout, Yielded }, since, until: Option<Tick>, credit: Option<CharacterId> }`** beside
+  `FightState`; feeds `defender_state.down` and AI41's downed flag; out of every token pool (C6a).
+  - *Knockout*: health 0, the `Knockdown` forced move with `Owner::Physics` (C2c), held, no roll-out; `until` = now +
+    `combat.downed.knockout_s`.
+  - *Yielded* (Q11): only from a `Yield { who }` command sent by AI37 (humans, its morale threshold; C6 never yields);
+    health kept, slot `react.yield` (cower), weapon sheathed, `until: None`.
+  - Hits while Downed: `Lethal` -> death; `NonLethal` -> Knockout, `until` restarts. C2c's "invulnerable while down" is
+    a standing fighter's poise knockdown (health > 0), not `Downed`: a downed foe is fragile (CP2077).
+  - Exits (Q13): **Recovered** (Knockout past `until`: C2c get-up, health `.wake_health` x max; Yielded: no hostile within
+    `.leave_m` for `.leave_s`, AI resumes the routine, content lowers disposition) emits `Spared { who, credit }`;
+    **Finished** (C21) emits `Finished { who, by }`, then `Died`; any lethal hit: `Died`.
+- **Finish** (C21, Q12): `CritKind::Finish` on a Downed target within `combat.crit.reach_m`, not `always_recover`, shown as
+  a "Finish" prompt (`sf_interaction` focus); it runs the C2e path (`Warp` snap, `IFrames(All)` while locked, sheet
+  `finish` move with a `Critical` row, always `Lethal`, victim's forced death clip from the downed pose). Leaving spares.
+- **Events** (C15): `Downed { who, kind, credit }`, `Spared`, `Finished` beside `HitLanded`, `Died { killer }`; quest hooks
+  read `Downed` as defeated; crime reads them in content (C23, Q14).
+- **Co-op**: `Downed` is host state replicated with `FightState`; Finish is a client command the host validates like a hit
+  claim. Player yield (Q15): `Yield` is a command on any fighter; no player input yet.
+- Tunables `combat.downed.*`: `knockout_s` (s, 10-600, Guess 90), `wake_health` (x max, 0.05-1, Guess 0.25), `leave_m`
+  (m, 5-100, Guess 30), `leave_s` (s, 1-60, Guess 10).
 
 ## Push and environment contacts
 
@@ -292,12 +324,8 @@ Decision 19 (owner 2026-11-26, Q7-9; research `gameplay-2026-11-25/combat-views.
 ## Lock-on and camera
 
 The third-person profile of "Views"; contacts never read the lock.
-The target is gameplay state (`ActionState::lock`, a stable id): a lock press acquires (`sf_camera::lockon::acquire` over
-`Lockable` hostiles in line of sight), else recentres; `LockTimers::check` breaks it (20 m, 1.5 s unseen, death, any
-traversal); `sf_camera_bevy::LockOn` frames it. Locked locomotion faces the target under the mover's own turn rates (no
-second turn system), `Turn` windows aim at it, locked rolls use the sheet's `locked` moves; unlocked rolls square up to the
-stick and attacks soft-aim (~3 m, +-30 deg, first ~1/6 s, R6 §5). Left: C4c. The Classic profile turns lock-on and hit-stop
-off (action.md "Mode profiles").
+Lock acquire, break (20 m, 1.5 s unseen, death, traversal), framing, locked locomotion and soft aim as built:
+[history](archive/combat-history.md) "Lock-on and camera as built (moved from combat.md 2026-11-26)". Left: C4c.
 
 ## Reactions, ragdoll and Delirium
 
@@ -331,7 +359,7 @@ Front, a missing tier to the next lower.
 Host-authoritative (action.md "Co-op readiness"). Client-predicted: own move starts, clocks, stamina costs, i-frames, own
 hit-stop. Own melee contacts are claimed by the attacking client and checked by the host; host only: NPC sweeps, rules,
 pools, reactions, deaths, lock validity. `FightState` replicates beside `ActionState`.
-Poise, parry, criticals, buildup and push credit are host state. Hit authority: net.md "Hit authority" (C0e, decision 15).
+Poise, parry, criticals, buildup, push credit and `Downed` are host state. Hit authority: net.md "Hit authority" (C0e, decision 15).
 
 ## Tests
 
@@ -356,6 +384,7 @@ In `bevyrrowind/docs/visual-checks/combat.md`. The spec's old "CB-6 classic swin
 | CB-9, CB-9b | kick (C9); kick into a hazard, credited kill (C10) |
 | CB-10, CB-11 | poise (C3a); creature fighters, boss phases (C6f) |
 | CB-12, CB-13, CB-14 | bow (C8b); cast over locomotion (C8d); classic swing (C5) |
+| CB-15, CB-16 | fist knockout and wake-up (C20, C22); finish or spare a downed or yielded foe (C21) |
 
 ## Build plan
 
@@ -377,7 +406,8 @@ Lane slices, order = `docs/roadmaps/combat.md` stages (depends and verify there)
 backstep, knockdown; C2d parry; C2e criticals; C3a poise; C3b heavy + charge; C3c openers; C3d second classes; C4c
 third-person profile; C8a-e delivery ([combat-delivery.md](combat-delivery.md), C0c); C9 kick; C10 hazards; C11 feint and morph; C12 damage packet; C13 Morrowind
 damage mapping; C14 prop targets; C15 hit and death events; C16 offences; C17 NPC fighters without AI; C18 first-person
-dodge; C19 threat cues.
+dodge; C19 threat cues; C20 non-lethal outcome + `Downed`; C21 Finish (mercy); C22 Morrowind non-lethal mapping; C23
+downed offences.
 C6a-f and C19 are designed in [combat-npc.md](combat-npc.md) (C0b).
 
 ## As built by slice
@@ -387,10 +417,5 @@ Built: C1a, C1b, C1c parts 1-4, C4 soft aim, C4b, C2a, C2b. As built, tests and 
 
 ## Open questions
 
-1. Co-op hit-stop on a client's own attacker: wait for the host's `HitLanded`, or predict? Decide at C7.
-   Answered 2026-11-26 (C0e): predicted from the client's own claim; net.md "Hit authority".
-2. Clips for heavy, charged, stagger tiers by side, guard-hit recoil (C2b: none; a guard walk too), backstep, running and jump
-   attacks are missing from the free packs (R1 §5): buy a pack, prototype with Mixamo, or use the content's own clips? Needed by C2/C3, not C1.
-   Answered 2026-11-26 (decision 6): Morrowind's own clips; missing moves as key-pose clips (AN37).
-3. Player poise and hyper-armor numbers (C3): ER-like per-weapon armor windows, or a single poise pool first?
-   Answered 2026-11-26 (decision 2): one symmetric pool plus `Armor` windows ("Poise"); numbers in C0d.
+None open. Questions 1-3 (co-op hit-stop, missing clips, poise numbers) are answered: [history](archive/combat-history.md)
+"Open questions answered (moved from combat.md 2026-11-26)". Non-lethal Q10-Q15 (pending owner): "Non-lethal and mercy".

@@ -490,3 +490,30 @@ any; a reaction has no `look` rule (free view).
   (`apps/openmw/mwmechanics/combat.cpp` at `ca5e2576`) and sets `Outcome::guarded`; the same guard reaction plays.
 - **Not built**: guard walk (the pose in the `upper` slot over a Sim-owned hold move), guard-hit recoil and the avatar's Additive
   hit springs, HUD guard cue (`HudView` is `sf_ui_screens`'), guard counter, parry, guard numbers from records (C3).
+
+### Open questions answered (moved from combat.md 2026-11-26)
+
+1. Co-op hit-stop on a client's own attacker: wait for the host's `HitLanded`, or predict? Decide at C7.
+   Answered 2026-11-26 (C0e): predicted from the client's own claim; net.md "Hit authority".
+2. Clips for heavy, charged, stagger tiers by side, guard-hit recoil (C2b: none; a guard walk too), backstep, running and jump
+   attacks are missing from the free packs (R1 §5): buy a pack, prototype with Mixamo, or use the content's own clips? Needed by C2/C3, not C1.
+   Answered 2026-11-26 (decision 6): Morrowind's own clips; missing moves as key-pose clips (AN37).
+3. Player poise and hyper-armor numbers (C3): ER-like per-weapon armor windows, or a single poise pool first?
+   Answered 2026-11-26 (decision 2): one symmetric pool plus `Armor` windows ("Poise"); numbers in C0d.
+
+### Lock-on and camera as built (moved from combat.md 2026-11-26)
+
+The target is gameplay state (`ActionState::lock`, a stable id): a lock press acquires (`sf_camera::lockon::acquire` over
+`Lockable` hostiles in line of sight), else recentres; `LockTimers::check` breaks it (20 m, 1.5 s unseen, death, any
+traversal); `sf_camera_bevy::LockOn` frames it. Locked locomotion faces the target under the mover's own turn rates (no
+second turn system), `Turn` windows aim at it, locked rolls use the sheet's `locked` moves; unlocked rolls square up to the
+stick and attacks soft-aim (~3 m, +-30 deg, first ~1/6 s, R6 §5). Left: C4c. The Classic profile turns lock-on and hit-stop
+off (action.md "Mode profiles").
+
+### Canonical technique: C1 reuse (moved 2026-11-26)
+
+Reuse (rule 8): Bevy has no combat layer and no maintained crate covers clip windows, weapon sweeps and a rules seam. Hits
+are segment-capsule math on baked socket tracks, not physics shape casts (deterministic, host-side, LOD-proof). The ER
+rewrite is a reference, not a dependency (a monolithic sim with a one-slot buffer; we have the chooser and per-class buffer):
+we take its constants (with attribution, R1 flags) and its tests' shape. Lock-on math exists (`sf_camera::lockon`), and
+framing and trauma shake (`sf_camera_bevy`).

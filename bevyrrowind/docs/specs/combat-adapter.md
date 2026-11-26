@@ -65,6 +65,11 @@ Every combat slot ends with a Morrowind clip fallback (`ClipFallback::Clip`) unl
   theme. Stat bands from attributes later (C5).
 - **Classic**: fatigue is the Morrowind pool, never gates a start; the fatigue term scales hit chance, block and damage
   inside `mw_rules`.
+- **Fists (modern, decision 20)**: hand-to-hand damages health like any weapon (CP2077 close combat), tagged `NonLethal`
+  (Q10, pending owner), so a brawl ends in a knockout ("Non-lethal and mercy"). **Classic** (C5, named only, not designed
+  or built now): Morrowind's fatigue-first rule, fists hurt fatigue unless the victim is knocked down or paralysed, then
+  health x `fHandtoHandHealthPer`; werewolf claws always health (OpenMW `apps/openmw/mwmechanics/combat.cpp` 478-530
+  `getHandToHandDamage` @ `4e718b5`).
 
 ## Poise (modern)
 
@@ -191,6 +196,24 @@ Tactics(
   An entry with area adds `AreaSpec { placement: AtImpact, falloff: None, los: true }` at the largest entry radius (unit
   conversion as effects.md "Area"); entries land at their own radii. No beams in vanilla.
 
+## Non-lethal and mercy (C22, C23)
+
+Framework side: combat.md "Non-lethal and mercy" (C20, C21); Q10-Q15 pending owner, recommended answers designed in.
+- **Tags** (C22, Q10): `weapon_classes.ron` marks `HandToHand` and the blunt types (blunt 1H, blunt 2H close, blunt 2H
+  wide) `NonLethal`; a record-id override list in the same file adds "subdue" items or a pack's own; blades, axes,
+  spears, ranged and creature attacks stay `Lethal`. Spell damage is never a packet (effects-adapter.md): it kills.
+- **Essential NPCs** (NPC_ flag) get `always_recover`: they always go down, never die, and no Finish is offered. Vanilla
+  lets them die with a warning (`sKilledEssential`, OpenMW `apps/openmw/mwmechanics/actors.cpp` 1835 @ `4e718b5`):
+  modern departs (Q13), Classic keeps vanilla.
+- **Yield** (Q11): humans only (NPC records); creatures, daedra and undead never yield (AI37 sends `Yield`, AI lane).
+- **Clips**: Morrowind's `Knockdown` / `Knockout` groups (and their swim variants) are the Knockout down and get-up clips
+  through the reaction map (AN35; no numbers here); no Morrowind group fits `react.yield`: a key-pose clip (AN37 kind).
+- **Crime** (C23, Q14): a hit that downs a non-hostile is Assault (C16's `actorAttacked`); `Finished` or a lethal hit on a
+  Yielded or non-hostile victim with a witness is Murder (`actorKilled`); Yielded counts as non-hostile; foes already
+  hostile (bandits, attackers) cost nothing.
+- **Quests**: framework quest hooks read `Downed` as defeated; ported MWScript `GetDead` and `OnDeath` stay death-only
+  (vanilla semantics), so a vanilla kill quest still needs a kill (the Finish prompt).
+
 ## Allies, friendly fire, crime (C16)
 
 - **`allied(a, b)`**: either sides with the other, OpenMW `Actors::getActorsSidingWith` (`actors.cpp` 2149-2240 @
@@ -301,11 +324,13 @@ Rows and verification: combat roadmap §4. **C3d** `weapon_classes.ron`, directi
 `greatsword_2h` / `spear_2h` / `fist` sheets once AN33 cooks windows; **C3a** values from "Poise"; **C13** `ModernRules`
 (packet, absorb, resistances, on-strike); **C17** record-driven NPC and creature fighters; **C6f** creature files and the
 generated default; **C8b** ranged sheets, ammo, speeds, recovery; **C8d** cast slots, the big rule, `launch_spec`;
-**C14** prop keys; **C16** crime hooks. Tests: exact on synthetic records, vanilla rows `#[ignore = "needs Morrowind.esm"]`.
+**C14** prop keys; **C16** crime hooks; **C22** non-lethal tags, essential, downed clips; **C23** downed offences. Tests: exact on synthetic records, vanilla rows `#[ignore = "needs Morrowind.esm"]`.
 
 ## Open questions
 
 1. Fists: Morrowind hand-to-hand hurts fatigue unless the victim is down (knockout brawls). Modern: health (ER), or
    fatigue first (non-lethal brawls)? Changes what the player can do: owner. Until answered: health.
+   Answered 2026-11-26 (owner, decision 20): modern = health with a non-lethal tag (Q10 pending); fatigue-first = Classic
+   only ("Health, stamina, fatigue").
 2. If AN32 shows daggers and longswords need distinct timings within `WeaponOneHand`, split the sheet by type (data).
 3. Veloren's ramping regen and re-stun buffer need framework fields: only if CB-10 shows stun-locks (C3a).

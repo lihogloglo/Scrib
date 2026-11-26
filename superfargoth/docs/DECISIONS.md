@@ -2015,3 +2015,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (nav, NV0b1, from roadmap decision 3): the HPA* "coarse graph" is replaced by a per-worldspace route graph
   (`sf_nav::route_graph`, bake step `nav.routes`, costs in walk metres, own deterministic A*; `nav.coarse` deleted in NV12d);
   cross-space journeys are one A* over route graphs + `WorldGraph` door hops (nav.md "Route graph").
+- 2026-11-26 (owner, combat): Modern fists and blunt hits damage health (Cyberpunk 2077); non-lethal hits that empty health
+  down the foe (knockout) instead of killing; mercy = spare or Finish a downed/yielded foe (C20-C23, roadmap decision 20).
+  Morrowind's fatigue-first fists are Classic `CombatRules` only. Details Q10-Q15 pending owner.

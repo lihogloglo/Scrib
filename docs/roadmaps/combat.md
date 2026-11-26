@@ -103,6 +103,16 @@ lock-on or hit-stop, swings over walking legs [7].
     cues every player gets (audio telegraphs, a hit-direction indicator) and the view-independent token cap on
     simultaneous attackers (decision 8). Feint and morph follow the input scheme, not the view (both views, as Chivalry 2
     and Mordhau). Mixed views in co-op PvE are allowed (a "force first person" host option only if PvP ever exists).
+20. **Non-lethal outcome and mercy** (owner 2026-11-26; research `combat-nonlethal.md`, C-R3; CP2077, KCD, Skyrim). Modern
+    fists and blunt weapons damage **health** (CP2077 close combat). Whether a hit that empties health kills is the hit's
+    `Lethality` (`Lethal | NonLethal`: weapon tag + per-attack override, no global toggle; Q10), answered by
+    `CombatRules::outcome_at_zero` -> `Death | Down(kind)`. A downed foe (`Downed { Knockout | Yielded }`) goes down through
+    `Owner::Physics` (C2c), stays fragile (a lethal hit or a Finish kills, a non-lethal hit refreshes it) and wakes after a
+    tunable time (Q13). **Mercy is the absence of a finish** (Q12): a Finish prompt plays a warped finisher (C2e path, no
+    paired clips); walking away spares. Yield is AI37's call (humans only, morale + health threshold; Q11), never C6's:
+    combat only applies `Downed { Yielded }`. DoT inherits the lethality of the hit that applied it; quest hooks read
+    Downed as defeated; crime per Q14 (C23). Essential NPCs always recover. Morrowind's fatigue-first fists are only the
+    Classic `CombatRules` (C5), not designed or built now. Player yield: seam only (Q15). Downed state is host state.
 
 ## 4. Stages
 
@@ -139,7 +149,8 @@ charged attacks, running and rolling attacks, heavy armour shrugging off a light
 
 ### Stage 2: parry, riposte, finishers, kick and hazards
 
-Ends with: parry the partner's swing and riposte; backstab an unaware dummy; kick it into spikes or off a ledge.
+Ends with: parry the partner's swing and riposte; backstab an unaware dummy; kick it into spikes or off a ledge; knock a
+brawler out with fists, then finish or spare him.
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
@@ -148,6 +159,8 @@ Ends with: parry the partner's swing and riposte; backstab an unaware dummy; kic
 | C9 | `Kick` class + push contact (impulse, credit), knockback via C2c | `sf_combat`, `mw_combat` data | C2c, AN37 kick | exact impulse; owner CB-9 |
 | C10 | Hazard volumes → `Contact { source: Environment }` credited to the pusher | `sf_combat`, `sf_interaction` | C9, IN28 | credit test; owner CB-9b |
 | C11 | Feint and morph as sheet data, both views (input scheme, not view) | `mw_combat` data, `sf_action` | anim C4 | exact cancel tick; owner CB-5d |
+| C20 | Non-lethal outcome: `Lethality` on row/contact/outcome, `outcome_at_zero`, `Downed { Knockout \| Yielded }` state machine (wake, refresh, die), `always_recover`, DoT lethality, `Downed`/`Spared` events; `Yield` input from AI37 (scripted in tests) | `sf_combat`, `sf_combat_bevy` | C2c, C17 | exact transitions headless; owner CB-15 |
+| C21 | Mercy: `Finish` prompt near a Downed foe (`sf_interaction` focus), `CritKind::Finish` through the C2e warped finisher, `Finished` event; leaving spares | `sf_combat`, `sf_combat_bevy`, `mw_combat` data | C20, C2e | exact eligibility; owner CB-16 |
 
 ### Stage 3: damage that means something, limbs that get hit
 
@@ -155,6 +168,7 @@ Ends with: parry the partner's swing and riposte; backstab an unaware dummy; kic
 |---|---|---|---|---|
 | C12 | Damage packet + buildup in `Outcome`; `StandardRules` flat default | `sf_combat` | C0a | exact packet math |
 | C13 | Morrowind mapping: chop/slash/thrust ranges, armour rating, resistances, `OnStrike` enchantments | `mw_combat` | C12, C0d | exact vs records |
+| C22 | Morrowind non-lethal mapping: `NonLethal` tags on `HandToHand` and blunt types, essential NPCs `always_recover`, `Knockdown`/`Knockout` groups as downed clips (AN35) | `mw_combat` data | C20, C3d, AN35 | exact tags vs records; owner CB-15 |
 | S1/S2 | Shape set per rig + posing (character-shapes; physics owns S1-S4) | `sf_ragdoll`, `sf_combat` | - | spec tests |
 | S5 | Two-phase sweep against per-bone hurt shapes, region in the contact | `sf_combat` | S1, S2 | blade into an arm hits, beside misses |
 
@@ -193,6 +207,7 @@ Ends with: shoot an archer who keeps her distance; cast a fireball that arcs and
 | C14 | Prop targets in sweeps and projectiles (material × damage type table in the adapter) | `sf_combat`, `mw_combat` | C12, C8a | exact; feeds IN1 |
 | C15 | Events for other lanes: `HitLanded` credit, `Died { killer }`, `Knockout`, combat noise | `sf_combat_bevy` | C2c | exact event order |
 | C16 | Assault/murder `OffenceAttempt` on hits against non-hostiles (crime adapter) | `mw_combat` | C15, LW2b | exact offences |
+| C23 | Downed offences (Q14): knockout of a non-hostile = assault, finishing a non-hostile or yielded person with a witness = murder, hostile = none | `mw_combat` | C16, C21, AI37 | exact offences |
 
 ### Stage 7: co-op and classic (later)
 
@@ -243,3 +258,18 @@ anim lane's. character-shapes.md S5 points at this roadmap.
 9. **Attackers you can't see in first person:** no view-aware AI (fragile in multiplayer; not the recommendation).
    Enemies behave the same in every view; fairness comes from audio telegraphs, a hit-direction indicator and the
    view-independent token cap. (C6a, C19)
+
+**Pending owner (2026-11-26, non-lethal; C-R3, decision 20).** Fixed: fists damage health; non-lethal damage at 0 health
+downs, never kills; spare or finish like CP2077; Morrowind's fatigue-first fists are Classic only. Recommended, designed as:
+
+10. **Non-lethal source:** a per-weapon tag (fists, blunt, "subdue" items are non-lethal) plus a per-attack override in the
+    sheet; no global toggle. (C20, C22)
+11. **Yield:** humans only, through AI37 morale at a health threshold (the AI lane emits `Yield`); creatures, daedra and
+    undead never. (AI37, C20)
+12. **Spare or finish:** a "Finish" prompt near a downed or yielded foe plays a short warped finisher (the C2e path, no
+    paired clips); walking away spares; attacking also kills. (C21)
+13. **Waking:** knockouts wake after a tunable time; the yielded stay yielded until you leave, then resume their routine
+    with lowered disposition; essential NPCs always recover. (C20, C22)
+14. **Crime:** finishing a non-hostile or yielded person with a witness is murder; knocking out a non-hostile is assault;
+    already-hostile bandits are no offence. (C23)
+15. **Player yield:** not now; the seam is reserved. (C20)
