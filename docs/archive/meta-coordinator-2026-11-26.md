@@ -1,5 +1,7 @@
 # Meta-coordinator playbook
 
+> **Retired 2026-11-26 (owner).** The meta-coordinator workflow is no longer used: its coordinator and lane sessions cost as much as the sub-agents writing code (`docs/reviews/agent-cost-audit-2026-11-26.html`). Kept as history only; do not follow it.
+
 How to run several lane sessions at once with one coordinator between them and the owner (owner 2026-11-26).
 The working rules are still `CONTRIBUTING.md`; this page only says how the coordinator applies them.
 

@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent cost audit, 2026-11-26</title>
+<style>
+  :root { --bg:#fbfaf7; --fg:#1d1d1b; --mut:#6b6a66; --line:#dddbd3; --card:#fff; --a:#b5532a; --b:#3d6f8e; --c:#8a8a85; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#191918; --fg:#eceae4; --mut:#a09e97; --line:#3a3936; --card:#222220; --a:#e08a5f; --b:#7fb2d2; --c:#8a8a85; } }
+  body { background:var(--bg); color:var(--fg); font:16px/1.55 system-ui, "Segoe UI", sans-serif; margin:0; }
+  main { max-width:900px; margin:0 auto; padding:32px 20px 80px; }
+  h1 { font-size:28px; margin:0 0 4px; } h2 { font-size:20px; margin:40px 0 10px; border-top:1px solid var(--line); padding-top:24px; }
+  h3 { font-size:16px; margin:22px 0 6px; }
+  p, li { max-width:76ch; } .mut { color:var(--mut); } small { color:var(--mut); }
+  .verdict { background:var(--card); border:1px solid var(--line); border-left:4px solid var(--a); padding:14px 18px; border-radius:6px; margin:18px 0; }
+  table { border-collapse:collapse; width:100%; margin:10px 0 6px; font-size:14.5px; }
+  th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--mut); font-weight:600; } td.n, th.n { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .bar { display:flex; height:22px; border-radius:4px; overflow:hidden; background:var(--line); min-width:220px; }
+  .bar span { display:block; height:100%; } .o { background:var(--a); } .w { background:var(--b); } .x { background:var(--c); }
+  .key span { display:inline-block; width:12px; height:12px; border-radius:2px; vertical-align:-1px; margin:0 5px 0 14px; }
+  .tag { font-size:12px; border:1px solid var(--line); border-radius:10px; padding:1px 8px; color:var(--mut); white-space:nowrap; }
+  code { font:13px ui-monospace, Consolas, monospace; background:var(--card); border:1px solid var(--line); border-radius:3px; padding:0 4px; }
+</style>
+</head>
+<body>
+<main>
+<h1>Agent cost audit</h1>
+<p class="mut">Scrib, Thursday 2026-11-26. Meta-coordinator workflow against the previous orchestrator workflow. Written 22:40.</p>
+
+<div class="verdict">
+<p><strong>The spend went to the orchestration layers, not to the messages and not to the tasks.</strong> In the meta workflow, the sessions that plan, brief, verify, commit and report cost as much as the sub-agents that write the code, and about twice as much once those sessions ran on Fable (from about 16:30). In last night's workflow the same layer cost 30 % on top of the workers.</p>
+<p>The messages between sessions are a small part: the meta-coordinator is about 6-8 % of the day. The 250k line is neither the cause nor a saving.</p>
+<p>Today cost roughly <strong>$1,000-1,400</strong> at API prices in this project, against <strong>$2,302</strong> for the previous 14 days together ($177 per active day). So about half of the previous two weeks in one day. Six sessions (meta-8 and five lanes) were still running when this was written.</p>
+</div>
+
+<h2>1. How much</h2>
+<p>Unit: API-equivalent dollars, from the token usage every call logs, at the published prices. A subscription is not billed this way, but it is the best common measure of load. The prices reproduce Claude Code's own per-session cost records to the cent.</p>
+<table>
+<tr><th>Period</th><th class="n">Cost</th><th>Source</th></tr>
+<tr><td>Previous 14 days (11-12 to 11-25), this project</td><td class="n">$2,302</td><td>measured, 13 active days, busiest day $312 (11-16)</td></tr>
+<tr><td>Today 00:00-02:00, old workflow (2 orchestrators, 43 sub-agents)</td><td class="n">$103</td><td>measured</td></tr>
+<tr><td>Today 08:00-14:50, first meta generation (meta-1, 4 lanes, 15 sub-agents)</td><td class="n">$83</td><td>measured</td></tr>
+<tr><td>Today 12:25-22:30, sessions launched by meta: 183 sub-agents</td><td class="n">$330-410</td><td>estimated: count on disk × measured cost per sub-agent ($1.9-2.4)</td></tr>
+<tr><td>Same period: about 60 lane orchestrator sessions (15 on Opus, 45 on Fable)</td><td class="n">$405-620</td><td>estimated: count on disk × $6-8 (Opus) or $7-11 (Fable) per session</td></tr>
+<tr><td>Same period: meta-2 to meta-8 and about 8 sessions without sub-agents</td><td class="n">$100-150</td><td>estimated from meta-1 ($8.1 on Opus)</td></tr>
+<tr><td><strong>Today, this project</strong></td><td class="n"><strong>≈ $1,000-1,400</strong></td><td></td></tr>
+<tr><td>Today, other projects on the same subscription (FauxRaccord $159, others $109)</td><td class="n">$268</td><td>measured</td></tr>
+</table>
+<p><small>Why part of the day is estimated: the sessions the meta-coordinator launched kept no transcript on disk (section 6). The two evening orchestrators whose live cost record could be read confirm the estimate: after about 20 minutes each, $3.99 and $5.36 of Fable orchestrator for one Opus sub-agent of $1.94 and $2.69.</small></p>
+
+<h2>2. Where it went: orchestrator cost per sub-agent</h2>
+<p class="key mut"><span class="o"></span>orchestration (lane orchestrator + meta share)<span class="w"></span>the sub-agent doing the work</p>
+<table>
+<tr><th>Workflow</th><th>Cost of one slice</th><th class="n">Orchestration</th><th class="n">Worker</th><th class="n">Overhead</th></tr>
+<tr><td>Old: one orchestrator, 16-23 sub-agents per session <span class="tag">measured</span></td>
+  <td><div class="bar"><span class="o" style="width:8%"></span><span class="w" style="width:27%"></span></div></td><td class="n">$0.58</td><td class="n">$1.89</td><td class="n">30 %</td></tr>
+<tr><td>Meta, midday, orchestrators on Opus <span class="tag">measured</span></td>
+  <td><div class="bar"><span class="o" style="width:33%"></span><span class="w" style="width:35%"></span></div></td><td class="n">$2.28</td><td class="n">$2.43</td><td class="n">95 %</td></tr>
+<tr><td>Meta, evening, orchestrators on Fable <span class="tag">2 live sessions</span></td>
+  <td><div class="bar"><span class="o" style="width:67%"></span><span class="w" style="width:33%"></span></div></td><td class="n">$4.0-5.4</td><td class="n">$1.9-2.7</td><td class="n">about 200 %</td></tr>
+</table>
+<p>The midday $2.28 is $1.73 of lane orchestrator plus $0.55 of meta per sub-agent. The evening figure is taken early in two sessions, when the read-in weighs most; over a whole session it is lower, and the estimate in section 1 uses $7-11 per session for about 3 sub-agents.</p>
+
+<h3>Why the orchestration layer grew</h3>
+<table>
+<tr><th>Cause</th><th>Evidence</th></tr>
+<tr><td><strong>Sessions end after about 3 slices.</strong></td><td>About 80 orchestrator sessions were opened today (interaction 14, anim 13, worldgen 12, gameplay 11, specs 10, bigworld 8, meta 7, ci 4). 183 sub-agents over 60 of them is 3 each. Every session starts with 61k tokens of context before its first action (harness, tools, CONTRIBUTING, memory index), then reads its handoff, roadmap and spec.</td></tr>
+<tr><td><strong>Each slice takes 4-6 times more orchestrator calls.</strong></td><td>Orchestrator API calls per sub-agent: 6.6 and 8.6 last night; 22, 27 and 54 at midday. The extra calls are per-slice commit, push and CI (23-29 shell calls per lane session, against 1 last night), git inspection (12-26, against 3), session-file updates (8-24) and 15-20 messages with meta.</td></tr>
+<tr><td><strong>Orchestrators moved to Fable at about 16:30.</strong></td><td><code>~/.claude/settings.json</code> has <code>"model": "fable"</code>, so every session meta launches is Fable. Fable's output and cache writes cost twice Opus (reads cost the same). The same orchestrator session costs 1.4 times more: $8.3 on Opus is $11.6 on Fable. Sub-agents stayed on Opus.</td></tr>
+<tr><td><strong>Every call re-sends the whole context.</strong></td><td>56-61 % of an orchestrator's cost is re-reading its own context, 20 % is output, 20 % is writing new context. An orchestrator writes about 700 output tokens per call (briefs, messages, handoffs).</td></tr>
+</table>
+
+<h2>3. Is it the talking?</h2>
+<p><strong>No.</strong> The meta-coordinator cost $8.1 in its first 80 minutes (24 messages in, 36 out), and eight meta sessions come to about $65-95, 6-8 % of the day. In a lane session, messages with meta add 10-15k tokens of context out of about 175k.</p>
+<p>What costs is that each layer is a full agent that carries and re-reads a large context on every call. Three layers (meta, lane, sub-agent) means three contexts paid for each slice.</p>
+
+<h2>4. Is it the 250k line?</h2>
+<p><strong>No, in both directions.</strong> Carrying 150k of extra context costs $0.03 per call (cache reads are $0.20 per million tokens on Opus and Fable). Starting a fresh session costs about $1-1.6 (writing 61k of fixed context plus the read-in). The two roughly cancel over a normal session. No measured session lost its cache (0 cold re-writes), so waiting on the build queue cost time, not tokens.</p>
+<p>The lever is how many slices a session finishes before it reaches the line: 16-23 last night, 3 today. Last night's sessions ran to 312k and 377k and were the cheapest per slice of the day.</p>
+
+<h2>5. Why the game feels the same</h2>
+<table>
+<tr><th>What the 269 commits added (83,900 lines)</th><th class="n">Lines</th><th class="n">Share</th></tr>
+<tr><td>Rust tests</td><td class="n">30,335</td><td class="n">36 %</td></tr>
+<tr><td>Rust Bevy-free cores (logic not yet on screen by itself)</td><td class="n">16,768</td><td class="n">20 %</td></tr>
+<tr><td>Specs and roadmaps</td><td class="n">15,332</td><td class="n">18 %</td></tr>
+<tr><td>Game wiring (<code>mw_*_bevy</code>, the app)</td><td class="n">10,077</td><td class="n">12 %</td></tr>
+<tr><td>Framework Bevy plugins</td><td class="n">5,222</td><td class="n">6 %</td></tr>
+<tr><td>Research, reviews, ledger, wiki, changelog, tools, data</td><td class="n">6,169</td><td class="n">7 %</td></tr>
+</table>
+<ul>
+<li>133 of the 269 commits change only docs. 111 touch non-test Rust.</li>
+<li>Of 215 sub-agents, 132 built code, 45 wrote specs or docs, 33 did research, recon or audits, 5 measured (sorted by their task titles, so approximate).</li>
+<li>Features were cut very thin: swing doors (IN33) took 16 sub-agents, the AI tier-0 work (AI10) 13, seat clips (AN26) 8, physics tint (AN38) 7, climate (WG-E1) 7. A sub-agent spends about half its cost before its first edit (51k of fixed context, a median of 102k of context at the first edit), so a feature in 16 pieces pays that read-in 16 times.</li>
+</ul>
+<p>The previous two weeks' line counts include vendored and moved files, so they are not comparable line for line.</p>
+
+<h2>6. What could not be measured</h2>
+<ul>
+<li><strong>Sessions launched by meta keep no transcript.</strong> 60 of the 66 session folders created today have sub-agent records but no <code>.jsonl</code>; the first one starts at 12:25, when meta began launching sessions itself. <code>tools/session_context.sh</code> reads those transcripts, so it has shown no lane since 14:50. The likely cause is the environment a session passes to the ones it starts (<code>CLAUDE_CODE_CHILD_SESSION</code>); this was not confirmed.</li>
+<li>meta-8 could not be asked: it is not in this session's peer list, and it holds no token data anyway.</li>
+<li>The plan's own meter. <code>/usage</code> in any session shows the real percentage used; the dollar figures here are a proxy for it.</li>
+</ul>
+
+<h2>7. Recommendations, largest saving first</h2>
+<ol>
+<li><strong>Go back to two layers.</strong> Two or three lane orchestrators that you talk to directly, each running many sub-agents per session, as last night: 30 % overhead instead of 95-200 %. The build queue already limits useful parallel work to about four lanes. If one window matters more than cost, keep meta but accept its price.</li>
+<li><strong>Run orchestrators on Opus.</strong> Remove <code>"model": "fable"</code> from the user settings or pass <code>--model opus</code> in the launch command. Keep Fable for the session you talk to.</li>
+<li><strong>Cut bigger slices.</strong> A feature such as swing doors as 3-4 sub-agents, not 16. Sub-agents peak at a median of 119-142k, well under the 250k line, so a slice can be about twice as large.</li>
+<li><strong>Batch the ceremony.</strong> One commit, push and docs pass (roadmap, changelog, ledger, wiki) per batch of slices, not per slice. This is where the extra orchestrator calls went.</li>
+<li><strong>Queue what ends on screen.</strong> A third of today's agents wrote specs or research, and most code landed in cores and tests. To feel progress, the queue needs slices that finish with game wiring and a scene to check.</li>
+<li><strong>Fix the transcript gap</strong> before running the meta workflow again, so its cost can be seen while it runs.</li>
+</ol>
+
+<h2>Method</h2>
+<p><small>Source: <code>~/.claude/projects/D--Gamedev-Bevyrrowind/**/*.jsonl</code>, 663 files, 37,773 API calls since 11-12, de-duplicated by message id, local time UTC+7. Prices per million tokens: Opus 5.5 $4 in, $20 out, $0.20 cache read, $8 cache write (1 h); Fable 5.2 $8, $40, $0.20, $16; Sonnet 5.5 $2, $10, $0.10, $4. Evening counts: session folders and <code>subagents/*.meta.json</code> created today; lane prompts in <code>.sessions/_prompts/</code>. Live cost: <code>lastCost</code> and <code>lastModelUsage</code> of this project in <code>~/.claude.json</code>, sampled at 22:28. Commits: <code>git log --since=2026-11-26 --numstat</code>, files sorted by path.</small></p>
+</main>
+</body>
+</html>

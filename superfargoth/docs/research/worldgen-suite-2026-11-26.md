@@ -130,7 +130,7 @@ Rule check: no Morrowind-only logic; Morrowind enters only as culture data and k
 
 ## 8. Proposed slices (one deliverable + its test each)
 
-Tunables: each new value declared with unit, range, source (`tunables.md`), `Guess` allowed; never bare consts. Agents for code: strong model; research/docs separate. Owner looks go through the meta-coordinator.
+Tunables: each new value declared with unit, range, source (`tunables.md`), `Guess` allowed; never bare consts. Agents for code: strong model; research/docs separate. Owner looks go to the owner directly.
 
 | ID | Deliverable | Test | Tunables (unit, range, source) |
 |---|---|---|---|

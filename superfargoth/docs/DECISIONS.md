@@ -2103,3 +2103,4 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (owner sitting, via meta-7; CONTRIBUTING "Tests and visual checks"): a look comparison reaches the owner only
   as one scene with a live toggle at a fixed weather, hour and camera start, never two launches; test scenes and review
   tools show no wall of text and confirm every action on screen; a check brief = what was built, what to do, 2-4 yes/no.
+- 2026-11-26 (owner): the meta-coordinator workflow (one coordinator session relaying to lane orchestrators) is retired the day it was tried: coordination cost as much as the code (`docs/reviews/agent-cost-audit-2026-11-26.html`). No relay or launcher sessions (CONTRIBUTING "Parallel sessions" 6); playbook archived in `docs/archive/meta-coordinator-2026-11-26.md`.

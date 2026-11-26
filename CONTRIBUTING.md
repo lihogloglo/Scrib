@@ -200,9 +200,9 @@ Several sessions may work **in the same working tree** at once.
    those paths, whatever else the shared index holds). Never `git add -A`, `commit -a` or a bare `git commit`.
 5. **Don't revert changes you didn't make.** Files changing under you are likely another session's work; check
    `.sessions/` and adapt.
-6. **Meta-coordinator (owner 2026-11-26).** When several lane sessions run, the owner talks only to one coordinator
-   session, which opens the lanes, relays questions and verdicts, keeps crates to one lane at a time and launches the
-   owner's checks as batched yes/no questions: `docs/meta-coordinator.md`.
+6. **No coordinator sessions (owner 2026-11-26).** No session whose job is to relay between other sessions or to open
+   them: the meta-coordinator tried that day cost as much in coordination as in code
+   (`docs/reviews/agent-cost-audit-2026-11-26.html`). The owner talks to each working session directly.
 
 ## Tests and visual checks
 
@@ -234,8 +234,7 @@ Several sessions may work **in the same working tree** at once.
 - **No wall of text on screen (owner 2026-11-26).** Test scenes and review tools show a minimal overlay, one line
   of keys, and a visible confirmation of every action the owner takes (the clip browser was rejected: "I have no
   idea if my changes were validated or not").
-- **A check brief** says what was built, what to do, then 2-4 yes/no questions (`docs/meta-coordinator.md` "Owner
-  checks").
+- **A check brief** says what was built, what to do, then 2-4 yes/no questions.
 - Changed animation slots or sources? Re-run `bevyrrowind bake` before checking in the live game: headless
   tests bake their own cache, the game reads the last bake.
 
