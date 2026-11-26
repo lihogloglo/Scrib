@@ -126,7 +126,8 @@ after a 0.4 s death clip); corpses drag by the grabbed limb through the P6 carry
 
 Framework seam, states, cap and tunables: `../../../superfargoth/docs/specs/physics-tint.md`. `mw_delirium_bevy` is the
 provider: it inserts `TintCapable` on human walkers (`HUMAN_SKELETONS` with a `Mover`); beast races, creatures and
-action characters (the player, the dummy) get none, so they play the fallback.
+action characters (the player, the dummy) get none, so they play the fallback (owner 2026-11-26: no second physics
+provider for creatures; quadruped reactions wait for a procedural animation system, WISHLIST 8, parked).
 - **Light path, not a `Takeover`:** no `Held`, the root and graph stay live. The agent is built like a takeover start (two
   posed frames, `bones_to_parts`, the floor), then each tick: `incoming` = `TintTarget` in the sim frame, `activePose` on
   every tinted mask, `setStiffness` per mask = `delirium.tint.stiffness` x `ActiveTint.sample.strength`, the pelvis held
@@ -146,6 +147,8 @@ action characters (the player, the dummy) get none, so they play the fallback.
   from there to `certain_fall` (100) today's push takeover; above, push + knockdown. `HitRules::takeover` becomes the band
   top.
 - **Triggers (AN41):** combat `Medium` (combat-adapter.md) -> Stagger, intensity = momentum / `band.max_ns`, clamped.
+  Combat `Large` (owner 2026-11-26) -> Stagger on the profile's regions at `mw.tint.large.intensity` (0-1, default 1.0,
+  Guess, ANIM-14 (7); 0 sends no request: the Large clip alone, the A/B arm).
   Injury: a hit leaving health under `mw.tint.injury.health_frac` (0.35 of max) or costing over `mw.tint.injury.hit_frac`
   (0.2) -> Stumble on the struck side (else by seed). Alcohol: an active effect from an `ALCH` in a RON alcohol list
   (sujamma, flin, mazte, greef, shein, brandy) -> a Sway every `mw.tint.sway.interval_s` (6) +- `mw.tint.sway.jitter_s`
@@ -155,7 +158,7 @@ action characters (the player, the dummy) get none, so they play the fallback.
 - **Fallbacks:** Stagger and Stumble: the `HitReact` kick (on the leg for Stumble). Sway and Sag: additive key-pose
   `PoseSeq` clips (anim decision 9) under `tint.fallback.sway` / `.sag` (AN41c, data); unmapped, the kick plays.
 - **Classic:** `anim.tint.enabled` false: fallbacks only. Vanilla NPCs rarely drink; the player does, and is not tinted
-  (spec open question 2). Scene `anim-tint` (ANIM-14): Balmora, walking and idle NPCs, console hits and drains.
+  (spec answer 2). Scene `anim-tint` (ANIM-14): Balmora, walking and idle NPCs, console hits and drains.
 
 ## Cloth
 

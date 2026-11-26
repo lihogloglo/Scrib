@@ -154,7 +154,7 @@ impl DialogueScene { pub fn validate(&self, facts: &FactTable) -> Vec<SceneError
 
 Rules gain one field (DQ-35a, additive to dialogue-rules.md "Rules"): `Response.scene: Option<SceneEntry { scene,
 node }>`; a picked greeting or topic rule with `scene` starts the runner. `once` scope: `World` (Yarn's per-save
-meaning), `#once:player` / `#once:speaker` tags override (open question 1). The rules' recency-demoted seeded
+meaning), `#once:player` / `#once:speaker` tags override (owner 2026-11-26, answer 1). The rules' recency-demoted seeded
 tie-break is Yarn's "best least recently seen" with a seeded hash in place of file order.
 
 ### Runner on the session (`sf_rpg::scene::runner`; DQ-35b)
@@ -323,7 +323,8 @@ DQ-36a can run in parallel with DQ-35 (no `sf_rpg` dependency until lowering).
 
 ## Open questions (what the author or player can do)
 
-1. **Default `once` scope in co-op:** `World` (a story beat happens once for the group; BG3/Divinity share story
-   progress) or `Player`. Recommended: `World`, with `#once:player` for lines each player should hear.
-2. **Can a later mod patch another mod's scene structure** (not just its lines)? Recommended: yes, whole-scene
-   replacement by record id (as every record); per-node patching waits for a real need.
+1. **Default `once` scope in co-op** (answered, owner via meta-5, 2026-11-26: yes as recommended): `World`, a `once`
+   line is heard once for the whole group (BG3/Divinity share story progress); `#once:player` marks a line each player
+   should hear.
+2. **Can a later mod change another mod's scene structure** (answered, owner via meta-5, 2026-11-26: yes as
+   recommended): a mod replaces another mod's whole scene by record id (as every record); no single-node patches.

@@ -8,7 +8,8 @@ Status (2026-11-26): spec (AN39), nothing built. Rows AN38-AN42 in `docs/roadmap
 **Agent summary.**
 - A tint: for 0.3-3 s the game's active-ragdoll provider follows the clip at lowered strength and the shown pose blends
   toward its bodies per region; root, graph, ops and gameplay stay the animation's. Kinds `Stagger`, `Stumble`, `Sway`,
-  `Sag`; a baseline limp or drunk gait is never a tint (decision 10).
+  `Sag`; a baseline limp or drunk gait is never a tint (decision 10). Medium and Large combat hits ask for a `Stagger`
+  over their reaction clip (owner 2026-11-26); creatures and beast races play the fallback (no second provider).
 - Framework (`sf_anim::tint`, `sf_anim_bevy::tint`): requests, gate, cap, states, envelopes, fallback. Provider (game):
   bodies and `PhysicsPose`.
 - Gate: preset, capable, not held, tier <= A1, distance, cooldown, cap. The cap counts tints plus live takeovers;
@@ -19,11 +20,12 @@ Status (2026-11-26): spec (AN39), nothing built. Rows AN38-AN42 in `docs/roadmap
 
 ## Goal
 
-A guard takes a medium blow and gives around it (spine folds, arms swing loose), back on his clip half a second later; a
+A guard takes a medium or large blow and gives around it (spine folds, arms swing loose), back on his clip half a second
+later; a
 wounded man's leg buckles mid-stride; a drunk lurches; an exhausted fighter sags. Each sits on what the character is doing
 (a walker keeps walking): no freeze, no pop, no foot slide. Rare: a few bodies near the camera; everyone else shows an
-additive version of the same event on the same tick. Non-goals: pushes, knockdowns, deaths (full takeovers); the player
-and creatures (Open questions 2-3); wall contacts; physics state over the network.
+additive version of the same event on the same tick. Non-goals: pushes, knockdowns, deaths (full takeovers); the player,
+creatures and beast races (owner answers 2-3, "Open questions"); wall contacts; physics state over the network.
 
 ## Today (verified 2026-11-26)
 
@@ -55,7 +57,8 @@ and creatures (Open questions 2-3); wall contacts; physics state over the networ
    `sf_ragdoll::powered` already turns into stable-PD pose follow (`sf_ragdoll/src/powered.rs:1-13`). Delirium (adopted
    2026-11-19, Euphoria lineage) has per-joint drives, masks, pose follow and disturbances: the provider for humans.
 3. **Our own:** the seam (scheduling policy no crate offers) and per-kind profiles, shaped like `sf_ragdoll::react::Timeline`
-   (`react.rs:160-198`) without depending on it (`sf_anim` stays physics-free). `sf_ragdoll::powered`: a later provider.
+   (`react.rs:160-198`) without depending on it (`sf_anim` stays physics-free). `sf_ragdoll::powered` is not a planned
+   second provider (owner 2026-11-26, answer 3).
 
 ## Industry comparison
 
@@ -68,11 +71,12 @@ strength and a blend weight of the simulated pose over the animation, both rampe
 | UE5 Physical Animation profile below a bone + physics blend weight ramped for hits; capsule authoritative [1] | per-kind profile, envelope; root gameplay's | profile is RON |
 | Euphoria (GTA IV/V, RDR2): game messages start behaviours, physics leads [2] | same lineage; tint follows, falls go to the takeover | no physics-led tint |
 | Uncharted 4 (Mach, GDC 2017): animation drives physics predictably [3] | clip is always the target | - |
-| Jedi: Fallen Order (Waszak, GDC 2020): motors over authored melee reactions [4] | `Stagger` over the Medium clip | wall contacts |
+| Jedi: Fallen Order (Waszak, GDC 2020): motors over authored melee reactions [4] | `Stagger` over the Medium and Large clips | wall contacts |
 | Frostbite (Sachania, GDC 2018): driven ragdolls, cost cuts, networking [5] | cap + gate; local presentation | - |
 | Havok powered ragdoll controllers; PhysX articulation implicit-PD drives [6] | Delirium per-joint PD | - |
 
-Not built, deliberately: our own solver; root-moving tints; learned controllers; A2/A3 tints; physics replication.
+Not built, deliberately: our own solver; root-moving tints; learned controllers; A2/A3 tints; physics replication; a
+second provider for creatures.
 
 [1] dev.epicgames.com/documentation/unreal-engine/physics-driven-animation-in-unreal-engine and .../applying-a-physical-animation-profile-in-unreal-engine;
 [2] wccftech.com/rockstar-euphoria-evolved-rdr2; [3] gdcvault.com/play/1024087; [4] 80.lv/articles/gdc-2020-talk-on-physical-animation-in-star-wars-jedi-fallen-order;
@@ -107,7 +111,7 @@ pub struct TintSet { pub stagger: TintProfile, pub stumble: TintProfile, pub swa
 pub struct TintSample { pub weight: f32 /* physics share */, pub strength: f32 /* 1 = on the clip */ }
 pub fn sample(e: &TintEnvelope, intensity: f32, t_s: f32, end: Option<f32>) -> TintSample;   // pure in time
 pub enum TintState { Requested, Active, Ending { from: f32, release_s: f32 }, Done(TintEnd), Refused(Refusal) }
-pub enum TintEnd { Time, Recovered, Promoted, Preempted, Interrupted, OffScreen, Unloaded, Failed }
+pub enum TintEnd { Time, Recovered, Promoted, Preempted, OffScreen, Unloaded, Failed }
 pub enum Refusal { Preset, Unsupported, Held, Tier, Distance, Cooldown, Cap }
 pub fn gate(req: &TintRequest, g: &GateInput /* "Gate order" fields */, s: &TintSettings) -> Result<(), Refusal>;
 impl TintBook {                                    // per root: tint, start tick, cooldown
@@ -157,11 +161,11 @@ the same tick (state table: Done(Promoted)), reusing the built bodies: a body on
 |---|---|---|
 | Requested | gate passes (same tick) | Active; `ActiveTint` inserted |
 | Requested | gate fails | Refused(reason); `TintFallbackPlay` this tick; cooldown starts (not on `Cooldown`) |
-| Active | same kind again | stays Active: impulse re-applied, hold extended (total <= `max_s`) |
+| Active | same kind again (a Large hit on a running `Stagger`) | stays Active: impulse re-applied, intensity = the higher of the two, hold extended (total <= `max_s`) |
 | Active | other kind, higher priority | stays Active with the new profile, envelope restarted from the current sample |
 | Active | hold time over / `TintEndRequested` | Ending (Time / Recovered), release from the current weight |
 | Active, Ending | takeover claim on this root (knockdown, death, push band, the provider on a fall) | Done(Promoted): the takeover starts from the shown pose |
-| Active, Ending | a takeover elsewhere over the cap (lowest score); a Large reaction on it | Ending over `preempt_release_s`, Done(Preempted / Interrupted) |
+| Active, Ending | a takeover elsewhere over the cap (lowest score) | Ending over `preempt_release_s`, Done(Preempted) |
 | Active | tier A2; A3 or off-screen | Ending; Done(OffScreen) at once (not visible) |
 | any | root despawned or `Animator` removed (streaming unload) | Done(Unloaded); bodies dropped the same tick |
 | Active, Ending | `TintFeedback::Failed` | Done(Failed): `inertialize_from` the shown pose over `abort_blend_s` |
@@ -183,15 +187,19 @@ Until `Ready` the envelope clock waits (weight 0) and no fallback plays, so a St
 
 A physics impulse (N s) on a capable character: below `band.min_ns` the `HitReact` kick; up to `band.max_ns` a `Stagger`
 (refused: the kick); from `band.max_ns` the game's takeover hook (push, its knockdown threshold above). No overlap.
+A combat reaction asks by its tier (owner 2026-11-26: Large hits get the tint too, when a slot is free):
 
 | combat.md `Tier` | Tint | What always plays / fallback |
 |---|---|---|
 | Additive, Small | none | `HitReact` springs; the Small clip |
 | Medium | `Stagger`, regions from the struck joint (else UPPER), priority `Hit` | the Medium forced clip with its root motion; refused: + `HitReact` kick |
-| Large | none; ends a running tint (Interrupted) | the Large clip |
+| Large | `Stagger`, the profile's regions (UPPER), priority `Hit`, intensity set by the game (physics-adapter.md) | the Large forced clip, its root motion and windows; refused: + `HitReact` kick |
 | Knockdown, Death | none: takeover; a running tint is Promoted | the takeover |
 
-The reaction clip stays the gameplay move (windows, root motion) either way.
+The reaction clip stays the gameplay move (windows, root motion, its own length) either way: the tint runs its envelope
+over the clip's start and never stretches or cuts it. A Medium or Large on a root with a running state or injury tint
+takes it over (state table, higher priority); nothing but a takeover ends a tint early. The cap (2) bounds the cost
+whatever the tier.
 
 ### Pose flow per tick and frame
 
@@ -251,22 +259,13 @@ tunable). The seam is the request: classic rules may send none.
 
 Fixed 60 Hz under a 120 fps target: one tick per ~2 frames, one per worst frame (two on a catch-up).
 
-**Measured (AN38a/b, 2026-11-26;** `mw_delirium/tests/tint_cost.rs`, release, 60 warm-up + 600 timed ticks, N agents in
-one loop on one thread; ledger physics.md "AN38a", "AN38b"), median / p99 ms per tick:
-
-| State | N = 1 | N = 2 | N = 4 | N = 8 | ms per body | At 2 s |
-|---|---|---|---|---|---|---|
-| A balancer (a takeover's standing phase) | 0.50 / 0.88 | - | 1.78 / 3.00 | 4.21 / 8.50 | 0.44-0.53 | stands |
-| B balancer + soft upper body | 0.67 / 0.98 | - | 2.73 / 4.52 | 5.47 / 8.63 | 0.67-0.68 | stands |
-| C balancer + followed upper body (`Sway` option) | 0.63 / 0.90 | 1.27 / 1.96 | 2.65 / 4.43 | 5.29 / 9.10 | 0.63-0.66 | stands |
-| D stumble after a 45 N s chest push | 0.54 / 0.89 | 1.04 / 1.57 | 2.05 / 3.13 | 4.10 / 6.37 | 0.51-0.54 | recovers, stands |
-| E stagger-fall after the same push | 1.17 / 1.90 | 2.24 / 3.34 | 4.54 / 7.68 | 8.59 / 13.60 | 1.1-1.2 down, 0.56 standing | fallen |
-| F whole-body pose follow, no balancer, no pin | 0.86 / 1.49 | - | 3.32 / 5.23 | 6.71 / 10.35 | 0.83-0.86 | collapsed (pelvis 14 %) |
-| **G = F + pinned pelvis (the tint's path)** | 0.65 / 1.04 | **1.28 / 2.13** | 2.54 / 3.62 | 5.19 / 8.79 | 0.64-0.65 | stands (100 %) |
-
-Cost is linear in N (no shared cost); p99 is 1.5-2x the median. The pin makes pose follow stand and is cheaper than F (F
-is a body collapsing onto the floor). A body on the ground costs about twice a standing one (E), hence the promotion
-rule in the provider contract. C at N = 4 once ran a slow phase (4.26 / 4.54).
+**Measured (AN38a/b, 2026-11-26;** `mw_delirium/tests/tint_cost.rs`, release, 600 timed ticks, N agents in one loop on
+one thread; ledger physics.md "AN38a", "AN38b"; the full table, states A-G at N = 1-8:
+[history](archive/physics-tint-history.md)), ms per body per tick: G, the tint's path (whole-body pose follow with a
+pinned pelvis), 0.64-0.65, stands at 100 % pelvis height; C (balancer + followed upper body, the `Sway` option)
+0.63-0.66; F (pose follow with neither pin nor balancer) 0.83-0.86 and collapsed (pelvis 14 %); E (stagger-fall after a
+45 N s chest push) 0.56 standing, 1.1-1.2 once down. Cost is linear in N (no shared cost); p99 is 1.5-2x the median. A
+body on the ground costs about twice a standing one, hence the promotion rule in the provider contract.
 
 **Budget: tints + takeovers at the cap <= 2.0 ms median and <= 2.7 ms p99 per tick** (2.7 ms = the frame's p99 11 ms
 minus its median 8.3 ms; physics share, not the 25 us animation budget). **Cap 2 holds:** G at N = 2 is 1.28 / 2.13 ms
@@ -299,7 +298,9 @@ in physics-adapter.md). Yes/no: (1) After a medium hit, does the upper body give
 (2) Does a wounded stumble read as a leg giving way, not a glitch? (3) Does the sag read as tired, and does a further drain
 fall into the knockdown with no jump? (4) With six NPCs hit at once (cap 2, so four play the fallback kick), do those
 four look acceptable beside the two tinted, with no flicker? (5) In Classic, are the same events there without physics? (6) Do light pushes (10 N s to `band.max_ns`) read
-better as a stagger than as today's full push takeover? (`band.max_ns` = 10 is today's behaviour, the A/B arm.)
+better as a stagger than as today's full push takeover? (`band.max_ns` = 10 is today's behaviour, the A/B arm.) (7) After
+a large hit, does the upper body give over the Large clip without fighting it, steps and timing unchanged? (The game's
+Large intensity at 0 is the clip alone, the A/B arm.)
 
 ## Slices
 
@@ -308,7 +309,7 @@ better as a stagger than as today's full push takeover? (`band.max_ns` = 10 is t
 | AN38 | measurement test (list in "Performance"); a (A, B, F) 39628390 and b (C, D, E, G, N = 2) 37041235 done, c-d left | `mw_delirium` tests | - | `cargo test -p mw_delirium --release -- --ignored`; ledger |
 | AN40a | seam: types, `sample`, `TintBook`, plugin sets, `TintTarget`, fallback messages; exact tests with a fake provider | `sf_anim`, `sf_anim_bevy` | AN39 | `cargo test -p sf_anim -p sf_anim_bevy` (exact cap) |
 | AN40b | Delirium provider; step 1 the coexistence test; sanity tests | `mw_delirium`, `mw_delirium_bevy` | AN38, AN40a | `cargo test -p mw_delirium -p mw_delirium_bevy` (no NaN, floor, rest) |
-| AN41a | hit triggers: Medium tier and the impulse band -> `Stagger` | `mw_combat`, `mw_walkers_bevy` | AN40b, AN22 | `cargo test -p mw_combat -p mw_walkers_bevy` (exact) |
+| AN41a | hit triggers: Medium and Large tiers and the impulse band -> `Stagger` | `mw_combat`, `mw_walkers_bevy` | AN40b, AN22 | `cargo test -p mw_combat -p mw_walkers_bevy` (exact) |
 | AN41b | state triggers: injury, alcohol, fatigue -> `Stumble`, `Sway`, `Sag`; scene `anim-tint` | `mw_walkers_bevy` | AN41a | exact tests; owner ANIM-14 |
 | AN41c | `Sway`/`Sag` fallback key-pose clips (data) | `mw_combat` data | AN41b, AN36 | bake loads them; ANIM-14 (5) |
 | AN42 | measurement: tint ms at the cap, each kind and mixed with takeovers | `mw_delirium_bevy` tests | AN41b | `#[ignore = "measurement"]`; ledger perf |
@@ -318,8 +319,10 @@ tracking hold, `Sway` may use the balanced lower body (provider data); if not, e
 
 ## Open questions
 
-1. Should Large hits get a tint too? Recommended: no for now (decision 10 names medium hits; the Large clip carries it).
+1. (Answered, owner via meta-5, 2026-11-26: yes.) A Large hit also gets the `Stagger` over its clip when a slot is free;
+   the clip keeps the timing and stays the fallback; the cap bounds the cost ("Hits").
 2. (Answered, owner via meta-5, 2026-11-26: no.) The player's own body gets no tint in third person before AN42 has
    measured cost and control feel; the provider refuses action characters today.
-3. Creatures and beast races: fallback only, or a Rapier provider on `sf_ragdoll::powered` later? Recommended: fallback
-   only until the owner asks.
+3. (Answered, owner via meta-5, 2026-11-26: fallback only.) No second physics provider for creatures or beast races;
+   they play the additive fallback. Quadruped reactions come later through a procedural animation system (WISHLIST 8,
+   parked: no spec, no research until the owner says go).

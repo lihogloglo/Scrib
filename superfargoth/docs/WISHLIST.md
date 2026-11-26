@@ -207,6 +207,10 @@ door links as first-class records, not per-cell teleports.
   physics-driven hair and cloth (§7).
 - Retargeting: Morrowind's Bip01 skeleton maps to a standard humanoid rig,
   so modern animation sets apply to vanilla bodies.
+- **Procedural quadruped animation** (parked; owner 2026-11-26): creatures on
+  four legs get their hit reactions, and later more, from a procedural
+  animation system instead of a second ragdoll provider (physics-tint.md
+  answer 3). No spec and no research until the owner says go.
 
 ## 9. Combat, inspired by Dark Souls 3
 

@@ -2053,3 +2053,12 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (specs-6, AN38b): physics tint cap 2 is measured, no longer provisional (pinned body 0.65 ms; N = 2 =
   1.28 / 2.13 ms median / p99 per tick, N = 4 fails). A tinted body that falls is promoted to the takeover the same tick,
   never kept as a tint (on the ground it costs twice, and a tint has no get-up) (physics-tint.md "Performance").
+- 2026-11-26 (owner via meta-5, AN39): a Large hit also gets the Stagger tint over its clip when a slot is free (the clip
+  keeps the timing and stays the fallback; cap 2 bounds the cost). Reverses the spec's "Large ends a running tint";
+  `TintEnd::Interrupted` is dropped (physics-tint.md "Hits").
+- 2026-11-26 (owner via meta-5, AN39): no second physics provider for creatures or beast races: additive fallback only.
+  Quadruped reactions come later through a procedural animation system (WISHLIST 8, parked: no spec, no research until
+  the owner's go) (physics-tint.md "Open questions").
+- 2026-11-26 (owner via meta-5, DQ-34): a `once` line is heard once for the whole group by default, `#once:player` marks
+  per-player lines; a mod replaces another mod's whole scene by record id, no single-node patches (dialogue-authoring.md
+  "Open questions").
