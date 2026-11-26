@@ -217,6 +217,17 @@ body), sends `DoorRest` when the placement overlay holds a decodable `door` stat
 the kinematic listing; nothing is written to the overlay there. Log line per activated cell: `interact: N swing doors
 indexed in <worldspace> cell (x, y, z)`.
 
+### As built (IN33c2b1, 2026-11-26)
+
+`mw_interaction_bevy/src/door_body.rs` moves a resident swing door. On the fixed tick, after `DoorSystems::Commit` and
+before the physics step, each `DoorMoved` becomes the kinematic body's target (`set_kinematic_target`: the body sweeps
+there and pushes characters); a `snap` (a restored rest state) teleports it (`set_pose`, which holds without a
+target). The body's pose is `leaf_pose`: the placement's own `WorldTransform` with the leaf's rotation and the hinge
+offset, so the f64 world position is kept. A body that drains in after its door registered (`SwingDoor::posed`
+tracks the body last seen) is teleported to `Door::leaf()` when the door is not closed. Each frame the `DoorPivot`
+follows the body's pose interpolated by the fixed step's overstep (the item pivot rule; a write only when it
+changed), or the shell's leaf when physics is off. Only doors in `SwingDoors` (R0) are visited.
+
 ## World rules mapping (IN41, IN38, IN19)
 
 **Material rows** (`sf.interact.material` + a pattern table in `mw_interaction`, checked against the install at cook,

@@ -16,6 +16,10 @@
 //!   visuals under a [`DoorPivot`] and, in R0, indexes it with `mw_interaction::door_def`, lists
 //!   its body as kinematic and restores its saved rest state (`DoorRest`); the shell's `Doors`
 //!   registers and swings it. Log: `interact: N swing doors indexed in <worldspace> cell (x, y, z)`.
+//! - **Door bodies** ([`door_body`]): each swing step of the shell (`DoorMoved`) moves the door's
+//!   kinematic body to the leaf (a restored rest teleports it, also for a body inserted later),
+//!   and the [`DoorPivot`] follows the body's interpolated pose each frame (the shell's leaf
+//!   without physics).
 //! - **Player user** ([`input`]): the player body gets an `InteractionUser` (`PLAYER`, the live
 //!   `interact.claim.priority_player`, no tags), so the seat default (`IN2b2`) seats it.
 //! - **Focus**: the focus ray's raw first hit (`mw_player_bevy::Focus::hit`) is the player's one
@@ -34,12 +38,15 @@
 //! [`FocusState::command`]: sf_interaction_bevy::FocusState::command
 
 pub mod door;
+pub mod door_body;
 pub mod index;
 pub mod input;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tests_door;
+#[cfg(test)]
+mod tests_door_body;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -52,7 +59,8 @@ use mw_game_core::player::FocusUpdate;
 use mw_player_bevy::{Focus, UsePresses};
 use sf_bake::{Manifest, Store};
 use sf_interaction::InteractableDef;
-use sf_interaction_bevy::{InteractionPlugin, InteractionSystems};
+use sf_interaction_bevy::{DoorSystems, InteractionPlugin, InteractionSystems};
+use sf_physics_bevy::PhysicsSystems;
 use sf_records::RecordId;
 use sf_tunables_bevy::{TunablesAppExt, tunable_changed};
 
@@ -122,5 +130,7 @@ pub fn add_with_defs(app: &mut App, defs: FurnitureDefs) {
         .add_systems(Update, (index::sync_sit.run_if(tunable_changed(sit)), index::log_indexed, door::log_indexed, input::player_user))
         .add_systems(Update, input::prompt.in_set(FocusUpdate).after(mw_player_bevy::FocusRay))
         .add_systems(FixedUpdate, input::candidates.after(InteractionSystems::Apply).before(InteractionSystems::Focus))
-        .add_systems(FixedUpdate, input::commands.after(InteractionSystems::Focus).before(InteractionSystems::Activate));
+        .add_systems(FixedUpdate, input::commands.after(InteractionSystems::Focus).before(InteractionSystems::Activate))
+        .add_systems(FixedUpdate, door_body::move_bodies.after(DoorSystems::Commit).before(PhysicsSystems::Step))
+        .add_systems(Update, (door_body::pose_new_bodies, door_body::follow_pivots).chain().after(PhysicsSystems::Stream));
 }

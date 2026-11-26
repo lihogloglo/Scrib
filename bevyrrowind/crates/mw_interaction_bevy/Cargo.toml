@@ -17,6 +17,8 @@ bevy_ecs = { workspace = true, features = ["std"] }
 bevy_log.workspace = true
 # `Vec3`: a swing door's doorway.
 bevy_math = { workspace = true, features = ["std"] }
+# `Time<Fixed>`: a door pivot follows its body's pose interpolated by the step's overstep.
+bevy_time = { workspace = true, features = ["std"] }
 # `Transform` of a swing door's pivot.
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 # `decode_interact_defs`, the `mw.interact.defs` product (IN32b2).
@@ -46,10 +48,16 @@ smallvec.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
+# The door-body tests start the async pool the physics drain loads shapes on.
+bevy_tasks.workspace = true
 # The test placements' transforms and the expected frames.
 glam.workspace = true
 # Encodes the test defs product.
 postcard.workspace = true
+# The door-body tests' leaf collider (a panel mesh).
+sf_controller.workspace = true
+# The door-body tests' model path (a body needs one).
+sf_vfs.workspace = true
 
 [lints]
 workspace = true

@@ -22,6 +22,7 @@ use sf_coords::{WorldPos, WorldTransform};
 use sf_interaction::{DOOR_STATE_OWNER, DoorState};
 use sf_interaction_bevy::{DoorRest, IndexChange};
 use sf_physics_bevy::KinematicPlacements;
+use sf_physics_bevy::sf_physics::BodyId;
 use sf_world::{DoorLink, IndexedPlacement, PlacementClass, PlacementId, WorldspaceId};
 use sf_world_bevy::{ActivateCx, DoorLinks, LoadedModel, PlacementSpawner, PlacementSpawners, SpawnCx, WorldOverlay};
 use smallvec::SmallVec;
@@ -58,6 +59,8 @@ pub struct SwingDoor {
     pub worldspace: WorldspaceId,
     /// The closed placement, full precision.
     pub transform: WorldTransform,
+    /// The body `door_body` last saw for this door (a new one is posed at the leaf).
+    pub(crate) posed: Option<BodyId>,
 }
 
 /// The swing doors in R0, by placement.
@@ -72,6 +75,10 @@ impl SwingDoors {
 
     pub fn iter(&self) -> impl Iterator<Item = (PlacementId, &SwingDoor)> {
         self.0.iter().map(|(id, d)| (*id, d))
+    }
+
+    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (PlacementId, &mut SwingDoor)> {
+        self.0.iter_mut().map(|(id, d)| (*id, d))
     }
 
     #[must_use]
@@ -172,7 +179,7 @@ impl PlacementSpawner for DoorHook {
         if let Some(rest) = saved_rest(world, p.id) {
             world.write_message(DoorRest { placement: p.id, open: rest.open, sign: rest.sign });
         }
-        let door = SwingDoor { worldspace: cx.worldspace.clone(), transform: p.transform };
+        let door = SwingDoor { worldspace: cx.worldspace.clone(), transform: p.transform, posed: None };
         world.get_resource_or_init::<SwingDoors>().0.insert(p.id, door);
         let key = (cx.worldspace.as_str().to_owned(), cx.cell.to_array());
         *world.get_resource_or_init::<SwingDoorLog>().0.entry(key).or_default() += 1;

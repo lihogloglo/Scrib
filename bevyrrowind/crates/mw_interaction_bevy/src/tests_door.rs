@@ -26,7 +26,7 @@ use crate::door::{DoorHook, DoorPivot, DoorPivots};
 use crate::index::frame_of;
 use crate::tests::{Nothing, app, cell, placement, tick};
 
-const DOOR: PlacementId = PlacementId(40);
+pub(crate) const DOOR: PlacementId = PlacementId(40);
 const BASE: &str = "in_door_01";
 
 /// Records the `parent` and `local` of every spawn; one entity each.
@@ -49,11 +49,11 @@ impl PlacementSpawner for Recorder {
     }
 }
 
-fn ws() -> WorldspaceId {
+pub(crate) fn ws() -> WorldspaceId {
     WorldspaceId::new("test")
 }
 
-fn door() -> IndexedPlacement {
+pub(crate) fn door() -> IndexedPlacement {
     let mut p = placement(DOOR, BASE, DVec3::new(10.0, 1.5, -4.0), Quat::from_rotation_y(0.7));
     p.placement.class = PlacementClass::Door;
     p
@@ -71,7 +71,7 @@ fn local() -> Transform {
 }
 
 /// `hook.spawn` under a new parent; returns (count, parent).
-fn spawn(app: &mut App, hook: &DoorHook, p: &IndexedPlacement) -> (u32, Entity) {
+pub(crate) fn spawn(app: &mut App, hook: &DoorHook, p: &IndexedPlacement) -> (u32, Entity) {
     let model = model();
     let lod = StreamingConfig::default().lod;
     let layers = RenderLayers::default();
@@ -94,7 +94,7 @@ fn spawn(app: &mut App, hook: &DoorHook, p: &IndexedPlacement) -> (u32, Entity) 
     (hook.spawn(world, &cx, p), parent)
 }
 
-fn residency(app: &mut App, hook: &DoorHook, p: &IndexedPlacement, on: bool) {
+pub(crate) fn residency(app: &mut App, hook: &DoorHook, p: &IndexedPlacement, on: bool) {
     let world = app.world_mut();
     let cell_entity = world.spawn_empty().id();
     let worldspace = ws();
