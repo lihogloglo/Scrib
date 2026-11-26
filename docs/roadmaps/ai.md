@@ -91,7 +91,7 @@ Stages 1-3 in order; 4-9 start as their other-lane needs land (cross-lane: `orde
 | AI0c | ai.md interrupt table, build order, tier additions, 3D movers, industry fixes (KCD = BTs, not GOAP) | docs | - | **done 2026-11-26** (ai.md "Interrupt contract", 3D movers, tiers, industry) |
 | AI0d | Followers and companions section (directive, commands, stealth, downed; adapter `AI_F`/`AI_E`) | docs | - | **done 2026-11-26** (new `followers.md`) |
 | AI0e | ai.md "Memory": gossip, reputation per faction and settlement | docs | - | **done 2026-11-26** (new `ai-memory.md`) |
-| AI0f | ai.md errands, `Operate`, link-operator contract | docs | AI0c | review |
+| AI0f | ai.md errands, `Operate`, link-operator contract | docs | AI0c | **done 2026-11-26** (ai.md "Errands, operators and links") |
 
 ### Stage 1: NPCs see and hear
 

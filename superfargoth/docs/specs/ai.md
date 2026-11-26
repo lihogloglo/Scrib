@@ -66,9 +66,10 @@ All saved/replicated types are serde; ids are stable (`ActorKey`, `PlayerKey`, `
 ```rust
 // sf_ai (Bevy-free). Illustrative, not compiled.
 pub enum DirectiveKind { StayNear { home: Location, radius: f32 }, GoTo(Location), Follow(ActorRef),
-    Escort { who: ActorRef, to: Location }, Use(PlacementId), Fight(ActorRef), Custom(RecordId) }
+    Escort { who: ActorRef, to: Location }, Use(PlacementId), Fight(ActorRef),
+    Errand(Errand), Operate(Operate) /* AI0f */, Custom(RecordId) }
 pub struct Directive { pub id: DirectiveId, pub kind: DirectiveKind, pub priority: u8, pub repeat: bool,
-    pub until: Option<GameTime>, pub source: DirectiveSource /* Record | Schedule | Script | Quest | Memory */,
+    pub until: Option<GameTime>, pub source: DirectiveSource /* Record | Schedule | Reaction | Memory | Script | Quest */,
     pub params: ParamBag, pub done: bool }
 pub trait StackPolicy: Send + Sync {       // adapter: OpenMW's insertion, cancel and repeat rules
     fn push(&self, stack: &mut Vec<Directive>, d: Directive);
@@ -94,11 +95,10 @@ pub fn decide(ws: &WorldState, stack: &[Directive], lib: &Library, rng: u64, tra
   OpenMW `aisequence.cpp` rules). Completion (`done`) is the signal scripts poll (`GetAIPackageDone`).
 - **Schedules** (`sf.ai.schedule`): `{ days, from, to, directive template, place }`, `place` a `Location` or an
   adapter-resolved anchor ("home", "work", a slot tag); the host clock pushes and retires `Schedule` directives at
-  window edges. Seam `ScheduleRules` (modern = records; classic = none). Quest safety (Radiant's lesson): scripts and
-  quests outrank schedules; a validator lists actors that quests address by position, so packs can exclude them.
-- **Timing**: schedules move actors between worldspaces, so they need tier 0 and door traversal: `ScheduleRules::None`
-  is the default until AI10, AI11 and AI12 exist (decisions (e)); an anchor that doesn't resolve keeps the actor on
-  its record directives.
+  window edges. Seam `ScheduleRules` (modern = records; classic = none). Quest safety (Radiant's lesson): a validator
+  lists actors that quests address by position, so packs can exclude them.
+- **Timing** (decision (e)): `ScheduleRules::None` until AI10-AI12 (tier 0, doors); an unresolved anchor keeps the
+  record directives.
 - Directives are fully saved; the stack is the truth across tiers.
 - **As built (AI4):** `sf_ai::directive` — limits, `Serving`, instance ids: [ai-as-built.md](ai-as-built.md) "AI4".
 
@@ -124,7 +124,7 @@ Highest first: rows 1-4 are drives, row 5 the stack, rows 6-7 run inside the ser
 | 2 | **Pursue**: guard heat, chase to LKP (AI29) | drive, weight 4 |
 | 3 | **Converse**: a talk opens (pins tier 2) | drive, weight 3 |
 | 4 | **Notice**: a concern, a Curious or Suspicious band | drive, weight 2; Glance/Bark as overlays, heavy rungs push a `Reaction` directive |
-| 5 | **Stack**, modern rank Quest > Script > Memory ([vendettas](ai-memory.md)) > Reaction (Search, Investigate, Confront, Report, Tidy) > Schedule > Record | `Directive` drive, weight 1, floor 1 |
+| 5 | **Stack**, modern rank Quest > Script > Memory ([vendettas](ai-memory.md)) > Reaction (Search, Investigate, Confront, Report, Tidy) > Schedule > Record; `Errand`, `Operate` take their source's rank (stop operator `Record`, road traveller `Schedule`) | `Directive` drive, weight 1, floor 1 |
 | 6 | **Activity**: errand stage, operator post, schedule `UseSlot`, free-time pick (AI27) | HTN methods |
 | 7 | **Idle**: nothing scores above 0 (`DriveReason::Idle`), or the record default | |
 | - | **Overlays**: look-at, Glance, `BarkCue` (AI30), greeting | own channels |
@@ -134,19 +134,17 @@ Highest first: rows 1-4 are drives, row 5 the stack, rows 6-7 run inside the ser
   `commit_ticks` stop flip-flop.
 - **Pre-emption.** By a drive: `serving_for` sets `Serving::Suspended`, `Limit::For` stops counting (`Until` does not),
   the runner drops its plan (`PlanRunner::clear`). In the stack: the lower directive waits, `For` paused.
-  `DirectiveSource` gains `Reaction` between `Schedule` and `Memory` (AI22), so reactions wait under quest and script
-  orders (quest safety); rows 1-3 don't.
+  `Reaction` (AI22) waits under quest and script orders (quest safety); rows 1-3 don't.
 - **Resume = replan from the root, never restore** (Fluid HTN, Decima): the world moved, so the served directive's root
   is decomposed fresh. `resume` continues a `Pause` split only within one unbroken run.
 - **Kept:** the stack (`For` left, params), progress executors write into params (errand stage, route progress, patrol
   index, report target; methods read it, so a resumed errand skips done stages), awareness, LKP, facts, a held prop
-  (Combat stows or drops it, AI31). **Lost:** plan, cursor, MTR, operator state, look-at, the slot claim once the exit
+  ("Held prop under pre-emption"). **Lost:** plan, cursor, MTR, executor state, look-at, the slot claim once the exit
   ran (Converse and overlays stay seated if the slot allows; rows 1-2 take the fast exit).
 - **Monitoring is not pre-emption:** `Library::holds` false on the active step, or a dirty read key, replans the same
   root. Ambient keys (`raining`, `night`) work this way: a free-time pick re-picks shelter, a work shift does not.
 - **Tier 0** runs no drives, only events (push, finish, window edge, fact, AI21 concerns); a promoted actor starts on
-  row 5. Morrowind's `StackPolicy` (OpenMW priorities) replaces row 5's ranks; Hello, Fight, Flee and Alarm are
-  considerations of rows 1-4. Host only; the trace logs each pre-emption with its `DriveReason`.
+  row 5. Morrowind's `StackPolicy` (OpenMW priorities) replaces row 5's ranks. Host only; the trace logs each pre-emption with its `DriveReason`.
 
 ## Behaviours (HTN method library)
 
@@ -168,16 +166,46 @@ NPC's from AI or scripts").
 `MoveTo(goal, gait)` (path request, corridor, arrival; fails on `NoPath` or 3 s without progress), `Traverse(link)`
 (approach, open by activation rules, wait `passable`, cross the `Gate`; fade links only unseen), `UseSlot(slot)`
 (claim, approach, enter, loop, exit), `Attack/Guard/Dodge/Reposition` (moveset, C6), `Speak`, `Face`, `LookAt`,
-`Wait`, `Activate`, `Flee`, `FlyTo`, `SwimTo`.
+`Wait`, `Activate`, `Flee`, `FlyTo`, `SwimTo`; `Pick`, `Place`, `Give`, `TraverseLink` (AI0f below).
 
 **3D movers** (lane decision 11; Horizon Zero Dawn) never use the navmesh: `FlyTo` (AI34) and `SwimTo` (AI35) follow
-nav's flight and swim queries (nav.md "Volumes", NV13: 3D waypoints over the height field or a `WaterBody`, profile
-clamped), as `MoveTo` does its path: 3D corridor, yaw and pitch within the class's climb and dive limits, fail on
+nav's flight and swim queries (nav.md "Volumes", NV13), as `MoveTo` does its path: 3D corridor, yaw and pitch within the class's climb and dive limits, fail on
 `NoPath` or stall, hold at a `Partial` end (a fish at the band edge); `SwimTo` stays in `[bed + r, surface - r]`.
 **Levitation** is a class swap to the adapter's flier class, back to ground at a landing candidate. Amphibious ground
 classes swim on navmesh `water` polys. **Classic executor slot**: operators under the same task ids (an `AiWander`
 port in `mw_rules`), never built early.
 - **As built (AI6):** `sf_ai::exec` (`MoveTo`, `Wait`, `Face`, `PlanRunner`, `OperatorBindings`) + `sf_ai_bevy::exec` (`AiExecutor`, `AiExecPlugin`, tunables `ai.exec.*`): [ai-as-built.md](ai-as-built.md) "AI6".
+
+## Errands, operators and links (AI0f)
+
+**Errand (AI32)** `{ item: Prop(PlacementId) | Tagged(TagFilter), from: Anchor, to: Place { at, spot } | Give(ActorRef) }`
+from schedules (porter, MA11), quests, scripts: `MoveTo(from)` → `Pick` → `MoveTo(to)` (× `CarryClass.speed_mul`) →
+`Place` or `Give` (AI31, one `HeldProp`); stage `Fetch | Carry | Deliver` in params. Both tiers call a pure
+`pick_spot(anchor, filter, occupancy, ActorKey)`, and tier 0 steps the same stages as events (carry: an NV12 route), so
+placement and result (`Delivered | Missing | Refused`) equal tier 2's (exact test). Prop gone: `Missing`. No spot within
+`ai.errand.spot_radius_m`: nearest valid floor. Recipient away past `ai.errand.give_wait_s`: `Refused`, placed at `to`.
+**Held prop under pre-emption:** rows 1-2 drop a two-hand or drag prop at the feet (no spot search), a one-hand one
+only if the moveset needs that hand; rows 3-4 keep it. The stage returns to `Fetch` on it (owner kept). Never stowed.
+
+**Operate (AI45, lane decision 15)** `{ slot: OperatorSlotRef, mode: Post | Crew | Road(RouteRef) }` on an ordinary
+actor (travel.md "Operators and replacement"). `Post`: `UseSlot(post)` at the board point; `Crew` also rides each trip
+(TV4 deck slot), then alights. Ambush (TV9): row 1 defends or flees by archetype. AI emits `OperatorPresence { slot,
+present, reason }` on change (present = serving within `ai.operate.post_radius_m` of the post, or aboard); absent →
+`Absent`, departures refused; dead → `Vacant`, TV26 replaces. **Road travellers, caravans** (TV21): `Road` on NV12 at
+tier 0; promotion places them on the road only out of every player's view (`ViewSample`) or beyond
+`ai.operate.road_pop_m`, else they stay tier 0, moving. Source: stop operator `Record` (bound at load, TV5), road
+traveller `Schedule` (timetable windows).
+
+**`TraverseLink` (AI33, lane decision 10)**, the NPC side of nav.md "Links": `LinkReached` suspends `MoveTo` (no
+replan); face `to` within `ai.link.align_deg`; send the player's `Command` for the kind (`Vault`, `Mantle`, `Climb`:
+AL-10; `Jump`: AL-12; `Drop`: step off; `Ladder`: `UseSlot`); `sf_action` runs the player's probes and states, no
+NPC-only climb code. Grounded at `to`: `LinkDone`; else `LinkFailed` (refused `Envelope`, no progress `Blocked`, nav's
+timeout `Timeout`, pre-empted `Interrupted`, `LinkDisabled` before the move `Disabled`); nav raises the cost (first
+three) and repaths. Tier 1 lacks foot probes, so a link pins tier 2 until the answer; tier 0 meets none (NV12 edges).
+
+Tunables (`Gameplay`, `Dev`, Guess): `ai.errand.spot_radius_m` m 1-20 (5), `ai.errand.give_wait_s` game s 5-300 (60),
+`ai.operate.post_radius_m` m 1-15 (4), `ai.operate.road_pop_m` m 150-2000 (500), `ai.link.align_deg` deg 5-45 (15).
+All host only, at tick boundaries.
 
 ## Perception and stimuli
 
@@ -344,10 +372,10 @@ unless noted; `hearing_mul` and the other `PerceptionProfile` / `PerceptionState
 Fact store, Nemesis-style relations and vendettas, bounded gossip, reputation per settlement and faction, and
 `ConsequenceRules`: [ai-memory.md](ai-memory.md) (AI13, AI43, AI44, AI25). Saved in `sf/aimemory` (see "Saves").
 
-## Smart objects (`sf_interaction`, planned, own spec)
+## Smart objects (`sf_interaction`)
 
-`sf_ai` needs `find_slots(ws, near, radius, tags)`, `claim`/`release` (host state, net.md) and per activity a method
-fragment (approach, enter, loop, exit) with animation hooks. Until then the adapter's pathgrid wander stands in.
+`find_slots`, `claim`/`release` (host) and per-activity method fragments: [interaction.md](interaction.md); carry and
+`Relocate`: [interaction-carry.md](interaction-carry.md). Until IN9 the adapter's pathgrid wander stands in.
 
 ## Tiers and budget (owner decision 5)
 
@@ -427,9 +455,8 @@ Sections (owner-keyed, versioned, save.md): `sf/ai` per actor (directive stack, 
 `LogicalState`, current activity and claim, drive and running directive id) and `sf/aimemory` (facts, relations: [ai-memory.md](ai-memory.md)). Not
 saved: plans, traces, awareness, path requests, `DirectiveDone` events (rebuilt on load; promotion resolve places
 actors). Belongs to the one state registry when it exists (vision §4.2.3).
-- **Section names are single-segment:** `sf_save::SectionKey::family` is the name up to the first `/`, so `sf/ai/...`
-  would share `sf/ai`'s migration chain; hence `sf/aimemory`. Multi-segment names are instances of one family
-  (`sf/character/<key>`), never a second family (audit 2026-11-09).
+- **Section names are single-segment** (a family is the name before the first `/`, save.md "Registry"): hence
+  `sf/aimemory`, not `sf/ai/memory` (audit 2026-11-09).
 - **As built (AI5):** one world section keyed by `ActorKey` (not overlay blobs), v1 = each actor's `SavedStack`; clock and key caveats: [ai-as-built.md](ai-as-built.md) "AI5".
 
 ## Scripting (Luau `@sf/ai`)
@@ -468,6 +495,8 @@ Per-actor **trace ring buffer** (64 decisions: tick, tier, drive and considerati
 | Schedules | Ultima VII, Gothic, Bethesda packages, KCD routines | records → directives | **match** |
 | Smart objects | Sims, UE Smart Objects, Skyrim furniture, A-Life smart terrains | `sf_interaction` | **match** (planned) |
 | Perception | UE AI Perception; OpenMW `awarenessCheck` | per player, through doors | **match** |
+| Errands, operators | Skyrim packages (Acquire, UseItemAt, Travel), RDR2 ambient chores (press only), Mount & Blade caravans on the map | `Errand`, `Operate`, tier 0 on NV12 | **match** |
+| NPC traversal | UE Smart Links (handoff event), Unity `NavMeshLink` manual traversal | `TraverseLink` drives the player's moves | **match** |
 | Off-screen LOD | UE MassLOD caps, Bethesda process levels, A-Life, KCD | 3 tiers, global cap, resolve | **match** |
 | Memory | Nemesis, KCD2 town reputation, RDR2 witnesses: [ai-memory.md](ai-memory.md) | fact store, gossip, reputation | **match** |
 | LLM NPCs | inZOI/ACE on-device, Mantella out of process, Where Winds Meet chatbots | advisor over validated options | **differ** (choices only) |
