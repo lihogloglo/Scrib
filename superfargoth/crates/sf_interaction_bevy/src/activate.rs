@@ -39,7 +39,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
-use sf_interaction::{InteractableDef, SlotTerms, TagId, UserKey, VerbTarget, rank_verbs};
+use sf_interaction::{InteractableDef, SlotTerms, TagId, UserKey, VerbChoice, VerbTarget, rank_verbs};
 use sf_script_bevy::sf_script::Handle;
 use sf_script_bevy::{Activated, ActivationOutcome};
 use sf_world::PlacementId;
@@ -194,6 +194,37 @@ pub enum ActivationSystems {
 
 // --- Systems ------------------------------------------------------------------------------------
 
+/// The verbs `target` offers `user` now, best first ([`rank_verbs`]: the target's state tags meet
+/// the verb's `requires`, and its slot is the user's claim already or one [`Claims::would_claim`]
+/// grants at `priority` for `tags`); `None` when the target has no def. Shared by validation
+/// (step 2) and the player's focus ([`crate::focus`]), so the prompt offers what validation accepts.
+///
+/// [`Claims::would_claim`]: sf_interaction::Claims::would_claim
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn offered_verbs(
+    user: UserKey,
+    tags: &[TagId],
+    priority: u8,
+    target: PlacementId,
+    defs: &InteractionDefs,
+    state: &InteractionStateTags,
+    claims: &InteractionClaims,
+    index: &InteractionIndex,
+) -> Option<SmallVec<[VerbChoice; 4]>> {
+    let def = defs.get(target)?;
+    let claims = &claims.0;
+    let offered = |r: sf_interaction::SlotRef| {
+        if claims.claim_on(r).is_some_and(|c| c.user == user) {
+            return true;
+        }
+        let Some(slot) = def.slots.get(usize::from(r.slot)) else { return false };
+        let mut terms = SlotTerms::of(slot, claims.params());
+        terms.enabled = index.0.get(r).is_some();
+        claims.would_claim(r, &terms, user, tags, priority).is_ok()
+    };
+    Some(rank_verbs(def, target, state.tags(target), offered))
+}
+
 /// The activation `cmd` gives, `None` when refused (step 2).
 fn validate(
     cmd: &ActivateCommand,
@@ -203,20 +234,10 @@ fn validate(
     index: &InteractionIndex,
 ) -> Option<Activated> {
     let activation = |verb: Option<TagId>| Activated { target: Handle(cmd.target.0), actor: cmd.actor, verb: verb.map(|v| v.0) };
-    let Some(def) = defs.get(cmd.target) else {
+    let Some(verbs) = offered_verbs(cmd.user, &cmd.tags, cmd.priority, cmd.target, defs, state, claims, index) else {
         return (cmd.verb.is_none() && cmd.slot.is_none()).then(|| activation(None));
     };
-    let claims = &claims.0;
-    let offered = |r: sf_interaction::SlotRef| {
-        if claims.claim_on(r).is_some_and(|c| c.user == cmd.user) {
-            return true;
-        }
-        let Some(slot) = def.slots.get(usize::from(r.slot)) else { return false };
-        let mut terms = SlotTerms::of(slot, claims.params());
-        terms.enabled = index.0.get(r).is_some();
-        claims.would_claim(r, &terms, cmd.user, &cmd.tags, cmd.priority).is_ok()
-    };
-    rank_verbs(def, cmd.target, state.tags(cmd.target), offered)
+    verbs
         .into_iter()
         .find(|c| {
             cmd.verb.is_none_or(|v| c.verb == v)

@@ -1,6 +1,6 @@
 [package]
 name = "sf_interaction_bevy"
-description = "Bevy shell for sf_interaction (interaction.md): hosts the Claims table and the slot PointIndex on the fixed tick (request messages applied as one sorted batch, leases, InteractionEvent messages) and binds the interact.* tunables live; the activation pipeline (ActivateCommand -> Activated -> scripts -> gates -> UseApproved/UseRefused); focus follows in IN31b2"
+description = "Bevy shell for sf_interaction (interaction.md): hosts the Claims table and the slot PointIndex on the fixed tick (request messages applied as one sorted batch, leases, InteractionEvent messages) and binds the interact.* tunables live; the activation pipeline (ActivateCommand -> Activated -> scripts -> gates -> UseApproved/UseRefused); per-player stable focus with its offered verbs and hold list (IN31b2)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

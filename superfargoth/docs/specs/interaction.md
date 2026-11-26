@@ -445,10 +445,38 @@ current × (1 + `focus_switch_margin`) for `focus_switch_s`. `cook` is identity 
 and `ClaimAnswered` (callers need refusals back: the AI picks another slot on `QueueFull`). One `FixedUpdate` run in
 `InteractionSystems::Apply`: tick + 1, index changes (sorted by placement), invalidations (sorted), one `apply_batch`,
 lease `tick`, answers and events out; send order never matters. `tick_hz` from `Time<Fixed>`; 13 `interact.*`
-tunables live. A claim on a slot not in the index is refused `Disabled` in the shell. Not hosted yet (IN31b/IN32):
-`Claims::owner_moved` (needs the owner frame at claim time); re-inserting a placement doesn't invalidate claims on
-now-disabled slots (send `InvalidateClaims { Slot, SlotDisabled }`). Hosts write requests `.before(Apply)`, read
+tunables live. A claim on a slot not in the index is refused `Disabled` in the shell. **IN31a-fix (2026-11-26):** `InteractionFrames`
+keeps each object's current frame and, while any slot is held, its **anchor** (the frame when first held); `Move`
+measures from the anchor (small drifts add up) and calls `Claims::owner_moved`; a re-insert first ends holds on slots
+it disables or no longer has (`SlotDisabled`), then treats a new frame as a move. Anchors reconcile once per tick from
+the core's events (`Claims::held_slots`). Hosts write requests `.before(Apply)`, read
 events `.after(Apply)`.
+
+## As built (IN31b1, 2026-11-26)
+
+`sf_interaction_bevy/src/activate.rs` (+ `tests_activate.rs`, 6 headless tests): the activation contract above.
+`ActivateCommand { user, actor, target, verb, slot, priority, tags }` (tags: the user's, for slot `users` filters)
+validated in `InteractionSystems::Activate` (after `Apply`): a target with a def (`InteractionDefs`, kept from
+`Insert`) needs an offered verb (`rank_verbs` over `would_claim`; a slot the user already holds counts as offered,
+so `UseSlot` can claim, approach, then activate); `verb: None` there takes the best offered verb; a def-less target
+passes only with `verb: None, slot: None`. Refused commands write nothing. `Activated` (`sf_script_bevy`) gained
+`verb: Option<u32>` (script payload `verb`, nil = primary use). In `Update` after the script slot,
+`ActivationSystems::{Collect, Gates, Default}`: unhandled `ActivationOutcome`s from any writer plus `ScriptActivate`
+(step 7, never reaches scripts) fill `PendingUses`; gates mark refusals (first wins); `Default` writes `UseApproved`
+or `UseRefused { reason }`. A refusal never substitutes another verb (ai.md "No escalation ladder").
+`InteractionStateTags` holds per-placement state tags (empty until IN19/IN33). Open: `UseApproved` carries no slot
+yet (pose/door defaults need it: IN2/IN33); reach is the host's check.
+
+## As built (IN31b2, 2026-11-26)
+
+`sf_interaction_bevy/src/focus.rs` (+ `tests_focus.rs`, 6 headless tests): per-player focus. The host's ray/cone query
+writes `FocusCandidates { player, candidates: (PlacementId, score), held, priority, tags }` each fixed tick;
+`InteractionSystems::Focus` (fixed order `Apply` → `Focus` → `Activate`, so a host input system between the last two
+is validated the same tick) keeps `PlayerFocus` (`BTreeMap<UserKey, FocusState>`, one `FocusStabilizer` each).
+`FocusState { target, verbs, list_open }`: verbs come from `offered_verbs` (shared with activation validation, so
+the prompt offers exactly what is accepted); while held on an unchanged target the verb list is frozen too; a player
+with no message keeps its state, an empty list clears focus. `FocusState::command(player, actor, choice)` builds the
+`ActivateCommand` (best verb + slot, a hold-list choice, or a def-less primary use). Game wiring: IN32.
 
 ## Owner questions
 

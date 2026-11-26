@@ -32,7 +32,12 @@
 //!   script slot, [`ActivationSystems`] runs the gates and writes [`UseApproved`] / [`UseRefused`].
 //!   Needs `sf_script_bevy::ScriptsPlugin` (the scripts answer every `Activated`).
 //!
-//! Not here: focus and the hold list (`IN31b2`); game wiring (`IN32`).
+//! - Focus (`IN31b2`, [`focus`] module docs): the host's [`FocusCandidates`] per player per tick
+//!   become each player's stable [`FocusState`] (target, offered verbs, hold list) in
+//!   [`PlayerFocus`], in [`InteractionSystems::Focus`] (after `Apply`, before `Activate`);
+//!   [`FocusState::command`] gives the [`ActivateCommand`] the host writes.
+//!
+//! Not here: game wiring (`IN32`).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -51,15 +56,19 @@ use sf_world::PlacementId;
 use smallvec::SmallVec;
 
 pub mod activate;
+pub mod focus;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tests_activate;
+#[cfg(test)]
+mod tests_focus;
 
 pub use activate::{
     ActivateCommand, ActivationSystems, InteractionDefs, InteractionStateTags, PendingUse, PendingUses, ScriptActivate,
     UseApproved, UseRefused,
 };
+pub use focus::{FocusCandidates, FocusState, PlayerFocus};
 
 // --- Tunables ---------------------------------------------------------------------------------
 
@@ -284,6 +293,8 @@ pub struct ClaimAnswered {
 pub enum InteractionSystems {
     /// Settings sync, index changes, invalidations, the batch, leases; events out.
     Apply,
+    /// Each player's [`FocusCandidates`] into [`PlayerFocus`] (target, verbs, hold list).
+    Focus,
     /// [`ActivateCommand`]s validated against this tick's claims; `Activated` out.
     Activate,
 }
@@ -329,7 +340,12 @@ impl Plugin for InteractionPlugin {
             .add_message::<UseRefused>()
             .add_message::<Activated>()
             .add_message::<ActivationOutcome>()
-            .configure_sets(FixedUpdate, (InteractionSystems::Apply, InteractionSystems::Activate).chain())
+            .init_resource::<PlayerFocus>()
+            .add_message::<FocusCandidates>()
+            .configure_sets(
+                FixedUpdate,
+                (InteractionSystems::Apply, InteractionSystems::Focus, InteractionSystems::Activate).chain(),
+            )
             .configure_sets(
                 Update,
                 (ActivationSystems::Collect, ActivationSystems::Gates, ActivationSystems::Default)
@@ -337,6 +353,7 @@ impl Plugin for InteractionPlugin {
                     .after(ScriptSlot::Update),
             )
             .add_systems(FixedUpdate, (sync_params, step).chain().in_set(InteractionSystems::Apply))
+            .add_systems(FixedUpdate, focus::focus.in_set(InteractionSystems::Focus))
             .add_systems(FixedUpdate, activate::activate.in_set(InteractionSystems::Activate))
             .add_systems(Update, activate::collect.in_set(ActivationSystems::Collect))
             .add_systems(Update, activate::finish.in_set(ActivationSystems::Default));
