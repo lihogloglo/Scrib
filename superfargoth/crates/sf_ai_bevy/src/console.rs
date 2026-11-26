@@ -10,7 +10,7 @@ use sf_console_bevy::sf_console::{ArgKind, CommandSpec, Param};
 
 use crate::alloc::CPU_TIER_CHOICES;
 use crate::{
-    AiAllocSettings, AiAllocStats, AiDecideStats, AiLibrary, AiSelected, AiTraces, DEFAULT_TRACE_LINES, actor_hex, directives_text,
+    AiAllocSettings, AiAllocStats, AiDecideStats, AiLibrary, AiLogical, AiLogicalStats, AiSelected, AiTraces, DEFAULT_TRACE_LINES, actor_hex, directives_text,
     parse_actor, trace_text,
 };
 
@@ -111,7 +111,10 @@ fn register_summaries(app: &mut App) {
     )
     .add_console_command(
         CommandSpec::new("ai.stats")
-            .help("Trace store settings and counts, HTN library size and load errors, the allocator's tick and cost"),
+            .help(
+                "Trace store settings and counts, HTN library size and load errors, the allocator's tick and cost, \
+                 tier-0 states stepped and the promotion queue",
+            ),
         |inv| {
             let traces = inv.ctx.resource::<AiTraces>();
             let lib = inv.ctx.resource::<AiLibrary>();
@@ -134,6 +137,13 @@ fn register_summaries(app: &mut App) {
                     Some(us) => format!("alloc: tick {}, allocate {us:.1} µs", alloc.tick),
                     None => format!("alloc: tick {}, timings off", alloc.tick),
                 });
+            }
+            if let (Some(_), Some(l)) = (inv.ctx.get_resource::<AiLogical>(), inv.ctx.get_resource::<AiLogicalStats>()) {
+                let cost = l.promote_us.map_or_else(|| "timings off".to_owned(), |us| format!("{us:.1} µs"));
+                inv.log.info(&format!(
+                    "logical: {} states, {} stepped; promote: queue {}, waiting {}, tried {}, placed {}, {cost}",
+                    l.states, l.stepped, l.queued, l.waiting, l.tried, l.placed,
+                ));
             }
             Ok(())
         },

@@ -426,6 +426,11 @@ Fact store, Nemesis-style relations and vendettas, bounded gossip, reputation pe
   claim places it standing. Seams: `PlayerViews::seen_by_any(at, radius)` (gameplay viewers, also for doors and
   follower catch-up) and `PromoteEnv` (snap, claim, approaches, body radius), both the shell's (AI10c).
   `demote(body, now)` is a fresh `LogicalState`; the allocator alone grants it.
+- **As built (AI10c1, 2026-11-26):** `sf_ai_bevy::logical`. An actor is tier 0 in fact iff its key is in the
+  `AiLogical` store (with or without a body); the allocator's `AiTier` is overridden to `Logical` on a stored body until
+  it is placed, so a queued actor perceives and plans as tier 0. A stored body already standing on its state's spot
+  (same worldspace, within its body radius) is placed there with no view test: nothing moves, so nothing pops in.
+  Followers read their leader's state through the store, stepped after the actors they follow.
 - **CPU tier** = host setting `sim.cpu_tier` (auto from cores, AI9d), apart from the graphics preset. Clients vary
   only presentation.
 

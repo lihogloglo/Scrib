@@ -25,6 +25,9 @@
 //! - Tiers (AI9b): [`AiAllocPlugin`] (added by [`AiPlugin`]) runs the `sf_ai` tier allocator on the
 //!   fixed tick over the simulated set and writes each actor's [`AiTier`] and [`AiAllocStats`];
 //!   the host writes [`AiInView`] and [`AiPin`]; tunables `sim.cpu_tier`, `ai.alloc.*` in [`alloc`].
+//! - Tier 0 (AI10c1): [`AiLogicalPlugin`] (added by [`AiPlugin`]) keeps the logical states in
+//!   [`AiLogical`] (tier 0 in fact iff stored), holds queued bodies at tier 0 and builds the
+//!   promotion queue; the game steps and promotes through [`AiTierZero`] in [`logical`].
 //! - BRP: [`brp_trace`] answers [`BRP_TRACE_METHOD`] with the store as JSON. This crate doesn't add
 //!   `bevy_remote` (one `RemotePlugin` per app, owned by the game's dev tools, and hakari keeps its
 //!   HTTP server out of every other build): the app registers [`brp_trace_system`] (see its docs).
@@ -55,6 +58,7 @@ pub mod exec;
 mod gizmos;
 pub mod hearing;
 pub mod light;
+pub mod logical;
 pub mod perception;
 #[cfg(feature = "debug")]
 mod perception_gizmos;
@@ -78,6 +82,10 @@ pub use hearing::{
     AiWeatherMask, HearingConfig, NoiseEvent, NoisePath, NoisePaths, NoisePropagation, NoiseWorld, PortalPaths, StraightLine,
 };
 pub use light::{AiLightExposure, AiLightInputs};
+pub use logical::{
+    AiLogical, AiLogicalBody, AiLogicalPlugin, AiLogicalStats, AiLogicalSystems, AiPromoteQueue, AiPromoteSettings, AiTierZero,
+    LogicalStepStats, PROMOTE_TUNABLES, add_promote_tunables, demote_body, promote_logical, step_logical,
+};
 pub use perception::{
     AiAwareness, AiEffectivePerception, AiObserver, AiPerceptionProfile, AiPerceptionSettings, AiPerceptionStateDefs,
     AiPerceptionStates, AiSightTimer, PERCEPTION_PROFILE_KIND, PERCEPTION_STATE_KIND, PERCEPTION_TUNABLES, Perceivable,
@@ -100,6 +108,8 @@ mod hearing_tests;
 mod hearing_door_tests;
 #[cfg(test)]
 mod light_tests;
+#[cfg(test)]
+mod logical_tests;
 #[cfg(all(test, feature = "debug"))]
 mod perception_gizmos_tests;
 #[cfg(test)]
@@ -140,6 +150,9 @@ impl Plugin for AiPlugin {
             .init_resource::<AiDirectives>();
         if !app.is_plugin_added::<AiAllocPlugin>() {
             app.add_plugins(AiAllocPlugin { timings: self.timings });
+        }
+        if !app.is_plugin_added::<AiLogicalPlugin>() {
+            app.add_plugins(AiLogicalPlugin { timings: self.timings });
         }
         console::register(app);
         #[cfg(feature = "debug")]

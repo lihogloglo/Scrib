@@ -31,6 +31,9 @@ const BAD_LIBRARY: &str = r#"[
   define(kind: "sf.ai.method", id: "bad_method", value: (task: "no_such_task", subtasks: [Task("p_wait")])),
 ]"#;
 
+/// The `ai.stats` tier-0 line with nothing stored (`AI10c1`).
+const LOGICAL_IDLE: &str = "logical: 0 states, 0 stepped; promote: queue 0, waiting 0, tried 0, placed 0, timings off";
+
 const A: ActorKey = ActorKey(7);
 const A_HEX: &str = "00000000000000000000000000000007";
 const B: ActorKey = ActorKey(u128::MAX);
@@ -74,14 +77,14 @@ fn idle_entry(lib: &Library, tick: u64) -> TraceEntry {
     }
 }
 
-fn run(app: &mut App, line: &str) -> Vec<(Level, String)> {
+pub(crate) fn run(app: &mut App, line: &str) -> Vec<(Level, String)> {
     let before = app.world().resource::<DevConsole>().log().lines().len();
     app.world_mut().write_message(ConsoleSubmit::exec(line));
     app.update();
     app.world().resource::<DevConsole>().log().lines().skip(before).map(|l| (l.level, l.text.clone())).collect()
 }
 
-fn info(lines: &[(Level, String)]) -> Vec<&str> {
+pub(crate) fn info(lines: &[(Level, String)]) -> Vec<&str> {
     lines.iter().filter(|(level, _)| *level == Level::Info).map(|(_, t)| t.as_str()).collect()
 }
 
@@ -123,7 +126,10 @@ fn ai_trace_prints_the_selected_actors_steps_with_names() {
     );
     assert_eq!(
         info(&run(&mut app, "ai.stats")),
-        ["traces on, admit tier2, timings off: 1 traced of cap 256, 1 watched; library 3 tasks, 1 methods, 0 load errors"]
+        [
+            "traces on, admit tier2, timings off: 1 traced of cap 256, 1 watched; library 3 tasks, 1 methods, 0 load errors",
+            LOGICAL_IDLE,
+        ]
     );
     assert_eq!(
         info(&run(&mut app, "ai.select off")),
@@ -162,6 +168,7 @@ fn ai_tiers_and_stats_read_the_allocator() {
         [
             "traces on, admit tier2, timings off: 0 traced of cap 256, 0 watched; library 3 tasks, 1 methods, 0 load errors",
             "alloc: tick 1, timings off",
+            LOGICAL_IDLE,
         ]
     );
     // Back to auto: the line says so.

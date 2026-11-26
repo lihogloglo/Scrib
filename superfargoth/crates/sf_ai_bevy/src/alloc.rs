@@ -404,11 +404,14 @@ impl Default for AiAllocStats {
     }
 }
 
-/// The allocator and its per-tick scratch.
+/// The allocator and its per-tick scratch. Crate-visible read-only through [`Self::allocated`]
+/// and [`Self::input`] (`AI10c1`: the tier-0 hold reads the granted tier and the allocator's own
+/// distance and pin, never recomputing them).
 #[derive(Resource, Debug, Default)]
-struct AllocState {
+pub(crate) struct AllocState {
     allocator: Allocator,
     timings: bool,
+    /// This tick's inputs, sorted by key.
     inputs: Vec<AllocInput>,
     /// This tick's (key, entity), sorted by key.
     keys: Vec<(ActorKey, Entity)>,
@@ -417,6 +420,19 @@ struct AllocState {
     /// Actors of the set without an [`AiTier`] yet.
     missing: Vec<(ActorKey, Entity)>,
     players: Vec<WorldPos>,
+}
+
+impl AllocState {
+    /// The tier the allocator granted `actor` this tick (tier 0 when unknown), whatever
+    /// [`AiTier`] says (the tier-0 hold overrides it while the actor waits to be placed).
+    pub(crate) fn allocated(&self, actor: ActorKey) -> Tier {
+        self.allocator.tier(actor)
+    }
+
+    /// The allocator's input for `actor` this tick (its distance and pin).
+    pub(crate) fn input(&self, actor: ActorKey) -> Option<&AllocInput> {
+        self.inputs.binary_search_by_key(&actor, |i| i.actor).ok().map(|i| &self.inputs[i])
+    }
 }
 
 /// Fixed-tick allocator system set.
@@ -517,6 +533,7 @@ fn allocate_tiers(
         }
     }
     keys.sort_unstable();
+    inputs.sort_unstable_by_key(|i| i.actor);
 
     let started = timings.then(Instant::now);
     let alloc = allocator.allocate(inputs, caps, &config, tick, tick_s);

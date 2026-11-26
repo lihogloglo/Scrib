@@ -81,6 +81,14 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   `resolve_promotion` places at `position_at(t)` snapped, else back along its route (`backtrack_step_m` up to
   `backtrack_m`), else `PromoteEnv::approaches`, only where `PlayerViews::unseen`, else waits; a refused `Use` slot
   claim stands it there. `demote(body, now)` = a fresh `LogicalState`; the allocator alone grants demotion.
+  Shell (AI10c1, `sf_ai_bevy/src/logical.rs`; the game wires it in AI10c2): `AiLogical` holds the states by key, and
+  an actor is tier 0 in fact iff stored; its body carries `AiLogicalBody` (`demote_body`). FixedUpdate sets
+  `AiLogicalSystems::{Hold, Step, Promote, Cleanup}`, after `AiAllocSystems::Allocate`, before sight and `Drive`: Hold
+  pins a held body's `AiTier` to `Logical` and queues the allocator's tier-1/2 grants (its distance and pin); the
+  game's Step and Promote systems call `AiTierZero::step` (due index: new states and `until <= now`, leaders before
+  followers, followers read leaders through the store) and `AiTierZero::promote` (a body already on its state's spot
+  is placed with no view test, else `resolve_promotion`); Cleanup gives a body that left the store its allocated tier
+  (staggered). Tunables `ai.tier.promote_*`; `ai.stats` prints a `logical:` line.
 - **Greeting** (MA4c2, 2026-11-26; `mw_walkers_bevy/src/greeting.rs`): every awake AI actor steps `mw_ai`'s OpenMW
   greeting machine (`greeting_step`, MA4c1) on the fixed tick in `GreetSystems` (`add` `greeting.rs:215`): Decide
   (`:255`, after `ReactionSystems::React`; asks for the Hello when a greeting starts), the voices' answer
