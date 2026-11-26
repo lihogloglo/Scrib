@@ -53,6 +53,8 @@ mod proxies_tests;
 mod platform_tests;
 pub mod stream;
 #[cfg(test)]
+mod kinematic_tests;
+#[cfg(test)]
 mod tests;
 
 #[cfg(feature = "controller")]
@@ -68,8 +70,8 @@ pub use ragdoll::{LYING_REST_GET_UP, Ragdoll, RagdollConfig, RagdollFailed, Ragd
 #[cfg(any(feature = "ragdoll", feature = "controller"))]
 pub use sf_ragdoll;
 pub use stream::{
-    BodyLoader, CollisionReady, ItemBody, ItemContent, ItemPivot, PhysicsBodySource, PhysicsHook, PhysicsShapeSource, PhysicsStreaming, STATE_OWNER,
-    STATE_VERSION, ShapeLoader, hook_items, hook_physics,
+    BodyLoader, CollisionReady, ItemBody, ItemContent, ItemPivot, KinematicPlacements, PhysicsBodySource, PhysicsHook, PhysicsShapeSource,
+    PhysicsStreaming, STATE_OWNER, STATE_VERSION, ShapeLoader, hook_items, hook_physics,
 };
 
 /// Plugin settings (physics.md defaults).
@@ -255,6 +257,7 @@ impl Plugin for PhysicsPlugin {
             .init_resource::<PhysicsFocus>()
             .init_resource::<PhysicsStats>()
             .init_resource::<PhysicsStreaming>()
+            .init_resource::<KinematicPlacements>()
             .init_resource::<BodyEntities>()
             .init_resource::<PhysicsEvents>()
             .configure_sets(

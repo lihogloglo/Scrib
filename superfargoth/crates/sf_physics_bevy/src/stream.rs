@@ -36,7 +36,7 @@ use bevy_time::{Fixed, Time};
 use bevy_transform::components::Transform;
 use sf_controller::StaticShape;
 use sf_coords::{WorldPos, WorldTransform};
-use sf_physics::{BodyDesc, BodyId, BodyShape, HeightShape, Layer, MeshShape, ShapeRef, SurfaceId};
+use sf_physics::{BodyDesc, BodyId, BodyKind, BodyShape, HeightShape, Layer, MeshShape, ShapeRef, SurfaceId};
 use sf_terrain_bevy::TerrainHeightsMap;
 use sf_terrain_bevy::sf_terrain::{TerrainHeights, WorldRect};
 use sf_world::{IndexedPlacement, Level, Location, Partition, Placement, PlacementId, PlacementOverlay, Scheduler, WorldspaceId};
@@ -133,6 +133,32 @@ struct Pending {
     /// Bounding radius around the placement's origin, m (`IndexedPlacement::radius`).
     radius: f32,
     item: bool,
+}
+
+/// Streamed placements whose static body is inserted `Kinematic` instead of
+/// fixed (a door leaf, a lift), on the same layer. The owner of the moving
+/// thing lists the placement at spawn, before the drain puts its body in (the
+/// set is read only then: listing a placement whose body is already in does
+/// not convert it), moves the body with `PhysicsWorld::set_kinematic_target`
+/// and removes the entry when the placement leaves: streaming never clears it.
+#[derive(Resource, Default, Debug)]
+pub struct KinematicPlacements(HashSet<Key>);
+
+impl KinematicPlacements {
+    /// Lists a placement; false if it already was.
+    pub fn insert(&mut self, worldspace: &WorldspaceId, id: PlacementId) -> bool {
+        self.0.insert((worldspace.clone(), id))
+    }
+
+    /// Unlists a placement; false if it was not listed.
+    pub fn remove(&mut self, worldspace: &WorldspaceId, id: PlacementId) -> bool {
+        self.0.remove(&(worldspace.clone(), id))
+    }
+
+    #[must_use]
+    pub fn contains(&self, worldspace: &WorldspaceId, id: PlacementId) -> bool {
+        self.0.contains(&(worldspace.clone(), id))
+    }
 }
 
 /// Queued activations, placed bodies, the shape cache and terrain chunks.
@@ -508,7 +534,7 @@ fn measured(estimate: f64) -> f64 {
 }
 
 /// Polls shape builds and inserts queued bodies under the frame budget.
-#[allow(clippy::needless_pass_by_value, clippy::too_many_lines, clippy::cast_precision_loss)]
+#[allow(clippy::needless_pass_by_value, clippy::too_many_lines, clippy::cast_precision_loss, clippy::too_many_arguments)]
 pub(crate) fn apply_inserts(
     mut streaming: ResMut<PhysicsStreaming>,
     mut physics: ResMut<Physics>,
@@ -517,6 +543,7 @@ pub(crate) fn apply_inserts(
     settings: Res<PhysicsSettings>,
     mut stats: ResMut<PhysicsStats>,
     world_streaming: Option<Res<Streaming>>,
+    kinematic: Res<KinematicPlacements>,
 ) {
     let scheduler = world_streaming.as_deref().map(Streaming::scheduler);
     let s = &mut *streaming;
@@ -632,7 +659,9 @@ pub(crate) fn apply_inserts(
                             s.waiting.entry(tag).or_default().push(key);
                             continue;
                         }
-                        (BodyDesc::fixed(pending.placement.transform, ShapeRef::Mesh(m), Layer::STATIC), false)
+                        // A listed placement (a door leaf) moves: kinematic, same layer.
+                        let kind = if kinematic.0.contains(&key) { BodyKind::Kinematic } else { BodyKind::Fixed };
+                        (BodyDesc::new(kind, pending.placement.transform, ShapeRef::Mesh(m), Layer::STATIC), false)
                     }
                     _ => {
                         s.pending.remove(&key);

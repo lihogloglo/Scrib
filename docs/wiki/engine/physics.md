@@ -29,7 +29,9 @@ relative shape cast from `c + v·dt` back along -v for the entry face and separa
 solver and `PhysicsEvent::Hit` own them). Overlap (IN33b1a): `body_overlaps_at(id, pose, layers)`
 (`probe.rs:46`) asks whether a body placed at another pose would overlap a body in `layers` (shape intersection per
 collider; a mesh tests its triangles, not its volume): the swing door's "is the next pose free" test; a Kinematic +
-Mesh body pushes capsules through `contacts` like a box. Proxies: `proxies.rs`. Carry: `carry.rs`.
+Mesh body pushes capsules through `contacts` like a box. `KinematicPlacements` (`sf_physics_bevy/src/stream.rs`,
+IN33b1b): a streamed static listed there before its body drains in is inserted Kinematic (door leaves, lifts); read at
+drain time only, the owner removes its entry. Proxies: `proxies.rs`. Carry: `carry.rs`.
 
 **Collision from NIF** (`mw_bake/src/collision.rs:1-30`, `collision.cook`): OpenMW `bulletnifloader.cpp` rules (commit
 4e718b50): skinned models none; `NC` markers; non-empty `RootCollisionNode` subtree; models `mesh.cook` skips and
