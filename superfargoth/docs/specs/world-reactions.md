@@ -224,7 +224,7 @@ effects), `ResetRules` (class × place kind → ttl; classes include `burnt` and
 | AI19 | `ConcernBoard`: kinds, merge, cap, severity, ttl, per-cell index, fed by IN14 + witness query | AI8, IN14 | exact: merge, eviction, attribution |
 | AI20 | `Notice` drive + `ConcernRules` + Glance/Bark rungs | AI7, AI19 | exact scores, rate limit, tier invariance |
 | AI21 | Discovery by tier (sight, room pass, schedule edge) | AI9, AI10, AI11, AI19 | tier invariance exact |
-| AI22 | `Investigate`, `Confront`, `Report` (interruptible reporter, `OffenceObserved` on arrival) | AI6, AI4, AI20, LW9 | headless: reporter reaches guard; stopped reporter files nothing |
+| AI22 | `Investigate`, `Confront`, `Report` (interruptible reporter walking a crime `ReportState`; `ReportDelivered` on arrival, `OffenceObserved` stays event-time) | AI6, AI4, AI20, LW9 | headless: reporter reaches guard; stopped reporter files nothing |
 | AI23 | Suspicion: candidates from awareness and ledger, `SuspicionRules`, `Suspects` fact | AI8, AI13, AI19 | exact: scoring, threshold, decay, no bounty |
 | IN16 | Loose-item `take` slot, adverts, ownership on take, `LootRules` | IN8, LW10 | exact: ownership and ledger after take; claim conflicts |
 | AI24 | `Tidy` / replace over IN9 `Relocate`, logical outcome out of view | IN9, AI14, AI21 | headless plan; tier invariance |

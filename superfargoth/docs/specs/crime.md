@@ -119,37 +119,57 @@ pub struct OffenceDef {                // a record, kind "crime.offence"
 ```
 
 `OffenceAttempt { offender: PlayerId, kind: RecordId, victim: Option<ActorKey>, subject: Option<ObjectKey>,
-arg: i32, faction: Option<RecordId>, tick }` is the one input; gameplay code (taking items, opening doors, hits,
-kills, picking pockets, sleeping in beds, forcing locks, spells) emits it, nothing else touches bounty.
+arg: i32, faction: Option<RecordId>, tick }` is the one input, emitted by gameplay code (takes, doors, hits, kills,
+pickpocketing, beds, forced locks, spells).
 `assess(&OffenceCtx) -> Assessment { per_witness: Vec<WitnessReaction>, reports: ReportPlan }` is pure and adds **no
-bounty** (both presets): bounty applies when a report is delivered ("Reports"). Superseded 2026-11-25: `Assessment.bounty`
-at assess (decision 2; owner: no instant report, in Classic too).
+bounty** in either preset: bounty lands only when a report is delivered ("Reports and recognition"). Departs from the
+2026-11-10 text, which added `Assessment.bounty` at assess (decision 2).
 
-`WitnessReaction { witness, reporter: bool, reaction: Reaction, disposition_delta, permanent: bool }` with
-`Reaction = Ignore | Flee | Fight | Pursue | Say(topic)`. `ReactionRules` (adapter) fills them from the witness's
-data (alarm, fight, guard flag) and the offence def. The host forwards `Pursue`/`Fight`/`Flee` to the AI lane as
-directive requests (ai.md) and each reporter's report to AI22's walking `Report` directive.
+`WitnessReaction { witness, reaction: Reaction, disposition_delta, permanent: bool }` with `Reaction = Ignore | Flee |
+Fight | Pursue | Say(topic)`. `ReactionRules` (adapter) fills them from the witness's data (alarm, fight, guard flag)
+and the offence def. The host forwards `Pursue`/`Fight`/`Flee` to the AI lane as directive requests (ai.md).
 
-### Jurisdictions and bounty
+### Jurisdictions, bounty and heat
 
-`Jurisdiction { id, name, bounty_stat: StatKey, ladder: Vec<(i32, Stance)>, kill_on_sight: Option<i32>,
-decay_per_day: i32, murder_floor: i32, jail_place, guard_class... }` is a record; `JurisdictionRules::of(&WitnessCtx) -> JurisdictionId` says which one a witness or position belongs to
-(Morrowind: one global; Skyrim: the hold; modern open-world: a region or faction). **Bounty is a `Counter` stat per
-player per jurisdiction** (stats.md: `bounty` for the default, `bounty.<id>` otherwise), so MWScript, dialogue
-filters and the HUD read it without this crate. Writers: only `CrimeCommand::AddBounty` and `Pay`/`Clear`, both
-through `StatOp::CounterSet` (floor 0).
+```rust
+pub struct Jurisdiction {             // a record, kind "crime.jurisdiction"
+    pub id: JurisdictionId,
+    pub bounty_stat: StatKey,         // Counter: `bounty` for the default, `bounty.<id>` otherwise (stats.md)
+    pub ladder: Vec<LadderStep>,      // LadderStep { from: i32, stance: Stance }, ascending by `from`
+    pub kill_on_sight: Option<i32>,   // murder on record and bounty >= this: Attack, no arrest offered
+    pub decay_per_day: i32,           // 0 = no decay (Classic)
+    pub murder_floor: i32,            // decay stops here while a murder is on record
+    pub options: Vec<RecordId>,       // ArrestOption records offered here
+    pub jail_place: PlaceRef, pub release_place: PlaceRef, pub guard_class: RecordId,
+}
+pub enum Stance { Ignore, Warn, Arrest, Pursue, Attack }
+```
 
-**Bounty and heat are apart** (decision 5; GTA, Cyberpunk 2.0, RDR2): bounty is a debt, kept until paid, served or
-decayed (`decay_per_day`, never below `murder_floor` once murder is on record; Classic: no decay); heat is AI29's
-pursuit over AI8f's LKP search and cools off when the player is lost. The ladder (data) runs `Warn` → `Arrest` →
-`Pursue` → `Attack`; fleeing raises heat, not the stance; kill on sight only for murder above `kill_on_sight`
-(owner). **Fairness** (decision 3): each bounty carries its `BountyCause { crime: CrimeId, kind, reporter, place,
-item }`, shown in the journal and stats screen (LW17).
+`JurisdictionRules::of(guard | pos) -> JurisdictionId` (adapter): Morrowind, Oblivion one global (owner Q3, open);
+Skyrim the hold; a modern open world a region or faction. The adapter fills the record numbers; a game without records gets a default
+jurisdiction from the `crime.law.*` tunables.
 
-`CrimeLedger { next_id, paid_through, causes }` per (player, jurisdiction): every offence batch gets an increasing
-`CrimeId`; witnesses remember the ids they saw (AI fact `crime.witnessed`); paying sets `paid_through = next_id - 1`
-and the host emits `Pardon { player, jurisdiction, through }`; witnesses with ids `<= through` calm down and restore
-their disposition. This is OpenMW's calm-down mechanism (`player.cpp` 414-426, `actors.cpp` 1203-1223) made data.
+**Bounty is a debt**: a `Counter` stat per player per jurisdiction that scripts, dialogue and the HUD read directly.
+Writers: `CrimeCommand::AddBounty` (only from a delivered report), `Pay`, `Clear` and the daily decay (`-=
+decay_per_day`, never below `murder_floor` while a murder is on the `CrimeLedger`), all via `StatOp::CounterSet`.
+
+**Heat is pursuit** (decision 5; GTA, Cyberpunk 2.0, RDR2): AI29's level per (player, jurisdiction) over AI8f's
+last-known-position search. Crime only raises it (`HeatRaise { player, jurisdiction, cause: Fled | Resisted |
+SeenWanted }`); AI29 cools it while the guards have lost the player and ends the pursuit at zero, or on `Pardon`.
+Losing the guards never lowers the bounty.
+
+**The ladder** (`LawRules::stance(&LawCtx { bounty, murder_on_record, jurisdiction }) -> Stance`, pure): the highest
+step with `from <= bounty`, else `Ignore`; `Attack` only for murder on record with `bounty >= kill_on_sight` (owner).
+`Warn` gives `crime.law.warn_window_s` to comply, then `Arrest`; at `Pursue` guards chase on sight. Fleeing and
+resisting raise heat, never the stance.
+
+**Fairness** (decision 3; KCD2 players call unseen bounties unfair): every bounty entry carries `BountyCause {
+crime: CrimeId, kind, reporter, place, item, recognition, tick }`, listed in the journal and stats screen (LW17).
+
+`CrimeLedger { next_id, paid_through, causes: Vec<BountyCause> }` per (player, jurisdiction): every offence batch gets
+an increasing `CrimeId`; witnesses remember the ids they saw (AI fact `crime.witnessed`); paying sets `paid_through =
+next_id - 1` and the host emits `Pardon { player, jurisdiction, through }`; witnesses with ids `<= through` calm down and
+restore their disposition. This is OpenMW's calm-down mechanism (`player.cpp` 414-426, `actors.cpp` 1203-1223) made data.
 
 ### Witnesses (the AI seam)
 
@@ -165,31 +185,55 @@ pub struct Witness { pub actor: ActorKey, pub saw: bool, pub heard: bool, pub is
 ```
 
 The AI lane answers with `OffenceObserved { offender, kind, witnesses, at, tick }` (ai.md "Crime, reactions,
-adapter"), event-time, from its own LOS and awareness; `can_report` is false for the offender's allies and followers,
-the dead, the unconscious and actors already fighting the victim. `WitnessQuery` has one implementation,
-`sf_ai_bevy`'s event-time query (AI8b, LW9); `sf_crime` tests use a fake. Until LW9, offences are ledgered and
-logged with no bounty. Superseded 2026-11-25: the `ScaffoldWitnesses` stand-in (decision 7, no interim).
+adapter"), event-time, from its own LOS and awareness; `band` and `visibility` feed recognition. `can_report` is false
+for the offender's allies and followers, another player (Co-op 6), the dead, the `Downed` and actors already fighting
+the victim. `WitnessQuery` has one implementation, `sf_ai_bevy`'s event-time query (AI8b, LW9); `sf_crime` tests use a
+fake. Until LW9, offences are ledgered and logged with no bounty. Superseded 2026-11-25: the `ScaffoldWitnesses`
+stand-in (decision 7, no interim).
 
 ### Reports and recognition
 
-`ReportPlan` names each reporter and its guard or post (`ReportRules`, adapter); each report has `ReportState {
-Pending, Walking(guard), Delivered, Cancelled(cause) }`, walked by AI22's `Report` directive (Notify shouts raise
-awareness, never bounty). Cancel: reporter dead or knocked out, bribed, threatened, `report_timeout_s` (tunable). On
-`ReportDelivered { report, guard }` the bounty goes to the **guard's** jurisdiction, once per `CrimeId`, and
-`OffenceCommitted` is emitted; a stopped reporter files nothing. Classic: Morrowind's sums and `reportCrime` rules at
-delivery. **Recognition** (decision 4; RDR2, Hitman): `Unknown | Description | Identified` per report from band,
-visibility and gear `Disguise` (item data), a tier higher for law and acquaintances (`RecognitionRules`, pure);
-`Unknown` feeds AI23 suspicion only. Classic: `Identified`.
+A witness never adds bounty: it walks a report to the law (decision 2; RDR2, KCD2; owner 2026-11-25, both presets).
+
+```rust
+pub struct ReportPlan(pub Vec<(ActorKey, ReportTarget, Recognition)>);  // one per witness with `can_report`
+pub enum ReportTarget { Guard(ActorKey), Post(PlaceRef) }                // ReportRules::target (adapter)
+pub struct Report { pub id: ReportId, pub crime: CrimeId, pub offender: PlayerId, pub reporter: ActorKey,
+                    pub recognition: Recognition, pub born: Tick, pub state: ReportState }
+pub enum ReportState { Pending, Walking(ActorKey /* guard */), Delivered, Cancelled(CancelCause) }
+pub enum CancelCause { Dead, Downed, Bribed, Threatened, Timeout }
+pub enum Recognition { Unknown, Description, Identified }
+```
+
+The host owns reports on the fixed tick. `Pending` becomes `Walking(guard)` when AI22's `Report` directive starts;
+arrival sends `ReportDelivered { report, guard }`. Cancelled when the reporter dies, is `Downed` (combat), takes a
+bribe or yields to a threat (`ReportRequest::Stop { report, by: Bribe { gold } | Threat }`, from dialogue or an
+interaction verb, settled by `ReportRules::stop`, pure, seeded), or misses `crime.report.timeout_s`. A cancelled report
+files nothing; shouts on the way raise awareness, never bounty.
+
+On delivery, once per `CrimeId`, the host adds the offence's `BountyRule` sum with its `BountyCause` to the
+**guard's** jurisdiction and emits `OffenceCommitted`; a second report of the same crime adds only a cause. Classic:
+the adapter maps Morrowind's sums and `reportCrime` rules onto delivery (crime-adapter.md, LW0e). Departs from the old
+Classic plan (instant report at event time, as OpenMW does).
+
+**Recognition** (decision 4; RDR2: seen versus identified witnesses, masks lawmen see through; Hitman: disguises
+their own staff see through): `RecognitionRules::tier(&RecognitionIn { band, visibility, disguise, is_law,
+knows_offender }) -> Recognition`, pure, fixed at sight; `disguise` in [0, 1] is the highest `Disguise` (item data) the
+offender wears. Standard: score = `visibility × (1 − disguise)`; `Identified` at `band >= Alerted` and score >=
+`identify_at`, `Description` at score >= `describe_at`, else `Unknown`; one tier higher for law and acquaintances (the
+adapter says who knows the offender). `Identified` charges the bounty; `Unknown` charges nothing and feeds AI23
+suspicion only; what `Description` charges is owner Q2 (recommended: guards learn the look and charge on identifying
+the player; until answered, as `Identified`). Classic: always `Identified`.
 
 ### Reactions, arrest, jail
 
-- **Notice on sight** (guards seeing a player over the threshold) is an AI behaviour; this spec supplies
-  `LawRules::stance(bounty, jurisdiction) -> Stance { Ignore | Warn | Arrest | Pursue | Attack }` from the ladder, pure.
-- **Arrest** is a host-owned `ArrestSession { player, guard, jurisdiction, bounty }` opened when an `Arrest` or
-  `Pursue` reaches the player (the dialogue is the screen). `ArrestOption` records (decision 13; KCD2): `Pay` (the
-  fine; `LawRules::fine(bounty)` may discount), `Jail`, `Resist` (guard attacks, session closes), `Flee` (heat up),
-  `Surrender` (not under kill on sight); `Persuade`, `Bribe` later (LW21). `ArrestRequest { Choose { session, option }
-  }` in, `ArrestEvent` out; a game's guard dialogue may drive it (Morrowind: DQ-15).
+- **Notice on sight** is a perception event in the AI lane (AI29), never a scan; crime supplies the stance.
+- **Arrest** is a host-owned `ArrestSession { player, guard, jurisdiction, bounty }`, opened when a guard at `Arrest`,
+  `Pursue` or an expired `Warn` reaches the player, or when the player surrenders; the dialogue is the screen. Options
+  are `ArrestOption { id, kind, available }` records the jurisdiction lists (decision 13; KCD2): `Pay` (the fine,
+  `LawRules::fine(bounty)`), `Jail`, `Resist` and `Flee` (heat up, session closes; on `Resist` the guard fights),
+  `Surrender` (yield mid-pursuit; never under kill on sight); `Persuade`, `Bribe` later (LW21). `ArrestRequest {
+  Choose { session, option } | Surrender }` in, `ArrestEvent` out. Morrowind's guard dialogue drives it (DQ-15 hooks).
 - **Pay**: bounty to 0, `StolenLedger::confiscate` into the jurisdiction's evidence store, `Pardon`, drawn weapon
   holstered. **Jail** (decision 12): `Sentence { days = LawRules::jail_days(bounty), place }`, bounty to 0, goods
   confiscated, `Pardon`; the host fades, teleports to `jail_place`, plays a short local scene (`jail_scene_s`,
@@ -199,6 +243,20 @@ visibility and gear `Disguise` (item data), a tier higher for law and acquaintan
 - **Fines on the way out**: `ServiceKind` offers `crime.pay` (thieves' guild style: pay without being arrested)
   and `crime.clear` (script/quest effect: `Clear { jurisdiction }`) reuse services.md; an adapter script can call
   the same `CrimeCommand`s.
+- **Net**: reports, heat raises and sessions are host-owned, per player, on the fixed tick; clients see
+  `ReportChanged` and send `ReportRequest`/`ArrestRequest`.
+
+**Law tunables** (tunables.md; `crime.law.*` set the default jurisdiction only; heat cooling is AI29's):
+
+| Tunable | Unit | Range | Default | Source |
+|---|---|---|---|---|
+| `crime.report.timeout_s` | s (sim) | 30-900 | 180 | Guess |
+| `crime.recognition.identify_at` / `describe_at` | score 0-1 | 0-1 | 0.6 / 0.25 | Guess |
+| `crime.law.warn_window_s` | s (sim) | 2-30 | 8 | Guess (KCD2, Skyrim warn beat) |
+| `crime.heat.on_flee` / `on_resist` / `on_seen_wanted` | heat level 0-1 | 0-1 | 0.5 / 1.0 / 0.25 | Guess |
+| `crime.law.warn_from` / `arrest_from` / `pursue_from` | bounty | 0-10000 | 1 / 40 / 1000 | Guess |
+| `crime.law.kill_on_sight` / `murder_floor` | bounty | 0-10000 | 1000 / 1000 | Guess |
+| `crime.law.decay_per_day` | bounty per game day | 0-1000 | 10 | Guess (RDR2 cools) |
 
 ### Fences and stolen goods in services
 
@@ -304,9 +362,9 @@ Superseded 2026-11-25: "nearest awareness value". Screens send intents only; the
 ### Commands and events (net rules 2, 5, 8)
 
 Client to host: `OffenceAttempt` (emitted by host systems; scripts through `CrimeCommand`), `LockRequest`,
-`ArrestRequest::Choose`, `Take { item, from }` is the existing inventory command (the host derives the offence).
-Host to clients (each with tick, player): `ReportChanged { report, state }`, at delivery `OffenceCommitted { id, kind,
-bounty_added, jurisdiction, reporter, recognition }`,
+`ArrestRequest`, `ReportRequest::Stop`, `Take { item, from }` is the existing inventory command (the host derives the offence).
+Host to clients (each with tick, player): `ReportChanged { report, state }`, at delivery `OffenceCommitted { id,
+bounty_added, jurisdiction, cause: BountyCause }`,
 `BountyChanged { jurisdiction, total }`, `Pardon`, `ArrestOffered/ArrestEnded`, `SentenceStarted/SentenceServed`,
 `LockChanged { object, lock, trap }`, `TrapSprung`, `StolenChanged { item, count }`, `Refused { reason }`.
 
@@ -333,7 +391,7 @@ bounty_added, jurisdiction, reporter, recognition }`,
 ## Saves
 
 - `sf/crime` (new, owner `sf_crime`, version 1, optional): `players: Map<PlayerKey, PlayerLaw { stolen: Vec<(RecordId,
-  OwnerKey, u32)>, crime: Vec<(JurisdictionId, CrimeLedger)>, reports: Vec<(ReportId, ReportState)>, sentence:
+  OwnerKey, u32)>, crime: Vec<(JurisdictionId, CrimeLedger)>, reports: Vec<Report>, sentence:
   Option<Sentence>, arrest: Option<ArrestPending> }>` (heat is AI29's, saved with its directive); `objects: Vec<ObjectLaw { object: ObjectKey, lock: Option<LockState>, trap:
   Option<Option<RecordId>>, ownership: Option<Ownership> }>` as a sparse overlay on content defaults (only changed
   objects). Empty sections are omitted.
@@ -356,10 +414,13 @@ guards**: noticing a wanted player is a perception-driven event, not a loop (Ope
 
 | Game | Technique | Us |
 |---|---|---|
-| OpenMW / Morrowind | owner or faction + rank, global lifts; witness = LOS + roll; bounty global; alarm 100 reports; guards pursue above a threshold, arrest dialogue; jail with skill loss; stolen map by item id | **match** (adapter); ledger adds reconcile, jail loss and the prompt marker are hooks |
+| OpenMW / Morrowind | owner or faction + rank, global lifts; witness = LOS + roll; bounty global; alarm 100 reports at once; guards pursue above a threshold, arrest dialogue; jail with skill loss; stolen map by item id | **match** (adapter), except the report walks (owner, Classic too); ledger adds reconcile, jail loss and the prompt marker are hooks |
 | Oblivion | same model, bounty global, fences, jail loss | **same rules**, different numbers |
-| Skyrim | crime factions per hold, bounty per faction, trespass areas, witnesses must see or hear, fences, Thieves Guild clears bounty, stolen items marked per stack, detection meter | **option**: jurisdictions, `crime.clear`, Meter model; per-stack marker rejected (stack splitting) |
-| KCD | witnesses report to guards, reputation per town, fines vs jail vs bribe, stealth by noise and light | **seam**: `ArrestOption` extensible, per-town jurisdictions |
+| Skyrim | crime factions per hold, bounty per faction added at once by any witness, trespass areas, witnesses must see or hear, fences, Thieves Guild clears bounty, stolen items marked per stack, detection meter | **option**: jurisdictions, `crime.clear`, Meter model; per-stack marker rejected (stack splitting) |
+| KCD, KCD2 | witnesses walk to guards or confront; fines, jail, flee, talk out; reputation per town; stealth by noise and light; players call unseen bounties unfair | **match**: walked `Report`, `ArrestOption` data, `BountyCause` in the journal, per-town jurisdictions |
+| RDR2 | eyewitness runs to the law and can be stopped (threat, pay, beat, kill); seen versus identified; masks fool civilians, not lawmen; bounty cools with time away | **match**: `ReportState` with cancel causes, `Recognition` with the law tier, `decay_per_day` |
+| Hitman | disguises pass most NPCs; staff of the disguise's role see through it | **match**: `Disguise` item data, one tier higher for law and acquaintances |
+| GTA, Cyberpunk 2.0 | wanted level or heat: pursuit around the last known position, lost by breaking sight and waiting; escalating units | **match**: heat = AI29 over AI8f LKP, apart from the bounty debt; ladder per jurisdiction |
 | Elden Ring / Souls | no crime system (NPC aggro and a world event per murder) | covered by `Reaction::Fight` via the same assess |
 
 Gaps: bribe/persuade options (LW21), trespass zones (LW19) (industry-audit.md).
@@ -377,7 +438,7 @@ Bevy-free, exact assertions, synthetic records and GMSTs (`sf_crime` tests):
 - **Reports**: delivery applies the bounty once per `CrimeId` to the guard's jurisdiction; each cancel cause files
   nothing; recognition tiers exact (disguise, law, acquaintance; Classic `Identified`).
 - **CrimeLedger**: ids increase; `Pardon` through `paid_through` calms exactly the witnesses with ids `<=`.
-- **Law flow**: `stance` ladder exactly at each boundary, kill on sight only for murder; decay stops at the floor; arrest options; Pay then Jail refuse a second time;
+- **Law flow**: `stance` ladder exactly at each boundary, kill on sight only for murder; `Warn` window then `Arrest`; Flee and Resist raise heat, never the stance; decay stops at the floor (Classic none); arrest options; Pay then Jail refuse a second time;
   `jail_days` floor; sentence resumes from a saved state; goods confiscated once.
 - **Locks**: `gate_activation` order (key unlocks and disarms; trap before open; locked without key); `pick_chance`
   Impossible / Percent; `window` seeded and re-simulated; `force` to 0 hp breaks; tool wear removes at 0; `UnlockAttempted` yields trespass only when owned and (level or locked

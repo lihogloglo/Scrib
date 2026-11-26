@@ -83,7 +83,7 @@ Owner checks `LW-n` go in `bevyrrowind/docs/visual-checks/crime.md` (new). `sf_c
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| LW0a | crime.md "Witnesses", "Reactions": decisions 2-5, 13 | docs | - | doccheck |
+| LW0a | crime.md "Witnesses", "Reactions": decisions 2-5, 13 | docs | - | **done 2026-11-26** (crime.md 121-249) |
 | LW0b | crime.md "Stealth", "Prompt and HUD": decision 6 | docs | AI0b, AI0g | doccheck |
 | LW0c | crime.md "Locks and traps": decisions 8-10 | docs | - | doccheck |
 | LW0d | crime.md ownership, jail, build plan, open questions | docs | LW0a-c | doccheck |
