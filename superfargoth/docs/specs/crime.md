@@ -76,32 +76,26 @@ pub struct Ownership { pub owner: Owner, pub lifted_by: Option<GlobalKey> }   //
 pub struct ObjectKey(/* stable id of a placed object, sf_ids */);
 ```
 
-`Ownership` is content data on a placed object (and on containers, doors, beds, actors' inventories) and a sparse
-runtime overlay (an adapter script may change it). **Containers pass their owner to what is taken from them**; an
-actor's inventory is owned by the actor.
+`Ownership` is content data on placed objects plus a sparse overlay; **containers pass their owner to their
+contents**, an actor owns its inventory. `OwnerRules::owned_for(&OwnerCtx) -> OwnershipVerdict { Free | Owned {
+victim, faction } }` is pure over rank, lifting global and own property; `use_allowed(&UseCtx)` adds dead, in-combat,
+sleeping or knocked-out victims and adapter `never_take` chests.
 
-`OwnerRules::owned_for(&OwnerCtx) -> Ownership_Verdict { Free | Owned { victim: Option<ActorKey>, faction: Option<RecordId> } }`
-is pure: the actor's standing in the faction (`min_rank`), the lifting global's value and "is this the actor's own
-property" are inputs. `use_allowed(&UseCtx) -> bool` adds the special cases (dead actor, actor in combat, sleeping
-or knocked-out victim for pickpocket, evidence chest: the adapter names it as `never_take`).
+**Stolen state is a per-player ledger, not a stack flag** (that would split stacks): `StolenLedger { entries:
+BTreeMap<(RecordId item, OwnerKey), Vec<Lot>> }`, `Lot { count: u32, day: GameDay, at: WorldPos }`, oldest first
+(decision 11; KCD2 hot goods):
 
-**Stolen state is a ledger, not a stack flag.** `StolenLedger { entries: BTreeMap<(RecordId item, OwnerKey), u32> }`,
-one per player (a remote player's goods are theirs alone). Stack attributes would split stacks that merge by
-equal attrs and would need an owner on every unit; the ledger keeps one count per (record, owner). Rules:
-
-- `record_taken(item, owner, count)`: skipped for currency; skipped when the owner is an actor who is dead or gone
-  (nobody to return it to), unless the adapter opts in.
-- `reconcile(item, held)`: after **every inventory change** the host clamps the sum of entries for `item` to what
-  the player holds, oldest owner first removed. Sold, dropped, consumed or traded goods stop being stolen (OpenMW
-  never does this, `mechanicsmanagerimp.cpp` 1079-1135: stale entries make later honestly bought copies "stolen").
-- `confiscate(held) -> Vec<(item, count)>`: removes entries in `BTreeMap` order (deterministic), returns goods to take.
-- `stolen_from(item, merchant)`: owner is the merchant actor or the merchant's primary faction.
-- `cool_down` (decision 11): Modern, an entry ages out after `cool_days` or `cool_distance_m` from its owner (then
-  ordinary merchants buy it; fences buy fresh goods at a discount); Classic, entries are permanent.
-- View: `stolen_count(item)` for the HUD; a stack shows "N stolen" without being split.
-- **Zones and evidence** (decision 11): `Restricted` zone records warn first, then after a grace the stay is a
-  trespass offence (LW19); held stolen goods are evidence: a frisk (AI23 suspicion, then search) that finds ledger
-  entries files a possession offence and confiscates (LW20).
+- `record_taken(item, owner, count, day, at)` pushes a lot; skips currency and dead or gone owners (adapter opt-in).
+- `reconcile(item, held)` after **every inventory change** clamps lots to what is held, oldest first: sold goods stop
+  being stolen (OpenMW never clears, `mechanicsmanagerimp.cpp` 1079-1135, so honest copies turn "stolen"; Classic keeps
+  that, crime-adapter.md).
+- `cool(day, pos, &Cooling)`, daily and before each sale offer: `Modern { days, distance_m }` drops a lot `days` old
+  or `distance_m` from where it was taken; `Permanent` (Classic) never drops.
+- `confiscate(held)` removes lots in map order (deterministic); `stolen_from(item, merchant)` matches the merchant or
+  its primary faction; `stolen_count(item)` shows "N stolen" on an unsplit stack.
+- **Restricted zones** (LW19; Skyrim, KCD2 private rooms): a `Restricted { owner, grace_s }` record gives `Warn` on
+  entry; staying past `grace_s` is trespass. **Possession is evidence** (LW20): a frisk (AI23 suspicion, then search)
+  that finds lots files a possession offence and confiscates. Tunables: "Reactions, arrest, jail".
 
 ### Offences as data
 
@@ -187,8 +181,7 @@ The AI lane answers with `OffenceObserved { offender, kind, witnesses, at, tick 
 adapter"), event-time, from its own LOS and awareness; `band` and `visibility` feed recognition. `can_report` is false
 for the offender's allies and followers, another player (Co-op 6), the dead, the `Downed` and actors already fighting
 the victim. `WitnessQuery` has one implementation, `sf_ai_bevy`'s event-time query (AI8b, LW9); `sf_crime` tests use a
-fake. Until LW9, offences are ledgered and logged with no bounty. Superseded 2026-11-25: the `ScaffoldWitnesses`
-stand-in (decision 7, no interim).
+fake; no stand-in (decision 7). Until LW9, offences are ledgered and logged with no bounty.
 
 ### Reports and recognition
 
@@ -234,18 +227,19 @@ the player; until answered, as `Identified`). Classic: always `Identified`.
   `Surrender` (yield mid-pursuit; never under kill on sight); `Persuade`, `Bribe` later (LW21). `ArrestRequest {
   Choose { session, option } | Surrender }` in, `ArrestEvent` out. Morrowind's guard dialogue drives it (DQ-15 hooks).
 - **Pay**: bounty to 0, `StolenLedger::confiscate` into the jurisdiction's evidence store, `Pardon`, drawn weapon
-  holstered. **Jail** (decision 12): `Sentence { days = LawRules::jail_days(bounty), place }`, bounty to 0, goods
-  confiscated, `Pardon`; the host fades, teleports to `jail_place`, plays a short local scene (`jail_scene_s`,
-  tunable), **never moves the shared clock**, credits the days via `JailRules::served(days, &PlayerView) ->
-  Vec<RpgCommand>` (Modern: reputation hit, no skill loss; skill change is an adapter hook, Classic keeps it), then
-  `release_place`. A saved `Sentence` resumes. Superseded 2026-11-25: `PassTime` for the days.
+  holstered. **Jail** (decision 12; KCD2): `Sentence { days = LawRules::jail_days(bounty), place, clock: JailClock }`,
+  bounty to 0, goods confiscated, `Pardon`, fade to `jail_place`, a short local scene (`crime.jail.scene_s`). One rule,
+  clock by session: `PassTime` in solo (days pass as a rest does, owner 2026-11-25), `Credit` in co-op (the shared clock
+  never moves; the days count for the jailed player only). Then `JailRules::served(days, &PlayerView) ->
+  Vec<RpgCommand>`: Modern = reputation hit, no skill loss (Classic hook keeps Morrowind's); release at
+  `release_place`. A saved `Sentence` resumes. **Departs** from the old Co-op 6 (time skipped for one player).
 - **Fines on the way out**: `ServiceKind` offers `crime.pay` (thieves' guild style: pay without being arrested)
   and `crime.clear` (script/quest effect: `Clear { jurisdiction }`) reuse services.md; an adapter script can call
   the same `CrimeCommand`s.
 - **Net**: reports, heat raises and sessions are host-owned, per player, on the fixed tick; clients see
   `ReportChanged` and send `ReportRequest`/`ArrestRequest`.
 
-**Law tunables** (tunables.md; `crime.law.*` set the default jurisdiction only; heat cooling is AI29's):
+**Crime tunables** (tunables.md; `crime.law.*` set the default jurisdiction only; heat cooling is AI29's):
 
 | Tunable | Unit | Range | Default | Source |
 |---|---|---|---|---|
@@ -256,14 +250,18 @@ the player; until answered, as `Identified`). Classic: always `Identified`.
 | `crime.law.warn_from` / `arrest_from` / `pursue_from` | bounty | 0-10000 | 1 / 40 / 1000 | Guess |
 | `crime.law.kill_on_sight` / `murder_floor` | bounty | 0-10000 | 1000 / 1000 | Guess |
 | `crime.law.decay_per_day` | bounty per game day | 0-1000 | 10 | Guess (RDR2 cools) |
+| `crime.jail.bounty_per_day` / `scene_s` | bounty per day / s (real) | 10-1000 / 3-60 | 100 / 12 | Guess |
+| `crime.stolen.cool_days` / `cool_distance_m` | game days / m | 1-60 / 0-50000 (0 off) | 7 / 2000 | Guess (KCD2) |
+| `crime.fence.fresh_price_mult` | price fraction | 0.1-1 | 0.5 | Guess |
+| `crime.trespass.grace_s` | s (sim) | 2-60 | 10 | Guess |
 
 ### Fences and stolen goods in services
 
-`sf_crime::StolenVeto` implements services' `DealVeto`: a Sell line that is `stolen_from(item, merchant)`
-vetoes with `Confiscate` (goods go to the merchant, `OffenceAttempt { kind: theft }` follows, as Morrowind does).
-`FenceRules::accepts(&Merchant, &Item) -> bool` marks merchants that buy stolen goods from anyone (modern
-thieves' fences; framework default on, Morrowind off: decision 11); the adapter chooses them from content flags. A fenced sale is a normal deal at the fence's
-`ServiceRules` price, and `reconcile` clears the ledger entry.
+`StolenVeto` (services' `DealVeto`): selling a lot `stolen_from(item, merchant)` vetoes with `Confiscate` (goods to
+the merchant, then a theft `OffenceAttempt`, as Morrowind). Modern: other merchants refuse hot lots, no offence;
+cooled goods sell anywhere. Classic: only the victim refuses, forever. `FenceRules::accepts(&Merchant, &Item)` marks
+fences (decision 11; Skyrim, KCD2), who buy hot goods at price × `crime.fence.fresh_price_mult`: framework on,
+Morrowind content none unless a mod flags a merchant.
 
 ### Stealth and detection
 
@@ -339,29 +337,23 @@ bounty_added, jurisdiction, cause: BountyCause }`,
 4. **Pure steps**: ownership, assess, reactions, gate, pick, probe, detection, fine, jail days are pure.
 5. **One owner**: host-owned. The arrest session claims the guard (provider claim, rpg.md) so two players cannot
    share one guard's dialogue; lock and ownership state is world state, one copy on the host.
-6. **No singleton player**: `OffenceAttempt.offender` is a `PlayerId`; the ledger, `CrimeLedger`, bounty and
-   sentence are per player. **Recommended default: crime is per player.** Another player is not a witness
-   (presentation of a remote player is not an observer; no griefing by reporting a friend), a partner never
-   reports the offender (allies are exempt as in Morrowind), and a guard pursues the offender only. Option
-   `SharedBounty` (party members add to one bounty) is off (later). Jail in co-op (decision 12): the jailed player
-   serves the short local scene (`jail_scene_s`), the days are credited to them, the others play on; one player's
-   time never advances the shared clock (services' and travel.md's co-op rule; only a passed party rest vote does,
-   net.md "Time, pause and rest"). Superseded 2026-11-25: "game time skipped for them only".
+6. **Crime is per player** (decision 15): `OffenceAttempt.offender` is a `PlayerId`; ledger, `CrimeLedger`, bounty
+   and sentence are per player. Another player is never a witness, allies never report (as Morrowind), a guard
+   pursues the offender only; `SharedBounty` comes later. Co-op jail is `JailClock::Credit`: the others play on and
+   the shared clock moves only on a passed party rest vote (net.md "Time, pause and rest").
 7. **Stable ids**: `ObjectKey`, `ActorKey`, `PlayerId`, `RecordId`, `CrimeId`.
 8. **Events are data**; `StolenChanged` precedes the HUD refresh.
 
 ## Saves
 
-- `sf/crime` (new, owner `sf_crime`, version 1, optional): `players: Map<PlayerKey, PlayerLaw { stolen: Vec<(RecordId,
-  OwnerKey, u32)>, crime: Vec<(JurisdictionId, CrimeLedger)>, reports: Vec<Report>, sentence:
-  Option<Sentence>, arrest: Option<ArrestPending> }>` (heat is AI29's, saved with its directive); `objects: Vec<ObjectLaw { object: ObjectKey, lock: Option<LockState>, trap:
-  Option<Option<RecordId>>, ownership: Option<Ownership> }>` as a sparse overlay on content defaults (only changed
-  objects). Empty sections are omitted.
-- Bounty is a stat (saved with `sf.character`, stats.md); witness crime ids are AI facts (saved with the AI
-  section, ai.md); evidence stores are ordinary containers.
-- Open sessions are not saved: saving during an arrest closes the offer (the guard re-offers on next sight).
-  A `Sentence` is saved and resumes. Unknown object keys at load are dropped and reported (save.md).
-- Shape golden for `sf/crime` v1; no migration yet.
+- `sf/crime` (owner `sf_crime`, v1, optional): `players: Map<PlayerKey, PlayerLaw { stolen: Vec<(RecordId, OwnerKey,
+  Vec<Lot>)>, crime: Vec<(JurisdictionId, CrimeLedger)>, reports: Vec<Report>, sentence: Option<Sentence> }>`;
+  `objects: Vec<ObjectLaw { object: ObjectKey, lock: Option<LockState>, trap: Option<Option<RecordId>>, ownership:
+  Option<Ownership> }>`, a sparse overlay of changed objects (lock, trap: crime-locks.md "Saves"). Empty parts omitted.
+- Elsewhere: bounty is a stat (`sf.character`), witness crime ids are AI facts, heat is AI29's directive, evidence
+  stores are containers.
+- Arrest sessions are not saved (the guard re-offers on sight). A `Sentence` resumes mid-scene with its `JailClock`
+  (LW15). Unknown object keys are dropped and reported (save.md). Shape golden for v1; no migration yet.
 
 ## Performance
 
@@ -394,15 +386,15 @@ Bevy-free, exact assertions, synthetic records and GMSTs (`sf_crime` tests):
 
 - **Ownership**: actor-owned is `Owned { victim }`; a faction owner with `min_rank 3` is owned at rank 2 and
   free at 3; a non-member is owned; `lifted_by` global nonzero frees both; a container hands its owner to contents.
-- **Ledger**: `record_taken` skips currency and dead owners; two owners kept apart; `reconcile` clamps, oldest first;
-  `confiscate` order is the map order and leaves exact remainders; `stolen_from` matches merchant or primary faction.
+- **Ledger**: `record_taken` skips currency and dead owners; `reconcile` clamps, oldest lot first; `cool` drops by
+  days or distance, never under `Permanent`; `confiscate` follows map order; `stolen_from` matches merchant or faction.
 - **Offences**: `BountyRule` Flat, PerValue (minimum 1 when the product floors to 0), FromArg; unknown kind is an
   error; `assess` is total over empty witness lists and never changes bounty.
 - **Reports**: delivery applies the bounty once per `CrimeId` to the guard's jurisdiction; each cancel cause files
   nothing; recognition tiers exact (disguise, law, acquaintance; Classic `Identified`).
 - **CrimeLedger**: ids increase; `Pardon` through `paid_through` calms exactly the witnesses with ids `<=`.
 - **Law flow**: `stance` ladder exactly at each boundary, kill on sight only for murder; `Warn` window then `Arrest`; Flee and Resist raise heat, never the stance; decay stops at the floor (Classic none); arrest options; Pay then Jail refuse a second time;
-  `jail_days` floor; sentence resumes from a saved state; goods confiscated once.
+  `jail_days` floor; `PassTime` moves the clock, `Credit` never; a saved sentence resumes; goods confiscated once.
 - **Locks and traps**: [crime-locks.md](crime-locks.md) "Tests".
 - **Detection**: `StandardDetection` exact per term (light, stance, behind, speed reveal, clamp); upright, still, in
   front equals light-only visibility (model, roll and meter tests are `sf_ai`'s).
@@ -412,16 +404,29 @@ Bevy-free, exact assertions, synthetic records and GMSTs (`sf_crime` tests):
 - **Saves**: `sf/crime` serde round trip, shape golden, sparse overlay equals base after revert, unknown key dropped.
 - **View-models**: prompt marker equals `use_allowed`; stolen count; lock row hidden when `level == 0`.
 
-## Build plan (one deliverable per slice; rules-only first: LW1-LW5 need no AI, Bevy or UI)
+## Build plan
 
-Slices, dependencies and checks: [crime roadmap](../../../docs/roadmaps/crime.md) §4 (Stage 1 locks and ownership,
-2 sneak, 3 reports and law, 4 a thief's trade, 5 Classic). Superseded 2026-11-25: the ten-slice table (scaffold
-witnesses dropped, arrest buttons moved to LW14).
+Slices, dependencies and checks: [crime roadmap](../../../docs/roadmaps/crime.md) §4. Stage order: 0 specs LW0a-e;
+1 owned things and locks LW1, LW3, A0, A1, A5, LW6, LW7, LW11, LW8; 2 sneak LW4 (built), MA5, LW12, LW13; 3 reports
+and law LW2, LW2b, LW5, A2, A3, LW9 (first bounty), LW14, LW15 (jail), LW16, LW17; 4 a thief's trade LW18, A4,
+LW19-LW21, LW10, LW22; 5 Classic A8. Rules first: LW1-LW5 need no AI, Bevy or UI.
 
 ## Open questions (owner)
 
-Old questions 1 and 3-7 are answered by roadmap decisions 6, 11-13, 15. Pending, with recommended answers in roadmap
-§7: Q1 minigame feel, Q2 disguise (and what a `Description` report charges), Q3 one bounty or per region, Q5 cool-off.
+All pending owner (roadmap §7); each answer is the recommendation, which the spec follows until then.
 
-1. **Solo jail and the clock**: **answered (owner 2026-11-25): yes, solo jail passes `days` of game time as Morrowind
-   does** (both presets); co-op never moves the shared clock (Co-op 6).
+1. **Minigame feel?** Lockpick sweet spot (Skyrim, KCD2), pickpocket KCD2 hold-to-search; "auto" and Classic roll.
+2. **Can headgear hide who you are?** Yes in Modern, law and acquaintances see through it; a `Description` report
+   charges once guards identify the player; Classic off.
+3. **One bounty or one per region?** One in Morrowind, locality from heat and gossip; framework per jurisdiction.
+4. **Jail without skill loss in Modern?** Yes, plus a reputation hit; Classic keeps skill loss.
+5. **Do stolen goods cool off?** Yes in Modern, fences buy hot goods at a discount; Classic permanent.
+
+Answered:
+
+- Solo jail clock (owner 2026-11-25): the days pass as in Morrowind (`JailClock::PassTime`).
+- Co-op scope (2026-11-25, decision 15): per player, `SharedBounty` later.
+- Stolen state (2026-11-25, decision 11): reconcile plus cool-down, Classic permanent.
+- Detection model (2026-11-25, decision 6): Meter default, Classic roll.
+- Co-op jail (2026-11-25, decision 12): days credited, shared clock fixed.
+- Arrest options (2026-11-25, decision 13): data rows, Persuade and Bribe in LW21.
