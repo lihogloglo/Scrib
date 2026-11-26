@@ -1,0 +1,32 @@
+[package]
+name = "sf_bigworld_bevy"
+description = "Bevy renderer for sf_bigworld: trees and dense scatter drawn from retained GPU instance batches, never as entities (BW-2: the slot-path ceiling bench only)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Thin renderer over the Bevy-free core `sf_bigworld` (spec `docs/specs/big-world-rendering.md`). BW-2 ships no
+# plugin: the library is empty and the one target is the ceiling bench `forest_ceiling`. The renderer's own
+# dependencies arrive with the GPU producer (BW-3).
+[dependencies]
+workspace-hack.workspace = true
+
+# Minimal Bevy (ARCHITECTURE §8b rule 6): the same umbrella features as every framework example, so the crate stays
+# in group [1] of `tools/bevy_variants.sh`.
+[dev-dependencies]
+bevy = { workspace = true, features = ["3d", "png", "tonemapping_luts"] }
+# SyntheticForest, TileKey, Bands: the bench's instances and tier distances.
+sf_bigworld.workspace = true
+# DiagCounters, FramePhasePlugin: main and render thread ms per frame.
+sf_diag_bevy.workspace = true
+
+[lints]
+workspace = true
+
+# Slot-path ceiling bench (BW-2): steps through its arms in one launch, prints `bw2 ceiling |` lines, exits.
+# `test = true`: its pure parts (meshes, slot fill, statistics) carry unit tests that `cargo test -p` runs.
+[[example]]
+name = "forest_ceiling"
+path = "examples/forest_ceiling/main.rs"
+test = true
