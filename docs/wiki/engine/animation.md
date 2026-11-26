@@ -34,7 +34,7 @@ and creature graphs are built in code, shipped as RON, and compiled at bake time
   if the manifest has `loco.*` slots (it has none, `:14-24`); `upper` and `full` slots; torch arm layer.
   Op stack order: `SpeedMatch` (0.5-2.2, `rate_share` 0.5, `gate speed_match`) `:941`, `StrideWarp` (max 1.2, `gate
   stride_warp`) `:968`, `FootPlacement` (unplant 20 deg, `gate on_ground`) `:977`, `Lean` (grade up 0.3, max 0.15 rad, rise with speed 0.2-1.2 m/s (none standing); trunk chest .45, upperChest .4, neck
-  .15, then `counter` head .9 and upper arms .85 turned back toward their pre-lean pose, `GRAPH_FORMAT` 12; `gate lean`) `:995`, `HandIk` x2 `:1001`,
+  .15, then `counter` head .9 and upper arms .85 turned back toward their pre-lean pose, `GRAPH_FORMAT` 12 then, 16 today (`compiled.rs:626`); `gate lean`) `:995`, `HandIk` x2 `:1001`,
   then `HitReact` and `SpringBones` (not in first person).
 - **Gait set** (A3, 2026-11-12; `mw_graphs/src/build.rs:156-190` `Preset`, `gaits`; `:703-725`): humanoid free
   movement in `walk` and `run` (sheathed and spell stances) is one `BlendSpace1D` over `speed` (`params::SPEED`, fed by
@@ -45,7 +45,7 @@ and creature graphs are built in code, shipped as RON, and compiled at bake time
   lanes. A `Blend` on `strafing` fades to the Morrowind directional set while locked on (`walk.none.directional`).
   Without the library the slots drop and the Morrowind sets play; weapon stances, sneak and swim keep them.
   `Preset::Classic` (`asset_for`, `:1133`) builds the pre-A3 graph (digest pinned in `mw_graphs/src/tests.rs`); nothing
-  selects it yet. Style seam: `SourcesManifest::gait_slot` (`sources.rs:294`) looks up `loco.<style>.<gait>.<part>`,
+  selects it yet. Style seam: `SourcesManifest::gait_slot` (`sources.rs:316`) looks up `loco.<style>.<gait>.<part>`,
   then the base set. Tests: `mw_graphs/tests/gait_set.rs`; A1 tables `slope_walk player_gaits` (`A1_CLASSIC=1`: Morrowind).
 - **Sync groups across states** (`instance.rs:1489-1503`, `join` `:1611`): a member entering alone (an inertialized
   switch stops the old state at once) joins the last update's leader by markers or phase (UE sync groups keep their

@@ -113,18 +113,21 @@ P-IK4 + lean fix (PL-10) and the roll chain (CB-6), both 2026-11-25.
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| AN12 | Spec: profile, classes, modifiers, selection, LOD, budget | docs | - | doccheck |
+| AN12 | Spec: profile, classes, modifiers, selection, LOD, budget | docs | - | doccheck | **done 2026-11-26** (5a66209a, `superfargoth/docs/specs/animation-style.md`: lookup moves to the framework `StyleTable::resolve`, `gait_slot` calls it; a gait class is a clip remap in the compiled graph, Classic digest unchanged, `GRAPH_FORMAT` 16 -> 17) |
 | AN13 | MotionBricks v0.2.0 spike: SOMA out, Injured presets, style by key pose, output licence, VRAM | research | - | note; ledger | **done 2026-11-26** (`docs/research/anim-2026-11-26/motionbricks.md`: ends exact by construction (hubcheck 0.0 deg / 0.0 cm), stand->sit in one 1.67 s segment, slide p95 15-19 cm/s vs Kimodo 100-150; style presets = key poses; outputs free (Open Model Agreement), BONES sample poses never ship; cached TensorRT plan 1.5 s load, +384 MiB VRAM, 5-9 ms/segment) |
-| AN14 | Core: `MotionProfile`, class chooser over `gait_slot`, smoothing | `sf_anim_graph` | AN12 | exact lookup, fallback |
-| AN15 | Posture modifiers: hunch, slump, breathing, load offset, speed scale | `sf_anim_graph` | AN14 | exact at 0; sanity at 1 |
-| AN16 | Limp: hip drop, short stance, asymmetric timing, one side | `sf_anim_graph` | AN14 | exact side/phase; no added slide |
+| AN14a | `style` module: `MotionProfile`, smoothing, `StyleTable` resolve + chooser | `sf_anim_graph` | AN12 | exact lookup, fallback, thresholds |
+| AN14b | Compiled class remap + `set_style` (inertialized) | `sf_anim_graph` | AN14a | exact remap; walk-only class; Classic digest |
+| AN15a | `Posture` op: hunch, slump, chest up, load, sway, breathing | `sf_anim_graph` | AN14a | exact at 0; sanity at 1 |
+| AN15b | `gait_speed` / speed scale | `sf_anim_graph` | AN14a | exact |
+| AN16 | Limp: hip drop, short stance, asymmetric timing, one side | `sf_anim_graph` | AN14a | exact side/phase; slide <= +0.5 cm/s |
 | AN17 | Style bands in `motiongen grade` | scrib-motiongen | AG3 | exact on fixtures |
 | AN18 | First style batch recipe: old, heavy, wounded, drunk, tired, timid, proud, female neutral (~14 loco clips + idles each) | scrib-motiongen | AN6, AN13, AN17 | plan prints |
 | AN19 | First style batch generation + grade + bands | generation | AN18 | grade table; ledger |
 | AN20 | Picks into `loco.<style>.*` slots | `mw_graphs` data | AN19, MG9 | counts per class; owner ANIM-7 |
 | AN21 | Adapter: profile from race, sex, class, health, fatigue, encumbrance, drink effects; age per Q4; Classic none | `mw_walkers_bevy`, `mw_graphs` | AN14 | exact per record |
-| AN22 | Profile in game: walkers pick class + modifiers by tier | `mw_walkers_bevy`, `sf_anim_bevy` | AN15, AN16, AN20, AN21 | counts; owner ANIM-8 (Balmora) |
-| AN23 | Measurement: style layers per tier, High, 4060 laptop | tests | AN22 | `#[ignore = "measurement"]`; perf ledger |
+| AN22a | Glue: components, host-tick choose, weight params by tier | `sf_anim_bevy` | AN14b, AN15a, AN16 | exact tiers; counts |
+| AN22b | Walkers + player carry the profile; mover reads `gait_speed` | `mw_walkers_bevy` | AN20, AN21, AN22a | counts; owner ANIM-8 (Balmora) |
+| AN23 | Measurement: style layers per tier, High, 4060 laptop | tests | AN22b | `#[ignore = "measurement"]`; perf ledger |
 | AN24 | Further class batches (repeatable, data only) | generation, data | AN22 | grade; owner per batch |
 
 ### Stage 4: interaction clip families (interaction and AI lanes)
@@ -144,7 +147,7 @@ Each family: recipe against slot contact points and MG4 height bands, generation
 | MG7b | Grip table + second-hand `FullBodyIk` | `mw_viewers_bevy`, data | MG7a | exact sockets |
 | MG8 | MotionBricks link worker (approach, loop seams, exit) | scrib-motiongen | AN13 | **done 2026-11-26** (seams printed: `motiongen link`, `[[link]]`/`[[loop_seam]]` recipes, one MotionBricks venv with a numpy Kimodo port; hubcheck on 4 takes: ends 0.0 deg/cm, slide p95 13-19 cm/s, raw RightHand miss ~50 deg spread by the correction, 4 ms/segment; ledger animation 2026-11-26) |
 | MG8b | Link worker: wrists and fingers slerped hub to hub over the piece (the model's raw wrists miss the hubs by 29-53 deg, MG8 diagnosis), the body keeps the endpoint correction; hand contacts stay runtime IK | scrib-motiongen | MG8 | hubcheck: ends 0/0, no wrist correction spread; per-frame wrist twist printed **done 2026-11-26** (`--hand-mode slerp` default, `model` = A/B; ends 0/0, wrist peak 2-67 deg/s vs MG8 113-217; left forearm correction 16-17 deg remains, ledger) |
-| AN26 | Sit/stand (IN2): approach-turn-in, sit, idle loops, stand; stool/chair/bench/floor; sides; bands; old/heavy variant | generation | AN25, MG8 | grade; owner ANIM-9; **AN26a generated 2026-11-26** (sit1: 36 pieces / 136 takes, hubs sit.stool, sit.chair.seat54, sit.bench, sit.floor, sit.chair@old, stand.idle@old; hubcheck ends 0/0); **AN26b baked 2026-11-26** (pelvis_fit + cook mirror + 48 `seat.*.b<cm>` slots, provisional picks); AN26c: c1a slot aliases in the step (8179b016) + c1b seat binder (ecab5d12) done 2026-11-26, c2 = player loads the seat clips + avatar plays the aliased clip |
+| AN26 | Sit/stand (IN2): approach-turn-in, sit, idle loops, stand; stool/chair/bench/floor; sides; bands; old/heavy variant | generation | AN25, MG8 | grade; owner ANIM-9; **AN26a generated 2026-11-26** (sit1: 36 pieces / 136 takes, hubs sit.stool, sit.chair.seat54, sit.bench, sit.floor, sit.chair@old, stand.idle@old; hubcheck ends 0/0); **AN26b baked 2026-11-26** (pelvis_fit + cook mirror + 48 `seat.*.b<cm>` slots, provisional picks); AN26c: c1a slot aliases in the step (8179b016) + c1b seat binder (ecab5d12) done 2026-11-26, c2 player loads the `seat.*` clips + avatar plays the aliased clip + `SeatClipSets` inserted (508a628a) done 2026-11-26: the player sits in game, owner ANIM-11 |
 | AN27 | Chair pull-out/push-in, bench scoot, seated prop chain: reach, pick, drink/eat/read, put down (IN9, AI31) | generation | AN26, MG7b | grade; owner ANIM-9 |
 | AN28 | Doors (IN33): push/pull, hinge L/R, both sides, walk-through, knock, locked rattle, bash (IN37) | generation | AN25 | grade; owner ANIM-10 |
 | AN29 | Carry and place (IN35, AI31): pick up at 3 heights, carry 1H/2H/shoulder, place, give/take, throw | generation | MG7b | grade; owner ANIM-10 |
@@ -178,10 +181,10 @@ Each family: recipe against slot contact points and MG4 height bands, generation
 
 ## 5. Spec changes (as spec slices, before build)
 
-- AN12: `animation.md` new "Motion style"; `animation-sources.md` "Gait classes" (fill, `loco.<style>.*`, Classic).
+- AN12: new `animation-style.md` (pointer in `animation.md` "Motion style"); `animation-sources.md` "Gait classes" (fill, `loco.<style>.*`, Classic).
 - AN9: `motion-generation.md` "Review renderer" rewrite; AN25 its "Interaction families"; AN39 `animation.md` "Physics tint".
 - Before AN33: `combat-adapter.md` "Morrowind attack clips" (windows, per-phase rate, reaction map).
-- Cleanup: drop 100STYLE from `animation-sources.md` and ROADMAP 3.4c ("look for a free sprint clip (100STYLE)").
+- Cleanup: drop 100STYLE from `animation-sources.md` and ROADMAP 3.4c ("look for a free sprint clip (100STYLE)"). **Done 2026-11-26** (070b6f75).
 
 ## 6. Dependencies on other lanes
 
@@ -190,7 +193,7 @@ Each family: recipe against slot contact points and MG4 height bands, generation
 | Interaction | IN27 slot frames, IK targets | AN26-AN30, MG7b, MG8; modifiers on slot clips |
 | AI | AI14/IN8, AI31, AI37, perception profile | AN8 look-at, AN22 styled walkers, AN31 |
 | Combat | sheets, poise (C3), C6 | AN32-AN37, C2, C4, AN41 medium-hit tint |
-| Crime, dialogue | LW14, DQ-30 | AN31 surrender/search, talk gestures; AN8 |
+| Crime, dialogue | LW14, DQ-30 | AN31 surrender/search, talk gestures; AN8. **Needed by DQ-30b** (`superfargoth/docs/specs/dialogue-presentation.md`; rows get IDs and an order when the dialogue lane reaches DQ-30): a per-character `look_target` writer, an additive head/neck rotation input for nods, a one-shot upper-body gesture slot |
 | Travel | IN7/IN23 seats | sit/astride clips (AN26 family) |
 
 ## 7. Owner questions (each with a recommended answer)

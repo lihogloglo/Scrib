@@ -49,3 +49,14 @@ Down to a walk activity, then G (V = unrated first if you like; verdicts land in
 Proof log: `clip-preview: group <id> <n> takes` (and `clip-preview: group row spacing ...`) in last.log.
 Status: awaiting owner (AN10, uncommitted 2026-11-26).
 
+
+## ANIM-11: the player sits on a seat (AN26c2)
+`owner_launch.sh view "Seyda Neen, Census and Excise Office"` (game location, player mode, default flags, third person). Picks are the provisional
+ANIM-9 ones: judge the wiring (starts, lands, holds, leaves), not the takes. Questions:
+(1) Stand in front of a chair, prompt "Sit", press E: does the character sit down onto the seat without a jump or a snap at the start? yes/no
+(2) Seated: does the body rest on the seat (not floating above it, not sunk into it) in a calm loop? yes/no
+(3) Press E or push the stick: does the character stand up and end beside or in front of the chair, without sliding through it? yes/no
+(4) Sit again from the chair's left side: does the sit-down start from where you stand (no spin to the front first)? yes/no
+Proof log: `player clips: N of M slot clips baked` in last.log, N and M both 48 higher than before (the 48 seat slots; N lower means the seat
+bake is missing: `bevyrrowind bake`).
+Status: awaiting owner (AN26c2 508a628a, 2026-11-26). Replaces IN-32 question (4) "E leaves you standing".

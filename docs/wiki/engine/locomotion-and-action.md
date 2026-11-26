@@ -48,6 +48,17 @@ the camera follows the drawn body at frame rate and never feeds gameplay.
   (`sf_combat_bevy/src/lib.rs:1-25`); lock-on in `lock.rs`, soft aim `sf_combat/src/aim.rs:61`; Morrowind sheets
   `bevyrrowind/crates/mw_combat/data/movesets/sword_1h.ron`, player glue `mw_player_bevy/src/combat.rs`.
 
+- **Slot aliases and seats** (AN26c): a rule names fixed slots (`interact.sit.enter|loop|exit`, `SEAT_RULES`); a character's
+  `ActionAliases` (`sf_action_bevy/src/lib.rs:136`, `sf_action::SlotAliases` in `sf_action/src/alias.rs`) maps a rule slot to the clip
+  slot to time and warp with (`Aliased` source in `step_actions`); `ActionOutput::slot` stays the rule's. The seat binder
+  (`sf_interaction_bevy/src/seat_clips.rs`: `SeatClipSets::from_names` indexes `<family>.b<cm>.{enter.<side>, loop, exit.<side>}`,
+  nearest band, fallback family, side else front; `bind_seat_clips` after the seat offer, before the step, latched while the slot
+  plays) writes the three aliases from the seat's `SeatClips`. Game: `mw_exterior_bevy` `player_clips` loads the player's own slots
+  plus every graph slot clip named `seat.*` (`mw_player_bevy::is_seat_clip`; log `player clips: N of M slot clips baked`);
+  `mw_player_bevy` `rules()` gives each seat clip a `SlotInfo` and root path under its own name, `add()` inserts `SeatClipSets`
+  (fallback `seat.chair`), and the avatar (`avatar.rs` `traversal`) plays the clip the rule slot resolves to, restarting when the
+  alias changes. NPCs: walkers are not action characters yet, so only the player sits.
+
 ## Bevy features used
 `FixedUpdate` and `Time<Fixed>`, `RunFixedMainLoop` sets, `bevy_enhanced_input`, `big_space` grids for `WorldPos`.
 Own: mover, chooser, camera rig (Bevy has no character controller).
