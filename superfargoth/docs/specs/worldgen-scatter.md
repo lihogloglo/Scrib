@@ -241,6 +241,11 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
   rect)`: clearing nodes (mosaic or forced) on a world-aligned `field_step_m` grid grown by the band + one step,
   `measure::distance_transform`, capped at `edge_band_m`, bilinear; `at` -> `StandPoint` (D, class, forced, distance,
   edge band). 3 tests (partition on 1 km2; disc band: nodes exact vs brute force, width within one step on 64 rays; tile alone bitwise).
+- **WG-E2d** (2026-11-27, `scatter.rs` v2 section): `CandidateRules::candidates(fields, stand, rect)` per species and
+  parent tile (`scatter.tile_m`): `floor(kappa_max A + u)` parents thinned by suitability x stand x prior (canopy stand
+  = D, 0 in a clearing; lower layers 1 until E2f), Poisson offspring by inversion, Box-Muller offsets cut at 3 sigma,
+  background share `b` (suitability squared); `size_mark` (reverse J of rate `size_shape / range`; Weibull of scale
+  the range, truncated), canopy edge quantile x `edge_size_ratio`; `tile_rect` = tile + `(2k-1) R_max`, `halo_m`. 4 tests.
 
 ## Tunables
 

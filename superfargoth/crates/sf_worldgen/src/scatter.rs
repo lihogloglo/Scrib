@@ -33,10 +33,17 @@ use rayon::prelude::*;
 
 use crate::filter::Declared;
 use crate::perturb::value_noise;
+use crate::scatter_fields::{Fields, Suitability};
+use crate::scatter_species::{Layer, SizeLaw, Species as SpeciesRow, SpeciesFile};
+use crate::scatter_stand::{StandClass, StandMap};
 
 #[cfg(test)]
 #[path = "tests_scatter.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests_scatter_candidates.rs"]
+mod tests_candidates;
 
 /// One-degree slope bins of the area census (0..90°).
 // tunables: const (layout: one bin per degree of slope, the census resolution of the slope cut)
@@ -641,4 +648,275 @@ fn tilt(up: [f32; 3], deg: f32, turn: f64) -> [f32; 3] {
     let (sp, cp) = ((turn * std::f64::consts::TAU) as f32).sin_cos();
     let (st, ct) = deg.to_radians().sin_cos();
     norm3([0, 1, 2].map(|k| up[k] * ct + (t1[k] * cp + t2[k] * sp) * st))
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Scatter v2 candidates (spec `worldgen-scatter.md` "Design" 4-5 and "Determinism across tiles"; slice WG-E2d).
+//
+// Per species and per parent tile (edge `scatter.tile_m`), a truncated Thomas process: `n = floor(kappa_max A + u)`
+// parents from the hash stream of (seed, parent tile, species), thinned at the parent by `kappa / kappa_max`
+// (Lewis and Shedler 1979), `kappa = (1 - b) parent_per_ha x suitability x stand x prior`; each kept parent has
+// Poisson(`offspring_mean x suitability`) offspring by inversion, offset by a Gaussian of `cluster_sigma_m`
+// (Box-Muller) and rejected beyond `THOMAS_REACH_SIGMAS` sigma, so a parent's reach is exact. A uniform background
+// stream per parent tile carries the share `b = background_fraction` of the candidates, thinned at the point by the
+// same factors (suitability squared: the cluster's parent and offspring factors). `stand` is the stand density `D`
+// for the canopy (0 in a clearing, forced or mosaic; a canopy candidate in a clearing is dropped) and 1 for lower
+// layers (their light factor is WG-E2f's). `prior` is the caller's region prior, clamped to
+// `[0, scatter.region_prior_max]`. Each candidate gets a size mark by inversion ([`size_mark`]; canopy quantiles
+// scaled by `scatter.edge_size_ratio` in the edge band), its crown radius `crown_a_m + crown_b h`, and a tie-break
+// hash for the competition's priority (size mark, then hash).
+//
+// Determinism: a candidate is a pure function of its own streams, the fields and the stand at its point; a rect
+// keeps the candidates inside it, from every parent tile within the reach of a parent, so any covering build
+// returns the same candidates over the rect, bit for bit. A tile's rect is its square grown by the competition
+// reach `(2k - 1) R_max` ([`CandidateRules::tile_rect`]); its parents come from `3 sigma` further, the spec's
+// halo `H = 3 sigma_max + (2k - 1) R_max` ([`CandidateRules::halo_m`]).
+
+/// The parent index of a background candidate in its [`CandidateKey`].
+// tunables: const (format: key marker of the background stream)
+pub const BACKGROUND: u32 = u32::MAX;
+
+/// Offspring beyond this many cluster sigmas are rejected (spec "Design" 4: the truncated Thomas process).
+// tunables: const (maths: the truncation that defines the process and its exact reach, spec "Design" 4)
+pub const THOMAS_REACH_SIGMAS: f64 = 3.0;
+
+/// Salts of the v2 parent and background streams in the scatter seed's hash space.
+// tunables: const (hash salt, not a value)
+const PARENT_SALT: u64 = 0x7a0e_2d00_0000_0e2d;
+// tunables: const (hash salt, not a value)
+const BACKGROUND_SALT: u64 = 0xb6c0_2d00_0000_1e2d;
+
+/// Square metres per hectare.
+// tunables: const (units)
+const M2_PER_HA: f64 = 10_000.0;
+
+/// The integer key of a candidate; output order (spec "Determinism across tiles").
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CandidateKey {
+    pub layer: Layer,
+    /// Index of the species in its file.
+    pub species: u32,
+    /// The parent tile.
+    pub tile: (i32, i32),
+    /// Parent index in the tile, or [`BACKGROUND`].
+    pub parent: u32,
+    /// Offspring index of the parent, or the background point's index.
+    pub offspring: u32,
+}
+
+/// One candidate before competition (spec "Design" 4-5).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Candidate {
+    pub key: CandidateKey,
+    /// Position, m (x east, y north).
+    pub pos: [f64; 2],
+    /// Size mark (height), m.
+    pub size_m: f64,
+    /// Crown radius `crown_a_m + crown_b size`, m.
+    pub crown_m: f64,
+    /// Second key of the competition priority (after the size mark).
+    pub tiebreak: u64,
+}
+
+/// The size mark of quantile `u` in `[0, 1)` (spec "Design" 5), m, in `[size_min_m, size_max_m]`. Reverse J: an
+/// exponential in height truncated to the range, of rate `size_shape / (size_max_m - size_min_m)` (so `size_shape`
+/// is the e-folds of the count across the range). Weibull: shape `size_shape`, scale the range, truncated at it.
+#[must_use]
+pub fn size_mark(sp: &SpeciesRow, u: f64) -> f64 {
+    let (a, b) = (sp.size_min_m, sp.size_max_m);
+    let range = b - a;
+    if range <= 0.0 {
+        return a;
+    }
+    let k = sp.size_shape;
+    let x = match sp.size_law {
+        SizeLaw::ReverseJ => -(1.0 - u * (1.0 - (-k).exp())).ln() * range / k,
+        // Maths: F(range) = 1 - exp(-1) at scale = range.
+        SizeLaw::Weibull => range * (-(1.0 - u * (1.0 - (-1.0f64).exp())).ln()).powf(1.0 / k),
+    };
+    (a + x).clamp(a, b)
+}
+
+/// Poisson(`mu`) by inversion of one uniform `u` (bounded: far past the tail the count stops).
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a bound of a few hundred at most
+fn poisson(mu: f64, u: f64) -> u32 {
+    if mu <= 0.0 {
+        return 0;
+    }
+    // Maths: mu + 20 sd + 20 is past any tail mass an f64 uniform can reach.
+    let cap = (mu + 20.0 * mu.sqrt() + 20.0).ceil() as u32;
+    let mut p = (-mu).exp();
+    let mut f = p;
+    let mut k = 0u32;
+    while u >= f && k < cap {
+        k += 1;
+        p *= mu / f64::from(k);
+        f += p;
+    }
+    k
+}
+
+/// Hash `k` of item `i` of a stream (the raw bits [`draw`] maps to `[0, 1)`).
+#[inline]
+fn hash_k(base: u64, i: u64, k: u64) -> u64 {
+    mix(base ^ (i.wrapping_mul(16).wrapping_add(k).wrapping_add(1)).wrapping_mul(0x9e37_79b9_7f4a_7c15))
+}
+
+/// The rules of the v2 candidates.
+pub struct CandidateRules<'a> {
+    /// Values (`[params]`) and species rows.
+    pub file: &'a SpeciesFile,
+    /// One suitability per species of `file`, in order.
+    pub suitability: &'a [Suitability],
+    /// `scatter.seed`.
+    pub seed: u64,
+    /// `scatter.tile_m`: the parent tiles.
+    pub tile_m: f64,
+    /// Region prior on parent intensity at (species index, x, y), clamped to `[0, scatter.region_prior_max]`.
+    pub prior: &'a (dyn Fn(usize, f64, f64) -> f64 + Sync),
+}
+
+impl CandidateRules<'_> {
+    /// `R_max`: the largest conflict distance, `max crown_k x 2 (crown_a_m + crown_b size_max_m)`, m.
+    #[must_use]
+    pub fn r_max_m(&self) -> f64 {
+        self.file.species.iter().map(|s| s.crown_k * 2.0 * (s.crown_a_m + s.crown_b * s.size_max_m)).fold(0.0, f64::max)
+    }
+
+    /// The competition reach `(2k - 1) R_max`, m (spec "Determinism across tiles", D).
+    #[must_use]
+    pub fn competition_reach_m(&self) -> f64 {
+        (2.0 * f64::from(self.file.values.competition_rounds) - 1.0) * self.r_max_m()
+    }
+
+    /// The halo `H = 3 sigma_max + (2k - 1) R_max`, m: how far past its square a tile rebuilds parents.
+    #[must_use]
+    pub fn halo_m(&self) -> f64 {
+        let sigma = self.file.species.iter().map(|s| s.cluster_sigma_m).fold(0.0, f64::max);
+        THOMAS_REACH_SIGMAS * sigma + self.competition_reach_m()
+    }
+
+    /// The square of tile `(tx, ty)` grown by the competition reach: the rect its candidates (and its stand map)
+    /// cover.
+    #[must_use]
+    pub fn tile_rect(&self, (tx, ty): (i32, i32)) -> [f64; 4] {
+        let (t, g) = (self.tile_m, self.competition_reach_m());
+        let (x0, y0) = (f64::from(tx) * t, f64::from(ty) * t);
+        [x0 - g, y0 - g, x0 + t + g, y0 + t + g]
+    }
+
+    /// Every candidate inside `rect = [x0, y0, x1, y1]` (half open), sorted by key. `stand` must cover `rect`
+    /// (built over it or a larger rect).
+    #[must_use]
+    pub fn candidates(&self, fields: &dyn Fields, stand: &StandMap, rect: [f64; 4]) -> Vec<Candidate> {
+        let mut out = Vec::new();
+        for (s, sp) in self.file.species.iter().enumerate() {
+            self.species_candidates(fields, stand, rect, s, sp, &mut out);
+        }
+        out.sort_unstable_by_key(|c| c.key);
+        out
+    }
+
+    /// The candidates of one species (unsorted).
+    // Tile indices of world metres and hashed counts of a few thousand per tile.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+    fn species_candidates(
+        &self,
+        fields: &dyn Fields,
+        stand: &StandMap,
+        rect: [f64; 4],
+        s: usize,
+        sp: &SpeciesRow,
+        out: &mut Vec<Candidate>,
+    ) {
+        let v = &self.file.values;
+        let suit = &self.suitability[s];
+        let canopy = sp.layer == Layer::Canopy;
+        let t = self.tile_m;
+        let area = t * t;
+        let pmax = v.region_prior_max;
+        let b = sp.background_fraction;
+        let sigma = sp.cluster_sigma_m;
+        let reach = THOMAS_REACH_SIGMAS * sigma;
+        let inside = |x: f64, y: f64| x >= rect[0] && x < rect[2] && y >= rect[1] && y < rect[3];
+        // (stand factor, edge band) at a point; `None` drops a canopy candidate in a clearing.
+        let stand_at = |x: f64, y: f64| -> Option<(f64, bool)> {
+            if !canopy {
+                return Some((1.0, false));
+            }
+            let p = stand.at(x, y);
+            (p.class != StandClass::Clearing).then_some((p.d, p.edge_band))
+        };
+        let prior = |x: f64, y: f64| (self.prior)(s, x, y).clamp(0.0, pmax) / pmax;
+        let mut emit = |key: CandidateKey, x: f64, y: f64, edge: bool, u: f64, tiebreak: u64| {
+            let q = if edge { u * v.edge_size_ratio } else { u };
+            let size_m = size_mark(sp, q);
+            out.push(Candidate { key, pos: [x, y], size_m, crown_m: sp.crown_a_m + sp.crown_b * size_m, tiebreak });
+        };
+        let species = s as u32;
+        let kappa_max = (1.0 - b) * sp.parent_per_ha / M2_PER_HA * pmax;
+        let bg_max = b * sp.parent_per_ha / M2_PER_HA * sp.offspring_mean * pmax;
+        let tx0 = ((rect[0] - reach) / t).floor() as i32;
+        let ty0 = ((rect[1] - reach) / t).floor() as i32;
+        let tx1 = ((rect[2] + reach) / t).floor() as i32;
+        let ty1 = ((rect[3] + reach) / t).floor() as i32;
+        for ty in ty0..=ty1 {
+            for tx in tx0..=tx1 {
+                let (x0, y0) = (f64::from(tx) * t, f64::from(ty) * t);
+                let tile = (tx, ty);
+                // Clusters.
+                let base = stream(self.seed ^ PARENT_SALT, tx, ty, species);
+                let n = (kappa_max * area + unit(mix(base))).floor() as u64;
+                for j in 0..n {
+                    let (px, py) = (x0 + draw(base, j, 0) * t, y0 + draw(base, j, 1) * t);
+                    // Box distance to the rect: past the reach no offspring lands inside (an exact skip).
+                    let dx = (rect[0] - px).max(px - rect[2]).max(0.0);
+                    let dy = (rect[1] - py).max(py - rect[3]).max(0.0);
+                    if dx.hypot(dy) > reach {
+                        continue;
+                    }
+                    let su = suit.at(&fields.sample(px, py));
+                    let Some((d, _)) = stand_at(px, py) else { continue };
+                    if draw(base, j, 2) >= su * d * prior(px, py) {
+                        continue;
+                    }
+                    let m = poisson(sp.offspring_mean * su, draw(base, j, 3));
+                    let ob = mix(base ^ (j + 1).wrapping_mul(0xa076_1d64_78bd_642f));
+                    for o in 0..u64::from(m) {
+                        let r = sigma * (-2.0 * (1.0 - draw(ob, o, 0)).ln()).sqrt();
+                        if r > reach {
+                            continue;
+                        }
+                        let (sn, cs) = (draw(ob, o, 1) * std::f64::consts::TAU).sin_cos();
+                        let (x, y) = (px + r * cs, py + r * sn);
+                        if !inside(x, y) {
+                            continue;
+                        }
+                        let Some((_, edge)) = stand_at(x, y) else { continue };
+                        let key = CandidateKey { layer: sp.layer, species, tile, parent: j as u32, offspring: o as u32 };
+                        emit(key, x, y, edge, draw(ob, o, 2), hash_k(ob, o, 3));
+                    }
+                }
+                // Background.
+                if bg_max <= 0.0 {
+                    continue;
+                }
+                let bb = stream(self.seed ^ BACKGROUND_SALT, tx, ty, species);
+                let n = (bg_max * area + unit(mix(bb))).floor() as u64;
+                for i in 0..n {
+                    let (x, y) = (x0 + draw(bb, i, 0) * t, y0 + draw(bb, i, 1) * t);
+                    if !inside(x, y) {
+                        continue;
+                    }
+                    let su = suit.at(&fields.sample(x, y));
+                    let Some((d, edge)) = stand_at(x, y) else { continue };
+                    if draw(bb, i, 2) >= su * su * d * prior(x, y) {
+                        continue;
+                    }
+                    let key = CandidateKey { layer: sp.layer, species, tile, parent: BACKGROUND, offspring: i as u32 };
+                    emit(key, x, y, edge, draw(bb, i, 3), hash_k(bb, i, 4));
+                }
+            }
+        }
+    }
 }
