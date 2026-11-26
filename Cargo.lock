@@ -5011,6 +5011,7 @@ dependencies = [
  "sf_ai",
  "sf_controller",
  "sf_coords",
+ "sf_ids",
  "sf_nav",
  "sf_records",
  "sf_tunables",

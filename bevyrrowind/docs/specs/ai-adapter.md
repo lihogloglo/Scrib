@@ -332,6 +332,18 @@ a `StatCommand` on the speaker); the unsaved `ai_settings` overlay and `Actor.ai
 their radius, travellers to their destination. Implemented as the adapter half of `sf_ai::fast_forward`, also used by
 tier-0 actors when a player rests.
 
+As built (MA7a, `mw_ai/src/fast_forward.rs`, port of `aiwander.cpp` :770-922 at `b8285cc9`): `allowed_positions(graph,
+spawn, distance_m)` = `fillAllowedPositions` in metres (nodes within the distance of the spawn and in the strongly
+connected component of the node nearest it; one such node adds the spawn and a point `min(max(d/2, 128 units), edge)`
+along each of its edges; the position closest to the spawn removed). `MorrowindFastForward` (`FastForwardRules`;
+seams: `Arc<PathGrids>`, occupancy `Fn(&Location, r_m)`, `is_water_only`, a seed) acts only on a `StayNear` top with
+radius > 0 that the state serves, in its home worldspace: one roll seeded `seed ^ key ^ span end ms`; occupied within 60
+units: OpenMW's neighbour nudge (5/15/30 %, not reset between neighbours); placed as a `Wait`er at the span end (route
+cleared, `until` rebuilt by a `step` at the same instant). Divergences: no `mRemainingDuration--` (`Limit::For`), one
+roll per span (OpenMW: per waited hour), no `z += 60` / ground snap (promotion snaps), water-only and unconscious /
+paralysed actors not moved (seam; caller, MA7b), travellers not teleported (tier 0 walked the `GoTo`). Gap:
+`WanderPlanner`'s allowed set differs (no connectivity, no closest removal, no single-node extension).
+
 ## Schedules for vanilla NPCs (owner 2026-11-08, modern addition)
 
 - A data pack `bevyrrowind/data/ai/schedules/` of `sf.ai.schedule` records plus assignment records (by class,

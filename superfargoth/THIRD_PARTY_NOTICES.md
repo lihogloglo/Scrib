@@ -218,12 +218,14 @@ SOFTWARE.
 ## OpenMW (AI packages)
 
 - Source: https://github.com/OpenMW/openmw, commit `b8285cc95d19e080fe0532f9f5154b0c3f727735`:
-  `apps/openmw/mwmechanics/aiwander.cpp` (`getRandomIdle`, wander goals); commit
+  `apps/openmw/mwmechanics/aiwander.cpp` (`getRandomIdle`, wander goals; `fastForward`, `fillAllowedPositions`,
+  `addNonPathGridAllowedPoints`, `addPositionBetweenPathgridPoints`, `setCurrentPositionToClosestAllowedPosition`,
+  `getNeighbouringNodes`) and `pathgrid.cpp` (`PathgridGraph::isPointConnected`, `getNeighbouringPoints`); commit
   `5f3aafb010a26b789b6a5e590b4e218d1ddf0cd9`: `apps/openmw/mwmechanics/aisequence.cpp` (`AiSequence::fill`, `stack`, `execute`'s repeat),
   `aipackage.hpp` (`Options`), the `makeDefaultOptions` of `aicombat.hpp`, `aiwander.hpp`, `aitravel.hpp`, `aiescort.hpp`, `aifollow.hpp`, `typedaipackage.hpp`, the constructors and duration/destination rules of `aiwander.cpp`,
   `aitravel.cpp`, `aiescort.cpp`, `aifollow.cpp`, `aiactivate.cpp`, `components/esm3/aipackage.hpp`, and the Fight rating of `combat.cpp` (`getFightTerm`, `getFightDispositionBias`, `getFightDistanceBias`, `getAggroDistance`, `isAggressionCapable`, `isAggressive`) with the aggression branch of `actors.cpp` (`Actors::engageCombat`), and the Flee rating and flee decision of `aicombataction.cpp` (`vanillaRateFlee`, `makeFleeDecision`, `prepareNextAction`'s anti-flee ratings, `ActionFlee`) and `aicombat.cpp` (`AiCombat::execute`, `attack`, `updateFleeing`), and the greeting of `actors.cpp` (`Actors::updateGreetingState`, `turnActorToFacePlayer`, `mTimerUpdateHello`), `actor.hpp`, `greetingstate.hpp` and `steering.cpp` (`smoothTurn`'s epsilon test).
 - Licence: GPL-3.0, as for "OpenMW (book markup)". Holder: the OpenMW contributors.
-- Ported into: `bevyrrowind/crates/mw_ai/src/wander.rs`, `bevyrrowind/crates/mw_ai/src/packages.rs`, `bevyrrowind/crates/mw_ai/src/policy.rs` and `bevyrrowind/crates/mw_ai/src/settings.rs` (the game).
+- Ported into: `bevyrrowind/crates/mw_ai/src/wander.rs`, `bevyrrowind/crates/mw_ai/src/fast_forward.rs`, `bevyrrowind/crates/mw_ai/src/packages.rs`, `bevyrrowind/crates/mw_ai/src/policy.rs` and `bevyrrowind/crates/mw_ai/src/settings.rs` (the game).
 
 ## Veloren (erosion)
 

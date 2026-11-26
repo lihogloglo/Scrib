@@ -16,6 +16,8 @@ petgraph.workspace = true
 sf_ai.workspace = true
 sf_controller.workspace = true
 sf_coords.workspace = true
+# `GameInstant` in `FastForwardRules` (`MA7a`).
+sf_ids.workspace = true
 sf_records.workspace = true
 # `nav`: the `mw.nav.door_approach_m` declaration (Bevy-free, already in the closure).
 sf_tunables.workspace = true

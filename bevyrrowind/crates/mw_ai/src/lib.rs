@@ -1,5 +1,7 @@
 //! Morrowind NPC AI adapter on `sf_ai` (`docs/specs/ai-adapter.md`), Bevy-free.
 //!
+//! - [`fast_forward`]: `OpenMW`'s wander fast-forward (`MA7a`): [`allowed_positions`] and
+//!   [`MorrowindFastForward`], where a wanderer stands after a skipped span.
 //! - [`nav`]: door approach points (`MA21`), shared by the game and the route bake.
 //! - [`pathgrid`]: PGRD records as per-cell directed graphs in engine space
 //!   (meters, Y up), with nearest/within/A* queries.
@@ -13,6 +15,7 @@
 //! - [`settings`]: AI settings considerations: the Fight / aggression rating (`MA4d`) and the Flee
 //!   rating and flee decision (`MA4f`), the greeting state machine (`MA4c1`).
 
+pub mod fast_forward;
 pub mod methods;
 pub mod nav;
 pub mod packages;
@@ -21,6 +24,7 @@ pub mod policy;
 pub mod settings;
 pub mod wander;
 
+pub use fast_forward::{MorrowindFastForward, Occupancy, WaterOnly, allowed_positions};
 pub use methods::{
     METHOD_WANDER_IDLE, METHOD_WANDER_STAND, METHOD_WANDER_WALK, STATE_HAS_IDLE,
     STATE_HAS_WALK_GOAL, STATE_IDLE_VARIANT, TASK_DO_IDLE, TASK_DO_WALK, TASK_WANDER,
@@ -35,6 +39,8 @@ pub use wander::{
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_fast_forward;
 #[cfg(test)]
 mod tests_packages;
 #[cfg(test)]

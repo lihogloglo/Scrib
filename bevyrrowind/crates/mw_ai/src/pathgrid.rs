@@ -214,6 +214,41 @@ impl PathGraph {
         Some(nodes.into_iter().map(NodeIndex::index).collect())
     }
 
+    /// The nodes `node` has an edge to, in record order (`OpenMW`'s
+    /// `PathgridGraph::getNeighbouringPoints`; self-loops and duplicates were
+    /// dropped at load). Empty for a node out of range.
+    pub fn neighbours(&self, node: usize) -> Vec<usize> {
+        if node >= self.len() {
+            return Vec::new();
+        }
+        let mut out: Vec<(usize, usize)> = self
+            .graph
+            .edges(NodeIndex::new(node))
+            .map(|e| (e.id().index(), e.target().index()))
+            .collect();
+        out.sort_unstable();
+        out.into_iter().map(|(_, to)| to).collect()
+    }
+
+    /// The strongly connected component of each node, by node index (`OpenMW`'s
+    /// `PathgridGraph` component ids: Tarjan over the directed edges).
+    pub fn components(&self) -> Vec<usize> {
+        let mut out = vec![0; self.len()];
+        for (id, component) in petgraph::algo::tarjan_scc(&self.graph).into_iter().enumerate() {
+            for n in component {
+                out[n.index()] = id;
+            }
+        }
+        out
+    }
+
+    /// Whether `a` and `b` are in one strongly connected component (`OpenMW`'s
+    /// `PathgridGraph::isPointConnected`). False for a node out of range.
+    pub fn connected(&self, from: usize, to: usize) -> bool {
+        let components = self.components();
+        matches!((components.get(from), components.get(to)), (Some(first), Some(second)) if first == second)
+    }
+
     /// The node at `pos` (within 1 cm), if any.
     pub fn node_at(&self, pos: WorldPos) -> Option<usize> {
         self.nearest(pos).filter(|&n| self.position(n).delta_f32(pos).length() < 0.01)

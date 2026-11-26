@@ -183,7 +183,8 @@ Ends with: Balmora runs dawn to night and through a 3 h wait; lamps lit at dusk;
 | AI14 | `UseSlot` + fragments (= interaction IN8), claim priority | `sf_ai`, `sf_interaction` | IN0, IN2, IN3 | deterministic claims; IN-8 |
 | AI11 | Schedules, `ScheduleRules`, quest-safety validator | `sf_ai` | AI10, AI12 | exact pushes at window edges |
 | AI27 | Free-time picker (time, role, 2-3 considerations), ambient keys, shelter and dusk-lamp methods | `sf_ai` | AI14, IN19 | exact picks on a synthetic day |
-| MA7 | `fastForward` rules | `mw_ai` | AI10 | exact placement |
+| MA7a | [x] `fastForward` rules: `MorrowindFastForward` + `allowed_positions` (2026-11-26). Gap: `WanderPlanner`'s allowed set differs from OpenMW's (no connectivity test, no closest removal, no single-node extension) | `mw_ai` | AI10 | exact placement |
+| MA7b | The game fast-forwards on a time skip: after `GameClock::skip` every simulated actor that is not unconscious or paralysed is demoted, `fast_forward` with `MorrowindFastForward`, placed while the screen is dark (promotion ignores views for that tick); occupancy from the store + bodies | `sf_ai_bevy`, `mw_walkers_bevy`, `mw_rpg_bevy` | AI10c2, MA7a | headless: skip 8 h, wanderers stand on allowed positions |
 | MA8 | Schedule pack (3 patterns, guards on post), anchors, `ai.schedules` | `mw_ai`, data | AI11, AI27 | validator report; owner **AI-4** (Balmora day, wait, storm) |
 | AIM | Cap sweeps Floor/High, AI + mover + animation ms | measurement | AI9, MA8 | one run; provisional rows filled |
 
