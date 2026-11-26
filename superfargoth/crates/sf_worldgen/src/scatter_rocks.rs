@@ -86,6 +86,8 @@ pub fn declared() -> Vec<Declared> {
         d("scatter.rock.field_child_mean", 5.0, "count", 1.0, 40.0, "Guess", "mean stones per field-stone clump"),
         d("scatter.rock.field_slope_full_deg", 15.0, "deg", 0.0, 45.0, "Guess",
           "field stones at full density up to this slope, none at loose_slope_max_deg"),
+        d("scatter.rock.rock_k", 0.9, "ratio", 0.5, 1.2, "Guess",
+          "two rocks conflict closer than rock_k (r_i + r_j), r = size / 2 (below 1 rocks may touch; WG-R, U)"),
     ]
 }
 
@@ -110,6 +112,7 @@ pub struct RockValues {
     pub field_cluster_sigma_m: f64,
     pub field_child_mean: f64,
     pub field_slope_full_deg: f64,
+    pub rock_k: f64,
 }
 
 impl RockValues {
@@ -142,6 +145,7 @@ impl RockValues {
             field_cluster_sigma_m: get("scatter.rock.field_cluster_sigma_m")?,
             field_child_mean: get("scatter.rock.field_child_mean")?,
             field_slope_full_deg: get("scatter.rock.field_slope_full_deg")?,
+            rock_k: get("scatter.rock.rock_k")?,
         })
     }
 }
@@ -262,6 +266,19 @@ impl RockRules<'_> {
     #[must_use]
     pub fn talus_reach_m(&self) -> f64 {
         self.values.reach_max_m
+    }
+
+    /// How far any block lands from its parent at most (talus run-out, outcrop and field-stone offsets), m.
+    #[must_use]
+    pub fn parent_reach_m(&self) -> f64 {
+        let v = &self.values;
+        v.reach_max_m.max(THOMAS_REACH_SIGMAS * v.cluster_sigma_m.max(v.field_cluster_sigma_m))
+    }
+
+    /// The largest block of any context, m (`size_max_m` over the `[rocks.*]` rows; 0 without one).
+    #[must_use]
+    pub fn size_max_m(&self) -> f64 {
+        self.file.rocks.values().map(|r| r.size_max_m).fold(0.0, f64::max)
     }
 
     /// Every talus block inside `rect = [x0, y0, x1, y1]` (half open), sorted by key; none without a

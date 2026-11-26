@@ -34,6 +34,7 @@ use rayon::prelude::*;
 use crate::filter::Declared;
 use crate::perturb::value_noise;
 use crate::scatter_fields::{FieldSample, Fields, Suitability, hat};
+use crate::scatter_rocks::{RockCandidate, RockGround, RockRules};
 use crate::scatter_species::{Layer, SizeLaw, Species as SpeciesRow, SpeciesFile};
 use crate::scatter_stand::{StandClass, StandMap};
 use crate::water::GuideWater;
@@ -61,6 +62,10 @@ mod tests_water;
 #[cfg(test)]
 #[path = "tests_scatter_budget.rs"]
 mod tests_budget;
+
+#[cfg(test)]
+#[path = "tests_scatter_rock_layer.rs"]
+mod tests_rock_layer;
 
 /// One-degree slope bins of the area census (0..90°).
 // tunables: const (layout: one bin per degree of slope, the census resolution of the slope cut)
@@ -808,6 +813,15 @@ pub struct CandidateRules<'a> {
     pub water: &'a WaterMask,
     /// The final ground height at (x, y), m (the sea rule).
     pub height: &'a (dyn Fn(f64, f64) -> f64 + Sync),
+    /// The rock layer, run first (WG-E3d); `None`: vegetation only.
+    pub rocks: Option<RockLayer<'a>>,
+}
+
+/// The rock layer of the passes (spec "Rocks (WG-E3)"): its candidate rules and the ground they read.
+#[derive(Clone, Copy)]
+pub struct RockLayer<'a> {
+    pub rules: &'a RockRules<'a>,
+    pub ground: &'a dyn RockGround,
 }
 
 impl CandidateRules<'_> {
@@ -848,18 +862,49 @@ impl CandidateRules<'_> {
         layers.into_iter().zip(grow).collect()
     }
 
+    /// The rock layer's `R_max = rock_k s_max` (the conflict distance of two of the largest blocks), m; 0 without
+    /// rocks.
+    #[must_use]
+    pub fn rock_r_max_m(&self) -> f64 {
+        self.rocks.map_or(0.0, |r| r.rules.values.rock_k * r.rules.size_max_m())
+    }
+
+    /// How far past a square the rock candidates reach so that the square's rock winners are exact wherever a
+    /// vegetation layer builds candidates (`grow_l` of [`Self::layer_grows`], grown by the largest rock footprint
+    /// `s_max / 2` plus the layer's stem footprint), plus the rock competition reach `(2k - 1) rock_k s_max`, m;
+    /// `None` without rocks.
+    #[must_use]
+    pub fn rock_grow_m(&self) -> Option<f64> {
+        let rl = self.rocks?;
+        let s_max = rl.rules.size_max_m();
+        let k2 = 2.0 * f64::from(self.file.values.competition_rounds) - 1.0;
+        let need = self
+            .layer_grows()
+            .into_iter()
+            .map(|(l, g)| {
+                let foot = self.file.species.iter().filter(|s| s.layer == l).map(|s| s.footprint_ratio * s.size_max_m);
+                g + s_max / 2.0 + foot.fold(0.0, f64::max)
+            })
+            .fold(0.0, f64::max);
+        Some(need + k2 * self.rock_r_max_m())
+    }
+
     /// How far the outermost layer's candidates reach past a square, m (the competition reach for one layer).
     #[must_use]
     pub fn square_reach_m(&self) -> f64 {
-        self.layer_grows().into_iter().map(|(_, g)| g).fold(0.0, f64::max)
+        let plants = self.layer_grows().into_iter().map(|(_, g)| g).fold(0.0, f64::max);
+        plants.max(self.rock_grow_m().unwrap_or(0.0))
     }
 
     /// The halo `H = 3 sigma_max + `[`Self::square_reach_m`] (`3 sigma_max + (2k - 1) R_max` for one layer), m:
-    /// how far past its square a tile rebuilds parents.
+    /// how far past its square a tile rebuilds parents. With rocks, at least the rock parents' reach (talus
+    /// run-out, cluster offsets) plus [`Self::rock_grow_m`] (spec `H_rock`).
     #[must_use]
     pub fn halo_m(&self) -> f64 {
         let sigma = self.file.species.iter().map(|s| s.cluster_sigma_m).fold(0.0, f64::max);
-        THOMAS_REACH_SIGMAS * sigma + self.square_reach_m()
+        let plants = THOMAS_REACH_SIGMAS * sigma + self.square_reach_m();
+        let rocks = self.rocks.zip(self.rock_grow_m()).map_or(0.0, |(r, g)| r.rules.parent_reach_m() + g);
+        plants.max(rocks)
     }
 
     /// The square of tile `(tx, ty)` grown by [`Self::square_reach_m`]: the rect its candidates (and its stand
@@ -1072,26 +1117,29 @@ fn priority(a: &Candidate, b: &Candidate) -> std::cmp::Ordering {
     a.size_m.total_cmp(&b.size_m).then(a.tiebreak.cmp(&b.tiebreak)).then(b.key.cmp(&a.key))
 }
 
-/// The conflicting neighbours of every candidate of one layer (indices into `cands`), by a bucket grid.
-fn conflicts(file: &SpeciesFile, cands: &[Candidate]) -> Vec<Vec<u32>> {
-    let k = |c: &Candidate| file.species[c.key.species as usize].crown_k;
-    let r_max = cands.iter().map(|c| 2.0 * k(c) * c.crown_m).fold(0.0, f64::max);
-    let n = cands.len();
+/// The rock priority (spec "Rocks" "Competition and exclusion"): size, hash, then the smaller key; `Greater` when
+/// `a` outranks `b`.
+fn rock_priority(a: &RockCandidate, b: &RockCandidate) -> std::cmp::Ordering {
+    a.size_m.total_cmp(&b.size_m).then(a.tiebreak.cmp(&b.tiebreak)).then(b.key.cmp(&a.key))
+}
+
+/// The conflicting neighbours of every point (indices), by a bucket grid: `i` and `j` conflict when their distance
+/// is under `reach[i] + reach[j]`.
+fn conflicts(pts: &[[f64; 2]], reach: &[f64]) -> Vec<Vec<u32>> {
+    let r_max = 2.0 * reach.iter().copied().fold(0.0, f64::max);
+    let n = pts.len();
     if n < 2 || r_max <= 0.0 {
         return vec![Vec::new(); n];
     }
-    let pts: Vec<[f64; 2]> = cands.iter().map(|c| c.pos).collect();
-    let grid = Buckets::new(&pts, r_max);
+    let grid = Buckets::new(pts, r_max);
     (0..n)
         .into_par_iter()
         .map(|i| {
-            let a = &cands[i];
+            let a = pts[i];
             let mut out = Vec::new();
-            grid.near(a.pos, r_max, |j| {
-                let b = &cands[j as usize];
-                if j as usize != i
-                    && (a.pos[0] - b.pos[0]).hypot(a.pos[1] - b.pos[1]) < k(a) * a.crown_m + k(b) * b.crown_m
-                {
+            grid.near(a, r_max, |j| {
+                let b = pts[j as usize];
+                if j as usize != i && (a[0] - b[0]).hypot(a[1] - b[1]) < reach[i] + reach[j as usize] {
                     out.push(j);
                 }
             });
@@ -1103,8 +1151,41 @@ fn conflicts(file: &SpeciesFile, cands: &[Candidate]) -> Vec<Vec<u32>> {
 
 /// The winners of `rounds` competition rounds among the candidates of one layer: one flag per candidate.
 fn compete_layer(file: &SpeciesFile, cands: &[Candidate], rounds: u32) -> Vec<bool> {
-    let nbr = conflicts(file, cands);
-    let n = cands.len();
+    let (pts, reach) = layer_reach(file, cands);
+    independent_set(&pts, &reach, |i, j| priority(&cands[i], &cands[j]), rounds)
+}
+
+/// The points and conflict reaches `crown_k x crown radius` of one layer's candidates.
+fn layer_reach(file: &SpeciesFile, cands: &[Candidate]) -> (Vec<[f64; 2]>, Vec<f64>) {
+    let pts = cands.iter().map(|c| c.pos).collect();
+    let reach = cands.iter().map(|c| file.species[c.key.species as usize].crown_k * c.crown_m).collect();
+    (pts, reach)
+}
+
+/// The conflicting neighbours of every candidate of one layer (indices into `cands`).
+#[cfg(test)]
+fn layer_conflicts(file: &SpeciesFile, cands: &[Candidate]) -> Vec<Vec<u32>> {
+    let (pts, reach) = layer_reach(file, cands);
+    conflicts(&pts, &reach)
+}
+
+/// The rock winners of `rounds` rounds: footprint `r = s / 2`, conflict under `rock_k (r_i + r_j)`.
+fn compete_rocks(cands: &[RockCandidate], rock_k: f64, rounds: u32) -> Vec<bool> {
+    let pts: Vec<[f64; 2]> = cands.iter().map(|c| c.pos).collect();
+    let reach: Vec<f64> = cands.iter().map(|c| rock_k * c.size_m / 2.0).collect();
+    independent_set(&pts, &reach, |i, j| rock_priority(&cands[i], &cands[j]), rounds)
+}
+
+/// The bounded-round fixed-priority independent set over points of conflict reach `reach` (see above); `prio(i,
+/// j)` is `Greater` when `i` outranks `j`.
+fn independent_set(
+    pts: &[[f64; 2]],
+    reach: &[f64],
+    prio: impl Fn(usize, usize) -> std::cmp::Ordering + Sync,
+    rounds: u32,
+) -> Vec<bool> {
+    let nbr = conflicts(pts, reach);
+    let n = pts.len();
     let mut won = vec![false; n];
     let mut eligible = vec![true; n];
     for _ in 0..rounds {
@@ -1114,7 +1195,7 @@ fn compete_layer(file: &SpeciesFile, cands: &[Candidate], rounds: u32) -> Vec<bo
                 eligible[i]
                     && !nbr[i].iter().any(|&j| {
                         let j = j as usize;
-                        eligible[j] && priority(&cands[j], &cands[i]).is_gt()
+                        eligible[j] && prio(j, i).is_gt()
                     })
             })
             .collect();
@@ -1137,36 +1218,89 @@ pub fn compete(file: &SpeciesFile, cands: &[Candidate], rounds: u32) -> Vec<bool
     won
 }
 
+/// The winners of every layer of a square: rocks (first in the passes) and vegetation, each sorted by key.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LayerWinners {
+    pub rocks: Vec<RockCandidate>,
+    pub plants: Vec<Candidate>,
+}
+
+/// `p` lies in `rect = [x0, y0, x1, y1]` (half open).
+fn in_rect(p: [f64; 2], rect: [f64; 4]) -> bool {
+    p[0] >= rect[0] && p[0] < rect[2] && p[1] >= rect[1] && p[1] < rect[3]
+}
+
+/// `square` grown by `g` on every side.
+fn grown(square: [f64; 4], g: f64) -> [f64; 4] {
+    [square[0] - g, square[1] - g, square[2] + g, square[3] + g]
+}
+
 impl CandidateRules<'_> {
-    /// The winners of every layer inside `square = [x0, y0, x1, y1]` (half open), sorted by key: layer by layer in
-    /// pass order, candidates over the square grown by the layer's reach ([`Self::layer_grows`]) under the earlier
-    /// layers' winners ([`Cover`]), competition at `scatter.competition_rounds`, kept by membership. `stand` must
-    /// cover the square grown by [`Self::square_reach_m`]. Bitwise the same as any larger build cut to the square.
+    /// The rock winners inside `rect` (spec "Rocks (WG-E3)"): talus, outcrop and field candidates, each dropped at
+    /// its own point in a forced clearing (roads, sites, anchors, footprints) or on water (pass 8), then one
+    /// competition over the three contexts (footprint `s / 2`, `rock_k`, priority size then hash; pass 6), sorted
+    /// by key. Exact over the rect shrunk by the rock competition reach.
+    fn rock_winners(&self, rl: RockLayer<'_>, stand: &StandMap, rect: [f64; 4]) -> Vec<RockCandidate> {
+        let mut cands = rl.rules.talus_candidates(rl.ground, rect);
+        cands.extend(rl.rules.outcrop_candidates(rl.ground, rect));
+        cands.extend(rl.rules.field_candidates(rl.ground, rect));
+        cands.retain(|c| self.dry_ground(c.pos[0], c.pos[1], stand.at(c.pos[0], c.pos[1]).forced));
+        cands.sort_unstable_by_key(|c| c.key);
+        let won = compete_rocks(&cands, rl.rules.values.rock_k, self.file.values.competition_rounds);
+        cands.into_iter().zip(won).filter(|(_, w)| *w).map(|(c, _)| c).collect()
+    }
+
+    /// The winners of every layer inside `square = [x0, y0, x1, y1]` (half open): the rock layer first (over the
+    /// square grown by [`Self::rock_grow_m`]; its footprints `s / 2` are hard obstacles for every later layer),
+    /// then the vegetation layer by layer in pass order, candidates over the square grown by the layer's reach
+    /// ([`Self::layer_grows`]) under the earlier layers' winners ([`Cover`]), competition at
+    /// `scatter.competition_rounds`, kept by membership. `stand` must cover the square grown by
+    /// [`Self::square_reach_m`]. Bitwise the same as any larger build cut to the square.
     #[must_use]
-    pub fn square_winners(&self, fields: &dyn Fields, stand: &StandMap, square: [f64; 4]) -> Vec<Candidate> {
+    pub fn square_layers(&self, fields: &dyn Fields, stand: &StandMap, square: [f64; 4]) -> LayerWinners {
         let mut cover = Cover::new(self.file.values.shade_per_crown);
-        let mut out = Vec::new();
-        let inside = |c: &Candidate| {
-            c.pos[0] >= square[0] && c.pos[0] < square[2] && c.pos[1] >= square[1] && c.pos[1] < square[3]
-        };
+        let mut out = LayerWinners::default();
+        if let (Some(rl), Some(g)) = (self.rocks, self.rock_grow_m()) {
+            let won = self.rock_winners(rl, stand, grown(square, g));
+            cover.add_rocks(&won);
+            out.rocks = won.into_iter().filter(|c| in_rect(c.pos, square)).collect();
+        }
         for (layer, g) in self.layer_grows() {
-            let rect = [square[0] - g, square[1] - g, square[2] + g, square[3] + g];
-            let cands = self.layer_candidates(fields, stand, rect, layer, &cover);
+            let cands = self.layer_candidates(fields, stand, grown(square, g), layer, &cover);
             let won = compete_layer(self.file, &cands, self.file.values.competition_rounds);
             let winners: Vec<Candidate> = cands.into_iter().zip(won).filter(|(_, w)| *w).map(|(c, _)| c).collect();
             cover.add(self.file, &winners);
-            out.extend(winners.into_iter().filter(inside));
+            out.plants.extend(winners.into_iter().filter(|c| in_rect(c.pos, square)));
         }
         out
     }
 
-    /// The winners inside tile `(tx, ty)`'s square ([`Self::square_winners`]). `stand` must cover
-    /// [`Self::tile_rect`].
+    /// The vegetation winners inside `square` ([`Self::square_layers`]' plants: under the rocks when the rules have
+    /// a rock layer).
     #[must_use]
-    pub fn tile_winners(&self, fields: &dyn Fields, stand: &StandMap, (tx, ty): (i32, i32)) -> Vec<Candidate> {
+    pub fn square_winners(&self, fields: &dyn Fields, stand: &StandMap, square: [f64; 4]) -> Vec<Candidate> {
+        self.square_layers(fields, stand, square).plants
+    }
+
+    /// The square of tile `(tx, ty)`.
+    fn tile_square(&self, (tx, ty): (i32, i32)) -> [f64; 4] {
         let t = self.tile_m;
         let (x0, y0) = (f64::from(tx) * t, f64::from(ty) * t);
-        self.square_winners(fields, stand, [x0, y0, x0 + t, y0 + t])
+        [x0, y0, x0 + t, y0 + t]
+    }
+
+    /// The winners of every layer inside tile `(tx, ty)`'s square ([`Self::square_layers`]). `stand` must cover
+    /// [`Self::tile_rect`].
+    #[must_use]
+    pub fn tile_layers(&self, fields: &dyn Fields, stand: &StandMap, tile: (i32, i32)) -> LayerWinners {
+        self.square_layers(fields, stand, self.tile_square(tile))
+    }
+
+    /// The vegetation winners inside tile `(tx, ty)`'s square ([`Self::square_winners`]). `stand` must cover
+    /// [`Self::tile_rect`].
+    #[must_use]
+    pub fn tile_winners(&self, fields: &dyn Fields, stand: &StandMap, tile: (i32, i32)) -> Vec<Candidate> {
+        self.square_winners(fields, stand, self.tile_square(tile))
     }
 }
 
@@ -1176,8 +1310,8 @@ impl CandidateRules<'_> {
 // Q)` form); a lower candidate is kept with `lerp(stol, 1, L)`, x `(1 + edge_boost)` in the edge band (its
 // dominating intensity raised by `1 + edge_boost`, Lewis-Shedler at the point). Every earlier winner's stem
 // footprint (`footprint_ratio x size mark`) is a hard obstacle: a later candidate is dropped when the two footprints
-// overlap. Rocks (WG-E3) will join the stems. Both are integer counts or comparisons at the point, so a layer's
-// candidates stay a pure function of the point and of the earlier winners within its reach
+// overlap. Rock footprints (`s / 2`, WG-E3d) join the stems. Both are integer counts or comparisons at the point,
+// so a layer's candidates stay a pure function of the point and of the earlier winners within its reach
 // ([`CandidateRules::layer_grows`]).
 
 /// A CSR bucket grid over points (cell `max(reach, sqrt(area / n))`, so never more cells than points).
@@ -1300,6 +1434,12 @@ impl Cover {
             self.stems.all.push([c.pos[0], c.pos[1], sp.footprint_ratio * c.size_m]);
         }
         self.crowns.rebuild();
+        self.stems.rebuild();
+    }
+
+    /// Adds the rock winners: each footprint (radius `size_m / 2`) a hard obstacle (spec "Rocks": rock over tree).
+    pub fn add_rocks(&mut self, rocks: &[RockCandidate]) {
+        self.stems.all.extend(rocks.iter().map(|c| [c.pos[0], c.pos[1], c.size_m / 2.0]));
         self.stems.rebuild();
     }
 

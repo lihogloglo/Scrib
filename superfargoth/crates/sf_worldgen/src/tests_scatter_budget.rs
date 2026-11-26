@@ -132,6 +132,7 @@ impl Fixture {
             prior: &prior,
             water: &self.water,
             height: &height,
+            rocks: None,
         }
     }
 

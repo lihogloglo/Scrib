@@ -175,7 +175,7 @@ fn parse() -> (SpeciesFile, Vec<Suitability>) {
 fn winners(water: &WaterMask, excluded: &(dyn Fn(f64, f64) -> bool + Sync)) -> (SpeciesFile, Vec<Candidate>) {
     let (file, suit) = parse();
     let fields = neutral();
-    let cand = CandidateRules { file: &file, suitability: &suit, seed: 77, tile_m: 256.0, prior: &one, water, height: &height };
+    let cand = CandidateRules { file: &file, suitability: &suit, seed: 77, tile_m: 256.0, prior: &one, water, height: &height, rocks: None };
     let stand = StandMap::build(StandRules { values: &file.values, seed: 77, canopy: &suit }, &fields, excluded, cand.tile_rect((0, 0)));
     let won = cand.tile_winners(&fields, &stand, (0, 0));
     (file, won)

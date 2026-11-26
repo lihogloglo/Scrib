@@ -286,6 +286,11 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
   below `size_min_m`). Field: three new values (sigma 2 m, 5 stones a clump, slope hat full to 15 deg, 0 at the loose
   limit). Plain fixture: 1334 parents, 7955 children all <= 0.4 x parent; g(0.5-1 sigma) outcrop 3.06, field 9.83;
   6420 stones on 6400 expected. 3 tests.
+- **WG-E3d** (2026-11-27, `scatter.rs`): `CandidateRules.rocks: Option<RockLayer { rules, ground }>`; `square_layers` /
+  `tile_layers` -> `LayerWinners { rocks, plants }` (`square_winners` = the plants). Rocks run first over the square grown by
+  `rock_grow_m` = max over plant layers (`grow_l + s_max / 2 + foot_l`) + `(2k - 1) rock_k s_max`; dropped at their point in a
+  forced clearing or on water, one competition over the contexts (`scatter.rock.rock_k`, declared here), footprints `s / 2`
+  into `Cover` as obstacles. The rock budget group is not wired (`budget_cut` takes plants). 2 tests.
 
 ## Tunables
 

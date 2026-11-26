@@ -88,7 +88,7 @@ fn candidates(file: &SpeciesFile, suit: &[Suitability], rect: [f64; 4]) -> Vec<C
     let fields = neutral();
     let none = |_: f64, _: f64| false;
     let stand = StandMap::build(StandRules { values: &file.values, seed: 55, canopy: suit }, &fields, &none, rect);
-    let cand = CandidateRules { file, suitability: suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0 };
+    let cand = CandidateRules { file, suitability: suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0, rocks: None };
     cand.candidates(&fields, &stand, rect)
 }
 
@@ -108,7 +108,7 @@ fn winners_never_conflict_and_rounds_only_add() {
     let cands = candidates(&file, &suit, [0.0, 0.0, 400.0, 400.0]);
     // The bucket grid finds exactly the brute-force conflicts (on a corner of the set).
     let small: Vec<Candidate> = cands.iter().filter(|c| c.pos[0] < 120.0 && c.pos[1] < 120.0).copied().collect();
-    let grid = conflicts(&file, &small);
+    let grid = layer_conflicts(&file, &small);
     for (i, a) in small.iter().enumerate() {
         let brute: Vec<u32> = (0..small.len())
             .filter(|&j| j != i && (a.pos[0] - small[j].pos[0]).hypot(a.pos[1] - small[j].pos[1]) < r_ij(&file, a, &small[j]))
@@ -127,7 +127,7 @@ fn winners_never_conflict_and_rounds_only_add() {
         }
     }
     // A candidate with no conflict wins; the largest candidate wins.
-    let nbr = conflicts(&file, &cands);
+    let nbr = layer_conflicts(&file, &cands);
     assert!(nbr.iter().zip(&won).all(|(n, w)| !n.is_empty() || *w));
     let top = (0..cands.len()).max_by(|&i, &j| priority(&cands[i], &cands[j])).expect("candidates");
     assert!(won[top]);
@@ -193,7 +193,7 @@ fn a_tile_alone_equals_the_same_square_of_a_larger_build() {
     let (file, suit) = parse(DENSE);
     let fields = neutral();
     let none = |_: f64, _: f64| false;
-    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0 };
+    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0, rocks: None };
     let tile = (1, 1);
     let rect = cand.tile_rect(tile);
     let stand = StandMap::build(StandRules { values: &file.values, seed: 55, canopy: &suit }, &fields, &none, rect);

@@ -103,7 +103,7 @@ fn no_lower_instance_in_an_earlier_stem_footprint() {
     let (file, suit) = parse();
     let fields = neutral();
     let none = |_: f64, _: f64| false;
-    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0 };
+    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0, rocks: None };
     let rect = cand.tile_rect((0, 0));
     let stand = StandMap::build(StandRules { values: &file.values, seed: 55, canopy: &suit }, &fields, &none, rect);
     let won = cand.tile_winners(&fields, &stand, (0, 0));
@@ -127,7 +127,7 @@ fn lower_layers_sit_in_more_light_than_uniform_points() {
     let (file, suit) = parse();
     let fields = neutral();
     let none = |_: f64, _: f64| false;
-    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0 };
+    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0, rocks: None };
     let rect = cand.tile_rect((0, 0));
     let stand = StandMap::build(StandRules { values: &file.values, seed: 55, canopy: &suit }, &fields, &none, rect);
     let won = cand.tile_winners(&fields, &stand, (0, 0));
@@ -174,7 +174,7 @@ fn a_layered_tile_alone_equals_the_same_square_of_a_larger_build() {
     let (file, suit) = parse();
     let fields = neutral();
     let none = |_: f64, _: f64| false;
-    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0 };
+    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0, rocks: None };
     let grows = cand.layer_grows();
     println!("grows {grows:?}");
     assert_eq!(grows.iter().map(|g| g.0).collect::<Vec<_>>(), [Layer::Canopy, Layer::Understorey, Layer::Ground]);
