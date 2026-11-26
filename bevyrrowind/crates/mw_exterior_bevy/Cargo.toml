@@ -15,6 +15,8 @@ bevy_camera_controller = { workspace = true, features = ["free_camera"] }
 bevy_enhanced_input.workspace = true
 glam.workspace = true
 mw_actors_bevy.workspace = true
+# `nav_links.rs` (MA21): pathgrid approach points of the worldspace graph's door links.
+mw_ai.workspace = true
 mw_assets.workspace = true
 mw_audio_bevy.workspace = true
 mw_bake.workspace = true
@@ -99,6 +101,10 @@ tes3 = { workspace = true, features = ["esp"] }
 workspace-hack.workspace = true
 
 [dev-dependencies]
+# `nav_links.rs` tests: in-memory content and the real-install measurement.
+mw_install.workspace = true
+mw_records.workspace = true
+mw_vfs.workspace = true
 # `level/nav.rs` tests: a throwaway bake store.
 tempfile.workspace = true
 

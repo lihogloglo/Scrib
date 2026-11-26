@@ -273,6 +273,13 @@ classic until seamless M9a passes; seamless research §7). Fade-only links (and 
 crossed only when no player sees either end. Followers walk through; vanilla's follower teleport is the fallback when
 blocked for N s and unseen (decided, seamless research §7 Q7).
 
+**As built (MA21, 2026-11-26):** `mw_exterior_bevy/src/nav_links.rs` adds `NavWorldGraphPlugin` over `DoorLinks`.
+Approach: the PGRD node of the end's cell (exterior: arrival square + 8 neighbours) nearest the arrival, not behind the
+door plane along the arrival yaw, within `mw.nav.door_approach_m` (4 m, Guess); none: the arrival. Flags stay
+`classic_flags` until `world.doors` exists. `NavDoorStates`: `Locked` for a link with a door reference whose lock level
+is > 0 at load, nothing else (static; runtime locks come with the interaction lane). Vanilla: 1828 links, 0 skipped,
+2803/3656 ends on PGRD, 121 locked; pathgrids + graph 18.8 ms, locks 4.8 ms at load; log `nav: door approach ...`.
+
 ## Memory (Nemesis-style) for Morrowind
 
 Fact kinds as records: attacked me, stole from me, spared me, defeated me, helped me (quest), crime witnessed.

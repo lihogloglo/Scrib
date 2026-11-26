@@ -758,6 +758,8 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     }
     // WA-10: after the weather's apply, so the frame's first valid wind reaches the sea that frame.
     app.add_systems(Update, sea_wind.after(WeatherSystems::Apply));
+    // MA21: the worldspace graph over the door links (pathgrid approach points, load-time locks).
+    crate::nav_links::add(&mut app, options.actors.as_deref(), &options.world.links);
     mw_doors_bevy::add(&mut app, options.world, options.use_door);
     mw_devtools_bevy::pipeline_watch::add(&mut app);
     mw_scripts_bevy::add(&mut app, vfs.clone(), options.activate);

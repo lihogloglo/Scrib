@@ -60,6 +60,10 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   listeners by `WorldGraph::path_distance` through doors and into other worldspaces, closed doors + `closed_door_m`,
   `hearing.rs` `PortalPaths`; tier 1 straight line in its space; no `NavWorldGraph`: straight line, same space only). A walker whose strongest entry is Searching stops wandering and searches (`search.rs`: LKP, look,
   widening rings) while the band is held, until the ttl gives up, then decays and wanders again.
+- **Worldspace graph** (MA21, 2026-11-26; `mw_exterior_bevy/src/nav_links.rs`, added next to `mw_doors_bevy::add`):
+  `NavWorldGraphPlugin` over `DoorLinks`; each link end's approach point is the PGRD node nearest its arrival, in front
+  of the door plane and within `mw.nav.door_approach_m` (4 m), else the arrival (vanilla: 77% of 3656 ends from PGRD);
+  classic fade-only flags; links whose door reference has a lock level > 0 read `Locked` (static, from the load).
 
 ## Bevy features used
 Resources and console commands only; gizmos behind feature `debug`. No Bevy navmesh crate (surveyed in the spec).

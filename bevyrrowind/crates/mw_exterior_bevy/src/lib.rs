@@ -15,6 +15,7 @@ mod intro;
 mod teardown;
 pub mod level;
 mod loading_screen;
+pub mod nav_links;
 mod origin_rebase;
 pub mod quality_presets;
 pub mod restream;
