@@ -149,6 +149,8 @@ the `from` pose to the `to` pose; the body keeps model + correction. Ends 0/0, w
   (later) turns into sources.ron candidates. `clip-preview --browse` writes it in the browsed folder: Y keep, N reject,
   M maybe (each advances), Backspace clear, U next unrated, Space / `.` / `-` `=` transport (AN46b), Z undo (the session's last verdict action, newest
   first: the entry's exact previous value and the view come back; `BrowseList::undo`, AN46a); sorted keys, existing entries kept, atomic save.
+  On screen (AN46e): three lines (where, the selected take's verdict and `saved <rated> of <total>`, the keys that work now), a
+  large green `SAVED` / `UNDONE` or red `NOT SAVED: <why>` line for 2 s after every verdict action, Tab = details page.
 
 #### Browse review: diagnosis (AN9, 2026-11-26)
 
@@ -185,6 +187,14 @@ Nothing reads `grades.json` (gates `skate`/`jerk`/`turn_mag`, `mirror_candidate`
    rig is missed until in game. Fix: **AN11.**
 8. **Notes need a text editor.** `note: ...` verdicts cannot be entered in the tool. Fix: a number key tags a reason
    (skate, slide, pop, pose) into the note. **New** (small); these tags feed AG3 calibration.
+9. **The overlay hid what happened** (owner 2026-11-26, ANIM-6b: "wall of text", "no idea if my changes were validated";
+   in that session no verdict key reached the tool and nothing said so). **Built 2026-11-26** (AN46e: Bevy-free text
+   builders in `browse.rs`, `BrowseList::overlay_lines` = exactly 3 lines of at most 100 characters, the old overlay
+   content on a details page behind Tab (H is the actors' cloth toggle), a `Notice` per verdict action (`SAVED  take 03
+   = reject`, `UNDONE  take 02`, `NOT SAVED: reject takes with N until 2 are left`, `NOT SAVED: <save error>`), and a
+   key the browser does not bind answers `key Q does nothing here (Tab: keys)` and logs `browse key: KeyQ ignored`;
+   the first overlay text is logged once as `browse overlay: ...`). Industry form: culling and dailies tools show the
+   item, its flag and a toast per rating (Lightroom's flag bezel, RV's HUD line), help behind one key.
 
 **Industry form.** Dailies tools (ShotGrid/Tweak RV, KeyFlow) review versions with synced A/B, wipe and tiled compare,
 frame step and per-version status keys, never one clip at a time from memory. Mocap pipelines pick a **circle take**

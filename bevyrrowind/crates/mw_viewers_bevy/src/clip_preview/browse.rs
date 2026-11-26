@@ -748,6 +748,208 @@ impl BrowseList {
     }
 }
 
+/// The key that shows / hides the overlay's details page. H was taken: the actors' cloth
+/// A/B toggle (`mw_actors_bevy::actors::toggle_cloth`) runs in the browser too.
+pub const HELP_KEY: &str = "Tab";
+
+/// A rating as the overlay says it.
+pub fn rating_word(rating: Option<Rating>) -> &'static str {
+    match rating {
+        Some(Rating::Keep) => "keep",
+        Some(Rating::Maybe) => "maybe",
+        Some(Rating::Reject) => "reject",
+        Some(Rating::Note) => "note",
+        None => "unrated",
+    }
+}
+
+/// [`Tally`] as the details page says it.
+pub fn tally_text(t: Tally) -> String {
+    let note = if t.note > 0 { format!(" {} note", t.note) } else { String::new() };
+    format!("{} keep {} maybe {} reject{note} {} unrated", t.keep, t.maybe, t.reject, t.unrated)
+}
+
+/// The longest error the default overlay's line 2 shows, characters (layout: the 100-character line).
+const OFF_ERROR_CHARS: usize = 83;
+
+/// Line 2 with the verdict file unusable: its error's first line, cut to fit.
+fn verdicts_off_line(error: &str) -> String {
+    let first = error.lines().next().unwrap_or_default();
+    let cut: String = first.chars().take(OFF_ERROR_CHARS).collect();
+    let more = if cut.len() < first.len() { "..." } else { "" };
+    format!("VERDICTS OFF: {cut}{more}")
+}
+
+/// What the details page shows besides the list's own state ([`BrowseList::details_text`]).
+#[derive(Clone, Copy, Debug)]
+pub struct Details<'a> {
+    pub prov: &'a Prov,
+    /// The last cook's status line.
+    pub status: &'a str,
+    /// The last cook's loop line (empty for a clip that isn't a cycle).
+    pub cut: &'a str,
+    /// The last key's message.
+    pub message: &'a str,
+    /// [`Transport::label`].
+    pub transport: &'a str,
+    /// Cycle takes play cut into loops (L).
+    pub loop_cut: bool,
+}
+
+impl BrowseList {
+    /// The active filters, for the details page and messages.
+    pub fn filter_text(&self, verdicts_on: bool) -> String {
+        let view = if verdicts_on { self.view.as_str() } else { "all (verdicts off)" };
+        format!("view {view}, candidates only {}", if self.candidates_only { "on" } else { "off" })
+    }
+
+    /// Group `name`'s place among the list's prompt groups (1-based, browse order) and their count.
+    pub fn group_position(&self, name: &str) -> (usize, usize) {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut at = 0;
+        for (_, clip) in self.cursors() {
+            let group = group_name(clip);
+            if seen.insert(group) && group == name {
+                at = seen.len();
+            }
+        }
+        (at, seen.len())
+    }
+
+    /// The cursor's place in the whole list (1-based, browse order).
+    pub fn clip_position(&self) -> usize {
+        self.cursors().position(|(at, _)| at == (self.activity, self.clip)).map_or(0, |p| p + 1)
+    }
+
+    /// The default overlay: exactly three lines (where, the verdict and what is saved, the
+    /// keys that work now). `verdicts`: the file, or why it can't be used; `transport`:
+    /// [`Transport::label`].
+    pub fn overlay_lines(&self, verdicts: Result<&Verdicts, &str>, transport: &str) -> String {
+        let transport = if transport.is_empty() { String::new() } else { format!(" [{transport}]") };
+        let saved = |v: &Verdicts| format!("saved {} of {}", self.cursors().filter(|(_, c)| v.get(&c.id).is_some()).count(), self.len());
+        let (line1, line2, line3) = if let Some(s) = &self.group {
+            let (i, n) = self.group_position(&s.name);
+            let line2 = match verdicts {
+                Ok(v) => format!("take {} selected: {}   {}", s.selected + 1, rating_word(v.rating(&s.selected_take().clip.id)), saved(v)),
+                Err(e) => verdicts_off_line(e),
+            };
+            let keys = if s.final_round() { "Y keep   M maybe   N reject" } else { "N reject   1-4 select" };
+            (format!("{}   group {i} / {n}{transport}", s.name), line2, format!("{keys}   Z undo   Down next group   {HELP_KEY} more"))
+        } else {
+            let clip = self.current();
+            let line2 = match verdicts {
+                Ok(v) => format!("{}   {}", rating_word(v.rating(&clip.id)), saved(v)),
+                Err(e) => verdicts_off_line(e),
+            };
+            (format!("{}   clip {} / {}{transport}", clip.id, self.clip_position(), self.len()), line2, format!("Y keep   N reject   M maybe   Z undo   G groups   {HELP_KEY} more"))
+        };
+        format!("{line1}\n{line2}\n{line3}")
+    }
+
+    /// The details page ([`HELP_KEY`]): the clip, its cook, prompt, grade, verdict and tallies, the
+    /// last message, then every key.
+    pub fn details_text(&self, verdicts: Result<&Verdicts, &str>, d: &Details<'_>) -> String {
+        let clip = self.current();
+        let activity = self.current_activity();
+        let grade = self.grade_line(clip).map(|g| format!("{g}\n")).unwrap_or_default();
+        let (verdict, tally, all) = match verdicts {
+            Ok(v) => (v.get(&clip.id).unwrap_or("unrated").to_owned(), tally_text(v.tally(&activity.clips)), tally_text(v.tally(self.activities.iter().flat_map(|a| &a.clips)))),
+            Err(_) => ("(verdicts off)".to_owned(), String::new(), String::new()),
+        };
+        let cut = if d.cut.is_empty() { String::new() } else { format!("{}\n", d.cut) };
+        let transport = if d.transport.is_empty() { String::new() } else { format!("   [{}]", d.transport) };
+        let group = match &self.group {
+            Some(s) => format!(
+                "GROUP {}: {} on stage, take {} selected{}\n",
+                s.name,
+                s.takes.len(),
+                s.selected + 1,
+                if s.final_round() { "   (final: Y keep / M maybe)" } else { "   (N rejects down to 2, then Y / M)" }
+            ),
+            None => String::new(),
+        };
+        let l = if d.loop_cut { "L raw take" } else { "L loop cut" };
+        format!(
+            "{group}{} ({}/{})   clip {}/{} of {} in all   {}{transport}\n{}   band: {}   {}\n{cut}prompt: {}\n{grade}verdict: {verdict}   activity: {tally}   all: {all}   {}\n\
+             keys: Y keep  N reject  M maybe  Backspace clear  U next unrated  Z undo   G group review / single clips\n\
+             Left/Right clip (group: take)  1-4 take  Up/Down activity (group: group)   Space pause  . frame  -/= speed\n\
+             C candidates only  V view  {l}   drag orbit  wheel zoom   {HELP_KEY} back",
+            activity.name,
+            self.activity + 1,
+            self.activities.len(),
+            self.clip + 1,
+            activity.clips.len(),
+            self.len(),
+            self.filter_text(verdicts.is_ok()),
+            clip.rel,
+            d.prov.band.as_deref().unwrap_or("-"),
+            d.status,
+            d.prov.prompt.as_deref().unwrap_or("(no .prov.json prompt)"),
+            d.message,
+        )
+    }
+
+    /// How a notice names clip `id`: `take <nn>` in group review, the clip id in single review.
+    pub fn notice_tail(&self, id: &str) -> String {
+        match (&self.group, self.cursors().find(|(_, c)| c.id == id)) {
+            (Some(_), Some((_, clip))) => format!("take {}", take_number(clip)),
+            _ => id.to_owned(),
+        }
+    }
+}
+
+/// A notice's colour: green for a saved or undone verdict action, red for what was not saved
+/// (and for a key that does nothing).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoticeKind {
+    Saved,
+    NotSaved,
+    Undone,
+}
+
+/// The large line a verdict action (or a key that does nothing) shows for a moment.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Notice {
+    pub kind: NoticeKind,
+    pub text: String,
+}
+
+impl Notice {
+    /// Nothing was saved, and why.
+    pub fn not_saved(reason: &str) -> Self {
+        Self { kind: NoticeKind::NotSaved, text: format!("NOT SAVED: {reason}") }
+    }
+
+    /// `verdict` recorded and saved for the clip `tail` names ([`BrowseList::notice_tail`]).
+    pub fn rated(tail: &str, verdict: Verdict) -> Self {
+        Self { kind: NoticeKind::Saved, text: format!("SAVED  {tail} = {}", verdict.as_str()) }
+    }
+
+    /// A group verdict's result: keep / maybe refused while more than [`GROUP_FINAL`] takes are on.
+    pub fn group_rated(tail: &str, verdict: Verdict, out: GroupRated) -> Self {
+        match out {
+            GroupRated::Refused => Self::not_saved(&format!("reject takes with N until {GROUP_FINAL} are left")),
+            GroupRated::Removed | GroupRated::Opened | GroupRated::Finished => Self::rated(tail, verdict),
+        }
+    }
+
+    /// Backspace's result (`had`: the clip had a verdict).
+    pub fn cleared(tail: &str, had: bool) -> Self {
+        if had { Self { kind: NoticeKind::Saved, text: format!("SAVED  {tail} = cleared") } } else { Self::not_saved("no verdict to clear") }
+    }
+
+    /// Z's result: the undone clip's tail, or `None` if nothing was left to undo.
+    pub fn undo(tail: Option<&str>) -> Self {
+        tail.map_or_else(|| Self::not_saved("nothing to undo"), |tail| Self { kind: NoticeKind::Undone, text: format!("UNDONE  {tail}") })
+    }
+
+    /// A key the browser doesn't bind, by its `KeyCode` debug name (`KeyQ` reads `Q`, `Digit7` `7`).
+    pub fn unbound(key: &str) -> Self {
+        let key = key.strip_prefix("Key").or_else(|| key.strip_prefix("Digit")).filter(|k| !k.is_empty()).unwrap_or(key);
+        Self { kind: NoticeKind::NotSaved, text: format!("key {key} does nothing here ({HELP_KEY}: keys)") }
+    }
+}
+
 /// The grader's metrics, in a fixed order with units; absent ones left out.
 fn metrics_text(metrics: &BTreeMap<String, f64>) -> String {
     const SHOWN: [(&str, &str, &str); 7] = [
@@ -1784,5 +1986,151 @@ mod tests {
         assert!(rows_near(&row(2, 1.5), &[-0.75, 0.75]));
         assert!(rows_near(&row(4, 1.0), &[-1.5, -0.5, 0.5, 1.5]));
         assert!(near(row_x(0, 1, 2.0), 0.0));
+    }
+
+    /// Ten clips, three prompt groups: `run.act.g0` (3 takes), `walk.act.g0` (4), `walk.act.g1` (3).
+    fn reviewed() -> BrowseList {
+        let root = Path::new("gen");
+        let mut paths: Vec<String> = (0..3).map(|t| format!("run/act/run.act.g0.0{t}.bvh")).collect();
+        paths.extend((0..4).map(|t| format!("walk/act/walk.act.g0.0{t}.bvh")));
+        paths.extend((0..3).map(|t| format!("walk/act/walk.act.g1.0{t}.bvh")));
+        BrowseList::from_paths(root, paths.iter().map(|p| root.join(p))).unwrap()
+    }
+
+    /// [`reviewed`] in group review: `walk.act.g0`'s four takes on stage, five other clips rated.
+    fn reviewed_group() -> (BrowseList, Verdicts) {
+        let mut l = reviewed();
+        let mut v = Verdicts::default();
+        for id in ["run.act.g0.00", "run.act.g0.01", "run.act.g0.02", "walk.act.g1.00", "walk.act.g1.01"] {
+            v.set(id, Verdict::Reject);
+        }
+        l.step_activity(1);
+        assert_eq!(l.current().id, "walk.act.g0.00");
+        assert!(l.open_group(Some(&v)));
+        (l, v)
+    }
+
+    #[test]
+    fn group_overlay_is_three_lines_with_only_the_keys_that_work() {
+        let (mut l, v) = reviewed_group();
+        assert!(l.select_take(1));
+        let text = l.overlay_lines(Ok(&v), "");
+        assert_eq!(text, "walk.act.g0   group 2 / 3\ntake 2 selected: unrated   saved 5 of 10\nN reject   1-4 select   Z undo   Down next group   Tab more");
+        assert!(!text.contains("Y keep"));
+    }
+
+    #[test]
+    fn final_round_overlay_offers_keep_and_maybe() {
+        let (mut l, mut v) = reviewed_group();
+        l.group.as_mut().unwrap().takes.truncate(2);
+        v.set("walk.act.g0.00", Verdict::Keep);
+        let text = l.overlay_lines(Ok(&v), "");
+        assert_eq!(text, "walk.act.g0   group 2 / 3\ntake 1 selected: keep   saved 6 of 10\nY keep   M maybe   N reject   Z undo   Down next group   Tab more");
+    }
+
+    #[test]
+    fn single_overlay_shows_the_verdict_and_the_saved_count() {
+        let dir = temp("overlay-single");
+        let mut l = reviewed();
+        let mut v = Verdicts::load(&dir).unwrap();
+        assert_eq!(l.overlay_lines(Ok(&v), ""), "run.act.g0.00   clip 1 / 10\nunrated   saved 0 of 10\nY keep   N reject   M maybe   Z undo   G groups   Tab more");
+        l.rate(&mut v, Verdict::Keep).unwrap();
+        l.step_clip(-1);
+        assert_eq!(l.overlay_lines(Ok(&v), ""), "run.act.g0.00   clip 1 / 10\nkeep   saved 1 of 10\nY keep   N reject   M maybe   Z undo   G groups   Tab more");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn verdicts_off_says_so_on_line_two() {
+        let l = reviewed();
+        let line2 = |l: &BrowseList, e: &str| l.overlay_lines(Err(e), "").lines().nth(1).unwrap().to_owned();
+        assert_eq!(line2(&l, "gen/verdicts.toml: bad"), "VERDICTS OFF: gen/verdicts.toml: bad");
+        // A multi-line TOML error keeps its first line; a long one is cut.
+        assert_eq!(line2(&l, "gen/verdicts.toml: TOML parse error\n  |\n1 | x"), "VERDICTS OFF: gen/verdicts.toml: TOML parse error");
+        assert_eq!(line2(&l, &"e".repeat(200)), format!("VERDICTS OFF: {}...", "e".repeat(OFF_ERROR_CHARS)));
+        let (g, _) = reviewed_group();
+        assert_eq!(line2(&g, "gen/verdicts.toml: bad"), "VERDICTS OFF: gen/verdicts.toml: bad");
+    }
+
+    #[test]
+    fn transport_label_shows_only_when_not_empty() {
+        let l = reviewed();
+        let v = Verdicts::default();
+        let line1 = |t: &Transport| l.overlay_lines(Ok(&v), &t.label()).lines().next().unwrap().to_owned();
+        let mut t = Transport::default();
+        assert_eq!(line1(&t), "run.act.g0.00   clip 1 / 10");
+        t.toggle_pause();
+        assert_eq!(line1(&t), "run.act.g0.00   clip 1 / 10 [paused]");
+        t.resume();
+        t.slower();
+        t.slower();
+        assert_eq!(line1(&t), "run.act.g0.00   clip 1 / 10 [x0.25]");
+        let (g, v) = reviewed_group();
+        assert_eq!(g.overlay_lines(Ok(&v), "paused").lines().next().unwrap(), "walk.act.g0   group 2 / 3 [paused]");
+    }
+
+    #[test]
+    fn every_notice_reads_what_happened() {
+        let saved = |text: &str| Notice { kind: NoticeKind::Saved, text: text.to_owned() };
+        let not_saved = |text: &str| Notice { kind: NoticeKind::NotSaved, text: text.to_owned() };
+        assert_eq!(Notice::rated("take 03", Verdict::Reject), saved("SAVED  take 03 = reject"));
+        assert_eq!(Notice::rated("walk.act.g0.00", Verdict::Keep), saved("SAVED  walk.act.g0.00 = keep"));
+        assert_eq!(Notice::group_rated("take 01", Verdict::Maybe, GroupRated::Opened), saved("SAVED  take 01 = maybe"));
+        assert_eq!(Notice::group_rated("take 01", Verdict::Keep, GroupRated::Refused), not_saved("NOT SAVED: reject takes with N until 2 are left"));
+        assert_eq!(Notice::cleared("take 02", true), saved("SAVED  take 02 = cleared"));
+        assert_eq!(Notice::cleared("take 02", false), not_saved("NOT SAVED: no verdict to clear"));
+        assert_eq!(Notice::undo(Some("take 02")), Notice { kind: NoticeKind::Undone, text: "UNDONE  take 02".to_owned() });
+        assert_eq!(Notice::undo(None), not_saved("NOT SAVED: nothing to undo"));
+        assert_eq!(Notice::not_saved("gen/verdicts.toml: access denied"), not_saved("NOT SAVED: gen/verdicts.toml: access denied"));
+        assert_eq!(Notice::unbound("KeyQ"), not_saved("key Q does nothing here (Tab: keys)"));
+        assert_eq!(Notice::unbound("Digit7"), not_saved("key 7 does nothing here (Tab: keys)"));
+        assert_eq!(Notice::unbound("Enter"), not_saved("key Enter does nothing here (Tab: keys)"));
+        // The tail: the take number in group review, the clip id in single review.
+        let (g, _) = reviewed_group();
+        assert_eq!((g.notice_tail("walk.act.g0.02"), reviewed().notice_tail("walk.act.g0.02")), ("take 02".to_owned(), "walk.act.g0.02".to_owned()));
+    }
+
+    #[test]
+    fn default_lines_fit_100_characters_with_a_40_character_name() {
+        let name = "n".repeat(40);
+        let root = Path::new("gen");
+        let paths: Vec<String> = (0..4).map(|t| format!("act/{name}.0{t}.bvh")).chain([format!("act/{name}.bvh")]).collect();
+        let mut l = BrowseList::from_paths(root, paths.iter().map(|p| root.join(p))).unwrap();
+        let v = Verdicts::default();
+        let long_error = "x".repeat(300);
+        let check = |l: &BrowseList| {
+            for verdicts in [Ok(&v), Err(long_error.as_str())] {
+                for transport in ["", "paused", "x0.25"] {
+                    let text = l.overlay_lines(verdicts, transport);
+                    assert_eq!(text.lines().count(), 3, "{text}");
+                    assert!(text.lines().all(|line| line.chars().count() <= 100), "{text}");
+                }
+            }
+        };
+        // Single review: a 43-character take id, then the 40-character one.
+        check(&l);
+        l.step_clip(-1);
+        check(&l);
+        assert!(l.open_group(None));
+        assert_eq!(l.group.as_ref().unwrap().name, name);
+        check(&l);
+        l.group.as_mut().unwrap().takes.truncate(2);
+        check(&l);
+    }
+
+    #[test]
+    fn details_page_holds_what_the_default_lines_leave_out() {
+        let l = graded();
+        let v = Verdicts::default();
+        let prov = Prov { prompt: Some("a person walks forward, relaxed".to_owned()), band: Some("walk".to_owned()) };
+        let d = Details { prov: &prov, status: "1.20 s, cooked + retargeted in 80 ms", cut: "", message: "", transport: "", loop_cut: true };
+        let details = l.details_text(Ok(&v), &d);
+        let default = l.overlay_lines(Ok(&v), "");
+        let grade = l.grade_line(l.current()).unwrap();
+        for part in ["a person walks forward, relaxed", grade.as_str(), "Backspace"] {
+            assert!(details.contains(part), "{part} not in {details}");
+            assert!(!default.contains(part), "{part} in {default}");
+        }
+        assert!(!default.contains("prompt"));
     }
 }

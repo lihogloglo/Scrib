@@ -18,6 +18,9 @@
 //! ([`Seat`]), on one [`GroupClock`]; 1-4 or Left/Right select a take, N rejects it (it leaves, the
 //! row closes up), Y / M give keep / maybe once two are left, Up/Down step groups; an emptied stage
 //! opens the next group ([`BrowseList::rate_take`]), G goes back to single clips.
+//! The overlay is three lines ([`BrowseList::overlay_lines`]: where, the verdict and the
+//! saved count, the keys that work now); Tab shows the details page. Each verdict action shows a
+//! large SAVED / NOT SAVED / UNDONE notice for [`NOTICE_S`], and a key that does nothing says so.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -31,7 +34,7 @@ use sf_anim_graph::slot::LOOP_FOREVER;
 use sf_character::Readiness;
 use sf_character_bevy::{Character, CharacterReadiness};
 
-use super::browse::{BrowseClip, BrowseList, GROUP_MAX, GroupClock, GroupRated, Grades, Prov, Tally, Transport, Verdict, Verdicts, row_x};
+use super::browse::{BrowseClip, BrowseList, Details, GROUP_MAX, GroupClock, GroupRated, Grades, Notice, NoticeKind, Prov, Transport, Verdict, Verdicts, row_x};
 use super::cook::{self, ClipJob};
 use super::{ActorQuery, Phase, Preview, play_full};
 
@@ -115,6 +118,12 @@ pub(super) struct Browse {
     group: GroupPlay,
     /// Pause / frame step / speed, both review modes.
     transport: Transport,
+    /// The overlay shows the details page ([`super::browse::HELP_KEY`] toggles; off at start).
+    details: bool,
+    /// A notice to show on the next update ([`Browse::show_notice`]).
+    notice: Option<Notice>,
+    /// When the notice on screen appeared (real time).
+    notice_since: Option<Instant>,
 }
 
 impl Browse {
@@ -141,6 +150,9 @@ impl Browse {
             cut: String::new(),
             group: GroupPlay::default(),
             transport: Transport::default(),
+            details: false,
+            notice: None,
+            notice_since: None,
         }
     }
 
@@ -176,29 +188,48 @@ impl Browse {
             Ok(v) => v,
             Err(e) => {
                 self.message = format!("verdicts off: {e}");
+                self.notice = Some(Notice::not_saved(&self.message));
                 return true;
             }
         };
         let id = self.list.current().id.clone();
+        let tail = self.list.notice_tail(&id);
         let result = match pressed {
             Some((_, Some(verdict))) => {
                 self.pending = true;
-                self.list.rate(verdicts, verdict).map(|()| format!("{id}: {}", verdict.as_str()))
+                self.list.rate(verdicts, verdict).map(|()| (format!("{id}: {}", verdict.as_str()), Some(Notice::rated(&tail, verdict))))
             }
-            Some((_, None)) => self.list.clear_rating(verdicts).map(|had| if had { format!("{id}: cleared") } else { format!("{id}: no verdict to clear") }),
+            Some((_, None)) => self.list.clear_rating(verdicts).map(|had| (if had { format!("{id}: cleared") } else { format!("{id}: no verdict to clear") }, Some(Notice::cleared(&tail, had)))),
             // Z: the undone clip comes back under the cursor and replays.
             None if undo => self.list.undo(verdicts).map(|undone| {
                 self.pending |= undone.is_some();
-                undo_text(undone)
+                let notice = Notice::undo(undone.as_deref().map(|u| self.list.notice_tail(u)).as_deref());
+                (undo_text(undone), Some(notice))
             }),
             None => {
                 self.pending = self.list.next_unrated(verdicts);
-                Ok(if self.pending { "next unrated".to_owned() } else { "every clip is rated".to_owned() })
+                Ok((if self.pending { "next unrated".to_owned() } else { "every clip is rated".to_owned() }, None))
             }
         };
-        self.message = result.unwrap_or_else(|e| format!("error: {e}"));
+        self.take_result(result);
         println!("browse verdict: {}", self.message);
         true
+    }
+
+    /// A verdict action's message and notice; an error is shown as not saved.
+    fn take_result(&mut self, result: Result<(String, Option<Notice>), String>) {
+        match result {
+            Ok((message, notice)) => {
+                self.message = message;
+                if notice.is_some() {
+                    self.notice = notice;
+                }
+            }
+            Err(e) => {
+                self.notice = Some(Notice::not_saved(&e));
+                self.message = format!("error: {e}");
+            }
+        }
     }
 
     /// C (candidates only) / V (view); `true` if the overlay needs a refresh.
@@ -227,64 +258,78 @@ impl Browse {
 
     /// The active filters, for the overlay and messages.
     fn filter_text(&self) -> String {
-        let view = if self.verdicts.is_ok() { self.list.view.as_str() } else { "all (verdicts off)" };
-        format!("view {view}, candidates only {}", if self.list.candidates_only { "on" } else { "off" })
+        self.list.filter_text(self.verdicts.is_ok())
     }
 
+    /// The overlay: three lines ([`BrowseList::overlay_lines`]), or the details page. The first
+    /// three-line text is logged once (`browse overlay: ...`, the proof line of an owner check).
     fn overlay_text(&self) -> String {
-        let clip = self.list.current();
-        let prov = Prov::read(clip).unwrap_or_default();
-        let grade = self.list.grade_line(clip).map(|g| format!("{g}\n")).unwrap_or_default();
-        let activity = self.list.current_activity();
-        let (verdict, tally, all) = match &self.verdicts {
-            Ok(v) => (v.get(&clip.id).unwrap_or("unrated").to_owned(), tally_text(v.tally(&activity.clips)), tally_text(v.tally(self.list.activities.iter().flat_map(|a| &a.clips)))),
-            Err(_) => ("(verdicts off)".to_owned(), String::new(), String::new()),
-        };
-        let cut = if self.cut.is_empty() { String::new() } else { format!("{}\n", self.cut) };
-        let l = if self.loop_cut { "L: raw take" } else { "L: loop cut" };
-        let transport = match self.transport.label() {
-            label if label.is_empty() => label,
-            label => format!("   [{label}]"),
-        };
-        let (group, keys) = match &self.list.group {
-            Some(s) => (
-                format!(
-                    "GROUP {}: {} on stage, take {} selected{}\n",
-                    s.name,
-                    s.takes.len(),
-                    s.selected + 1,
-                    if s.final_round() { "   (final: Y keep / M maybe)" } else { "   (N rejects down to 2, then Y / M)" }
-                ),
-                "1-4 / Left/Right: select take  N reject  Y keep  M maybe  Bksp clear  Z undo  U next unrated   Up/Down: group   G: single clips   Space pause  . frame  -/= speed",
-            ),
-            None => (String::new(), "Y keep  N reject  M maybe  Bksp clear  Z undo  U next unrated   G: group side by side   Left/Right: clip   Up/Down: activity   Space pause  . frame  -/= speed"),
-        };
-        format!(
-            "{group}{} ({}/{})   clip {}/{} of {} in all   {}{transport}\n{}   band: {}   {}\n{cut}prompt: {}\n{grade}verdict: {verdict}   activity: {tally}   all: {all}   {}\n\
-             {keys}   C candidates only  V view   {l}   drag: orbit   wheel: zoom",
-            activity.name,
-            self.list.activity + 1,
-            self.list.activities.len(),
-            self.list.clip + 1,
-            activity.clips.len(),
-            self.list.len(),
-            self.filter_text(),
-            clip.rel,
-            prov.band.as_deref().unwrap_or("-"),
-            self.status,
-            prov.prompt.as_deref().unwrap_or("(no .prov.json prompt)"),
-            self.message,
-        )
+        static LOGGED: std::sync::Once = std::sync::Once::new();
+        let verdicts = self.verdicts.as_ref().map_err(String::as_str);
+        let transport = self.transport.label();
+        if !self.details {
+            let text = self.list.overlay_lines(verdicts, &transport);
+            LOGGED.call_once(|| println!("browse overlay: {}", text.replace('\n', " | ")));
+            return text;
+        }
+        let prov = Prov::read(self.list.current()).unwrap_or_default();
+        let details = Details { prov: &prov, status: &self.status, cut: &self.cut, message: &self.message, transport: &transport, loop_cut: self.loop_cut };
+        self.list.details_text(verdicts, &details)
+    }
+
+    /// Put the pending notice on screen, or take the shown one down after [`NOTICE_S`].
+    fn show_notice(&mut self, notices: &mut Notices<'_, '_>) {
+        if let Some(notice) = self.notice.take() {
+            let color = match notice.kind {
+                NoticeKind::Saved | NoticeKind::Undone => Color::srgb(0.45, 1.0, 0.45),
+                NoticeKind::NotSaved => Color::srgb(1.0, 0.4, 0.35),
+            };
+            for (mut text, mut text_color, mut node) in &mut *notices {
+                text.0.clone_from(&notice.text);
+                text_color.0 = color;
+                node.display = Display::Flex;
+            }
+            self.notice_since = Some(Instant::now());
+        } else if self.notice_since.is_some_and(|t| t.elapsed().as_secs_f32() >= NOTICE_S) {
+            self.notice_since = None;
+            for (.., mut node) in &mut *notices {
+                node.display = Display::None;
+            }
+        }
     }
 }
 
-fn tally_text(t: Tally) -> String {
-    let note = if t.note > 0 { format!(" {} note", t.note) } else { String::new() };
-    format!("{} keep {} maybe {} reject{note} {} unrated", t.keep, t.maybe, t.reject, t.unrated)
-}
+/// How long a notice stays on screen, seconds of real time (a new one replaces it).
+// tunables: const (dev-tool UI, a toast's on-screen time)
+const NOTICE_S: f32 = 2.0;
 
 #[derive(Component)]
 pub(super) struct Overlay;
+
+/// The large notice line under the overlay ([`Notice`]).
+#[derive(Component)]
+pub(super) struct NoticeLine;
+
+/// The notice line's text, colour and node (shown / hidden).
+type Notices<'w, 's> = Query<'w, 's, (&'static mut Text, &'static mut TextColor, &'static mut Node), (With<NoticeLine>, Without<Overlay>)>;
+
+/// Whether the browser (or content it runs, or the window's own handling) uses `key`; digits 1-4
+/// only in group review. Modifiers, Escape and F1-F12 never count as unbound.
+fn bound(key: KeyCode, group: bool) -> bool {
+    use KeyCode as K;
+    let browser = matches!(
+        key,
+        K::KeyY | K::KeyN | K::KeyM | K::KeyU | K::KeyZ | K::KeyC | K::KeyV | K::KeyG | K::KeyL | K::Tab | K::Backspace | K::Space | K::Period | K::Minus | K::Equal | K::ArrowLeft | K::ArrowRight | K::ArrowUp | K::ArrowDown
+    );
+    // B / H: the actors' bodies and cloth A/B toggles (`mw_actors_bevy::actors`), live in the browser too.
+    let content = matches!(key, K::KeyB | K::KeyH);
+    let skipped = matches!(
+        key,
+        K::ShiftLeft | K::ShiftRight | K::ControlLeft | K::ControlRight | K::AltLeft | K::AltRight | K::SuperLeft | K::SuperRight | K::Escape | K::F1 | K::F2 | K::F3 | K::F4 | K::F5 | K::F6 | K::F7 | K::F8 | K::F9 | K::F10 | K::F11 | K::F12
+    );
+    let take = group && matches!(key, K::Digit1 | K::Digit2 | K::Digit3 | K::Digit4);
+    browser || content || skipped || take
+}
 
 /// The label over a group seat's actor ([`seat_labels`]).
 #[derive(Component)]
@@ -304,14 +349,25 @@ pub(super) fn spawn_overlay(mut commands: Commands) {
             Node { position_type: PositionType::Absolute, display: Display::None, padding: UiRect::all(Val::Px(3.0)), ..Node::default() },
         ));
     }
-    commands.spawn((
-        Overlay,
-        Text::new("loading the NPC..."),
-        TextFont::from_font_size(15.0),
-        TextColor(Color::srgb(0.95, 0.95, 0.85)),
-        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
-        Node { position_type: PositionType::Absolute, top: Val::Px(6.0), left: Val::Px(6.0), right: Val::Px(6.0), padding: UiRect::all(Val::Px(6.0)), ..Node::default() },
-    ));
+    // The overlay across the top, the notice centred right under it (whatever the overlay's height).
+    commands.spawn(Node { position_type: PositionType::Absolute, top: Val::Px(6.0), left: Val::Px(6.0), right: Val::Px(6.0), flex_direction: FlexDirection::Column, row_gap: Val::Px(10.0), ..Node::default() }).with_children(|top| {
+        top.spawn((
+            Overlay,
+            Text::new("loading the NPC..."),
+            TextFont::from_font_size(18.0),
+            TextColor(Color::srgb(0.95, 0.95, 0.85)),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+            Node { padding: UiRect::all(Val::Px(6.0)), ..Node::default() },
+        ));
+        top.spawn((
+            NoticeLine,
+            Text::new(""),
+            TextFont::from_font_size(40.0),
+            TextColor(Color::WHITE),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
+            Node { display: Display::None, align_self: AlignSelf::Center, padding: UiRect::axes(Val::Px(16.0), Val::Px(6.0)), ..Node::default() },
+        ));
+    });
 }
 
 /// The browser's actors: (the [`ActorQuery`] of a body, its seat root).
@@ -461,28 +517,36 @@ impl Browse {
             Ok(v) => v,
             Err(e) => {
                 self.message = format!("verdicts off: {e}");
+                self.notice = Some(Notice::not_saved(&self.message));
                 return true;
             }
         };
         let id = self.list.current().id.clone();
+        let tail = self.list.notice_tail(&id);
         let result = if let Some(verdict) = rate {
-            self.list.rate_take(verdicts, verdict).map(|out| match out {
-                GroupRated::Refused => format!("{id}: keep / maybe once 2 takes are left (N rejects)"),
-                GroupRated::Removed => format!("{id}: {}", verdict.as_str()),
-                GroupRated::Opened => format!("{id}: {}; next takes", verdict.as_str()),
-                GroupRated::Finished => format!("{id}: {}; no other group is shown", verdict.as_str()),
+            self.list.rate_take(verdicts, verdict).map(|out| {
+                let message = match out {
+                    GroupRated::Refused => format!("{id}: keep / maybe once 2 takes are left (N rejects)"),
+                    GroupRated::Removed => format!("{id}: {}", verdict.as_str()),
+                    GroupRated::Opened => format!("{id}: {}; next takes", verdict.as_str()),
+                    GroupRated::Finished => format!("{id}: {}; no other group is shown", verdict.as_str()),
+                };
+                (message, Some(Notice::group_rated(&tail, verdict, out)))
             })
         } else if clear {
-            self.list.clear_rating(verdicts).map(|had| if had { format!("{id}: cleared") } else { format!("{id}: no verdict to clear") })
+            self.list.clear_rating(verdicts).map(|had| (if had { format!("{id}: cleared") } else { format!("{id}: no verdict to clear") }, Some(Notice::cleared(&tail, had))))
         } else if undo {
-            self.list.undo(verdicts).map(undo_text)
+            self.list.undo(verdicts).map(|undone| {
+                let notice = Notice::undo(undone.as_deref().map(|u| self.list.notice_tail(u)).as_deref());
+                (undo_text(undone), Some(notice))
+            })
         } else if self.list.next_unrated(verdicts) {
             self.list.open_group(Some(verdicts));
-            Ok("next unrated".to_owned())
+            Ok(("next unrated".to_owned(), None))
         } else {
-            Ok("every clip is rated".to_owned())
+            Ok(("every clip is rated".to_owned(), None))
         };
-        self.message = result.unwrap_or_else(|e| format!("error: {e}"));
+        self.take_result(result);
         println!("browse verdict: {}", self.message);
         true
     }
@@ -606,12 +670,26 @@ pub(super) fn browse_step(
     rigs: Rigs,
     globals: Query<&GlobalTransform>,
     mut overlay: Query<&mut Text, With<Overlay>>,
+    mut notices: Notices,
     mut windows: Query<&mut Window>,
 ) {
     if preview.phase != Phase::Browse {
         return;
     }
     let Some(b) = preview.browse.as_mut() else { return };
+    // Last update's notice (a verdict action), or the one on screen timing out.
+    b.show_notice(&mut notices);
+    if let Some(key) = keys.get_just_pressed().copied().find(|k| !bound(*k, b.list.group.is_some())) {
+        println!("browse key: {key:?} ignored");
+        b.notice = Some(Notice::unbound(&format!("{key:?}")));
+    }
+    if keys.just_pressed(KeyCode::Tab) {
+        b.details = !b.details;
+        let text = b.overlay_text();
+        for mut t in &mut overlay {
+            t.0.clone_from(&text);
+        }
+    }
     let dt = time.delta_secs();
     let transport_refresh = b.transport_keys(&keys);
     let group_refresh = if b.list.group.is_none() {

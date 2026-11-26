@@ -30,7 +30,9 @@ seen): (5) YES, "planted feet seem to be planted". (4) NOT JUDGED: the keyboard 
 and the walk->jog blend were never on screen ("the walk doesn't work because we don't have a specific button to just
 walk, but it's alright"); stays open until the player can walk. In passing: "the animations (jog and sprint) are
 still wonky, we'll have to find better ones (or generate them)". Run 1 (questions 1-3): NOT ANSWERED at the same
-sitting: the review tool's UI was rejected (ANIM-6b); asked again once its overlay is redone.
+sitting: the review tool's UI was rejected (ANIM-6b). Overlay redone (AN46e): ask run 1 again after ANIM-6b (single
+review reads `<clip id>   clip i / n` / `unrated   saved r of n` / `Y keep   N reject   M maybe   Z undo   G groups
+Tab more`; proof line `browse overlay: ...`).
 
 ## ANIM-9: sit/stand batch 1 candidates (AN26a)
 
@@ -42,26 +44,31 @@ C = candidates, G on a group (groups = `seat.<family>[.old].<piece>.<band>`; ver
 (4) G on `seat.floor.exit.front.seat14`: does any take stand up from the floor believably (no float, no snap)? yes/no
 (5) G on `seat.chair.old.loop.rest.seat48`: does any take read as an old person? yes/no
 Proof log: `browse grades: <n> clips graded, 0 gated` (136 clips in the folder) in last.log. Keeps = the hub sources and picks for AN26b.
-Status: awaiting owner (AN26a, uncommitted 2026-11-26). Skipped at the 2026-11-26 sitting: same tool, UI rejected
-(ANIM-6b); waits for the overlay redo.
+Status: awaiting owner (AN26a). Skipped at the 2026-11-26 sitting: same tool, UI rejected (ANIM-6b). Overlay redone
+(AN46e): ask after ANIM-6b. In group review the screen reads `<group>   group i / n` / `take k selected: unrated
+saved r of 136` / `N reject   1-4 select   Z undo   Down next group   Tab more` (Y / M once 2 takes are left); each
+verdict key answers with a large SAVED or NOT SAVED line. Second proof line: `browse overlay: ...`.
 
-## ANIM-6b: side-by-side group review in clip-preview (AN10)
+## ANIM-6b: side-by-side group review in clip-preview (AN10), readable overlay (AN46e)
 
-Run: `owner_launch.sh clip-preview --browse "D:/Gamedev/Bevyrrowind/animation packs/generated/loco2"` (absolute folder),
-Down to a walk activity, then G (V = unrated first if you like; verdicts land in the same `verdicts.toml`). Questions:
-(1) G on a walk group: do 2-4 takes play side by side, starting and restarting in step, a label over each? yes/no
-(2) press 2 then N: does that take vanish and the rest close up, still in step? yes/no
-(3) with 2 left, Y on one and M on the other: does the next group open by itself? yes/no
-(4) G again: back to one clip, one actor on the mark? yes/no
-Proof log: `clip-preview: group <id> <n> takes` (and `clip-preview: group row spacing ...`) in last.log.
-Status: REJECTED (owner 2026-11-26 sitting, exe 1c699df9, `--browse` loco2): "woah that UI is terrible and it's hard to
+Built: the browser's overlay is three short lines, a large SAVED / NOT SAVED line answers every verdict key, Tab
+shows the details. Run: `owner_launch.sh clip-preview --browse "D:/Gamedev/Bevyrrowind/animation packs/generated/loco2"`
+(absolute folder). It opens on one clip: `<clip id>   clip 1 / n` / `unrated   saved 0 of n` /
+`Y keep   N reject   M maybe   Z undo   G groups   Tab more`. Press G: 2-4 takes side by side, line 3 becomes
+`N reject   1-4 select   Z undo   Down next group   Tab more`. Questions:
+(1) top of the screen: three short lines only, and you can tell which take is selected? yes/no
+(2) press 2 then N: a large green `SAVED  take .. = reject` for 2 s, the take leaves, the rest close up in step? yes/no
+(3) press Y while more than 2 takes stand: a large red `NOT SAVED: reject takes with N until 2 are left`? yes/no
+(4) with 2 left, Y on one and M on the other: SAVED both times, and the next group opens by itself? yes/no
+(5) at every moment, is it clear whether your verdict was saved? yes/no
+Proof log: `browse overlay: <clip id>   clip 1 / <n> | unrated   saved ... | Y keep   N reject ...` in last.log (then a
+`browse verdict:` line per verdict key, `browse key: <K> ignored` per key that does nothing).
+Status: awaiting owner (AN46e built 2026-11-26; seen before ANIM-9 and ANIM-1 run 1, which use the same tool).
+History: REJECTED at the 2026-11-26 sitting (exe 1c699df9, old overlay): "woah that UI is terrible and it's hard to
 understand what's happening. No more wall of text in the test scenes please. I have no idea if my changes were
-validated or not...". Questions 1-4 not answered. Evidence (`%TEMP%/bw-owner-2026-11-26-1957/last.log`, 3 min): 9
-groups opened in list order, zero `browse verdict:` lines (every Y / N / M / Backspace / U / Z press prints one,
-refused ones too) and no `verdicts.toml` in loco2: no verdict key reached the tool, and nothing on screen said so.
-Follow-up before any further owner rating: overlay redo (clip name, verdict state, one line of keys, a visible
-confirmation on every verdict).
-
+validated or not...". The old questions 1-4 were not answered. Evidence (`%TEMP%/bw-owner-2026-11-26-1957/last.log`,
+3 min): 9 groups opened in list order, zero `browse verdict:` lines and no `verdicts.toml` in loco2: no verdict key
+reached the tool, and nothing on screen said so (which keys were pressed is not known).
 
 ## ANIM-11: the player sits on a seat (AN26c2)
 `owner_launch.sh view "Seyda Neen, Census and Excise Office"` (game location, player mode, default flags, third person). Picks are the provisional
