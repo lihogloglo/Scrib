@@ -33,7 +33,7 @@ pub use def::{
     TagId, VerbDef, WorkstationDef, fnv1a32,
 };
 pub use cook::cook;
-pub use door::{DOOR_OPEN, DoorChanged, DoorState, swing_sign};
+pub use door::{DOOR_OPEN, DoorChanged, DoorState, VERB_CLOSE, VERB_OPEN, swing_sign};
 pub use entrance::{pick_entrance, pick_exit, to_local};
 pub use index::{IndexedSlot, KindTag, PointIndex, SlotUser, compose};
 pub use params::InteractParams;

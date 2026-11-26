@@ -219,7 +219,7 @@ fn world_pos(v: Vec3) -> WorldPos {
     WorldPos::from_f64(v.as_dvec3())
 }
 
-fn feet_of(body: &ActionBody) -> Vec3 {
+pub(crate) fn feet_of(body: &ActionBody) -> Vec3 {
     body.loco.position.to_f64().as_vec3()
 }
 

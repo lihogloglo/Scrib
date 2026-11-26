@@ -219,6 +219,8 @@ fn def_defaults_are_the_struct_defaults() {
         (&FOCUS_HOLD_S, d.focus_hold_s),
         (&FOCUS_SWITCH_MARGIN, d.focus_switch_margin),
         (&FOCUS_SWITCH_S, d.focus_switch_s),
+        (&DOOR_SWING_S, d.door_swing_s),
+        (&DOOR_CLOSE_BEHIND_S, d.door_close_behind_s),
     ];
     let counts = [
         (&PRIORITY_AMBIENT, d.priority_ambient),

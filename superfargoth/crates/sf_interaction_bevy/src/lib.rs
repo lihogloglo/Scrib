@@ -43,6 +43,11 @@
 //!   on `SeatExited` / `SeatRefused`, clear the aim when the claim is lost. [`SeatSystems`] orders
 //!   it around `sf_action_bevy::ActionSystems::Step`; [`EndPoseFree`] is the host's capsule test.
 //!
+//! - Swing doors (`IN33`, [`door`] module docs): [`Doors`] registers every resident object with a
+//!   [`sf_interaction::SlotKind::Door`] slot from the [`IndexChange`]s; the default
+//!   ([`DoorSystems`]) toggles one on an approved `open` / `close` use, writes [`DoorChanged`] and
+//!   keeps the [`sf_interaction::DOOR_OPEN`] state tag.
+//!
 //! Not here: game wiring (`IN32`).
 
 use std::collections::BTreeMap;
@@ -62,6 +67,7 @@ use sf_world::PlacementId;
 use smallvec::SmallVec;
 
 pub mod activate;
+pub mod door;
 pub mod focus;
 pub mod seat;
 pub mod seat_clips;
@@ -69,6 +75,8 @@ pub mod seat_clips;
 mod tests;
 #[cfg(test)]
 mod tests_activate;
+#[cfg(test)]
+mod tests_door;
 #[cfg(test)]
 mod tests_focus;
 #[cfg(test)]
@@ -78,6 +86,7 @@ pub use activate::{
     ActivateCommand, ActivationSystems, InteractionDefs, InteractionStateTags, PendingUse, PendingUses, ScriptActivate,
     UseApproved, UseRefused,
 };
+pub use door::{Door, DoorChanged, DoorSystems, Doors};
 pub use focus::{FocusCandidates, FocusState, PlayerFocus};
 pub use seat::{EndPoseFree, EndPoseTest, InteractionUser, SeatClips, SeatPhase, SeatSystems, SeatUse, SeatUses, seat_target};
 pub use seat_clips::{SIT_ENTER, SIT_EXIT, SIT_LOOP, SeatClipSets, SeatClipSystems, SeatSet, bind_seat_clips};
@@ -149,6 +158,14 @@ pub const FOCUS_SWITCH_S: Def<f32> = pres(def!(float "interact.focus.switch_s" =
 pub const HAND_MAX: Def<u32> = gp_count(def!(count "interact.claim.hand_max" = 2)
     .range(0, 4)
     .help("Hand claims a user may hold while Occupied (two hands)"));
+pub const DOOR_SWING_S: Def<f32> = gp(def!(float "interact.door.swing_s" = 0.8)
+    .range(0.2, 3.0)
+    .unit(Unit::Seconds)
+    .help("Time a door leaf takes from closed to open"));
+pub const DOOR_CLOSE_BEHIND_S: Def<f32> = gp(def!(float "interact.door.close_behind_s" = 1.0)
+    .range(0.0, 10.0)
+    .unit(Unit::Seconds)
+    .help("Delay before a door closes behind the user that opened it"));
 
 /// The `interact.*` tunables [`InteractParams`] has, bound by [`InteractionPlugin`].
 pub const TUNABLES: &[&dyn AnyDef] = &[
@@ -165,6 +182,8 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &FOCUS_SWITCH_MARGIN,
     &FOCUS_SWITCH_S,
     &HAND_MAX,
+    &DOOR_SWING_S,
+    &DOOR_CLOSE_BEHIND_S,
 ];
 
 // --- Resources ----------------------------------------------------------------------------------
@@ -367,7 +386,9 @@ impl Plugin for InteractionPlugin {
                     .chain()
                     .after(ScriptSlot::Update),
             )
-            .add_systems(FixedUpdate, (sync_params, step).chain().in_set(InteractionSystems::Apply))
+            .init_resource::<Doors>()
+            .add_message::<DoorChanged>()
+            .add_systems(FixedUpdate, (sync_params, step, door::register).chain().in_set(InteractionSystems::Apply))
             .add_systems(FixedUpdate, focus::focus.in_set(InteractionSystems::Focus))
             .add_systems(FixedUpdate, activate::activate.in_set(InteractionSystems::Activate))
             .add_systems(Update, activate::collect.in_set(ActivationSystems::Collect))
@@ -379,6 +400,8 @@ impl Plugin for InteractionPlugin {
             )
             .configure_sets(FixedUpdate, SeatSystems::Events.after(sf_action_bevy::ActionSystems::Step))
             .add_systems(Update, seat::seat_requests.in_set(SeatSystems::Request))
+            .configure_sets(Update, DoorSystems::Default.after(ActivationSystems::Default))
+            .add_systems(Update, door::door_default.in_set(DoorSystems::Default))
             .configure_sets(
                 FixedUpdate,
                 SeatClipSystems.after(SeatSystems::Offer).before(sf_action_bevy::ActionSystems::Step),
@@ -399,6 +422,8 @@ impl Plugin for InteractionPlugin {
         bind!(app, FOCUS_SWITCH_MARGIN, |p, v| p.focus_switch_margin = v);
         bind!(app, FOCUS_SWITCH_S, |p, v| p.focus_switch_s = v);
         bind!(app, HAND_MAX, |p, v| p.hand_max = to_u8(v));
+        bind!(app, DOOR_SWING_S, |p, v| p.door_swing_s = v);
+        bind!(app, DOOR_CLOSE_BEHIND_S, |p, v| p.door_close_behind_s = v);
     }
 }
 

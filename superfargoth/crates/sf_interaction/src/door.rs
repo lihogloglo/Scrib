@@ -18,6 +18,12 @@ use crate::index::compose;
 /// State tag an open door carries (verbs `open` / `close` filter on it).
 pub const DOOR_OPEN: TagId = TagId::of("door.open");
 
+/// The slotless verb that opens a door; a door def's `open` requires no [`DOOR_OPEN`].
+pub const VERB_OPEN: TagId = TagId::of("open");
+
+/// The slotless verb that closes a door; a door def's `close` requires [`DOOR_OPEN`].
+pub const VERB_CLOSE: TagId = TagId::of("close");
+
 /// Float slack of the arrival test, as a fraction of one step: a step that leaves less than this
 /// share of itself to go lands on the target exactly (rounding of summed steps, not a tunable).
 // tunables: const (f32 rounding slack of summed steps, maths; far below one visible pose change)

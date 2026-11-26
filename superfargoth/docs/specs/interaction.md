@@ -537,6 +537,19 @@ on 0 / 1 (a step that leaves under 0.1 % of itself arrives). The opener is recor
 a user that reopens a closing door mid-swing gets no close-behind. A zero or non-finite axis leaves the leaf at the
 object frame. Door saves must not go through ron (`UserKey`, `PlacementId` are u128).
 
+## As built (IN33b2a, 2026-11-26)
+
+`sf_interaction_bevy/src/door.rs` (+ `tests_door.rs`, 10 headless tests). `Doors` (resource: per resident door its def,
+world frame, doorway and `DoorState`) follows `IndexChange` in `InteractionSystems::Apply`, after the claim step: an
+`Insert` of a def with a `Door` slot registers it closed (a re-insert keeps its state), a `Move` refreshes its frame, a
+`Remove` or a re-insert without a door slot drops it and its `door.open` tag. The default (`DoorSystems::Default`, `Update`,
+after `ActivationSystems::Default`) toggles a registered door on a `UseApproved`: `open` (`VERB_OPEN`) only when its
+target is closed, `close` (`VERB_CLOSE`) only when open, no verb always, any other verb never; the user is the
+`InteractionUser` of the activation's actor, its feet in the object's frame (no body: the doorway; no such user, a script:
+no user). Each toggle writes one `DoorChanged` message and sets or clears `door.open` in `InteractionStateTags` (its first
+writer). The game inserts only swing doors, so the default needs no class test. `interact.door.swing_s` and
+`interact.door.close_behind_s` are bound live. Nothing moves yet (IN33b2b).
+
 ## Owner questions
 
 1. Destruction scope: every crate and barrel, or only some ("fragile" list per material)? Which weapons break what
