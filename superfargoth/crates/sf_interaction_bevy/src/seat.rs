@@ -35,7 +35,8 @@
 //! 4. **Lost claim**: the claim table is the truth. A claim that is no longer this user's at the
 //!    offer step (invalidated by `IndexChange::Remove`, `InvalidateClaims`, a move, a lease, a
 //!    preemption) clears the aim that tick; the action layer stands a seated body up, and its
-//!    later `SeatExited` writes nothing (the hold is gone already).
+//!    later `SeatExited` writes nothing (the hold is gone already). A lost def, frame or index row
+//!    with the claim still held writes its `Release` at the loss, then goes the same way.
 //!
 //! **Clips** ([`SeatClips`]): from the offer on, the user carries the slot's clip family, band (cm)
 //! and the enter and exit sides, for the animation side to pick its clip set (the anim contract:
@@ -237,7 +238,7 @@ pub enum SeatStep {
     ClaimRefused(sf_interaction::Refusal),
     /// The character is gone (or no longer this user): the slot is let go.
     UserGone,
-    /// The use lost what it needs: dropped, or (seated) the stand-up starts.
+    /// The use lost what it needs (a claim still held is released): dropped, or (seated) the stand-up starts.
     Lost(SeatLoss),
     /// The slot has entrances but none is free: the slot is given back.
     NoEntrance,
@@ -467,6 +468,10 @@ pub(crate) fn seat_offers(
             Ok(placed) => placed,
             Err(loss) => {
                 aim.0 = None;
+                // Only a lost claim is gone already: a lost def / frame / row gives the slot back here.
+                if loss != SeatLoss::Claim && u.phase != SeatPhase::Leaving {
+                    out.write(request(user, Op::Release));
+                }
                 return match u.phase {
                     SeatPhase::Seated | SeatPhase::Leaving => {
                         // The stand-up still plays this seat's exit clip: the clips stay to `SeatExited`.

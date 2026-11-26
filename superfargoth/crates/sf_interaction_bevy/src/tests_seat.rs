@@ -577,6 +577,40 @@ fn a_missing_frame_index_row_or_def_is_named_once_when_the_use_is_dropped() {
         lose(&mut app);
         frames(&mut app, 3);
         assert_eq!(steps(&app, player(), p), vec![SeatStep::Asked, offered(), SeatStep::Lost(loss)], "{loss:?}");
+        assert_eq!(claim(&app), None, "{loss:?}");
+        assert_eq!(aim(&app, p), None, "{loss:?}");
+        assert!(app.world().resource::<SeatUses>().get(player()).is_none(), "{loss:?}");
+    }
+}
+
+#[test]
+fn a_seated_use_that_loses_its_frame_row_or_def_frees_the_slot_and_stands_up() {
+    type Lose = fn(&mut App);
+    let cases: [(SeatLoss, Lose); 3] = [
+        (SeatLoss::Frame, |app| {
+            app.world_mut().resource_mut::<InteractionFrames>().current.remove(&CHAIR);
+        }),
+        (SeatLoss::IndexRow, |app| {
+            app.world_mut().resource_mut::<InteractionIndex>().0.remove(SLOT);
+        }),
+        (SeatLoss::Def, |app| {
+            app.world_mut().resource_mut::<InteractionDefs>().0.remove(&CHAIR);
+        }),
+    ];
+    for (loss, lose) in cases {
+        let (mut app, p) = seated();
+        assert_eq!(claim(&app), Some((player(), Phase::Occupied)), "{loss:?}");
+        lose(&mut app);
+        frames(&mut app, 3);
+        assert_eq!(claim(&app), None, "{loss:?}: the slot is given back at the loss");
+        let exited = |a: &App| steps(a, player(), p).last() == Some(&SeatStep::Exited);
+        assert!(until(&mut app, 240, exited), "{loss:?}: stood up: {:?}", steps(&app, player(), p));
+        assert_eq!(
+            steps(&app, player(), p),
+            vec![SeatStep::Asked, offered(), SeatStep::Entered, SeatStep::Lost(loss), SeatStep::Exited],
+            "{loss:?}"
+        );
+        assert_eq!(claim(&app), None, "{loss:?}");
         assert_eq!(aim(&app, p), None, "{loss:?}");
         assert!(app.world().resource::<SeatUses>().get(player()).is_none(), "{loss:?}");
     }
