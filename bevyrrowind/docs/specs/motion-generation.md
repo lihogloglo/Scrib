@@ -183,13 +183,22 @@ Nothing reads `grades.json` (gates `skate`/`jerk`/`turn_mag`, `mirror_candidate`
    frame forward, `-` / `=` speed over 0.1 / 0.25 / 0.5 / 1; one `Transport` scales every seat and the row clock; play
    resumes on a new clip, a verdict key or G). Not built: a backward step, contact markers.
 6. **Wrong-way turns look like rejects.** `mirror_candidate` clips are usable relabels but show as plain bad takes.
-   Fix: show the flag and preview the mirror. **AG2** (flag), mirror preview **new**.
+   Fix: show the flag and preview the mirror. **AG2** (flag). **Mirror preview built 2026-11-26** (AN46d: X cooks the
+   mirror image of the clip under the cursor, or of every take of the group on stage, through the bake's own cook-time
+   mirror, `ClipRules::mirror` of AN26b2, so it is what a `#mirror` slot row would bake; preview only, nothing goes to
+   `verdicts.toml`, no undo entry. The mirror belongs to one clip or group (`BrowseList::mirror`): moving away drops
+   it, and coming back shows the plain take. Line 1 ends with `[mirrored]`, a white notice answers the key (`MIRRORED
+   <target>  (preview only, nothing saved)`, `MIRROR OFF  <target>`; `MIRROR NOT SHOWN: <why>` in red if the cook
+   refuses, then the plain take plays), a flagged clip's line 2 ends with `mirror candidate (X)`, line 3 is unchanged,
+   the key is listed on the details page; start-up log `browse mirror: key X, <n> mirror candidates`). Industry form:
+   a non-destructive mirror toggle in the preview viewport (UE5 animation editor's Mirror Data Table preview, Unity's
+   clip import "Mirror" checkbox). Reuse check: nothing new, the cook, the pairs and the root-track mirror are AN26b2's.
 7. **A clip is seen on one body, free-standing.** Skate or foot trouble that only shows at slot speed or on another
    rig is missed until in game. Fix: **AN11.**
 8. **Notes need a text editor.** `note: ...` verdicts cannot be entered in the tool. Fix: a number key tags a reason
    (skate, slide, pop, pose) into the note. These tags feed AG3 calibration. **Built 2026-11-26** (AN46c: keys 5 6 7 8
    toggle skate / slide / pop / pose on the clip or the selected take, also while paused; not into the note: the
-   verdict value stays exactly `keep` / `maybe` / `reject`, which `motiongen grade` and `mw_bake/tests/loop_cut.rs`
+   verdict value stays exactly `keep` / `maybe` / `reject`, which `motiongen grade` and `mw_bake/tests/it/loop_cut.rs`
    match, and the tags go in a reserved `[_reasons]` table of `verdicts.toml`, `"<id>" = ["skate", "pop"]`, known
    reasons in that order, hand-written ones kept after them; a tag is not a verdict (the clip stays unrated);
    Backspace clears verdict and tags, Z takes back one tag or one verdict; shown as `reject [skate]` on line 2 and

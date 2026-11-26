@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use mw_bake::anim::HumanoidTarget;
 use mw_bake::sources::AnimSources;
 use mw_graphs::sources::SourcesManifest;
-use sf_anim::{Clip, ClipRules, LoopCut, LoopCutError, LoopCutRules, Looping, RootMotionMode, RootMotionRules};
+use sf_anim::{Clip, ClipRules, LoopCut, LoopCutError, LoopCutRules, Looping, MirrorRules, RootMotionMode, RootMotionRules};
 
 /// One clip to preview, as the command line or a `--batch` line names it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -122,14 +122,21 @@ pub fn is_cycle(rel: &str) -> bool {
 /// The loop cutter's verdict on one cook: the window and seam errors, or why no loop was cut.
 pub type CutReport = Result<LoopCut, LoopCutError>;
 
-/// [`cook`], optionally through the loop cutter ([`ClipRules::loop_cut`] at its defaults, as a
-/// cycle slot's): the cut clip loops whole (its `loop_range` set), the report says how the seam
-/// closes. Without the cut, or when no loop fits, the clip is the raw take, played once.
+/// The review browser's cook rules: [`preview_rules`], optionally loop-cut ([`ClipRules::loop_cut`]
+/// at its defaults, as a cycle slot's) and mirrored ([`ClipRules::mirror`] at its defaults: a
+/// left-side take plays as the right-side one; a preview only, the asset is not changed).
+pub fn review_rules(loop_cut: bool, mirror: bool) -> ClipRules {
+    ClipRules { loop_cut: loop_cut.then(LoopCutRules::default), mirror: mirror.then(MirrorRules::default), ..preview_rules() }
+}
+
+/// [`cook`] with [`review_rules`]: through the loop cutter, the cut clip loops whole (its
+/// `loop_range` set), the report says how the seam closes; without the cut, or when no loop fits,
+/// the clip is the raw take, played once. `mirror` cooks the mirror image.
 ///
 /// # Errors
-/// As [`cook`].
-pub fn cook_report(job: &Resolved, target: &HumanoidTarget, loop_cut: bool) -> Result<(Clip, Option<CutReport>), String> {
-    let rules = ClipRules { loop_cut: loop_cut.then(LoopCutRules::default), ..preview_rules() };
+/// As [`cook`]; a mirror that cannot apply fails the whole cook (`mirror: <why>`).
+pub fn cook_report(job: &Resolved, target: &HumanoidTarget, loop_cut: bool, mirror: bool) -> Result<(Clip, Option<CutReport>), String> {
+    let rules = review_rules(loop_cut, mirror);
     mw_bake::anim::cook_library_clip_report(&job.source, &job.path, job.name.as_deref(), &rules, target).map(|(clip, report)| (clip, report.loop_cut))
 }
 
@@ -319,6 +326,17 @@ mod tests {
         assert!(is_cycle("loco.walk.cycle.1/act/loco.walk.cycle.1.act.ground0.00.bvh"));
         assert!(is_cycle("loco.run.cycle.free/x.bvh"));
         assert!(!is_cycle("loco.run.pivot.l180.1/x.bvh"));
+    }
+
+    #[test]
+    fn review_rules_add_only_the_loop_cut_and_the_mirror() {
+        assert_eq!(review_rules(false, false), preview_rules());
+        let mut both = review_rules(true, true);
+        assert_eq!(both.loop_cut, Some(LoopCutRules::default()));
+        assert_eq!(both.mirror, Some(MirrorRules::default()));
+        both.loop_cut = None;
+        both.mirror = None;
+        assert_eq!(both, preview_rules());
     }
 
     #[test]

@@ -60,6 +60,9 @@ pub struct BrowseList {
     pub group: Option<GroupStage>,
     /// The session's verdict actions Z takes back ([`BrowseList::undo`]).
     pub undo: UndoLog,
+    /// The review target a mirrored cook was asked for ([`MIRROR_KEY`], a preview only): the group's
+    /// name in group review, the cursor clip's id in single review; `None`: plain takes.
+    pub mirror: Option<String>,
 }
 
 /// Most verdict actions Z walks back through in one session; older ones drop off.
@@ -304,6 +307,7 @@ impl BrowseList {
             view: View::All,
             group: None,
             undo: UndoLog::default(),
+            mirror: None,
         })
     }
 
@@ -346,6 +350,36 @@ impl BrowseList {
 
     pub fn current(&self) -> &BrowseClip {
         &self.activities[self.activity].clips[self.clip]
+    }
+
+    /// What [`MIRROR_KEY`] mirrors now: the group on stage, else the cursor's clip.
+    fn mirror_target(&self) -> &str {
+        self.group.as_ref().map_or(self.current().id.as_str(), |s| s.name.as_str())
+    }
+
+    /// Whether the current review target plays mirrored.
+    pub fn mirrored(&self) -> bool {
+        self.mirror.as_deref() == Some(self.mirror_target())
+    }
+
+    /// [`MIRROR_KEY`]: flips the mirror for the current review target (a preview, not a verdict
+    /// action: no undo entry, nothing saved, the cursor stays). The target's name and whether the
+    /// mirror is now on.
+    pub fn toggle_mirror(&mut self) -> (String, bool) {
+        let target = self.mirror_target().to_owned();
+        let on = !self.mirrored();
+        self.mirror = on.then(|| target.clone());
+        (target, on)
+    }
+
+    /// Every cook asks this: whether to cook mirrored. A mirror asked for another target is
+    /// dropped, so it belongs to one clip or group (coming back shows the plain take).
+    pub fn cook_mirror(&mut self) -> bool {
+        let on = self.mirrored();
+        if !on {
+            self.mirror = None;
+        }
+        on
     }
 
     pub fn current_activity(&self) -> &Activity {
@@ -773,6 +807,9 @@ impl BrowseList {
 /// A/B toggle (`mw_actors_bevy::actors::toggle_cloth`) runs in the browser too.
 pub const HELP_KEY: &str = "Tab";
 
+/// The key that toggles the mirrored preview of the clip or group under review.
+pub const MIRROR_KEY: &str = "X";
+
 /// The reason-tag keys as the overlay and the details page list them ([`REASONS`] order).
 const TAG_KEYS: &str = "5 skate  6 slide  7 pop  8 pose";
 
@@ -849,14 +886,16 @@ impl BrowseList {
     /// keys that work now). `verdicts`: the file, or why it can't be used; `transport`:
     /// [`Transport::label`].
     pub fn overlay_lines(&self, verdicts: Result<&Verdicts, &str>, transport: &str) -> String {
-        let transport = if transport.is_empty() { String::new() } else { format!(" [{transport}]") };
+        let mirrored = if self.mirrored() { " [mirrored]" } else { "" };
+        let transport = if transport.is_empty() { mirrored.to_owned() } else { format!(" [{transport}]{mirrored}") };
+        let hint = if self.grades.grade(self.current()).is_some_and(|g| g.mirror_candidate) { format!("   mirror candidate ({MIRROR_KEY})") } else { String::new() };
         let saved = |v: &Verdicts| format!("saved {} of {}", self.cursors().filter(|(_, c)| v.get(&c.id).is_some()).count(), self.len());
         let (line1, line2, line3) = if let Some(s) = &self.group {
             let (i, n) = self.group_position(&s.name);
             let line2 = match verdicts {
                 Ok(v) => {
                     let id = &s.selected_take().clip.id;
-                    format!("take {} selected: {}{}   {}", s.selected + 1, rating_word(v.rating(id)), v.tags_suffix(id), saved(v))
+                    format!("take {} selected: {}{}   {}{hint}", s.selected + 1, rating_word(v.rating(id)), v.tags_suffix(id), saved(v))
                 }
                 Err(e) => verdicts_off_line(e),
             };
@@ -865,7 +904,7 @@ impl BrowseList {
         } else {
             let clip = self.current();
             let line2 = match verdicts {
-                Ok(v) => format!("{}{}   {}", rating_word(v.rating(&clip.id)), v.tags_suffix(&clip.id), saved(v)),
+                Ok(v) => format!("{}{}   {}{hint}", rating_word(v.rating(&clip.id)), v.tags_suffix(&clip.id), saved(v)),
                 Err(e) => verdicts_off_line(e),
             };
             (format!("{}   clip {} / {}{transport}", clip.id, self.clip_position(), self.len()), line2, format!("Y keep   N reject   M maybe   {TAG_KEYS}   Z undo   G groups   {HELP_KEY} more"))
@@ -884,7 +923,10 @@ impl BrowseList {
             Err(_) => ("(verdicts off)".to_owned(), String::new(), String::new()),
         };
         let cut = if d.cut.is_empty() { String::new() } else { format!("{}\n", d.cut) };
-        let transport = if d.transport.is_empty() { String::new() } else { format!("   [{}]", d.transport) };
+        let mut transport = if d.transport.is_empty() { String::new() } else { format!("   [{}]", d.transport) };
+        if self.mirrored() {
+            transport.push_str("   [mirrored]");
+        }
         let group = match &self.group {
             Some(s) => format!(
                 "GROUP {}: {} on stage, take {} selected{}\n",
@@ -901,7 +943,7 @@ impl BrowseList {
              keys: Y keep  N reject  M maybe  Backspace clear  U next unrated  Z undo   G group review / single clips\n\
              {TAG_KEYS} (toggle a reason tag, before the verdict)\n\
              Left/Right clip (group: take)  1-4 take  Up/Down activity (group: group)   Space pause  . frame  -/= speed\n\
-             C candidates only  V view  {l}   drag orbit  wheel zoom   {HELP_KEY} back",
+             C candidates only  V view  {l}  {MIRROR_KEY} mirror (preview, not saved)   drag orbit  wheel zoom   {HELP_KEY} back",
             activity.name,
             self.activity + 1,
             self.activities.len(),
@@ -927,12 +969,13 @@ impl BrowseList {
 }
 
 /// A notice's colour: green for a saved or undone verdict action, red for what was not saved
-/// (and for a key that does nothing).
+/// (and for a key that does nothing), white for a view change (nothing saved, nothing failed).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NoticeKind {
     Saved,
     NotSaved,
     Undone,
+    Info,
 }
 
 /// The large line a verdict action (or a key that does nothing) shows for a moment.
@@ -975,6 +1018,18 @@ impl Notice {
     /// Z's result: the undone clip's tail, or `None` if nothing was left to undo.
     pub fn undo(tail: Option<&str>) -> Self {
         tail.map_or_else(|| Self::not_saved("nothing to undo"), |tail| Self { kind: NoticeKind::Undone, text: format!("UNDONE  {tail}") })
+    }
+
+    /// [`MIRROR_KEY`]'s result for `target` (the clip id or group name [`BrowseList::toggle_mirror`]
+    /// returns): the mirror now on or off.
+    pub fn mirror(target: &str, on: bool) -> Self {
+        let text = if on { format!("MIRRORED  {target}  (preview only, nothing saved)") } else { format!("MIRROR OFF  {target}") };
+        Self { kind: NoticeKind::Info, text }
+    }
+
+    /// The mirrored cook failed (`reason`, the cook's error): the plain take plays instead.
+    pub fn mirror_failed(reason: &str) -> Self {
+        Self { kind: NoticeKind::NotSaved, text: format!("MIRROR NOT SHOWN: {reason}") }
     }
 
     /// A key the browser doesn't bind, by its `KeyCode` debug name (`KeyQ` reads `Q`, `Digit7` `7`).
@@ -1074,6 +1129,11 @@ impl Grades {
     /// Graded clips, and how many of them are gated.
     pub fn counts(&self) -> (usize, usize) {
         (self.clips.len(), self.clips.values().filter(|g| g.gated()).count())
+    }
+
+    /// Clips the grader flagged `mirror_candidate` (their mirror image would fill the other side's slot).
+    pub fn mirror_candidates(&self) -> usize {
+        self.clips.values().filter(|g| g.mirror_candidate).count()
     }
 
     /// `clip`'s grade, joined by its file stem (the grader's key, also when two clips share a stem).
@@ -2246,13 +2306,24 @@ mod tests {
                 tagged.toggle_reason(&clip.id, reason);
             }
         }
+        // Every clip a mirror candidate: line 2's hint on every clip (no gate, so the order stays).
+        let flagged = format!("{{{}}}", l.cursors().map(|(_, c)| format!(r#""{}": {{"gates": [], "mirror_candidate": true}}"#, c.id)).collect::<Vec<_>>().join(", "));
+        l.set_grades(Grades::parse(&flagged).unwrap());
+        assert_eq!(l.grades.mirror_candidates(), 5);
         let long_error = "x".repeat(300);
         let check = |l: &BrowseList| {
-            for verdicts in [Ok(&v), Ok(&tagged), Err(long_error.as_str())] {
-                for transport in ["", "paused", "x0.25"] {
-                    let text = l.overlay_lines(verdicts, transport);
-                    assert_eq!(text.lines().count(), 3, "{text}");
-                    assert!(text.lines().all(|line| line.chars().count() <= 100), "{text}");
+            for mirrored in [false, true] {
+                let mut l = l.clone();
+                if mirrored {
+                    assert!(l.toggle_mirror().1);
+                }
+                for verdicts in [Ok(&v), Ok(&tagged), Err(long_error.as_str())] {
+                    for transport in ["", "paused", "x0.25"] {
+                        let text = l.overlay_lines(verdicts, transport);
+                        assert_eq!(text.lines().count(), 3, "{text}");
+                        assert!(text.lines().all(|line| line.chars().count() <= 100), "{text}");
+                        assert_eq!(text.contains("[mirrored]"), mirrored, "{text}");
+                    }
                 }
             }
         };
@@ -2281,6 +2352,111 @@ mod tests {
             assert!(!default.contains(part), "{part} in {default}");
         }
         assert!(!default.contains("prompt"));
+    }
+
+    #[test]
+    fn single_mirror_belongs_to_one_clip() {
+        let mut l = reviewed();
+        assert_eq!(l.toggle_mirror(), ("run.act.g0.00".to_owned(), true));
+        assert!(l.mirrored());
+        assert!(l.cook_mirror());
+        assert_eq!(l.mirror.as_deref(), Some("run.act.g0.00"));
+        l.step_clip(1);
+        assert!(!l.mirrored());
+        assert!(!l.cook_mirror());
+        assert_eq!(l.mirror, None);
+        l.step_clip(-1);
+        assert!(!l.mirrored());
+        // Twice on one clip: off again.
+        assert_eq!(l.toggle_mirror(), ("run.act.g0.00".to_owned(), true));
+        assert_eq!(l.toggle_mirror(), ("run.act.g0.00".to_owned(), false));
+        assert_eq!(l.mirror, None);
+    }
+
+    #[test]
+    fn mirror_is_not_a_verdict_action() {
+        let (mut g, v) = reviewed_group();
+        assert!(g.select_take(1));
+        let before = (g.undo.len(), g.activity, g.clip, g.group.clone());
+        g.toggle_mirror();
+        assert_eq!((g.undo.len(), g.activity, g.clip, g.group.clone()), before);
+        let mut l = reviewed();
+        let before = (l.undo.len(), l.activity, l.clip, l.group.clone());
+        l.toggle_mirror();
+        assert_eq!((l.undo.len(), l.activity, l.clip, l.group.clone()), before);
+        assert_eq!(l.overlay_lines(Ok(&v), "").lines().nth(1).unwrap(), "reject   saved 5 of 10");
+    }
+
+    #[test]
+    fn group_mirror_follows_the_group_not_the_take() {
+        let (mut l, v) = reviewed_group();
+        assert_eq!(l.toggle_mirror(), ("walk.act.g0".to_owned(), true));
+        assert!(l.select_take(1));
+        assert!(l.mirrored());
+        assert!(l.cook_mirror());
+        l.leave_group(Some(&v));
+        assert!(!l.mirrored());
+        assert!(!l.cook_mirror());
+        assert_eq!(l.mirror, None);
+    }
+
+    #[test]
+    fn line_one_marks_the_mirror() {
+        let v = Verdicts::default();
+        let mut l = reviewed();
+        l.toggle_mirror();
+        assert_eq!(l.overlay_lines(Ok(&v), "").lines().next().unwrap(), "run.act.g0.00   clip 1 / 10 [mirrored]");
+        let (mut g, gv) = reviewed_group();
+        g.toggle_mirror();
+        assert!(g.select_take(1));
+        assert_eq!(g.overlay_lines(Ok(&gv), "paused").lines().next().unwrap(), "walk.act.g0   group 2 / 3 [paused] [mirrored]");
+    }
+
+    #[test]
+    fn line_two_hints_a_mirror_candidate() {
+        let mut l = graded();
+        let v = Verdicts::default();
+        let line2 = |l: &BrowseList, verdicts: Result<&Verdicts, &str>| l.overlay_lines(verdicts, "").lines().nth(1).unwrap().to_owned();
+        l.step_activity(1);
+        assert_eq!(l.current().id, "walk.f.act.g0.01");
+        let hinted = line2(&l, Ok(&v));
+        assert!(hinted.ends_with("   mirror candidate (X)"), "{hinted}");
+        assert_eq!(hinted, format!("unrated   saved 0 of {}   mirror candidate (X)", l.len()));
+        assert!(!line2(&l, Err("gen/verdicts.toml: bad")).contains("mirror candidate"));
+        l.step_clip(1);
+        assert_eq!(l.current().id, "walk.f.act.g0.02");
+        assert!(!line2(&l, Ok(&v)).contains("mirror candidate"));
+        l.step_activity(-1);
+        assert_eq!(l.current().id, "idle");
+        assert!(!line2(&l, Ok(&v)).contains("mirror candidate"));
+    }
+
+    #[test]
+    fn mirror_notices_read_what_happened() {
+        assert_eq!(Notice::mirror("run.act.g0.00", true), Notice { kind: NoticeKind::Info, text: "MIRRORED  run.act.g0.00  (preview only, nothing saved)".to_owned() });
+        assert_eq!(Notice::mirror("walk.act.g0", false), Notice { kind: NoticeKind::Info, text: "MIRROR OFF  walk.act.g0".to_owned() });
+        assert_eq!(Notice::mirror_failed("mirror: no side names"), Notice { kind: NoticeKind::NotSaved, text: "MIRROR NOT SHOWN: mirror: no side names".to_owned() });
+    }
+
+    #[test]
+    fn details_page_marks_the_mirror_and_lists_its_key() {
+        let mut l = graded();
+        let v = Verdicts::default();
+        let prov = Prov::default();
+        let d = Details { prov: &prov, status: "", cut: "", message: "", transport: "paused", loop_cut: false };
+        let plain = l.details_text(Ok(&v), &d);
+        assert!(!plain.contains("[mirrored]"), "{plain}");
+        assert!(plain.contains("X mirror (preview, not saved)"), "{plain}");
+        assert!(plain.lines().last().unwrap().ends_with("L loop cut  X mirror (preview, not saved)   drag orbit  wheel zoom   Tab back"), "{plain}");
+        l.toggle_mirror();
+        let mirrored = l.details_text(Ok(&v), &d);
+        assert!(mirrored.lines().any(|line| line.contains("[paused]   [mirrored]")), "{mirrored}");
+    }
+
+    #[test]
+    fn grades_count_mirror_candidates() {
+        assert_eq!(Grades::parse(GRADES).unwrap().mirror_candidates(), 1);
+        assert_eq!(Grades::default().mirror_candidates(), 0);
     }
 
     /// The file's lines that aren't the header comment.

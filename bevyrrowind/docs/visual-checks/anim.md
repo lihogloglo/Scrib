@@ -72,6 +72,19 @@ validated or not...". The old questions 1-4 were not answered. Evidence (`%TEMP%
 3 min): 9 groups opened in list order, zero `browse verdict:` lines and no `verdicts.toml` in loco2: no verdict key
 reached the tool, and nothing on screen said so (which keys were pressed is not known).
 
+## ANIM-6c: mirror preview in clip-preview (AN46d)
+
+Built: X shows the mirror image of the clip (or of every take of the group on stage), preview only. Same launch as
+ANIM-6b: `owner_launch.sh clip-preview --browse "D:/Gamedev/Bevyrrowind/animation packs/generated/loco2"` (absolute
+folder), asked right after ANIM-6b's questions. Questions:
+(1) on a clip that goes to one side (Up/Down to a `strafe.l` activity), press X: the same move now goes to the other
+side, line 1 ends with `[mirrored]` and a large white `MIRRORED  <clip>  (preview only, nothing saved)` shows? yes/no
+(2) does the mirrored move look as natural as the original (no twisted arm or leg, feet still on the ground)? yes/no
+(3) press Right, then Left: both clips play unmirrored (no `[mirrored]` on line 1)? yes/no
+Proof log: `browse mirror: key X, 0 mirror candidates` in last.log at start (loco2 has no flagged clip today, so no
+`mirror candidate (X)` hint shows there), then `browse mirror: <clip id> on` per press.
+Status: awaiting owner (AN46d built 2026-11-26).
+
 ## ANIM-11: the player sits on a seat (AN26c2)
 `owner_launch.sh view "Seyda Neen, Census and Excise Office"` (game location, player mode, default flags, third person). Picks are the provisional
 ANIM-9 ones: judge the wiring (starts, lands, holds, leaves), not the takes. Questions:

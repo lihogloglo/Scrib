@@ -34,7 +34,7 @@ use sf_anim_graph::slot::LOOP_FOREVER;
 use sf_character::Readiness;
 use sf_character_bevy::{Character, CharacterReadiness};
 
-use super::browse::{BrowseClip, BrowseList, Details, GROUP_MAX, GroupClock, GroupRated, Grades, Notice, NoticeKind, Prov, REASONS, Transport, Verdict, Verdicts, row_x};
+use super::browse::{BrowseClip, BrowseList, Details, GROUP_MAX, GroupClock, GroupRated, Grades, MIRROR_KEY, Notice, NoticeKind, Prov, REASONS, Transport, Verdict, Verdicts, row_x};
 use super::cook::{self, ClipJob};
 use super::{ActorQuery, Phase, Preview, play_full};
 
@@ -88,7 +88,7 @@ struct GroupPlay {
 }
 
 /// Inertialization into each browsed clip and each loop replay, seconds (UE5 Inertialization; Bollo, GDC 2018).
-/// 0 cut hard from the idle: thighs jumped ~20 deg, knees ~28 (`mw_bake/tests/thigh_snap.rs`, 2026-11-12).
+/// 0 cut hard from the idle: thighs jumped ~20 deg, knees ~28 (`mw_bake/tests/it/thigh_snap.rs`, 2026-11-12).
 const BROWSE_BLEND_IN: f32 = 0.15;
 /// The loop replays this long before the clip ends, so the montage never reaches its blend-out to the idle.
 const BROWSE_REPLAY_LEAD: f32 = 0.05;
@@ -133,6 +133,7 @@ impl Browse {
             (0, _) => println!("browse grades: no grades.json"),
             (graded, gated) => println!("browse grades: {graded} clips graded, {gated} gated"),
         }
+        println!("browse mirror: key {MIRROR_KEY}, {} mirror candidates", list.grades.mirror_candidates());
         let verdicts = Verdicts::load(&list.root);
         if let Err(e) = &verdicts {
             eprintln!("error: verdicts off: {e}");
@@ -310,6 +311,7 @@ impl Browse {
             let color = match notice.kind {
                 NoticeKind::Saved | NoticeKind::Undone => Color::srgb(0.45, 1.0, 0.45),
                 NoticeKind::NotSaved => Color::srgb(1.0, 0.4, 0.35),
+                NoticeKind::Info => Color::WHITE,
             };
             for (mut text, mut text_color, mut node) in &mut *notices {
                 text.0.clone_from(&notice.text);
@@ -323,6 +325,22 @@ impl Browse {
                 node.display = Display::None;
             }
         }
+    }
+
+    /// [`MIRROR_KEY`]: the mirrored preview of the clip or group under review on / off (the caller
+    /// asks for the cook); nothing saved.
+    fn toggle_mirror(&mut self) {
+        let (target, on) = self.list.toggle_mirror();
+        self.message = format!("mirror {}: {target}", if on { "on" } else { "off" });
+        self.notice = Some(Notice::mirror(&target, on));
+        println!("browse mirror: {target} {}", if on { "on" } else { "off" });
+    }
+
+    /// A mirrored cook failed (`reason`): the mirror goes off (the caller asks for the plain cook).
+    fn mirror_failed(&mut self, reason: &str) {
+        self.list.mirror = None;
+        self.notice = Some(Notice::mirror_failed(reason));
+        println!("browse mirror: not shown: {reason}");
     }
 }
 
@@ -346,7 +364,7 @@ fn bound(key: KeyCode, group: bool) -> bool {
     use KeyCode as K;
     let browser = matches!(
         key,
-        K::KeyY | K::KeyN | K::KeyM | K::KeyU | K::KeyZ | K::KeyC | K::KeyV | K::KeyG | K::KeyL | K::Tab | K::Backspace | K::Space | K::Period | K::Minus | K::Equal | K::ArrowLeft | K::ArrowRight | K::ArrowUp | K::ArrowDown
+        K::KeyY | K::KeyN | K::KeyM | K::KeyU | K::KeyZ | K::KeyC | K::KeyV | K::KeyG | K::KeyL | K::KeyX | K::Tab | K::Backspace | K::Space | K::Period | K::Minus | K::Equal | K::ArrowLeft | K::ArrowRight | K::ArrowUp | K::ArrowDown
     );
     // B / H: the actors' bodies and cloth A/B toggles (`mw_actors_bevy::actors`), live in the browser too.
     let content = matches!(key, K::KeyB | K::KeyH);
@@ -414,13 +432,13 @@ fn seat_of(roots: &Roots<'_, '_>, parent: Entity) -> Option<usize> {
 }
 
 /// One take cooked onto the actor's skeleton and bound to its graph (the capture's cook path), and
-/// the cut's loop line for a cycle take (empty otherwise).
-fn cook_take(clip: &BrowseClip, source: &str, target: &HumanoidTarget, asset: &AnimAsset, loop_cut: bool) -> (Result<Arc<LateClip>, String>, String) {
+/// the cut's loop line for a cycle take (empty otherwise). `mirror`: the take's mirror image (a preview).
+fn cook_take(clip: &BrowseClip, source: &str, target: &HumanoidTarget, asset: &AnimAsset, loop_cut: bool, mirror: bool) -> (Result<Arc<LateClip>, String>, String) {
     let job = ClipJob { file: clip.path.to_string_lossy().into_owned(), name: None, source: Some(source.to_owned()) };
     let cycle = cook::is_cycle(&clip.rel);
     let mut report = None;
     let late = cook::resolve(&job)
-        .and_then(|r| cook::cook_report(&r, target, loop_cut && cycle))
+        .and_then(|r| cook::cook_report(&r, target, loop_cut && cycle, mirror))
         .and_then(|(c, r)| {
             report = r;
             LateClip::new(&asset.graph, &asset.skeleton, Arc::new(c)).map_err(|e| format!("late clip: {e:?}"))
@@ -503,6 +521,11 @@ impl Browse {
             self.loop_cut = !self.loop_cut;
             self.group.step = RowStep::Cook;
             self.message = format!("loop cut {}", if self.loop_cut { "on" } else { "off: raw takes" });
+            changed = true;
+        }
+        if keys.just_pressed(KeyCode::KeyX) {
+            self.toggle_mirror();
+            self.group.step = RowStep::Cook;
             changed = true;
         }
         if self.filter_keys(keys) {
@@ -622,8 +645,9 @@ impl Browse {
             let t = Instant::now();
             let mut errors = Vec::new();
             self.group.clips = Default::default();
+            let mirror = self.list.cook_mirror();
             for take in &stage.takes {
-                let (late, cut) = cook_take(&take.clip, &self.source, target, &asset, self.loop_cut);
+                let (late, cut) = cook_take(&take.clip, &self.source, target, &asset, self.loop_cut, mirror);
                 if !cut.is_empty() {
                     println!("browse {}: {cut}", take.clip.rel);
                 }
@@ -641,6 +665,11 @@ impl Browse {
             }
             self.group.step = RowStep::Start;
             self.group.clock = None;
+            if mirror && let Some(e) = errors.first() {
+                // The mirror could not apply: the plain takes play next update.
+                self.mirror_failed(e);
+                self.group.step = RowStep::Cook;
+            }
         }
         let on_stage = |seat: Option<usize>| seat.and_then(|s| stage.in_seat(s).map(|_| s));
         let ends: Vec<f32> = stage.takes.iter().filter_map(|t| self.group.clips[t.seat].as_deref().map(take_end)).collect();
@@ -768,6 +797,10 @@ pub(super) fn browse_step(
         b.pending = true;
         b.message = format!("loop cut {}", if b.loop_cut { "on" } else { "off: raw takes" });
     }
+    if keys.just_pressed(KeyCode::KeyX) {
+        b.toggle_mirror();
+        b.pending = true;
+    }
     // A tag before the verdict (N advances); it sets no `pending`, so a pause holds.
     let refresh = b.filter_keys(&keys) | b.tag_keys(&keys) | b.verdict_keys(&keys);
     // A clip change (navigation, L, a rating, undo, back from group review): play resumes, the speed stays.
@@ -790,7 +823,8 @@ pub(super) fn browse_step(
         let clip = b.list.current().clone();
         let t = Instant::now();
         let asset = Arc::clone(&animator.asset);
-        let (late, cut) = cook_take(&clip, &b.source, target, &asset, b.loop_cut);
+        let mirror = b.list.cook_mirror();
+        let (late, cut) = cook_take(&clip, &b.source, target, &asset, b.loop_cut, mirror);
         let cooked = late.and_then(|late| {
             // A cut loop has a loop range: the slot loops it (the seam as the game plays it); a raw take replays below.
             let loops = if late.clip.loop_range.is_some() { LOOP_FOREVER } else { 0 };
@@ -812,6 +846,11 @@ pub(super) fn browse_step(
                     animator.instance.stop_slot(&asset.binding(), slot, 0.0);
                 }
                 b.playing = None;
+                if mirror {
+                    // The mirror could not apply: the plain take plays next update.
+                    b.mirror_failed(&e);
+                    b.pending = true;
+                }
                 format!("error: {e}")
             }
         };
