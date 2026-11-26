@@ -9,7 +9,8 @@
 //!   HUD and Morrowind theme are later slices.
 //!
 //! Opening a conversation: the player activates an NPC (E on the focused placement,
-//! `scripts.rs` writes `Activated`); an activation no script handled opens the window
+//! `scripts.rs` writes `Activated`); an approved use (`UseApproved`: no script handled it, no gate
+//! refused it) opens the window
 //! ([`talk_on_activate`]). `J` opens and closes the journal (Back closes it too). While a menu is
 //! open the player's controls are paused (`PlayerMode::paused`). Dev: `Shift+U` gives the player
 //! Fargoth's ring (scaffold [`DevGiveRing`]).
@@ -31,6 +32,8 @@ use mw_walkers_bevy::script_ai::{AiPackageKind, AiRuns, ScriptAiPush};
 use mw_script::aifn::package_type;
 use serde::{Deserialize, Serialize};
 use sf_character_bevy::{Character, CharacterPlacement};
+use mw_interaction::{DefaultAction, runs_default};
+use sf_interaction_bevy::{ActivationSystems, UseApproved};
 use sf_records::{RecordDb, RecordFormat, RecordId, apply_record_file};
 use sf_rpg::{
     ActorKey, Attrs, CharacterRpg, ConversationCtx, DialogueOutput, DialogueSession,
@@ -38,7 +41,7 @@ use sf_rpg::{
 };
 use sf_rpg::service::{ServiceEvent, ServiceSessions, WorldServices};
 use sf_rpg_ui::{Alphabet, DialogueRequest, DialogueView, JournalLabels, JournalScreen, JournalSeen};
-use sf_script_bevy::{ActivationOutcome, PLAYER, ScriptPlacements};
+use sf_script_bevy::{PLAYER, ScriptPlacements};
 use sf_ui::{Layer, UiRegistry, register_kinds};
 use sf_ui_bevy::{
     MessageBoxConfig, MessageBoxes, ScreenStackRes, SfUiPlugin, Toasts, UiRegistryRes,
@@ -1092,7 +1095,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, open_ui: Option<String>) {
         app.add_plugins(EnhancedInputPlugin);
     }
     app.add_plugins((SfUiPlugin, UiTextPlugin, SfScreensPlugin, JournalUiPlugin::<Rpg>::default()))
-        .add_message::<ActivationOutcome>()
+        .add_message::<UseApproved>()
         .add_message::<ServiceEventMessage>()
         .add_message::<ScriptAiPush>()
         .insert_resource(UiRegistryRes(registry()))
@@ -1101,7 +1104,9 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, open_ui: Option<String>) {
         .insert_resource(OpenAtStart(open_ui))
         .add_systems(
             Update,
-            (track_actors, dev_give_ring, talk_on_activate, toggle_journal, open_at_start).chain().before(ScreenSystems::Spawn),
+            (track_actors, dev_give_ring, talk_on_activate.after(ActivationSystems::Default), toggle_journal, open_at_start)
+                .chain()
+                .before(ScreenSystems::Spawn),
         )
         .add_systems(
             Update,
@@ -1266,15 +1271,29 @@ fn dev_give_ring(keys: Res<ButtonInput<KeyCode>>, mut rpg: ResMut<Rpg>) {
     info!("dialogue: dev gave {RING} (now {})", rpg.state.pc.loadout.count(&ring));
 }
 
-/// The default action of activating an NPC: talk. Reads the player's activations no script
-/// handled (`ActivationOutcome`, as doors and sounds do) whose target placement is an NPC
-/// record. `OpenMW` does the same in `MWClass::Npc::activate` (apps/openmw/mwclass/npc.cpp,
+/// The NPC the player talks to from this frame's approved uses: the last player use of an NPC
+/// (`is_npc`) whose verb runs dialogue (its primary use or `talk`, [`mw_interaction::runs_default`]).
+fn talk_target<'a>(
+    approved: impl IntoIterator<Item = &'a UseApproved>,
+    is_npc: impl Fn(sf_script_bevy::sf_script::Handle) -> bool,
+) -> Option<ActorKey> {
+    approved
+        .into_iter()
+        .filter(|a| a.activation.actor == PLAYER && runs_default(DefaultAction::Dialogue, a.verb))
+        .filter(|a| is_npc(a.activation.target))
+        .map(|a| ActorKey(a.activation.target.0))
+        .last()
+}
+
+/// The default action of activating an NPC: talk. Reads the player's approved uses (`UseApproved`:
+/// no script handled it, no gate refused it; `IN32c2`) whose target placement is an NPC
+/// record ([`talk_target`]). `OpenMW` does the same in `MWClass::Npc::activate` (apps/openmw/mwclass/npc.cpp,
 /// 0.49.0: `ActionTalk` for a living, non-hostile NPC); death, combat, sneak-pickpocket and
 /// hostility are not modelled yet, so every registered NPC talks.
 #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)] // Bevy system params
 fn talk_on_activate(
     mut commands: Commands,
-    mut outcomes: MessageReader<ActivationOutcome>,
+    mut approved: MessageReader<UseApproved>,
     placements: Option<Res<ScriptPlacements>>,
     mut rpg: ResMut<Rpg>,
     mut stack: ResMut<ScreenStackRes>,
@@ -1283,15 +1302,10 @@ fn talk_on_activate(
     sheets: DialogueSheets,
 ) {
     let Some(placements) = placements else {
-        outcomes.clear();
+        approved.clear();
         return;
     };
-    let talk_to = outcomes
-        .read()
-        .filter(|o| !o.handled && o.activation.actor == PLAYER)
-        .filter(|o| placements.get(o.activation.target).is_some_and(|p| rpg.is_npc(&id(&p.record))))
-        .map(|o| ActorKey(o.activation.target.0))
-        .last();
+    let talk_to = talk_target(approved.read(), |h| placements.get(h).is_some_and(|p| rpg.is_npc(&id(&p.record))));
     let Some(speaker) = talk_to else { return };
     if active.is_some() || menu_open(&stack) {
         return;
@@ -1597,6 +1611,55 @@ mod tests {
 
     const FARGOTH: ActorKey = ActorKey(1);
     const ARRILLE: ActorKey = ActorKey(2);
+
+    /// Refuses every pending use while on (a stand-in for crime's lock gate).
+    #[derive(Resource, Default)]
+    struct Locked(bool);
+
+    fn lock_gate(locked: Res<Locked>, mut pending: ResMut<sf_interaction_bevy::PendingUses>) {
+        if locked.0 {
+            for u in pending.uses_mut() {
+                u.refuse(mw_interaction::TagId::of("locked"));
+            }
+        }
+    }
+
+    /// The speaker [`talk_target`] picks each frame (the NPC is placement 1).
+    #[derive(Resource, Default)]
+    struct Spoke(Vec<Option<ActorKey>>);
+
+    fn speak(mut approved: MessageReader<UseApproved>, mut spoke: ResMut<Spoke>) {
+        spoke.0.push(talk_target(approved.read(), |h| h.0 == 1));
+    }
+
+    /// `IN32c2`: an approved primary use (or `talk`) of an NPC, through the activation pipeline's
+    /// gates, starts the talk with it; a gate's refusal, another verb or a non-NPC target starts
+    /// nothing.
+    #[test]
+    fn an_approved_use_of_an_npc_talks_and_a_refused_one_does_not() {
+        use mw_interaction::activation::verb;
+        use sf_script_bevy::sf_script::Handle;
+        use sf_script_bevy::{Activated, ActivationOutcome};
+        let mut app = App::new();
+        app.add_plugins(sf_interaction_bevy::InteractionPlugin)
+            .init_resource::<Locked>()
+            .init_resource::<Spoke>()
+            .add_systems(Update, lock_gate.in_set(ActivationSystems::Gates))
+            .add_systems(Update, speak.after(ActivationSystems::Default));
+        let uses = |app: &mut App, target: u128, verb: Option<&str>| -> Option<ActorKey> {
+            let verb = verb.map(|v| mw_interaction::TagId::of(v).0);
+            let activation = Activated { target: Handle(target), actor: PLAYER, verb };
+            app.world_mut().write_message(ActivationOutcome { activation, handled: false });
+            app.update();
+            app.world().resource::<Spoke>().0.last().copied().flatten()
+        };
+        assert_eq!(uses(&mut app, 1, None), Some(ActorKey(1)));
+        assert_eq!(uses(&mut app, 1, Some(verb::TALK)), Some(ActorKey(1)));
+        assert_eq!(uses(&mut app, 1, Some(verb::SIT)), None, "a pose verb talked");
+        assert_eq!(uses(&mut app, 2, None), None, "not an NPC");
+        app.world_mut().resource_mut::<Locked>().0 = true;
+        assert_eq!(uses(&mut app, 1, None), None, "a refused use talked");
+    }
 
     fn last_text(view: &DialogueView) -> String {
         view.entries().rev().find_map(|e| match &e.kind { sf_rpg_ui::EntryKind::Line(l) => Some(l.text()), _ => None }).unwrap_or_default()

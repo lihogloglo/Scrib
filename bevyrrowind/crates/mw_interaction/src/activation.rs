@@ -11,6 +11,8 @@
 //! the slice that builds it, and are never offered: no verb without a handler. `OpenMW` citations:
 //! commit 4e718b50, `apps/openmw/mwclass/` (the spec's table).
 
+use sf_interaction::TagId;
+
 use crate::furniture::Kind;
 
 /// Verb tags (`TagId::of(name)`), shared with the defs' slots.
@@ -295,4 +297,16 @@ pub fn primary(
     on: impl Fn(Switch) -> bool,
 ) -> Option<&'static Row> {
     offered(class, holds, on).next()
+}
+
+/// Whether the default handler of `action` runs an approved use (`sf_interaction_bevy::UseApproved`)
+/// of `verb`: `None` (the target's primary use: a target with no def) or the tag of an offered row
+/// with that action (`open` for a container or a travel door, `talk`, `take`, `read`). A pose verb
+/// (`sit`, `lie`, `lean`) on a def'd container or activator is the seat default's, so its class's
+/// default never runs on it (`IN32c2`). The one check every default handler makes.
+#[must_use]
+pub fn runs_default(action: DefaultAction, verb: Option<TagId>) -> bool {
+    verb.is_none_or(|v| {
+        ROWS.iter().any(|r| r.action == action && r.available == Availability::Offered && TagId::of(r.verb) == v)
+    })
 }

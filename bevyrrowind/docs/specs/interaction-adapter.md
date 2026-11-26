@@ -177,6 +177,18 @@ after the player; registers `mw_interaction::TUNABLES` and `sf_interaction_bevy:
 - Open: ACTI placements are not in `ScriptPlacements` (`mw_scripts_bevy` hook skips ACTIVATOR), so an activator is
   never focused (pre-existing; its 55 furniture defs are indexed but unreachable by the player).
 
+### As built (IN32c2, 2026-11-26)
+
+The pack's defaults run on `UseApproved` (contract step 6), so a gate in `ActivationSystems::Gates` can refuse them:
+travel doors (`mw_doors_bevy::activate`), talk (`mw_rpg_bevy::dialogue::talk_on_activate` via pure `talk_target`),
+take and open (`mw_rpg_bevy::inventory::request_takes`), each `.after(ActivationSystems::Default)` the same frame,
+other ordering kept. One verb rule, `mw_interaction::runs_default(DefaultAction, verb)`: the primary use
+(`verb: None`) or the tag of an offered row with that action (door/container `open`, `talk`, `take`/`read`); a pose
+verb on a def'd chest or activator never opens it. `mw_player_bevy::activatable` takes its prompts from the rows
+(`primary(class, ..).prompt`; a light's `Carryable` is the only condition known there), names and tooltip rules
+unchanged. A script's `Activate` (`ScriptActivate`) now runs these defaults too (the contract; nothing writes it
+yet). Still on `ActivationOutcome`: `mw_scripts_bevy`'s dev `report`, and `mw_audio_bevy`'s door sounds (IN32c2b).
+
 ## World rules mapping (IN41, IN38, IN19)
 
 **Material rows** (`sf.interact.material` + a pattern table in `mw_interaction`, checked against the install at cook,

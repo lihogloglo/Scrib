@@ -822,39 +822,44 @@ pub type Activatable = (String, Option<&'static str>);
 /// has a tooltip (`MWClass::*::hasToolTip`: a non-empty name; statics have none,
 /// `apps/openmw/mwclass/*.cpp`, commit 4e718b50); activation then is the class's
 /// `activate`: NPCs talk, doors and containers open, books read, items are taken, carryable
-/// lights too; a living creature or a fixed light shows its name only.
+/// lights too; a living creature or a fixed light shows its name only. The verbs are the
+/// activation table's (`mw_interaction::activation`, [`mw_interaction::primary`]: the class's first
+/// offered row; a light's `Carryable` the only condition known here, `IN32c2`).
 pub fn activatable(db: &RecordDb, record: &str) -> Option<Activatable> {
+    use mw_interaction::{Condition, RecordClass as C, primary};
     use tes3::esp::{
         Activator, Alchemy, Apparatus, Armor, Book, Clothing, Container, Creature, Door, Ingredient, Light, LightFlags, Lockpick,
         MiscItem, Npc, Probe, RepairItem, Weapon,
     };
     let id = RecordId::new(record);
-    let named = |name: &str, verb| (!name.is_empty()).then(|| (name.to_owned(), verb));
+    let verb = |class, holds: &dyn Fn(Condition) -> bool| primary(class, holds, |_| true).map(|row| row.prompt);
+    let named = |name: &str, class| (!name.is_empty()).then(|| (name.to_owned(), verb(class, &|_| false)));
     macro_rules! classes {
-        ($($ty:ty => $verb:expr),* $(,)?) => {
-            $(if let Some(r) = db.get::<$ty>(&id) { return named(&r.name, $verb); })*
+        ($($ty:ty => $class:expr),* $(,)?) => {
+            $(if let Some(r) = db.get::<$ty>(&id) { return named(&r.name, $class); })*
         };
     }
     classes! {
-        Npc => Some("Talk"),
-        Door => Some("Open"),
-        Container => Some("Open"),
-        Activator => Some("Use"),
-        Book => Some("Read"),
-        Creature => None,
-        Weapon => Some("Take"),
-        Armor => Some("Take"),
-        Clothing => Some("Take"),
-        Ingredient => Some("Take"),
-        MiscItem => Some("Take"),
-        Alchemy => Some("Take"),
-        Apparatus => Some("Take"),
-        Lockpick => Some("Take"),
-        Probe => Some("Take"),
-        RepairItem => Some("Take"),
+        Npc => C::Npc,
+        Door => C::Door,
+        Container => C::Container,
+        Activator => C::Activator,
+        Book => C::Book,
+        Creature => C::Creature,
+        Weapon => C::Weapon,
+        Armor => C::Armor,
+        Clothing => C::Clothing,
+        Ingredient => C::Ingredient,
+        MiscItem => C::MiscItem,
+        Alchemy => C::Alchemy,
+        Apparatus => C::Apparatus,
+        Lockpick => C::Lockpick,
+        Probe => C::Probe,
+        RepairItem => C::RepairItem,
     }
     if let Some(l) = db.get::<Light>(&id) {
-        return named(&l.name, l.data.flags.contains(LightFlags::CAN_CARRY).then_some("Take"));
+        let carry = l.data.flags.contains(LightFlags::CAN_CARRY);
+        return (!l.name.is_empty()).then(|| (l.name.clone(), verb(C::Light, &|c| carry && c == Condition::Carryable)));
     }
     None
 }

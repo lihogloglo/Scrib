@@ -24,7 +24,9 @@ use mw_assets::LightCalibration;
 use mw_game_core::exterior::Settled;
 use mw_game_core::perf::{Off, Part};
 use mw_game_core::player::{PlayerBody, UsePressed};
+use mw_interaction::{DefaultAction, runs_default};
 use mw_world::CellEnvironment;
+use sf_interaction_bevy::{ActivationSystems, UseApproved};
 use sf_sky_bevy::SkyCamera;
 use sf_terrain_bevy::{TerrainCamera, TerrainPatch};
 use sf_world::{DoorLink, LinkEnd, Location, Worldspace, WorldspaceId};
@@ -117,8 +119,16 @@ pub fn add(app: &mut App, world: WorldLinks, use_door: u32) {
         .insert_resource(Environments(world.environments))
         .insert_resource(AutoDoor { remaining: use_door })
         .add_systems(Update, report_travel)
-        // After the script slot: the activate key's door opens only if no script handled it.
-        .add_systems(Update, activate.after(sf_script_bevy::ScriptSlot::Update).before(StreamingSystems::Transition))
+        // After the activation pipeline's default step (after the script slot): the activate key's door
+        // opens only if no script handled it and no gate refused it (`UseApproved`, IN32c2).
+        .add_message::<UseApproved>()
+        .add_systems(
+            Update,
+            activate
+                .after(sf_script_bevy::ScriptSlot::Update)
+                .after(ActivationSystems::Default)
+                .before(StreamingSystems::Transition),
+        )
         // Before the sky applies: `setup_sky_cameras` must see this frame's
         // `SkyCamera` insert/remove, or a portal crossing renders one frame
         // with the other side's atmosphere and environment light (the
@@ -207,9 +217,9 @@ pub fn sync_free_camera(
     }
 }
 
-/// Opens a door: the default action of the player's activation of a door
-/// placement that no script handled (`ActivationOutcome`, M5 L3; the activate
-/// key and crosshair pick are `scripts.rs`'s). Link ends without a door
+/// Opens a door: the default action of the player's approved use of a door
+/// placement (`UseApproved`: no script handled it, no gate refused it; its
+/// primary use or `open`, [`mw_interaction::runs_default`], `IN32c2`). Link ends without a door
 /// object (teleport points) keep the proximity pick on Use ([`UsePressed`]), from the player body in player mode
 /// (the third-person camera sits metres behind it), else the camera. `--use-door`
 /// travels directly, once the start has streamed in.
@@ -224,13 +234,13 @@ fn activate(
     positions: WorldPosOf,
     cams: Query<(Entity, &GlobalTransform), With<DoorUser>>,
     bodies: Query<&sf_action_bevy::ActionBody, With<PlayerBody>>,
-    mut outcomes: MessageReader<sf_script_bevy::ActivationOutcome>,
+    mut approved: MessageReader<UseApproved>,
     mut travel: MessageWriter<StartTravel>,
 ) {
-    let opened: Vec<_> = outcomes
+    let opened: Vec<_> = approved
         .read()
-        .filter(|o| !o.handled && o.activation.actor == sf_script_bevy::PLAYER)
-        .map(|o| sf_world::PlacementId(o.activation.target.0))
+        .filter(|a| a.activation.actor == sf_script_bevy::PLAYER && runs_default(DefaultAction::TravelDoor, a.verb))
+        .map(|a| sf_world::PlacementId(a.activation.target.0))
         .collect();
     if fade.is_active() {
         return;
@@ -460,7 +470,7 @@ mod tests {
         use bevy_input::{ButtonInput, keyboard::KeyCode};
         use sf_world_bevy::WorldspaceRoot;
         let mut app = App::new();
-        app.add_message::<sf_script_bevy::ActivationOutcome>()
+        app.add_message::<UseApproved>()
             .add_message::<StartTravel>()
             .insert_resource(DoorLinks(vec![DoorLink {
                 a: end("ext", Vec3::new(0.0, 0.0, -2.0)),
@@ -484,6 +494,57 @@ mod tests {
         assert!(travels(&mut app).is_empty(), "a raw E (Use not pressed) opened the door");
         app.world_mut().resource_mut::<UsePressed>().0 = true;
         assert_eq!(travels(&mut app), vec![WorldspaceId::new("hall")]);
+    }
+
+    /// Refuses every pending use while on (a stand-in for crime's lock gate).
+    #[derive(Resource, Default)]
+    struct Locked(bool);
+
+    fn lock_gate(locked: Res<Locked>, mut pending: ResMut<sf_interaction_bevy::PendingUses>) {
+        if locked.0 {
+            for u in pending.uses_mut() {
+                u.refuse(mw_interaction::TagId::of("locked"));
+            }
+        }
+    }
+
+    /// `IN32c2`: the door travels on an approved use (`UseApproved`, through the activation pipeline's
+    /// gates), on its primary use or `open`; a gate's refusal or a pose verb travels nowhere.
+    #[test]
+    fn an_approved_use_of_a_door_travels_and_a_refused_one_does_not() {
+        use mw_interaction::{TagId, activation::verb};
+        use sf_script_bevy::sf_script::Handle;
+        use sf_script_bevy::{Activated, ActivationOutcome, PLAYER};
+        use sf_world_bevy::WorldspaceRoot;
+        const DOOR: sf_world::PlacementId = sf_world::PlacementId(5);
+        let mut app = App::new();
+        app.add_plugins(sf_interaction_bevy::InteractionPlugin)
+            .add_message::<StartTravel>()
+            .insert_resource(DoorLinks(vec![DoorLink {
+                a: LinkEnd { door: Some(DOOR), ..end("ext", Vec3::new(0.0, 0.0, -2.0)) },
+                b: end("hall", Vec3::ZERO),
+                two_way: true,
+            }]))
+            .init_resource::<FadeTransition>()
+            .insert_resource(AutoDoor { remaining: 0 })
+            .init_resource::<Locked>()
+            .add_systems(Update, lock_gate.in_set(ActivationSystems::Gates))
+            .add_systems(Update, activate.after(ActivationSystems::Default));
+        let root = app.world_mut().spawn(WorldspaceRoot { id: WorldspaceId::new("ext"), layer: 0 }).id();
+        let (cell, transform) = sf_world_bevy::to_grid(WorldPos::ORIGIN);
+        app.world_mut().spawn((DoorUser, cell, transform, ChildOf(root), GlobalTransform::IDENTITY));
+        let uses = |app: &mut App, verb: Option<&str>| -> Vec<WorldspaceId> {
+            let activation = Activated { target: Handle(DOOR.0), actor: PLAYER, verb: verb.map(|v| TagId::of(v).0) };
+            app.world_mut().write_message(ActivationOutcome { activation, handled: false });
+            app.update();
+            let sent = app.world().resource::<Messages<StartTravel>>();
+            sent.iter_current_update_messages().map(|t| t.to.worldspace.clone()).collect()
+        };
+        assert_eq!(uses(&mut app, None), vec![WorldspaceId::new("hall")], "primary use");
+        assert_eq!(uses(&mut app, Some(verb::OPEN)), vec![WorldspaceId::new("hall")], "open");
+        assert!(uses(&mut app, Some(verb::SIT)).is_empty(), "a pose verb travelled");
+        app.world_mut().resource_mut::<Locked>().0 = true;
+        assert!(uses(&mut app, None).is_empty(), "a refused use travelled");
     }
 
     /// The facing at a DODT marker (Morrowind angles through `mw_world`'s

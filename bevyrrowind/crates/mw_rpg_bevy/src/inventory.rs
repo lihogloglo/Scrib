@@ -1,7 +1,8 @@
 //! Taking items into the player's inventory (ROADMAP 2.2 U5 / 2.4; superfargoth `rpg.md`,
 //! `net.md` "Net-ready rules", `save.md`).
 //!
-//! - **Request, then host.** E on the focus writes `Activated`; an unhandled player activation of
+//! - **Request, then host.** E on the focus writes `Activated`; an approved player use (`UseApproved`:
+//!   no script handled it, no gate refused it; its primary use or the class's own verb, `IN32c2`) of
 //!   a takeable record ([`TakeKind`]) becomes a [`TakeRequest`] (player id, placement id, record:
 //!   stable ids only, net rule 7). [`apply_takes`] is the host side: it validates the request
 //!   against the live world and applies it. A co-op client would send the request instead.
@@ -64,10 +65,12 @@ use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemState;
 use bevy_log::prelude::*;
+use mw_interaction::{DefaultAction, runs_default};
+use sf_interaction_bevy::{ActivationSystems, UseApproved};
 use sf_physics_bevy::ItemPivot;
 use sf_records::{RecordDb, RecordId};
 use sf_rpg::{ActorKey, Attrs, CharacterRpg, Holder, PlayerId, RpgCommand, StackId};
-use sf_script_bevy::{ActivationOutcome, PLAYER, ScriptPlacements, ScriptSlot};
+use sf_script_bevy::{PLAYER, ScriptPlacements, ScriptSlot};
 use sf_world::PlacementId;
 use sf_world_bevy::WorldOverlay;
 use tes3::esp::{
@@ -227,26 +230,39 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>) {
         .insert_resource(ItemRecords(db))
         .add_message::<TakeRequest>()
         .add_message::<ContainerOpened>()
-        .add_systems(Update, (request_takes, apply_takes).chain().after(ScriptSlot::Update));
+        .add_message::<UseApproved>()
+        // After the activation pipeline's default step (after the script slot), the same frame.
+        .add_systems(
+            Update,
+            (request_takes, apply_takes).chain().after(ScriptSlot::Update).after(ActivationSystems::Default),
+        );
 }
 
-/// Unhandled player activations of takeable records become [`TakeRequest`]s.
+/// Approved player uses (`UseApproved`) of takeable records become [`TakeRequest`]s: a container
+/// on its primary use or `open`, an item on its primary use, `take` or `read` (a book is taken
+/// until the reader exists), [`mw_interaction::runs_default`]. A pose verb (`sit` on a def'd chest)
+/// opens nothing: the seat default runs it.
 #[allow(clippy::needless_pass_by_value)] // system parameters
 fn request_takes(
-    mut outcomes: MessageReader<ActivationOutcome>,
+    mut approved: MessageReader<UseApproved>,
     placements: Option<Res<ScriptPlacements>>,
     records: Res<ItemRecords>,
     mut out: MessageWriter<TakeRequest>,
 ) {
     let Some(placements) = placements else {
-        outcomes.clear();
+        approved.clear();
         return;
     };
-    for o in outcomes.read().filter(|o| !o.handled && o.activation.actor == PLAYER) {
-        let Some(placed) = placements.get(o.activation.target) else { continue };
+    for a in approved.read().filter(|a| a.activation.actor == PLAYER) {
+        let Some(placed) = placements.get(a.activation.target) else { continue };
         let record = RecordId::new(&placed.record);
-        if let Some(kind) = records.kind(&record) {
-            out.write(TakeRequest { player: PlayerId::HOST, target: PlacementId(o.activation.target.0), record, kind });
+        let Some(kind) = records.kind(&record) else { continue };
+        let action = match kind {
+            TakeKind::Item => DefaultAction::Take,
+            TakeKind::Container => DefaultAction::OpenContainer,
+        };
+        if runs_default(action, a.verb) {
+            out.write(TakeRequest { player: PlayerId::HOST, target: PlacementId(a.activation.target.0), record, kind });
         }
     }
 }
@@ -449,6 +465,68 @@ mod tests {
     use mw_install::MorrowindInstall;
     use mw_rpg::NoSheets;
     use sf_rpg_ui::DialogueRequest;
+
+    /// Refuses every pending use while on (a stand-in for crime's lock gate).
+    #[derive(Resource, Default)]
+    struct Locked(bool);
+
+    fn lock_gate(locked: Res<Locked>, mut pending: ResMut<sf_interaction_bevy::PendingUses>) {
+        if locked.0 {
+            for u in pending.uses_mut() {
+                u.refuse(mw_interaction::TagId::of("locked"));
+            }
+        }
+    }
+
+    /// `IN32c2`: an approved primary use of a loose item or a container (through the activation
+    /// pipeline's gates) asks to take or open it, as before; a gate's refusal asks nothing, and a
+    /// `sit` on a def'd chest never opens it.
+    #[test]
+    fn approved_uses_take_and_open_refused_and_pose_uses_do_not() {
+        use mw_interaction::{TagId, activation::verb};
+        use sf_script_bevy::sf_script::Handle;
+        use sf_script_bevy::{Activated, ActivationOutcome, Placed};
+        use tes3::esp::{FileType, Header, Plugin, TES3Object};
+        const APPLE: PlacementId = PlacementId(1);
+        const CHEST: PlacementId = PlacementId(2);
+        const ROCK: PlacementId = PlacementId(3);
+        let objects: Vec<TES3Object> = vec![
+            Header { file_type: FileType::Esm, ..Header::default() }.into(),
+            MiscItem { id: "apple".into(), ..MiscItem::default() }.into(),
+            Container { id: "chest".into(), ..Container::default() }.into(),
+        ];
+        let bytes = Plugin { objects }.save_bytes().unwrap();
+        let vfs = sf_vfs::Vfs::builder().mount(sf_vfs::MemSource::new("data").with("Master.esm", bytes)).build();
+        let db = Arc::new(mw_records::load(&vfs, &["Master.esm".to_owned()]).unwrap().db);
+        let mut app = App::new();
+        app.add_plugins(sf_interaction_bevy::InteractionPlugin)
+            .insert_resource(ItemRecords(db))
+            .init_resource::<ScriptPlacements>()
+            .init_resource::<Locked>()
+            .add_message::<TakeRequest>()
+            .add_systems(Update, lock_gate.in_set(ActivationSystems::Gates))
+            .add_systems(Update, request_takes.after(ActivationSystems::Default));
+        let placed = |record: &str| Placed { record: record.into(), worldspace: "test".into(), position: [0.0; 3], radius: 0.5 };
+        let mut p = app.world_mut().resource_mut::<ScriptPlacements>();
+        for (h, record) in [(APPLE, "apple"), (CHEST, "chest"), (ROCK, "rock")] {
+            p.loaded.insert(Handle(h.0), placed(record));
+        }
+        let uses = |app: &mut App, target: PlacementId, verb: Option<&str>| -> Vec<(PlacementId, TakeKind)> {
+            let activation = Activated { target: Handle(target.0), actor: PLAYER, verb: verb.map(|v| TagId::of(v).0) };
+            app.world_mut().write_message(ActivationOutcome { activation, handled: false });
+            app.update();
+            let sent = app.world().resource::<Messages<TakeRequest>>();
+            sent.iter_current_update_messages().map(|t| (t.target, t.kind)).collect()
+        };
+        assert_eq!(uses(&mut app, APPLE, None), [(APPLE, TakeKind::Item)]);
+        assert_eq!(uses(&mut app, CHEST, None), [(CHEST, TakeKind::Container)]);
+        assert_eq!(uses(&mut app, CHEST, Some(verb::OPEN)), [(CHEST, TakeKind::Container)]);
+        assert!(uses(&mut app, CHEST, Some(verb::SIT)).is_empty(), "a sit opened the chest");
+        assert!(uses(&mut app, ROCK, None).is_empty(), "a static is not takeable");
+        app.world_mut().resource_mut::<Locked>().0 = true;
+        assert!(uses(&mut app, APPLE, None).is_empty(), "a refused take");
+        assert!(uses(&mut app, CHEST, None).is_empty(), "a refused open");
+    }
 
     const FARGOTH: ActorKey = ActorKey(1);
 

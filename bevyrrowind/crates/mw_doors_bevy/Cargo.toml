@@ -19,10 +19,14 @@ bevy_math = { workspace = true, features = ["std"] }
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 mw_assets.workspace = true
 mw_game_core.workspace = true
+# The verb rule of the door's default (`runs_default`, IN32c2; Bevy-free).
+mw_interaction.workspace = true
 mw_world.workspace = true
 sf_action_bevy.workspace = true
 sf_atmos_bevy.workspace = true
 sf_audio_bevy.workspace = true
+# `UseApproved` and `ActivationSystems`: the door opens on an approved use (IN32c2).
+sf_interaction_bevy.workspace = true
 sf_records.workspace = true
 sf_script_bevy.workspace = true
 sf_sky_bevy.workspace = true

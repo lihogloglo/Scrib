@@ -7,7 +7,8 @@
 //! - [`measure`](mod@measure): [`measure()`], a census model's triangles and top to its [`Measured`]
 //!   shape (seat front from the backrest, bed head from the boards; the bake calls it, `IN32b2`).
 //! - [`activation`]: the per-record-class activation table ([`ROWS`]): verb, default action and
-//!   Classic behaviour; today's prompts unchanged, unbuilt actions listed but never offered.
+//!   Classic behaviour; today's prompts unchanged, unbuilt actions listed but never offered;
+//!   [`runs_default`], whether a default handler acts on an approved use's verb.
 //! - [`tunables`]: `mw.rules.interaction.sit`, the `mw.interact.*` furniture lengths
 //!   ([`FurnitureParams`]) and the `mw.interact.measure.*` bake thresholds ([`MeasureParams`]).
 //!
@@ -23,6 +24,7 @@ pub mod tunables;
 
 pub use activation::{
     Availability, Classic, Condition, DefaultAction, ROWS, RecordClass, Row, Switch, offered, primary, rows,
+    runs_default,
 };
 pub use defs::{Basis, CLASS_VERB_PRIORITY, Facing, Measured, POSE_VERB_PRIORITY, class_verb, def_for};
 pub use furniture::{Kind, classify};

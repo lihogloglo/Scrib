@@ -170,6 +170,7 @@ AL-TRUNK | confirmed in the browser 2026-11-12 (arms clear the chest, trunk upri
 AU-3 | partial (2026-10-30: greets only very close; NPCs don't stop or turn) | [audio](visual-checks/audio.md) | NPC greetings, idle chatter, lip-sync level
 AU-5 | rejected (2026-10-30: no swing, no sound, prompt only) | [audio](visual-checks/audio.md) | Swinging-door sounds
 KM-1 (was IN-1) | awaiting owner | [player-ui](visual-checks/player-ui.md) | Keymap controls, rebind, gamepad, sneak hold vs toggle
+IN-32 | awaiting owner | [interaction](visual-checks/interaction.md) | Activation through the interaction contract: talk, container, take, door unchanged; chair prompts "Sit" (IN32c)
 PM-1 | confirmed with follow-up (2026-10-30: mouse sliders, mute icon, Main menu button) | [player-ui](visual-checks/player-ui.md) | Escape menu and options (volume live and saved)
 SV-2 | confirmed with follow-up (2026-10-30: thumbnails missing) | [player-ui](visual-checks/player-ui.md) | Save/load screens from the pause menu (save, overwrite, load, delete)
 MM-1 | confirmed with follow-up (2026-11-11: flow works; look crude, text over grey boxes, not Morrowind/OpenMW) | [player-ui](visual-checks/player-ui.md) | Release start: intro logos, main menu with no world behind it, New game

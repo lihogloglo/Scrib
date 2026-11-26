@@ -20,6 +20,8 @@ mw_controls_bevy.workspace = true
 # Morrowind's MGEF table for the effects glue (`effects`).
 mw_effects.workspace = true
 mw_game_core.workspace = true
+# The verb rule of the talk and take defaults (`runs_default`, IN32c2; Bevy-free).
+mw_interaction.workspace = true
 mw_records.workspace = true
 mw_rpg.workspace = true
 mw_script.workspace = true
@@ -42,6 +44,9 @@ sf_calendar = { workspace = true, features = ["bevy"] }
 sf_character_bevy = { workspace = true, features = ["world"] }
 # Magic effects on the characters (`effects`).
 sf_effects_bevy.workspace = true
+# `UseApproved` and `ActivationSystems`: talk and take run on an approved use (IN32c2); already in
+# the graph through `mw_doors_bevy`.
+sf_interaction_bevy.workspace = true
 sf_physics_bevy.workspace = true
 sf_records.workspace = true
 sf_rpg.workspace = true

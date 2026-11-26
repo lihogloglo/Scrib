@@ -4,7 +4,8 @@
 use sf_interaction::TagId;
 
 use crate::activation::{
-    Availability, Classic, Condition, DefaultAction, ROWS, RecordClass as R, Switch, offered, primary, rows, verb,
+    Availability, Classic, Condition, DefaultAction, ROWS, RecordClass as R, Switch, offered, primary, rows, runs_default,
+    verb,
 };
 use crate::furniture::Kind;
 
@@ -127,4 +128,63 @@ fn unbuilt_actions_are_not_offered() {
     assert_eq!(slice(R::Light, verb::SNUFF), Some(Availability::NotYet("IN19")));
     assert_eq!(slice(R::Furniture(Kind::Bed), verb::SLEEP), Some(Availability::NotYet("IN3")));
     assert_eq!(slice(R::Container, verb::BASH), Some(Availability::NotYet("IN37")));
+}
+
+/// Every verb tag of the table.
+const VERBS: [&str; 16] = [
+    verb::TALK,
+    verb::OPEN,
+    verb::CLOSE,
+    verb::USE,
+    verb::READ,
+    verb::TAKE,
+    verb::SEARCH,
+    verb::PICKPOCKET,
+    verb::SNUFF,
+    verb::RELIGHT,
+    verb::SIT,
+    verb::LIE,
+    verb::LEAN,
+    verb::SLEEP,
+    verb::BASH,
+    verb::BROWSE,
+];
+
+/// The verbs `action`'s default runs on, besides the primary use (`None`).
+fn runs_on(action: DefaultAction) -> Vec<&'static str> {
+    VERBS.into_iter().filter(|v| runs_default(action, Some(TagId::of(v)))).collect()
+}
+
+/// `IN32c2`: each class's primary default runs on the primary use and on its own verb only; a pose
+/// verb on a def'd container or activator never opens or uses it.
+#[test]
+fn default_handlers_run_on_their_own_verbs_only() {
+    // Class by class: the primary row's action and the verbs it runs on, exactly.
+    let table: &[(R, DefaultAction, &[&str])] = &[
+        (R::Npc, DefaultAction::Dialogue, &[verb::TALK]),
+        (R::Door, DefaultAction::TravelDoor, &[verb::OPEN]),
+        (R::Container, DefaultAction::OpenContainer, &[verb::OPEN]),
+        (R::Activator, DefaultAction::Script, &[verb::USE]),
+        // A book is taken until the reader exists: read and take both run it.
+        (R::Book, DefaultAction::Take, &[verb::READ, verb::TAKE]),
+        (R::Weapon, DefaultAction::Take, &[verb::READ, verb::TAKE]),
+        (R::MiscItem, DefaultAction::Take, &[verb::READ, verb::TAKE]),
+    ];
+    for &(class, action, verbs) in table {
+        let row = primary(class, |_| false, |_| true).expect("an offered primary row");
+        assert_eq!(row.action, action, "{class:?}");
+        assert!(runs_default(action, None), "{class:?}: the primary use");
+        assert!(runs_default(action, Some(TagId::of(row.verb))), "{class:?}: its own verb");
+        assert_eq!(runs_on(action), verbs, "{class:?}");
+    }
+    for pose in [verb::SIT, verb::LIE, verb::LEAN] {
+        for action in [DefaultAction::OpenContainer, DefaultAction::Script, DefaultAction::TravelDoor, DefaultAction::Take, DefaultAction::Dialogue] {
+            assert!(!runs_default(action, Some(TagId::of(pose))), "{action:?} on {pose}");
+        }
+    }
+    // The pose verbs are the seat default's; unbuilt actions run on nothing.
+    assert_eq!(runs_on(DefaultAction::Pose), [verb::SIT, verb::LIE, verb::LEAN]);
+    for action in [DefaultAction::SwingDoor, DefaultAction::Bash, DefaultAction::ToggleLit, DefaultAction::Rest, DefaultAction::Loot] {
+        assert!(runs_on(action).is_empty(), "{action:?}");
+    }
 }

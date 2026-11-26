@@ -33,6 +33,8 @@ mw_combat.workspace = true
 mw_controls_bevy.workspace = true
 mw_doors_bevy.workspace = true
 mw_game_core.workspace = true
+# The prompt verbs of `activatable`: the activation table's rows (IN32c2; Bevy-free).
+mw_interaction.workspace = true
 mw_anim.workspace = true
 mw_graphs.workspace = true
 mw_walkers_bevy.workspace = true
