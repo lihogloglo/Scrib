@@ -75,7 +75,12 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   `Completed` at the arrival minute, Follow stands at the leader's logical position, Use walks then holds, Fight holds,
   Custom registered; `validate` fails at load for an unregistered custom kind). Routes advance at walk speed in
   simulated seconds (game ms / `time_scale`), arrival fixed when the route is taken up. `fast_forward` = step + the
-  adapter's `FastForwardRules` (MA7).
+  adapter's `FastForwardRules` (MA7). Promotion core (AI10b, `sf_ai/src/promote.rs`; not in game until AI10c):
+  `PromoteQueue` holds every actor granted tier 1/2 still tier 0 (pins, then nearest player, then key), tries at most
+  `per_tick` a tick, a waiter retried after `retry_s` (skips free, so seen waiters never starve unseen ones);
+  `resolve_promotion` places at `position_at(t)` snapped, else back along its route (`backtrack_step_m` up to
+  `backtrack_m`), else `PromoteEnv::approaches`, only where `PlayerViews::unseen`, else waits; a refused `Use` slot
+  claim stands it there. `demote(body, now)` = a fresh `LogicalState`; the allocator alone grants demotion.
 - **Greeting** (MA4c2, 2026-11-26; `mw_walkers_bevy/src/greeting.rs`): every awake AI actor steps `mw_ai`'s OpenMW
   greeting machine (`greeting_step`, MA4c1) on the fixed tick in `GreetSystems` (`add` `greeting.rs:215`): Decide
   (`:255`, after `ReactionSystems::React`; asks for the Hello when a greeting starts), the voices' answer

@@ -418,6 +418,14 @@ Fact store, Nemesis-style relations and vendettas, bounded gossip, reputation pe
   Routes come through the `LogicalEnv` seam (`RouteRef { from, to, length_m, speed_mps }`, `point_on`), not
   `sf_nav` types: the shell composes `WorldGraph` + NV12 (AI10c). Speed is per simulated second (game ms /
   `time_scale`), so tier 0 matches a tier-2 walker. Fight holds (pinned). `fast_forward(state, stack, hours, ..)`.
+- **As built (AI10b, 2026-11-26):** `sf_ai::promote`. A try is one resolve (snap + view tests); a waiting entry is not
+  tried again for `ai.tier.promote_retry_s` (0.1-5 s, Guess 0.5; skips are free), so seen waiters near the player
+  never starve unseen ones. Candidates in order: the state's spot at `t`, then points back along its own route every
+  `ai.tier.promote_backtrack_step_m` (1-20 m, Guess 4) up to `ai.tier.promote_backtrack_m` (0-200 m, Guess 40) or the
+  route start (it walks into view on its path, GTA/RDR style), then the shell's occluded approaches; a refused `Use`
+  claim places it standing. Seams: `PlayerViews::seen_by_any(at, radius)` (gameplay viewers, also for doors and
+  follower catch-up) and `PromoteEnv` (snap, claim, approaches, body radius), both the shell's (AI10c).
+  `demote(body, now)` is a fresh `LogicalState`; the allocator alone grants it.
 - **CPU tier** = host setting `sim.cpu_tier` (auto from cores, AI9d), apart from the graphics preset. Clients vary
   only presentation.
 

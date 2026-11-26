@@ -38,6 +38,9 @@
 //!   activity, until) every logical actor runs, the per-kind [`LogicalTransitions`] (custom kinds
 //!   registered, [`LogicalTransitions::validate`] at load), the [`LogicalEnv`] seam and
 //!   [`fast_forward`] with the adapter's [`FastForwardRules`].
+//! - `AI10b` (promotion core): [`promote`], the nearest-first [`PromoteQueue`] under a fixed count
+//!   per tick, [`resolve_promotion`] (unseen placement: spot, back along the route, approaches) on
+//!   the [`PlayerViews`] / [`PromoteEnv`] seams, and [`demote`].
 //!
 //! The console command `ai.trace` and BRP live in `sf_ai_bevy` (AI3): actor references and the
 //! console context are the shell's.
@@ -52,6 +55,7 @@ pub mod light;
 pub mod logical;
 pub mod perception;
 pub mod profile;
+pub mod promote;
 pub mod react;
 pub mod save;
 pub mod search;
@@ -99,6 +103,10 @@ pub use profile::{
     PerceptionField, PerceptionProfile, PerceptionRangeError, PerceptionState, PerceptionStates, PushOutcome,
     SearchConfig, SearchParams, SightConfig, SightParams, StateEntry, register_perception_kinds, resolve,
 };
+pub use promote::{
+    EnteredFrom, Placement, PlayerViews, PromoteConfig, PromoteEnv, PromoteQueue, PromoteRequest, PromoteTick, Resolve,
+    demote, resolve_promotion,
+};
 pub use react::{ReactConfig, ReactGoal, ReactInput, ReactState, investigate_point};
 pub use save::{AI_SECTION, AI_VERSION, ActorSave, AiSave, AiSaveError};
 pub use search::{
@@ -140,6 +148,8 @@ mod tests_notify;
 mod tests_perception;
 #[cfg(test)]
 mod tests_profile;
+#[cfg(test)]
+mod tests_promote;
 #[cfg(test)]
 mod tests_react;
 #[cfg(test)]

@@ -271,6 +271,15 @@ impl LogicalState {
         }
     }
 
+    /// Metres along its route at `t` (`None`: not on a route, or following): where a promoted
+    /// walker resumes (`promote`, `AI10b`).
+    pub fn progress_at(&self, t: GameInstant, time_scale: f64) -> Option<f32> {
+        if self.follow.is_some() {
+            return None;
+        }
+        self.route.as_ref().map(|route| self.progress_after(route, t, time_scale))
+    }
+
     /// When the actor reaches the end of its route (`None`: not on one, or not moving).
     pub fn arrival(&self) -> Option<GameInstant> {
         self.route.as_ref().and(self.arrives)
