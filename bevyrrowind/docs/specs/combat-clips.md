@@ -12,7 +12,7 @@ Every combat slot ends with a Morrowind clip fallback (`ClipFallback::Clip`) unl
 - Attacks: `WeaponOneHand@chop|slash|thrust`, `WeaponTwoHand@...`, `WeaponTwoWide@...`, `HandToHand@...` (graph clip names,
   `mw_graphs::build::WEAPON_SECTIONS`). Reactions: `Hit1`-`Hit5`, `Knockdown`, `Knockout@tail` (get-up), `Death1`-`Death5`.
   Guard: `Shield@block`.
-- **Windows** come from the clips' text keys (`mw_combat::windows`, kinds parsed in `mw_anim/src/text_keys.rs:32-53`):
+- **Windows** come from the clips' text keys (`mw_combat::windows`, a new module; kinds parsed in `mw_anim/src/text_keys.rs:32-53`):
   "Morrowind attack clips" below. One hit per attack (the original honours one hit key); the sheet's row numbers apply.
 - These clips animate the upper body: in the modern profile they play in the full-body slot (fallback quality, owner accepts);
   the classic profile plays them in the `upper` slot over the movement set.

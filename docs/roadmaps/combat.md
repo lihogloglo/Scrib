@@ -141,10 +141,10 @@ charged attacks, running and rolling attacks, heavy armour shrugging off a light
 | C2c | Backstep + knockdown through `Owner::Physics`, get-up roll-out window, invulnerable while down; same rules in both views | `sf_combat`, `mw_walkers_bevy` | AN37 backstep | exact windows; owner CB-3c |
 | C18 | First-person dodge: the same dodge `MoveSpec` (CB-6 timing, i-frames, cost) presented as a side dash camera path, no tumble; view switch mid-move changes nothing | `sf_camera_bevy`, `mw_combat` data | C0a | identical windows in both views; owner CB-5e |
 | C3a | Symmetric poise + armour windows, break escalation, `poise_broken` | `sf_combat` | C0a | exact tiers; owner CB-10 |
-| C3b | Heavy + charge from the `min attack`..`max attack` window | `sf_combat`, `mw_combat` | AN33 | charge release swaps clip; owner CB-4 |
+| C3b | Heavy + charge from the `min attack`..`max attack` window: adds `WindowKind::Charge` and the release pick Heavy `.medium` / Charged `.large` (combat-clips.md "Morrowind attack clips"; `mw.combat.clips.charge.hold_s`) | `sf_combat`, `mw_combat` | AN33 | charge release swaps clip; owner CB-4 |
 | C3c | Openers: running, rolling, backstep, jump attacks; typed i-frames | `mw_combat` data, `sf_action` | C3b | exact chains; owner CB-4 |
 | C3d | Second classes as data: `greatsword_2h`, `spear_2h`, `fist` on `WeaponTwoHand/TwoWide/HandToHand` | `mw_combat` data | C3b, C0d | no new code; owner CB-4b |
-| C17 | NPC and creature fighters without AI: `Fighter`, health from records, reactions, death via walkers ragdoll | `mw_combat`, `mw_walkers_bevy` | C2c | hit NPC reacts and dies; unblocks MA15, DQ-12, C16 |
+| C17 | NPC and creature fighters without AI: `Fighter`, health from records, reactions, death via walkers ragdoll; creatures on the 8 weapon-biped rigs (dremora, golden saint, skeleton, liche, liche_king, almelexia, almelexia_warrior, lordvivec) use the humanoid weapon sheet of their weapon, the werewolf rig the `fist` sheet, raven and `heart_akulakhan` are targets without a sheet (combat-clips.md "Creature attack clips") | `mw_combat`, `mw_walkers_bevy` | C2c | hit NPC reacts and dies; exact: sheet per rig kind on synthetic records; unblocks MA15, DQ-12, C16 |
 | C4c | Third-person profile: lock-on flick switching, combat shake (1P keeps soft aim, CB-5) | `sf_combat_bevy`, `sf_camera_bevy` | - | switch picks flicked side; owner CB-5c |
 
 ### Stage 2: parry, riposte, finishers, kick and hazards
@@ -185,7 +185,7 @@ then, with AI15, three guards take turns while others circle (ai.md Stage 6).
 | C6d | Telegraph lint at sheet load | `sf_combat` | C0b | warns below floor |
 | C19 | Threat cues for every player and view: audio telegraph at windup start, hit-direction indicator | `sf_combat_bevy`, `mw_combat` data | C6d | exact cue tick; owner CB-7b |
 | C6e | Duelist: C6 drives a humanoid fighter via `Command` in `level-sparring` | `sf_combat_bevy`, `mw_combat` | C6a-c, C3a | no NaN; owner CB-7 |
-| C6f | Creature sheets from `Attack1-3`: anatomy moves, lunge wall-stagger, boss phase swaps | `mw_combat` data | C6e, S1 | exact phase swap; owner CB-11 |
+| C6f | Creature sheets from `Attack1-3` (combat-adapter.md "Creatures (C6f)"): one move per group; generated default = `Melee` rows and at most ONE `Charged` + `WallStagger` move per sheet (the longest `MoveReach.travel_m`, if ≥ `mw.combat.creature.lunge_m` 0.75 m: 12 rigs); species files `mw_combat/data/creatures/<skeleton>.ron` (`CreatureCombat`, `hit_s`); boss phase swaps. First step (read, no code): whether OpenMW applies an attack clip's root travel to a creature (30 of 234 moves end displaced; spec open question 4) | `mw_combat` data | C6e, S1, AN33 (creature windows) | exact on synthetic travel (one Charged, the longest; none below the threshold; a file wins); vanilla `#[ignore = "needs Morrowind data"]`: the 12 rigs; exact phase swap; owner CB-11 |
 | (ai) | AI15, AI36, AI37, MA10 wrap C6 in the combat drive | ai lane | C6e | owner AI-8 |
 
 ### Stage 5: bows, throwing and spells
@@ -195,7 +195,7 @@ Ends with: shoot an archer who keeps her distance; cast a fireball that arcs and
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
 | C8a | `Projectile` source: host entity, swept segment per tick, gravity/drag, stick, spawn event | `sf_combat`, `sf_combat_bevy` | C0c, S5 | no tunnelling at 100 m/s; stuck arrow persists |
-| C8b | Ranged sheet: draw/charge window, aim modes (lock, over-shoulder, crosshair), slowed walk | `sf_combat`, `mw_combat` | C8a | exact charge; owner CB-12 |
+| C8b | Ranged sheet: draw/charge window (`MoveSpec.draw`: named by the adapter spec, absent today, `sf_combat/src/sheet.rs:290-305`), aim modes (lock, over-shoulder, crosshair), slowed walk | `sf_combat`, `mw_combat` | C8a | exact charge; owner CB-12 |
 | C8c | `Area` and `Beam` sources: ground reticle, overlap with falloff + LOS | `sf_combat` | C8a | exact falloff |
 | C8d | Cast action: upper-body Morrowind `SpellCast` clips over locomotion, release tick → `Cast` → C8a/C8c | `sf_combat_bevy`, `mw_combat` | C8c, effects A5b | headless cast lands; owner CB-13 |
 | C8e | Ranged fighters: band with LOS, `ranged` token pool, lead solver | `sf_combat` | C8b, C6a | exact band keeping |
@@ -223,7 +223,17 @@ OpenMW `aicombataction.cpp` ratings (classic AI, after C5).
 
 C0a-C0e above, before their stages. Also: combat.md build plan gains C2b2, C2d, C2e, C8-C19; the spec's "CB-6 classic swing"
 becomes CB-14 (CB-6 is the confirmed roll). anim's "combat-adapter.md Morrowind attack clips" slice (before AN33) stays the
-anim lane's. character-shapes.md S5 points at this roadmap.
+anim lane's (specced 2026-11-26, now `bevyrrowind/docs/specs/combat-clips.md`; rows AN33-AN37 in `anim.md`). character-shapes.md S5 points at this roadmap.
+
+Found by the attack-clips spec (2026-11-26), each fixed by the row named:
+- Reactions compile `WindowPolicy::Committed`, rate 1, the whole clip (`sf_combat/src/sheet.rs:630`, `662`): a Small
+  hit locks the player for the full 1.0 s clip. AN35 (entries `(slot, rate, free_s)`).
+- `guard.sword_1h.idle` falls back to `Shield@block`, looped as the held guard (`mw_graphs/data/animation/
+  sources.ron:477-485`); it is a 1.333 s one-shot block reaction. AN35 (it becomes `guard_hit`), AN37 (the held pose).
+- The sword's attacks and reactions play UAL first, Morrowind as fallback (`sources.ron:335-545`); owner decision 9
+  wants Morrowind first. C4 (attacks), AN35 (reactions).
+- Beast `SpellCast` spans 201.5 s against 8.2 s (stray keys in `xbase_animkna.kf`, AN32a): C8d cuts the cast by its
+  keys, not by the group span.
 
 ## 6. Dependencies on other lanes
 
