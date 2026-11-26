@@ -31,6 +31,8 @@ use crate::SeatClips;
 
 /// The seat rules' enter slot (`sf_action` `seat_rules.ron`).
 pub const SIT_ENTER: &str = "interact.sit.enter";
+/// The seat rules' approach walk (to the enter clip's start pose, when the enter cannot start).
+pub const SIT_APPROACH: &str = "interact.sit.approach";
 /// The seat rules' seated loop slot.
 pub const SIT_LOOP: &str = "interact.sit.loop";
 /// The seat rules' stand-up slot.

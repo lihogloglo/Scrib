@@ -95,7 +95,7 @@ pub use seat::{
     EndPoseFree, EndPoseTest, InteractionUser, SeatClips, SeatLoss, SeatPhase, SeatReport, SeatStep, SeatSystems, SeatUse, SeatUses,
     seat_target,
 };
-pub use seat_clips::{SIT_ENTER, SIT_EXIT, SIT_LOOP, SeatClipSets, SeatClipSystems, SeatSet, bind_seat_clips};
+pub use seat_clips::{SIT_APPROACH, SIT_ENTER, SIT_EXIT, SIT_LOOP, SeatClipSets, SeatClipSystems, SeatSet, bind_seat_clips};
 /// The Bevy-free core, for crates that read or write this shell's messages without their own
 /// dependency on it (`sf_interaction::DoorChanged`, `UserKey`).
 pub use sf_interaction;

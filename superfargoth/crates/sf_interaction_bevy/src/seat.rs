@@ -51,7 +51,9 @@
 //! `Lost` (which of claim, def, frame or index row went; once when the use is dropped or a seated
 //! user turns `Leaving`), `NoEntrance` and `Offered` (on the grant's tick: entry side, horizontal
 //! feet-to-seat distance, yaw offset); the events step's `Entered`, `Exited` and `EnterRefused`
-//! (with that tick's action refusals). An approval that is not a seat use (no def, no pose slot
+//! (with that tick's action refusals). An offered use whose enter cannot start reports
+//! `Approaching` once, on the tick the action layer starts its approach walk, before that tick's
+//! `Entered` or `EnterRefused`. An approval that is not a seat use (no def, no pose slot
 //! for the verb) or whose actor is no [`InteractionUser`] reports nothing. The host logs or shows
 //! them; every use ends in `ClaimRefused`, `UserGone`, `Lost` (before sitting), `NoEntrance`,
 //! `EnterRefused` or `Exited`.
@@ -68,7 +70,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use glam::{Quat, Vec2, Vec3};
-use sf_action::{EventKind as ActionEventKind, TargetId};
+use sf_action::{EventKind as ActionEventKind, RuleKey, TargetId};
 use sf_action_bevy::{ActionBody, ActionCharacter, SeatAim, SeatSense};
 use sf_anim::RootPose;
 use sf_coords::WorldPos;
@@ -83,7 +85,7 @@ use smallvec::SmallVec;
 use crate::activate::offered_verbs;
 use crate::{
     ClaimAnswered, ClaimRequest, InteractionClaims, InteractionDefs, InteractionFrames, InteractionIndex, InteractionStateTags,
-    UseApproved,
+    SIT_APPROACH, UseApproved,
 };
 
 // --- Components and resources -------------------------------------------------------------------
@@ -248,11 +250,15 @@ pub enum SeatStep {
         /// The slot's yaw minus the body's, radians in [-pi, pi].
         yaw_off: f32,
     },
+    /// The action layer started the approach walk ([`crate::SIT_APPROACH`]): the body walks to the
+    /// enter clip's start pose; the use stays offered.
+    Approaching,
     /// The body sat (`SeatEntered`).
     Entered,
     /// The body stood up (`SeatExited`): the use ends.
     Exited,
-    /// The action layer refused the enter (`SeatRefused`), with that tick's refusals.
+    /// The action layer refused the enter, or the approach ended without sitting (`SeatRefused`),
+    /// with that tick's refusals.
     EnterRefused(SmallVec<[sf_action::Refusal; 2]>),
 }
 
@@ -543,6 +549,12 @@ pub(crate) fn seat_events(
         // Always queued (no presence check): ordered after a same-tick insert from the offer step.
         if user.user != *key {
             return true;
+        }
+        // The approach's `MoveStart` carries the focus target, not the seat: tested unfiltered,
+        // written before the loop so a same-tick `Entered` / `EnterRefused` comes after it.
+        let approach = ActionEventKind::MoveStart(RuleKey::of(SIT_APPROACH));
+        if seat.phase == SeatPhase::Offered && c.output.events.iter().any(|e| e.kind == approach) {
+            reports.write(report(*key, seat, SeatStep::Approaching));
         }
         let target = Some(seat_target(seat.slot.placement));
         for e in c.output.events.iter().filter(|e| e.target == target) {

@@ -2,12 +2,12 @@
 //! ground, `SEAT_RULES` with stand-in clips): approval → claim → seat offer → occupy → release.
 //! Exact on claim events, answers and seat events.
 
-use std::f32::consts::PI;
+use std::f32::consts::{PI, TAU};
 use std::sync::Arc;
 use std::time::Duration;
 
 use bevy_time::{TimePlugin, TimeUpdateStrategy};
-use glam::{Quat, Vec3};
+use glam::{Quat, Vec2, Vec3};
 use sf_action::{
     ActionClass, ActionEvent, ActionState, BASE_RULES, CharacterId, CharacterParams, Command, Origin, RootPath, RuleKey,
     RuleSetBuilder, SEAT_RULES, SlotInfo, SlotTable,
@@ -153,6 +153,10 @@ fn chair() -> Arc<InteractableDef> {
 #[derive(Resource, Default)]
 struct Presses(Vec<(Entity, ActionClass)>);
 
+/// A stick for the next tick's command, by entity.
+#[derive(Resource, Default)]
+struct Sticks(Vec<(Entity, Vec2)>);
+
 /// What the run saw, by fixed tick.
 #[derive(Resource, Default)]
 struct Log {
@@ -163,16 +167,25 @@ struct Log {
     reports: Vec<SeatReport>,
 }
 
-fn write_commands(tick: Res<ActionTick>, mut presses: ResMut<Presses>, mut characters: Query<(Entity, &mut ActionCharacter)>) {
+fn write_commands(
+    tick: Res<ActionTick>,
+    mut presses: ResMut<Presses>,
+    mut sticks: ResMut<Sticks>,
+    mut characters: Query<(Entity, &mut ActionCharacter)>,
+) {
     for (e, mut c) in &mut characters {
         let mut cmd = Command::empty(tick.0);
         for (_, class) in presses.0.iter().filter(|(p, _)| *p == e) {
             cmd.buttons.pressed.insert(*class);
             cmd.buttons.held.insert(*class);
         }
+        if let Some((_, stick)) = sticks.0.iter().find(|(p, _)| *p == e) {
+            cmd.stick = *stick;
+        }
         c.command = cmd;
     }
     presses.0.clear();
+    sticks.0.clear();
 }
 
 fn record(
@@ -208,6 +221,7 @@ fn app() -> App {
         .insert_resource(Flat(TerrainProbe(Plane)))
         .insert_resource(rules())
         .init_resource::<Presses>()
+        .init_resource::<Sticks>()
         .init_resource::<Log>()
         .add_systems(FixedUpdate, write_commands.in_set(ActionSystems::Command))
         .add_systems(FixedUpdate, record.after(SeatSystems::Events))
@@ -226,8 +240,13 @@ fn app() -> App {
 
 /// A character at `at` facing +Z that uses slots as `user`.
 fn spawn(app: &mut App, id: u64, at: Vec3, user: UserKey, actor: Handle, priority: u8) -> Entity {
+    spawn_facing(app, id, at, 0.0, user, actor, priority)
+}
+
+/// [`spawn`] with the body's yaw (`sf_controller::forward`: 0 faces +Z, pi/2 faces +X).
+fn spawn_facing(app: &mut App, id: u64, at: Vec3, yaw: f32, user: UserKey, actor: Handle, priority: u8) -> Entity {
     let character = ActionCharacter::new(CharacterId(id), ActionState::new(RuleKey::of("loco")), CharacterParams::default());
-    let body = ActionBody::new(Locomotion::new(WorldPos::from_f64(at.as_dvec3()), 0.0), MoverParams::default(), WorldPos::ORIGIN);
+    let body = ActionBody::new(Locomotion::new(WorldPos::from_f64(at.as_dvec3()), yaw), MoverParams::default(), WorldPos::ORIGIN);
     let user = InteractionUser { user, actor, priority, tags: SmallVec::new() };
     app.world_mut().spawn((character, body, user)).id()
 }
@@ -724,4 +743,125 @@ fn the_exit_alias_is_latched_while_the_stand_up_plays() {
     assert!(until(&mut app, 120, |a| mov(a, p) == RuleKey::of("loco")), "stood: {:?}", mov(&app, p));
     frames(&mut app, 2);
     assert!(no_aliases(&app, p));
+}
+
+// --- The approach (IN2c5): the real mover walks to the enter clip's start -----------------------
+
+/// Frames (one fixed tick each) from the sit press to the first `Approaching` report, the first
+/// tick in the enter, and the `Entered` report.
+#[derive(Debug, Default)]
+struct Timeline {
+    approaching: Option<usize>,
+    enter: Option<usize>,
+    entered: Option<usize>,
+}
+
+fn has_step(app: &App, step: &SeatStep) -> bool {
+    app.world().resource::<Log>().reports.iter().any(|r| r.user == player() && r.step == *step)
+}
+
+/// The player at `at` facing `yaw` presses sit on the chair; frames run (at most `max`) until the
+/// body is in its seated loop, or (`stick`: the stick pushed that many frames after `Approaching`)
+/// until the use ends.
+fn approach(at: Vec3, yaw: f32, stick: Option<usize>, max: usize) -> (App, Entity, Timeline) {
+    let mut app = app();
+    let p = spawn_facing(&mut app, 1, at, yaw, player(), PLAYER, 30);
+    frames(&mut app, 10);
+    app.world_mut().write_message(sit_command());
+    let mut t = Timeline::default();
+    for frame in 1..=max {
+        app.update();
+        if t.approaching.is_none() && has_step(&app, &SeatStep::Approaching) {
+            t.approaching = Some(frame);
+        }
+        if t.enter.is_none() && mov(&app, p) == RuleKey::of(ENTER) {
+            t.enter = Some(frame);
+        }
+        if t.entered.is_none() && has_step(&app, &SeatStep::Entered) {
+            t.entered = Some(frame);
+        }
+        if stick.zip(t.approaching).is_some_and(|(s, a)| frame == a + s) {
+            app.world_mut().resource_mut::<Sticks>().0.push((p, Vec2::new(0.0, 1.0)));
+        }
+        let done = match stick {
+            Some(_) => t.approaching.is_some() && app.world().resource::<SeatUses>().get(player()).is_none(),
+            None => mov(&app, p) == RuleKey::of(LOOP),
+        };
+        if done {
+            break;
+        }
+    }
+    frames(&mut app, 2);
+    (app, p, t)
+}
+
+/// The walk-and-sit asserts of the two approach tests; `yaw_off` is the offer's (rounded) yaw gap.
+fn walks_then_sits(name: &str, at: Vec3, yaw: f32, yaw_off: f32) {
+    let (app, p, t) = approach(at, yaw, None, 480);
+    let feet = app.world().get::<ActionBody>(p).unwrap().loco.position.to_f64().as_vec3();
+    let err = feet.distance(Vec3::new(0.1, 0.0, 0.6));
+    println!("{name}: ticks from the press {t:?}, feet error {err:.5} m");
+    let offered = SeatStep::Offered { entry: Some(Side::Front), feet_to_seat_m: 1.2, yaw_off };
+    assert_eq!(steps(&app, player(), p), vec![SeatStep::Asked, offered, SeatStep::Approaching, SeatStep::Entered], "{name}");
+    assert!(ever(&app, p, SIT_APPROACH), "{name}");
+    assert!(ever(&app, p, ENTER), "{name}");
+    assert_eq!(mov(&app, p), RuleKey::of(LOOP), "{name}");
+    assert_eq!(claim(&app), Some((player(), Phase::Occupied)), "{name}");
+    assert!(err < 1e-3, "{name}: {feet:?}");
+    assert_eq!(seat_kinds(&app, p), vec![sf_action::EventKind::SeatEntered(0)], "{name}");
+}
+
+#[test]
+fn a_sit_from_in_front_facing_the_seat_walks_then_sits() {
+    // The slot (0.1, 0, 0.6) faces -Z: 1.2 m in front of it is (0.1, 0, -0.6), facing +Z (yaw 0).
+    walks_then_sits("front", Vec3::new(0.1, 0.0, -0.6), 0.0, centi(PI));
+}
+
+/// The seated body faces -Z, its left is -X: 1.2 m there is (-1.1, 0, 0.6), facing the seat (+X,
+/// yaw pi/2). Measured 2026-11-26: the approach ends in `ApproachTimeout`, the body never sits.
+/// Prints, every 10 ticks from the press, the planar distance to the approach target (the enter's
+/// start pose: (0.1, 0, 0.1), yaw 0), the yaw gap, the mover's speed and yaw rate, the move.
+/// Once it arrives, the asserts are `walks_then_sits("left", .., PI / 2.0, centi(PI / 2.0))`.
+#[test]
+#[ignore = "measurement: IN2c5 the real mover does not arrive"]
+fn the_same_from_the_left_side() {
+    let mut app = app();
+    let p = spawn_facing(&mut app, 1, Vec3::new(-1.1, 0.0, 0.6), PI / 2.0, player(), PLAYER, 30);
+    frames(&mut app, 10);
+    app.world_mut().write_message(sit_command());
+    let target = Vec3::new(0.1, 0.0, 0.1);
+    let names = [("loco", "loco"), (SIT_APPROACH, "approach"), (ENTER, "enter"), (LOOP, "loop")];
+    for tick in 0..=240 {
+        if tick % 10 == 0 {
+            let loco = &app.world().get::<ActionBody>(p).unwrap().loco;
+            let feet = loco.position.to_f64().as_vec3();
+            let dist = Vec2::new(feet.x - target.x, feet.z - target.z).length();
+            let gap = (loco.motion.yaw + PI).rem_euclid(TAU) - PI;
+            let speed = loco.motion.velocity.length();
+            let m = mov(&app, p);
+            let name = names.iter().find(|(id, _)| RuleKey::of(id) == m).map_or("other", |(_, n)| *n);
+            println!(
+                "tick {tick:3}: dist {dist:.3} m, yaw gap {gap:+.3} rad, speed {speed:.3} m/s, yaw rate {:+.3} rad/s, feet ({:.3}, {:.3}), {name}",
+                loco.motion.angular_velocity, feet.x, feet.z
+            );
+        }
+        app.update();
+    }
+    println!("trail {:?}", steps(&app, player(), p));
+}
+
+#[test]
+fn the_stick_during_the_approach_gives_the_seat_back() {
+    let (app, p, t) = approach(Vec3::new(0.1, 0.0, -0.6), 0.0, Some(5), 480);
+    println!("stick: ticks from the press {t:?}");
+    let trail = steps(&app, player(), p);
+    assert_eq!(trail.iter().filter(|s| **s == SeatStep::Approaching).count(), 1, "{trail:?}");
+    let [.., approaching, SeatStep::EnterRefused(r)] = trail.as_slice() else { panic!("{trail:?}") };
+    assert_eq!(*approaching, SeatStep::Approaching, "{trail:?}");
+    let cancelled = sf_action::Refusal { rule: RuleKey::of(SIT_APPROACH), reason: sf_action::Refused::ApproachCancelled };
+    assert!(r.contains(&cancelled), "{r:?}");
+    assert_eq!(claim(&app), None);
+    assert_eq!(aim(&app, p), None);
+    assert_eq!(clips(&app, p), None);
+    assert!(!ever(&app, p, ENTER), "the enter never ran");
 }

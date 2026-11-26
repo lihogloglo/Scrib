@@ -13,12 +13,13 @@
 use bevy_ecs::prelude::*;
 use bevy_log::{info, warn};
 use sf_interaction::{TagId, UserKey, VERB_CLOSE, VERB_OPEN, fnv1a32};
-use sf_interaction_bevy::{SIT_ENTER, SIT_EXIT, SIT_LOOP, SeatReport, SeatStep, UseRefused};
+use sf_interaction_bevy::{SIT_APPROACH, SIT_ENTER, SIT_EXIT, SIT_LOOP, SeatReport, SeatStep, UseRefused};
 
 use crate::input::PLAYER_USER;
 
 /// The seat rules' keys: `sf_action::RuleKey::of(id)` is this same 32-bit FNV-1a of the id.
-const SIT_RULES: [(u32, &str); 3] = [
+const SIT_RULES: [(u32, &str); 4] = [
+    (fnv1a32(SIT_APPROACH.as_bytes()), SIT_APPROACH),
     (fnv1a32(SIT_ENTER.as_bytes()), SIT_ENTER),
     (fnv1a32(SIT_LOOP.as_bytes()), SIT_LOOP),
     (fnv1a32(SIT_EXIT.as_bytes()), SIT_EXIT),
@@ -60,6 +61,7 @@ pub(crate) fn seat_line(r: &SeatReport) -> (bool, String) {
             let yaw = yaw_off.to_degrees();
             (false, format!("seat: {user} offered {seat}: entry {entry}, feet {feet_to_seat_m:.2} m from the seat, yaw off {yaw:.0} deg"))
         }
+        SeatStep::Approaching => (false, format!("seat: {user} walks to {seat}")),
         SeatStep::Entered => (false, format!("seat: {user} entered {seat}")),
         SeatStep::Exited => (false, format!("seat: {user} exited {seat}")),
         SeatStep::EnterRefused(refusals) => {
@@ -100,7 +102,7 @@ mod tests {
     use sf_world::PlacementId;
     use smallvec::smallvec;
 
-    use super::{SIT_ENTER, fnv1a32, log_reports, refused_line, seat_line};
+    use super::{SIT_APPROACH, SIT_ENTER, fnv1a32, log_reports, refused_line, seat_line};
     use crate::input::PLAYER_USER;
 
     const SLOT: SlotRef = SlotRef { placement: PlacementId(7), slot: 1 };
@@ -117,6 +119,12 @@ mod tests {
         let enter = postcard::from_bytes(&bytes).expect("decode");
         let other = postcard::from_bytes(&postcard::to_stdvec(&(5_u32, 6_u32)).expect("encode")).expect("decode");
         SeatStep::EnterRefused(smallvec![enter, other])
+    }
+
+    /// The approach rule's refusal for `ApproachCancelled` (variant index 15), decoded the same way.
+    fn approach_cancelled_step() -> SeatStep {
+        let bytes = postcard::to_stdvec(&(fnv1a32(SIT_APPROACH.as_bytes()), 15_u32)).expect("encode");
+        SeatStep::EnterRefused(smallvec![postcard::from_bytes(&bytes).expect("decode")])
     }
 
     #[test]
@@ -145,6 +153,7 @@ mod tests {
                 "seat: player offered PlacementId(7) slot 1: entry any (no entrances), feet 1.00 m from the seat, yaw off 0 deg"
                     .into(),
             ),
+            (SeatStep::Approaching, false, "seat: player walks to PlacementId(7) slot 1".into()),
             (SeatStep::Entered, false, "seat: player entered PlacementId(7) slot 1".into()),
             (SeatStep::Exited, false, "seat: player exited PlacementId(7) slot 1".into()),
             (
@@ -153,6 +162,11 @@ mod tests {
                 format!(
                     "seat: use dropped: enter refused by the action layer (interact.sit.enter: MaxCorrection; RuleKey(5): Probe), {on}"
                 ),
+            ),
+            (
+                approach_cancelled_step(),
+                true,
+                format!("seat: use dropped: enter refused by the action layer (interact.sit.approach: ApproachCancelled), {on}"),
             ),
             (
                 SeatStep::EnterRefused(smallvec![]),

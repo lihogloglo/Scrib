@@ -590,6 +590,15 @@ IN2c6 the repro's stances A-E assert `Entered`.
 under the approach's rule key. A load check refuses an `Approach` owner without a slot or an `Arrived` exit to a
 rule, and `Arrived` on any other owner. 8 tests (`tests_approach.rs`) with a stand-in mover; the real mover is IN2c6.
 
+**As built (IN2c5, 2026-11-26).** The seat shell reports `SeatStep::Approaching` once, when a use in phase `Offered`
+sees `MoveStart(interact.sit.approach)` among the body's events (`seat_events`; the event carries the focus target,
+so it is read outside the seat-target filter), before that tick's `Entered` / `EnterRefused`. `EnterRefused` now also
+ends an approach that did not sit (its refusal names the approach rule). The game logs `seat: player walks to ..`.
+First run with the real mover (`tests_seat.rs`): from the front with a clip that starts facing the seat it sits
+(0.78 s of walk); **with the walk direction off the target yaw it times out** (no braking, overshoot, circling:
+ledger IN2c5), which is every natural stance with the real clips (they start with the back to the seat). The walk
+intent of IN2c4 is therefore not final: IN2c4b gives it the path followers' constant-deceleration arrival.
+
 ## As built (IN33a, 2026-11-26)
 
 `sf_interaction/src/door.rs` (+ `tests_door.rs`, 8 exact tests): the design of "Slot kinds" Door as pure functions.
