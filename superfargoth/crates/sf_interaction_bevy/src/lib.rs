@@ -37,6 +37,12 @@
 //!   [`PlayerFocus`], in [`InteractionSystems::Focus`] (after `Apply`, before `Activate`);
 //!   [`FocusState::command`] gives the [`ActivateCommand`] the host writes.
 //!
+//! - Pose slots (`IN2b2`, [`seat`] module docs): the default for an approved use of a
+//!   [`sf_interaction::SlotKind::Pose`] slot by an [`InteractionUser`] character: claim, offer the
+//!   claimed slot to the action layer (`sf_action_bevy::SeatAim`), occupy on `SeatEntered`, release
+//!   on `SeatExited` / `SeatRefused`, clear the aim when the claim is lost. [`SeatSystems`] orders
+//!   it around `sf_action_bevy::ActionSystems::Step`; [`EndPoseFree`] is the host's capsule test.
+//!
 //! Not here: game wiring (`IN32`).
 
 use std::collections::BTreeMap;
@@ -57,18 +63,22 @@ use smallvec::SmallVec;
 
 pub mod activate;
 pub mod focus;
+pub mod seat;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tests_activate;
 #[cfg(test)]
 mod tests_focus;
+#[cfg(test)]
+mod tests_seat;
 
 pub use activate::{
     ActivateCommand, ActivationSystems, InteractionDefs, InteractionStateTags, PendingUse, PendingUses, ScriptActivate,
     UseApproved, UseRefused,
 };
 pub use focus::{FocusCandidates, FocusState, PlayerFocus};
+pub use seat::{EndPoseFree, EndPoseTest, InteractionUser, SeatPhase, SeatSystems, SeatUse, SeatUses, seat_target};
 
 // --- Tunables ---------------------------------------------------------------------------------
 
@@ -334,6 +344,9 @@ impl Plugin for InteractionPlugin {
             .init_resource::<InteractionDefs>()
             .init_resource::<InteractionStateTags>()
             .init_resource::<PendingUses>()
+            .init_resource::<activate::ActivationSlots>()
+            .init_resource::<SeatUses>()
+            .init_resource::<EndPoseFree>()
             .add_message::<ActivateCommand>()
             .add_message::<ScriptActivate>()
             .add_message::<UseApproved>()
@@ -356,7 +369,16 @@ impl Plugin for InteractionPlugin {
             .add_systems(FixedUpdate, focus::focus.in_set(InteractionSystems::Focus))
             .add_systems(FixedUpdate, activate::activate.in_set(InteractionSystems::Activate))
             .add_systems(Update, activate::collect.in_set(ActivationSystems::Collect))
-            .add_systems(Update, activate::finish.in_set(ActivationSystems::Default));
+            .add_systems(Update, activate::finish.in_set(ActivationSystems::Default))
+            .configure_sets(Update, SeatSystems::Request.after(ActivationSystems::Default))
+            .configure_sets(
+                FixedUpdate,
+                SeatSystems::Offer.after(InteractionSystems::Apply).before(sf_action_bevy::ActionSystems::Step),
+            )
+            .configure_sets(FixedUpdate, SeatSystems::Events.after(sf_action_bevy::ActionSystems::Step))
+            .add_systems(Update, seat::seat_requests.in_set(SeatSystems::Request))
+            .add_systems(FixedUpdate, seat::seat_offers.in_set(SeatSystems::Offer))
+            .add_systems(FixedUpdate, seat::seat_events.in_set(SeatSystems::Events));
         bind!(app, PRIORITY_AMBIENT, |p, v| p.priority_ambient = to_u8(v));
         bind!(app, PRIORITY_SCHEDULE, |p, v| p.priority_schedule = to_u8(v));
         bind!(app, PRIORITY_QUEST, |p, v| p.priority_quest = to_u8(v));

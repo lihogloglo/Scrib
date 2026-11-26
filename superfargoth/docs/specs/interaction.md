@@ -497,6 +497,20 @@ entry flag `offered: true` (no request classes) starts `interact.sit.enter` on t
 offer: the shell releases the claim. `sf_action_bevy::SeatAim(Option<SeatSense>)` is the shell's write (before
 `ActionSystems::Step`).
 
+## As built (IN2b2, 2026-11-26)
+
+`sf_interaction_bevy/src/seat.rs` (+ `tests_seat.rs`, 5 headless tests with `SfActionPlugin`): the default for
+`SlotKind::Pose`. Host component `InteractionUser { user, actor, priority, tags }` (requires `SeatAim`). `UseApproved`
+(and `PendingUse`) carry `slot: Option<u8>` from validation; a slotless approval (script `Activate`) takes the best
+offered pose slot. Phases `SeatUses`: Asked → Granted (claim) → Offered (`SeatAim` = slot frame and `pick_exit` exit,
+from the feet; seat `TargetId` = placement id's low 64 bits) → Seated (`SeatEntered` → `Occupy`) → Leaving
+(`SeatExited`/`SeatRefused` → `Release`, aim cleared). A lost claim (invalidation, lease, preemption) is read from the
+claim table each tick and clears the aim at once (no Release after it, so hand claims aren't touched). Exit faces the
+slot; no entrance or none free → where the feet were at the grant (entrances all blocked → claim released).
+`EndPoseFree` is the host's capsule seam (accepts all by default). Latency at one fixed tick per frame: command N →
+enter N+1; entered M → Occupied M+1; exited K → released K+1. Open: `interact.sit.exit` has no `stand`, so the
+stand-up carries ~7 cm past the exit pose (action-layer rule data).
+
 ## Owner questions
 
 1. Destruction scope: every crate and barrel, or only some ("fragile" list per material)? Which weapons break what

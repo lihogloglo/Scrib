@@ -2,6 +2,7 @@
 
 Format: `date | tried | result | verdict | commit or doc`. Newest first. Owner checks are IN- ids in `bevyrrowind/docs/visual-checks.md`.
 
+2026-11-26 | IN2b2 seat default in the shell: UseApproved(+slot) -> claim -> `SeatAim` -> Occupy on `SeatEntered`, Release on exit/refused, lost claim clears the aim | 5 headless tests with the action plugin (shell 26); clippy, deny, hakari, bevy_variants [1] clean | kept; exit carries ~7 cm (sit.exit has no `stand`); owner IN-2 waits for AN26 clips | spec "As built (IN2b2)"
 2026-11-26 | IN2b1 sit starts from the seat sense (entry `offered`), `SeatRefused` once per offer, `SeatAim` component | sf_action 72 (11 seat), sf_action_bevy 25 (+1 headless sit), sf_save_bevy 42; clippy clean | kept; IN2b2 glue next | spec "As built (IN2a)"
 2026-11-26 | IN2a sit/stand in `sf_action`: `SeatSense`, `WarpTarget::{Slot, SlotExit}`, `Owner::Seated` + `ExitOn::Stand`, `SeatEntered/SeatExited` events, `SEAT_RULES` data | 7 new exact tests (sf_action 68 pass), clippy sf_action + sf_action_bevy clean | kept; IN2b glue next; seated save not yet | spec "As built (IN2a)"
 2026-11-26 | IN31b2 per-player focus: `FocusCandidates` -> `PlayerFocus`/`FocusState` (stabilized target, verbs frozen while held, `list_open`), `command()` -> `ActivateCommand`; `offered_verbs` shared with validation | 6 new headless tests (shell 21, core 39), clippy clean | kept; game wiring in IN32 | spec "As built (IN31b2)"

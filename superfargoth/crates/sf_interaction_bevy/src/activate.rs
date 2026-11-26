@@ -27,7 +27,9 @@
 //!    first refusal wins; gates order among themselves with plain Bevy ordering).
 //! 6. **Default** ([`ActivationSystems::Default`]): each pending use becomes one [`UseApproved`]
 //!    (what the verb's default handler reads, `.after(ActivationSystems::Default)`) or one
-//!    [`UseRefused`] (its reason, for the prompt), and the list empties.
+//!    [`UseRefused`] (its reason, for the prompt), and the list empties. A use validated in step 2
+//!    carries the slot its verb acts through (`IN2b2`: kept beside the `Activated` by actor, target
+//!    and verb, since the scripts' answer has no slot); a script's `Activate` carries none.
 //! 7. **Script `Activate`** ([`ScriptActivate`]) enters at step 5: gates, then default, never the
 //!    scripts again, so a script cannot recurse into itself.
 //!
@@ -107,6 +109,8 @@ impl InteractionStateTags {
 pub struct PendingUse {
     pub activation: Activated,
     pub verb: Option<TagId>,
+    /// The slot the verb acts through, when step 2 chose one (`None` for a script's `Activate`).
+    pub slot: Option<u8>,
     /// Entered from a script's `Activate` (step 7), not from the scripts' answer.
     pub from_script: bool,
     refused: Option<TagId>,
@@ -142,6 +146,11 @@ impl PendingUses {
     }
 }
 
+/// The slot each of this fixed tick's accepted activations acts through, by (actor, target, verb):
+/// written in step 2, taken in step 5 (the same frame: the scripts answer in `ScriptSlot::Update`).
+#[derive(Resource, Clone, Debug, Default)]
+pub(crate) struct ActivationSlots(BTreeMap<(Handle, Handle, Option<u32>), u8>);
+
 // --- Messages -----------------------------------------------------------------------------------
 
 /// Step 1: a user asks to use `target` (player input on its focus, an NPC's `UseSlot` step).
@@ -174,6 +183,9 @@ pub struct ScriptActivate {
 pub struct UseApproved {
     pub activation: Activated,
     pub verb: Option<TagId>,
+    /// The slot the verb acts through, when validation chose one (a script's `Activate`: `None`,
+    /// the verb's default picks).
+    pub slot: Option<u8>,
 }
 
 /// Step 6: a gate refused the use; `reason` goes to the prompt. Nothing else happens.
@@ -225,17 +237,17 @@ pub(crate) fn offered_verbs(
     Some(rank_verbs(def, target, state.tags(target), offered))
 }
 
-/// The activation `cmd` gives, `None` when refused (step 2).
+/// The activation `cmd` gives and the slot its verb acts through, `None` when refused (step 2).
 fn validate(
     cmd: &ActivateCommand,
     defs: &InteractionDefs,
     state: &InteractionStateTags,
     claims: &InteractionClaims,
     index: &InteractionIndex,
-) -> Option<Activated> {
+) -> Option<(Activated, Option<u8>)> {
     let activation = |verb: Option<TagId>| Activated { target: Handle(cmd.target.0), actor: cmd.actor, verb: verb.map(|v| v.0) };
     let Some(verbs) = offered_verbs(cmd.user, &cmd.tags, cmd.priority, cmd.target, defs, state, claims, index) else {
-        return (cmd.verb.is_none() && cmd.slot.is_none()).then(|| activation(None));
+        return (cmd.verb.is_none() && cmd.slot.is_none()).then(|| (activation(None), None));
     };
     verbs
         .into_iter()
@@ -243,7 +255,13 @@ fn validate(
             cmd.verb.is_none_or(|v| c.verb == v)
                 && cmd.slot.is_none_or(|s| matches!(c.target, VerbTarget::Slot(r) if r.slot == s))
         })
-        .map(|c| activation(Some(c.verb)))
+        .map(|c| {
+            let slot = match c.target {
+                VerbTarget::Slot(r) => Some(r.slot),
+                VerbTarget::Slotless { .. } => None,
+            };
+            (activation(Some(c.verb)), slot)
+        })
 }
 
 /// Step 2-3: validates this tick's commands and writes `Activated` for the accepted ones.
@@ -254,30 +272,40 @@ pub(crate) fn activate(
     state: Res<InteractionStateTags>,
     claims: Res<InteractionClaims>,
     index: Res<InteractionIndex>,
+    mut slots: ResMut<ActivationSlots>,
     mut out: MessageWriter<Activated>,
 ) {
-    let mut accepted: Vec<Activated> =
+    let mut accepted: Vec<(Activated, Option<u8>)> =
         commands_in.read().filter_map(|cmd| validate(cmd, &defs, &state, &claims, &index)).collect();
-    accepted.sort_by_key(|a| (a.actor, a.target, a.verb));
-    out.write_batch(accepted);
+    accepted.sort_by_key(|(a, _)| (a.actor, a.target, a.verb));
+    for (a, slot) in &accepted {
+        if let Some(slot) = slot {
+            slots.0.insert((a.actor, a.target, a.verb), *slot);
+        }
+    }
+    out.write_batch(accepted.into_iter().map(|(a, _)| a));
 }
 
 /// Step 5: unhandled uses and script `Activate`s, in order.
 pub(crate) fn collect(
     mut pending: ResMut<PendingUses>,
+    mut slots: ResMut<ActivationSlots>,
     mut outcomes: MessageReader<ActivationOutcome>,
     mut script: MessageReader<ScriptActivate>,
 ) {
     pending.0.clear();
+    let slots = std::mem::take(&mut slots.0);
     let unhandled = outcomes.read().filter(|o| !o.handled).map(|o| PendingUse {
         activation: o.activation,
         verb: o.activation.verb.map(TagId),
+        slot: slots.get(&(o.activation.actor, o.activation.target, o.activation.verb)).copied(),
         from_script: false,
         refused: None,
     });
     let scripted = script.read().map(|s| PendingUse {
         activation: Activated { target: s.target, actor: s.actor, verb: s.verb.map(|v| v.0) },
         verb: s.verb,
+        slot: None,
         from_script: true,
         refused: None,
     });
@@ -294,7 +322,7 @@ pub(crate) fn finish(
     for u in pending.0.drain(..) {
         match u.refused {
             None => {
-                approved.write(UseApproved { activation: u.activation, verb: u.verb });
+                approved.write(UseApproved { activation: u.activation, verb: u.verb, slot: u.slot });
             }
             Some(reason) => {
                 refused.write(UseRefused { activation: u.activation, verb: u.verb, reason });

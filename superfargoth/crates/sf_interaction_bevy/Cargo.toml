@@ -1,6 +1,6 @@
 [package]
 name = "sf_interaction_bevy"
-description = "Bevy shell for sf_interaction (interaction.md): hosts the Claims table and the slot PointIndex on the fixed tick (request messages applied as one sorted batch, leases, InteractionEvent messages) and binds the interact.* tunables live; the activation pipeline (ActivateCommand -> Activated -> scripts -> gates -> UseApproved/UseRefused); per-player stable focus with its offered verbs and hold list (IN31b2)"
+description = "Bevy shell for sf_interaction (interaction.md): hosts the Claims table and the slot PointIndex on the fixed tick (request messages applied as one sorted batch, leases, InteractionEvent messages) and binds the interact.* tunables live; the activation pipeline (ActivateCommand -> Activated -> scripts -> gates -> UseApproved/UseRefused); per-player stable focus with its offered verbs and hold list (IN31b2); the pose-slot default: claim, seat offer to the action layer, occupy, release (IN2b2)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,6 +12,17 @@ bevy_app = { workspace = true, features = ["std"] }
 bevy_ecs = { workspace = true, features = ["std"] }
 # `Time<Fixed>`: the tick rate leases count in.
 bevy_time = { workspace = true, features = ["std"] }
+# Slot frames and seat poses (the same glam as `sf_interaction` and `sf_action`).
+glam.workspace = true
+# `SeatSense`, `TargetId` and the seat `EventKind`s (IN2b2).
+sf_action.workspace = true
+# `SeatAim`, `ActionCharacter`, `ActionBody`, `ActionSystems`: the pose-slot default offers claimed
+# seats to the action layer and hears its seat events (IN2b2).
+sf_action_bevy.workspace = true
+# `RootPose`, the seat sense's pose type.
+sf_anim.workspace = true
+# `WorldPos`: the action body's feet.
+sf_coords.workspace = true
 sf_interaction.workspace = true
 # `Activated` / `ActivationOutcome` / `ScriptSlot`: the activation pipeline runs through the scripts.
 sf_script_bevy.workspace = true
@@ -23,6 +34,8 @@ smallvec.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
+# Flat ground, the test bodies' mover state (seat tests).
+sf_controller.workspace = true
 # `ActorKey`, `PlayerKey`, `RecordId`: test users and the test def.
 sf_ids.workspace = true
 sf_records.workspace = true

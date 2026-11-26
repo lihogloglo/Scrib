@@ -222,7 +222,7 @@ fn an_unhandled_use_is_approved_once_with_its_verb() {
     let a = Activated { target: handle(CHAIR), actor: PLAYER, verb: Some(sit().0) };
     let seen = app.world().resource::<Seen>();
     assert_eq!(seen.activated, vec![a]);
-    assert_eq!(seen.approved, vec![UseApproved { activation: a, verb: Some(sit()) }]);
+    assert_eq!(seen.approved, vec![UseApproved { activation: a, verb: Some(sit()), slot: Some(0) }]);
     assert!(seen.refused.is_empty());
     // The primary use of a target with a def names the best offered verb.
     send(&mut app, vec![cmd(CHAIR, None)]);
@@ -256,7 +256,7 @@ fn a_script_activate_passes_gates_and_default_once_and_skips_the_scripts() {
     let seen = app.world().resource::<Seen>();
     assert!(seen.activated.is_empty());
     let chest = Activated { target: handle(CHEST), actor: PLAYER, verb: None };
-    assert_eq!(seen.approved, vec![UseApproved { activation: chest, verb: None }]);
+    assert_eq!(seen.approved, vec![UseApproved { activation: chest, verb: None, slot: None }]);
     assert_eq!(seen.refused.len(), 1);
     assert_eq!(seen.refused[0].reason, locked());
     assert_eq!(seen.refused[0].verb, Some(TagId::of("open")));
@@ -314,6 +314,6 @@ fn a_target_without_a_def_is_activated_for_its_primary_use() {
     let a = Activated { target: handle(DOOR), actor: PLAYER, verb: None };
     let seen = app.world().resource::<Seen>();
     assert_eq!(seen.activated, vec![a]);
-    assert_eq!(seen.approved, vec![UseApproved { activation: a, verb: None }]);
+    assert_eq!(seen.approved, vec![UseApproved { activation: a, verb: None, slot: None }]);
     assert_eq!(seen_by_scripts(&app), "door;");
 }

@@ -64,6 +64,7 @@ impl Default for FocusState {
             target: None,
             verbs: SmallVec::new(),
             list_open: false,
+            // tunables: const (empty state; set every tick from FocusInput.priority = interact.claim.priority_player)
             priority: 0,
             tags: SmallVec::new(),
         }
