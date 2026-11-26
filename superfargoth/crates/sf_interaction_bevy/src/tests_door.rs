@@ -1,6 +1,8 @@
 //! `IN33b2a` headless tests: the door registry follows the index changes, an approved use toggles a
 //! registered door by the verb rule (one `DoorChanged`, the `door.open` tag kept), the swing side
 //! comes from the user's feet in the object's frame, the door tunables are bound live.
+//! `IN33b2b`: the swing on the fixed tick (48 steps at 60 Hz, a blocked pause, a reversal), the
+//! close-behind armed by the opener's release through the claim table, a removal mid-swing.
 //! `UseApproved` is written directly: the activation pipeline is tested in `tests_activate`.
 
 use std::f32::consts::FRAC_PI_2;
@@ -9,10 +11,10 @@ use glam::{Quat, Vec3};
 use sf_action_bevy::ActionBody;
 use sf_controller::{Locomotion, MoverParams};
 use sf_coords::WorldPos;
-use sf_ids::PlayerKey;
+use sf_ids::{ActorKey, PlayerKey};
 use sf_interaction::{
-    ClipFamily, DOOR_OPEN, DoorDef, IkTargets, Occupancy, SlotDef, SlotKind, TagFilter, TagId, Tick, UserKey,
-    VERB_CLOSE, VERB_OPEN, VerbDef,
+    ClipFamily, DOOR_OPEN, DoorDef, IkTargets, Occupancy, SlotDef, SlotKind, SlotTerms, TagFilter, TagId, Tick,
+    UserKey, VERB_CLOSE, VERB_OPEN, VerbDef,
 };
 use sf_records::RecordId;
 use sf_script_bevy::PLAYER;
@@ -54,7 +56,12 @@ fn verb(verb: TagId, requires: TagFilter) -> VerbDef {
 /// Hinge at +0.5 x, axis Y, 90 degrees, doorway at the origin: a positive turn moves the leaf
 /// centre toward +z (the +n side). Slotless `open` (no `door.open`) and `close` (`door.open`).
 fn door(both_ways: bool) -> Arc<InteractableDef> {
-    let leaf = DoorDef { hinge: Vec3::new(0.5, 0.0, 0.0), axis: Vec3::Y, open_deg: 90.0, both_ways, close_behind: false };
+    door_with(both_ways, false)
+}
+
+/// [`door`], optionally closing behind its opener.
+fn door_with(both_ways: bool, close_behind: bool) -> Arc<InteractableDef> {
+    let leaf = DoorDef { hinge: Vec3::new(0.5, 0.0, 0.0), axis: Vec3::Y, open_deg: 90.0, both_ways, close_behind };
     let closed = TagFilter { none: smallvec![DOOR_OPEN], ..TagFilter::default() };
     let open = TagFilter { all: smallvec![DOOR_OPEN], ..TagFilter::default() };
     Arc::new(InteractableDef {
@@ -212,7 +219,9 @@ fn removal_drops_the_door_and_its_tag_and_a_reinsert_keeps_the_state() {
 
     let moved = Frame { translation: Vec3::new(3.0, 0.0, 0.0), rotation: Quat::IDENTITY };
     insert(&mut app, DOOR, door(false), moved);
-    assert_eq!(state(&app), Some(open), "a re-insert keeps the state");
+    // The insert's fixed tick also swings the kept state one step.
+    let p = InteractParams::default();
+    assert_eq!(state(&app), Some(open.stepped(1.0 / 60.0, p.door_swing_s)), "a re-insert keeps the state");
     assert_eq!(app.world().resource::<Doors>().get(DOOR).map(|d| d.object), Some(moved));
     assert!(tagged(&app));
 
@@ -265,4 +274,186 @@ fn a_both_ways_door_swings_away_from_a_user_with_a_body() {
     app.world_mut().spawn((body, user));
     assert_eq!(approve(&mut app, DOOR, None), vec![changed(true, Some(player()))]);
     assert_eq!(state(&app).map(|s| s.sign), Some(-1), "away from the user on the +n side");
+}
+
+// --- The swing (IN33b2b) ------------------------------------------------------------------------
+
+/// What the fixed ticks wrote, gathered after [`DoorSystems::Commit`].
+#[derive(Resource, Default)]
+struct Swing {
+    moved: Vec<DoorMoved>,
+    changed: Vec<sf_interaction::DoorChanged>,
+}
+
+/// Ticks left to block every sweep, between Plan and Commit (the host's test).
+#[derive(Resource, Default)]
+struct BlockTicks(u32);
+
+fn gather_swing(mut swing: ResMut<Swing>, mut moved: MessageReader<DoorMoved>, mut changed: MessageReader<DoorChanged>) {
+    swing.moved.extend(moved.read().copied());
+    swing.changed.extend(changed.read().map(|c| c.0));
+}
+
+fn block_all(mut left: ResMut<BlockTicks>, mut sweeps: ResMut<DoorSweeps>) {
+    if left.0 == 0 {
+        return;
+    }
+    left.0 -= 1;
+    for (_, sweep) in sweeps.iter_mut() {
+        sweep.blocked = true;
+    }
+}
+
+/// Adds the gatherer and the blocker to an app.
+fn track(app: &mut App) {
+    app.init_resource::<Swing>()
+        .init_resource::<BlockTicks>()
+        .add_systems(FixedUpdate, block_all.after(DoorSystems::Plan).before(DoorSystems::Commit))
+        .add_systems(FixedUpdate, gather_swing.after(DoorSystems::Commit));
+}
+
+/// `runs` fixed ticks; the `DoorMoved`s they wrote.
+fn fixed(app: &mut App, runs: usize) -> Vec<DoorMoved> {
+    let before = app.world().resource::<Swing>().moved.len();
+    for _ in 0..runs {
+        app.world_mut().run_schedule(FixedUpdate);
+    }
+    app.world().resource::<Swing>().moved[before..].to_vec()
+}
+
+/// An app with the player, tracked, the door just toggled open (`t` = 0).
+fn opened(def: Arc<InteractableDef>) -> App {
+    let mut app = app_with(def, Frame::default());
+    track(&mut app);
+    spawn_player(&mut app);
+    assert_eq!(approve(&mut app, DOOR, None).len(), 1);
+    app
+}
+
+fn t(app: &App) -> f32 {
+    state(app).unwrap().t
+}
+
+fn leaf_now(app: &App) -> Frame {
+    let d = app.world().resource::<Doors>().get(DOOR).unwrap();
+    d.state.leaf(d.def.door().unwrap().2, &d.object)
+}
+
+fn params(app: &App) -> InteractParams {
+    effective_params(app.world().resource::<InteractionSettings>(), Some(app.world().resource::<Time<Fixed>>()))
+}
+
+fn claim_request(user: UserKey, release: bool) -> ClaimRequest {
+    let slot = SlotRef { placement: DOOR, slot: 0 };
+    let terms = SlotTerms { group: None, queue: None, reach: 0.0, users: TagFilter::default(), enabled: true };
+    let op = if release { Op::Release } else { Op::Claim { slot, terms, tags: SmallVec::new() } };
+    ClaimRequest(Request { user, priority: 30, op })
+}
+
+/// `user` claims the door slot on one tick and releases it on the next; the release's tick.
+fn pass_through(app: &mut App, user: UserKey) -> Tick {
+    let slot = SlotRef { placement: DOOR, slot: 0 };
+    app.world_mut().write_message(claim_request(user, false));
+    fixed(app, 1);
+    assert_eq!(app.world().resource::<InteractionClaims>().0.claim_on(slot).map(|c| c.user), Some(user));
+    app.world_mut().write_message(claim_request(user, true));
+    fixed(app, 1);
+    assert!(app.world().resource::<InteractionClaims>().0.claim_on(slot).is_none());
+    app.world().resource::<InteractionTick>().0
+}
+
+#[test]
+fn a_toggled_door_arrives_after_exactly_48_ticks_at_60_hz() {
+    let mut app = opened(door(false));
+    let p = params(&app);
+    assert_eq!((p.tick_hz.to_bits(), p.door_swing_s.to_bits()), (60.0_f32.to_bits(), 0.8_f32.to_bits()));
+    let mut moved = fixed(&mut app, 47);
+    assert!(state(&app).unwrap().is_moving());
+    moved.extend(fixed(&mut app, 1));
+    assert_eq!(moved.len(), 48);
+    assert!(moved.iter().all(|m| m.placement == DOOR));
+    let s = state(&app).unwrap();
+    assert_eq!(s.t.to_bits(), 1.0_f32.to_bits());
+    assert!(!s.is_moving());
+    assert_eq!(moved.last().map(|m| m.leaf), Some(leaf_now(&app)));
+    assert_eq!(fixed(&mut app, 1), vec![], "at rest");
+    assert_eq!(app.world().resource::<DoorSweeps>().iter().count(), 0);
+}
+
+#[test]
+fn a_blocked_door_pauses_and_resumes_from_the_same_t() {
+    let mut app = opened(door(false));
+    assert_eq!(fixed(&mut app, 10).len(), 10);
+    let paused = state(&app).unwrap();
+    app.world_mut().resource_mut::<BlockTicks>().0 = 5;
+    for _ in 0..5 {
+        assert_eq!(fixed(&mut app, 1), vec![], "blocked");
+        assert!(app.world().resource::<DoorSweeps>().get(DOOR).is_some_and(|s| s.blocked));
+        assert_eq!(state(&app), Some(paused), "t and target kept");
+    }
+    assert_eq!(fixed(&mut app, 37).len(), 37);
+    assert!(state(&app).unwrap().is_moving());
+    assert_eq!(fixed(&mut app, 1).len(), 1);
+    assert_eq!(t(&app).to_bits(), 1.0_f32.to_bits());
+    assert!(!state(&app).unwrap().is_moving());
+}
+
+#[test]
+fn a_toggle_mid_swing_reverses_and_arrives_at_zero() {
+    let mut app = opened(door(false));
+    fixed(&mut app, 20);
+    let mut last = t(&app);
+    let reversed = sf_interaction::DoorChanged { placement: DOOR, open: false, user: Some(player()), tick: Tick(22) };
+    assert_eq!(approve(&mut app, DOOR, None), vec![reversed]);
+    for _ in 0..20 {
+        assert_eq!(fixed(&mut app, 1).len(), 1);
+        assert!(t(&app) < last, "closing");
+        last = t(&app);
+    }
+    assert_eq!(t(&app).to_bits(), 0.0_f32.to_bits());
+    assert!(!state(&app).unwrap().is_moving());
+    assert_eq!(fixed(&mut app, 1), vec![]);
+}
+
+#[test]
+fn the_openers_release_closes_the_door_behind_after_the_delay() {
+    let mut app = opened(door_with(false, true));
+    fixed(&mut app, 48);
+    assert!(!state(&app).unwrap().is_moving());
+    // Forget the opening toggle (the gatherer's first run reads it).
+    app.world_mut().resource_mut::<Swing>().changed.clear();
+    let k = params(&app).door_close_behind_ticks();
+    assert!(k > 1);
+
+    // Another user's pass schedules nothing.
+    pass_through(&mut app, UserKey::Actor(ActorKey(5)));
+    assert_eq!(state(&app).and_then(|s| s.close_at), None);
+    assert_eq!(state(&app).and_then(|s| s.opener), Some(player()));
+
+    let released = pass_through(&mut app, player());
+    assert_eq!(state(&app).and_then(|s| s.close_at), Some(released.plus(k)));
+    let k_runs = usize::try_from(k).unwrap();
+    assert_eq!(fixed(&mut app, k_runs - 1), vec![]);
+    assert!(app.world().resource::<Swing>().changed.is_empty());
+    assert!(tagged(&app));
+
+    let moved = fixed(&mut app, 1);
+    let closed = sf_interaction::DoorChanged { placement: DOOR, open: false, user: None, tick: released.plus(k) };
+    assert_eq!(app.world().resource::<Swing>().changed, vec![closed]);
+    assert!(!tagged(&app));
+    assert_eq!(moved.len(), 1, "the swing starts on the closing tick");
+    assert_eq!(fixed(&mut app, 47).len(), 47);
+    assert_eq!(t(&app).to_bits(), 0.0_f32.to_bits());
+    assert!(!state(&app).unwrap().is_moving());
+    assert_eq!(app.world().resource::<Swing>().changed.len(), 1);
+}
+
+#[test]
+fn a_door_removed_mid_swing_writes_no_more_moves() {
+    let mut app = opened(door(false));
+    assert_eq!(fixed(&mut app, 10).len(), 10);
+    app.world_mut().write_message(IndexChange::unload(DOOR));
+    assert_eq!(fixed(&mut app, 5), vec![]);
+    assert!(app.world().resource::<Doors>().get(DOOR).is_none());
+    assert_eq!(app.world().resource::<DoorSweeps>().iter().count(), 0);
 }

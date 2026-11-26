@@ -1,5 +1,5 @@
-//! Swing doors (`docs/specs/interaction.md`, IN33): the resident doors and the default for their
-//! `open` / `close` use. The swing itself is the core's [`DoorState`].
+//! Swing doors (`docs/specs/interaction.md`, IN33): the resident doors, the default for their
+//! `open` / `close` use, and their swing on the fixed tick. The state is the core's [`DoorState`].
 //!
 //! - **Registry** ([`Doors`], `FixedUpdate`, in `InteractionSystems::Apply` after the claim step):
 //!   every [`IndexChange::Insert`] whose def has a [`sf_interaction::SlotKind::Door`] slot registers
@@ -14,18 +14,43 @@
 //!   doorway) picks the swing side in the core. No such user (a script) toggles with no user. Each
 //!   toggle writes one [`DoorChanged`] and sets or clears [`DOOR_OPEN`] in
 //!   [`InteractionStateTags`].
+//! - **Plan** (`FixedUpdate`, [`DoorSystems::Plan`], after `InteractionSystems::Apply`), over the
+//!   doors in placement order:
+//!   1. close-behind arm: a [`ClaimChanged`] `Released` or `Invalidated` on a door's slot hands the
+//!      user to [`DoorState::released`] (the core schedules only for the opener of an open
+//!      `close_behind` door);
+//!   2. close-behind fire: [`DoorState::poll`]; a due close writes [`DoorChanged`] (no user) and
+//!      clears [`DOOR_OPEN`]; the swing starts the same tick;
+//!   3. sweep: [`DoorSweeps`] is rebuilt with one [`DoorSweep`] per moving door: the leaf's world
+//!      frame after this tick's step ([`DoorState::stepped`]), `blocked` false.
+//! - **Host test** (between [`DoorSystems::Plan`] and [`DoorSystems::Commit`]): the host tests each
+//!   sweep's `next` leaf against its bodies and calls [`DoorSweeps::block`] on a hit. This crate runs
+//!   no physics.
+//! - **Commit** (`FixedUpdate`, [`DoorSystems::Commit`]): a blocked door does not move this tick (it
+//!   keeps `t` and its target); any other swept door takes its step and writes one [`DoorMoved`]
+//!   with the leaf's new world frame (the arriving tick included; none at rest). A door gone since
+//!   Plan is skipped. A swinging leaf never sends an [`IndexChange::Move`]: the object's frame (and
+//!   its claims) stay put.
+//!
+//! Plan and Commit step by one fixed tick (`1 / tick_hz` s, `interact.door.swing_s` closed to open).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
+use bevy_time::{Fixed, Time};
 use glam::Vec3;
 use sf_action_bevy::ActionBody;
-use sf_interaction::{DOOR_OPEN, DoorState, Frame, InteractableDef, VERB_CLOSE, VERB_OPEN, to_local};
+use sf_interaction::{
+    DOOR_OPEN, DoorState, EventKind, Frame, InteractParams, InteractableDef, VERB_CLOSE, VERB_OPEN, to_local,
+};
 use sf_world::PlacementId;
 
 use crate::seat::feet_of;
-use crate::{IndexChange, InteractionStateTags, InteractionTick, InteractionUser, UseApproved};
+use crate::{
+    ClaimChanged, IndexChange, InteractionSettings, InteractionStateTags, InteractionTick, InteractionUser,
+    UseApproved, effective_params,
+};
 
 /// One resident swing door.
 #[derive(Clone, Debug)]
@@ -62,14 +87,47 @@ impl Doors {
         self.0.is_empty()
     }
 
-    #[allow(dead_code)] // the swing step uses it
     pub(crate) fn get_mut(&mut self, placement: PlacementId) -> Option<&mut Door> {
         self.0.get_mut(&placement)
     }
 
-    #[allow(dead_code)] // the swing step uses it
     pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (PlacementId, &mut Door)> {
         self.0.iter_mut().map(|(p, d)| (*p, d))
+    }
+}
+
+/// One moving door's planned step, for the host's blocker test.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DoorSweep {
+    /// The leaf's world frame after this tick's step.
+    pub next: Frame,
+    /// Set by the host: the step is not taken this tick (a pause).
+    pub blocked: bool,
+}
+
+/// This tick's planned steps of the moving doors, by placement (rebuilt by Plan each tick).
+#[derive(Resource, Clone, Debug, Default)]
+pub struct DoorSweeps(BTreeMap<PlacementId, DoorSweep>);
+
+impl DoorSweeps {
+    #[must_use]
+    pub fn get(&self, placement: PlacementId) -> Option<&DoorSweep> {
+        self.0.get(&placement)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (PlacementId, &DoorSweep)> {
+        self.0.iter().map(|(p, s)| (*p, s))
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (PlacementId, &mut DoorSweep)> {
+        self.0.iter_mut().map(|(p, s)| (*p, s))
+    }
+
+    /// Holds the door at `placement` this tick (nothing if it has no sweep).
+    pub fn block(&mut self, placement: PlacementId) {
+        if let Some(sweep) = self.0.get_mut(&placement) {
+            sweep.blocked = true;
+        }
     }
 }
 
@@ -77,11 +135,24 @@ impl Doors {
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DoorChanged(pub sf_interaction::DoorChanged);
 
-/// Where the door default runs, in `Update`.
+/// One committed step of one door's leaf: its new world frame (the host moves the leaf's body and
+/// mesh). One per door per moving tick, none at rest or while blocked.
+#[derive(Message, Clone, Copy, Debug, PartialEq)]
+pub struct DoorMoved {
+    pub placement: PlacementId,
+    pub leaf: Frame,
+}
+
+/// Where the door systems run.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DoorSystems {
-    /// Approved uses on doors into toggles.
+    /// `Update`: approved uses on doors into toggles.
     Default,
+    /// `FixedUpdate`, after `InteractionSystems::Apply`: close-behind, then [`DoorSweeps`].
+    Plan,
+    /// `FixedUpdate`, after [`Self::Plan`]: the unblocked steps, [`DoorMoved`] out. The host's
+    /// blocker test runs between the two.
+    Commit,
 }
 
 /// The registry follows the tick's index changes (module docs).
@@ -156,5 +227,72 @@ pub(crate) fn door_default(
             tags.remove(placement, DOOR_OPEN);
         }
         out.write(DoorChanged(changed));
+    }
+}
+
+/// One fixed tick's step in seconds and the swing time, from the effective params.
+fn swing_step(params: &InteractParams) -> (f32, f32) {
+    (1.0 / params.tick_hz, params.door_swing_s)
+}
+
+/// Close-behind, then this tick's sweeps (module docs, Plan).
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
+pub(crate) fn plan(
+    mut claims: MessageReader<ClaimChanged>,
+    tick: Res<InteractionTick>,
+    settings: Res<InteractionSettings>,
+    fixed: Option<Res<Time<Fixed>>>,
+    mut doors: ResMut<Doors>,
+    mut sweeps: ResMut<DoorSweeps>,
+    mut tags: ResMut<InteractionStateTags>,
+    mut out: MessageWriter<DoorChanged>,
+) {
+    let params = effective_params(&settings, fixed.as_deref());
+    let (dt, swing_s) = swing_step(&params);
+    let close_behind_ticks = params.door_close_behind_ticks();
+
+    for ClaimChanged(event) in claims.read() {
+        if !matches!(event.kind, EventKind::Released | EventKind::Invalidated(_)) {
+            continue;
+        }
+        let Some(door) = doors.get_mut(event.slot.placement) else { continue };
+        let Some((slot, _, door_def)) = door.def.door() else { continue };
+        if slot == event.slot.slot {
+            door.state.released(event.user, door_def, tick.0, close_behind_ticks);
+        }
+    }
+
+    sweeps.0.clear();
+    for (placement, door) in doors.iter_mut() {
+        let Some((_, _, door_def)) = door.def.door() else { continue };
+        if let Some(changed) = door.state.poll(placement, door_def, door.doorway, tick.0) {
+            tags.remove(placement, DOOR_OPEN);
+            out.write(DoorChanged(changed));
+        }
+        if door.state.is_moving() {
+            let next = door.state.stepped(dt, swing_s).leaf(door_def, &door.object);
+            sweeps.0.insert(placement, DoorSweep { next, blocked: false });
+        }
+    }
+}
+
+/// The unblocked sweeps into steps (module docs, Commit).
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn commit(
+    sweeps: Res<DoorSweeps>,
+    settings: Res<InteractionSettings>,
+    fixed: Option<Res<Time<Fixed>>>,
+    mut doors: ResMut<Doors>,
+    mut out: MessageWriter<DoorMoved>,
+) {
+    let (dt, swing_s) = swing_step(&effective_params(&settings, fixed.as_deref()));
+    for (placement, sweep) in sweeps.iter() {
+        if sweep.blocked {
+            continue;
+        }
+        let Some(door) = doors.get_mut(placement) else { continue };
+        let Some((_, _, door_def)) = door.def.door() else { continue };
+        door.state = door.state.stepped(dt, swing_s);
+        out.write(DoorMoved { placement, leaf: door.state.leaf(door_def, &door.object) });
     }
 }

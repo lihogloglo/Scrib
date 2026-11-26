@@ -550,6 +550,18 @@ no user). Each toggle writes one `DoorChanged` message and sets or clears `door.
 writer). The game inserts only swing doors, so the default needs no class test. `interact.door.swing_s` and
 `interact.door.close_behind_s` are bound live. Nothing moves yet (IN33b2b).
 
+## As built (IN33b2b, 2026-11-26)
+
+The swing, in `FixedUpdate`, `(DoorSystems::Plan, DoorSystems::Commit)` chained after `InteractionSystems::Apply` (the host
+orders both against its physics step and puts its blocked test between them). **Plan:** a `ClaimChanged` `Released` or
+`Invalidated` on a registered door's door slot arms close-behind for that user (`DoorState::released`; the core ignores
+anyone but the opener); the per-tick `poll` fires a due close (one `DoorChanged { open: false, user: None }`, tag cleared);
+then `DoorSweeps` is rebuilt: for each moving door, the leaf's world frame after one step, `blocked: false`. **Commit:**
+each unblocked sweep steps its door and writes `DoorMoved { placement, leaf }` (one per door per moving tick, the arriving
+tick included; none at rest, none while blocked: a blocked door keeps `t` and its target). `dt` is one fixed tick
+(`1 / tick_hz`), the swing takes `interact.door.swing_s`. The shell does not depend on physics and never sends
+`IndexChange::Move` for a leaf. The player never claims the doorway, so close-behind is for NPC users (AI12 / AI14).
+
 ## Owner questions
 
 1. Destruction scope: every crate and barrel, or only some ("fragile" list per material)? Which weapons break what
