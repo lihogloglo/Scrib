@@ -104,7 +104,7 @@ Stages 2 and 3 run in parallel after Stage 1; Stage 6 can start any time (IN20 n
 | IN1 | Crates/barrels break: prop targets, stages, spill, debris + LOD, `Destroyed`, blob | `sf_interaction(_bevy)` | IN0, combat C2c/C3 | stage math, round trip; owner IN-1 |
 | IN38 | Adapter breakables (crates, barrels, urns, sacks, pottery), materials, `NoiseKind` | `mw_interaction` | IN1, IN29 | exact rows on game data |
 | IN4 | Impact damage from `ContactForceEvent` thresholds | `sf_interaction_bevy` | IN1 | exact map; owner IN-4 |
-| IN18 | `NoiseEvent` emitters: impacts, breaks, doors, throws, drops, bashes, lock picks (crime LW13) | `sf_interaction_bevy` | IN4, IN33, AI8a | exact loudness per case |
+| IN18 | `NoiseEvent` emitters: impacts, breaks, doors, throws, drops, bashes (pick, trap and forced-lock noise is crime's, `sf_crime_bevy`, crime-locks.md) | `sf_interaction_bevy` | IN4, IN33, AI8a | exact loudness per case |
 | IN37 | Bash locks/doors: strength-scaled lock damage, contents risk, offence hook | `sf_interaction`, `mw_interaction` | IN1, IN33 | exact thresholds |
 | IN14 | `WorldChange` vocabulary + placement diff | `sf_interaction` | IN1, IN6, IN33 | one event per transition |
 | IN15 | `ResetRules`, classes, ttl, cap, lazy reconcile, at-rest snap, holder link | `sf_interaction`, `sf/overlay` | IN1, IN30 | expiry, eviction, old saves |

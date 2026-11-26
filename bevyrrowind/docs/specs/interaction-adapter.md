@@ -28,7 +28,9 @@ Today `mw_player_bevy::activatable` (`src/lib.rs:798`) gives the focus a name an
 `mw_doors_bevy`, talk `mw_rpg_bevy/src/dialogue.rs`, take/open `mw_rpg_bevy/src/inventory.rs:235`). IN32 moves each
 onto the contract (interaction.md "Activation contract"), behaviour unchanged. Crime's lock and trap gate runs first
 (crime.md decision 8; a key unlocks and disarms, a trap fires: `door.cpp:143-180`, `container.cpp:152-200`); OpenMW's
-werewolf refusal is a later gate. Rows in focus order (files in `mwclass/` unless named):
+werewolf refusal is a later gate. The gate refuses only `open` (Locked, TrapSprung); `pick` and `probe` are crime
+verbs that pass it (crime-locks.md): a readied lockpick (probe) + activate on a locked (trapped) `DOOR`/`CONT` maps
+to `pick` (`probe`), IN33. Rows in focus order (files in `mwclass/` unless named):
 
 | Record | Verb | Slot | Default action | Vanilla | Classic |
 |---|---|---|---|---|---|
@@ -144,7 +146,8 @@ named exterior cell (`CELL` name set; later worldgen settlements give theirs, Ma
 
 **Noise** (IN18): the host emitter (`mw_walkers_bevy/src/noise_emitters.rs`) maps `InteractionNoise` one to one onto
 `NoiseEvent` (`maker` → `PerceptTarget`) and owns the `TagId` → `NoiseKindId` table, beside `KIND_NAMES` /
-`PlayerNoiseKinds`: `impact.<material>`, `drop`, `throw`, `break.<material>`, `door`, `bash`, `lockpick`, `fire`.
+`PlayerNoiseKinds`: `impact.<material>`, `drop`, `throw`, `break.<material>`, `door`, `bash`, `fire` (pick, trap and forced-lock
+noise: crime emits it, `sf_crime_bevy`, crime-locks.md).
 
 ## Breakables (IN38; bash IN37)
 
