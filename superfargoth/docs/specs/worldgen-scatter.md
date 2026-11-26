@@ -191,8 +191,13 @@ deep, big blocks high. Loose rocks above `loose_slope_max_deg` drop; outcrop par
 
 **Adapter data (Bevyrrowind).** Rock rows and `[rock_units]` in `scatter_species.toml` for the six units of
 `worldgen/geology.toml`. **Learned** from the 33,017 rock references (`flora.rs:86-113`): a field-stone region prior,
-pose `align`, `offset_m`. **Authored:** classes per unit and context (basalt_flow: block, columnar, talus; tephra:
-scoria; capped_sediment: platy, slab), `rockfall`, size ranges. **The source's rock models stay** (owner 2026-11-26):
+pose `align`, `offset_m`. **Authored:** classes per unit and context, from the
+typology table (`rockgen.md` "(e) Typology", RG-9; talus / outcrop / field): basalt_flow `talus`, `jagged` /
+`columnar`, `block` / `jagged`, `crust_plate`; tuff `soft_block`, `block` / `soft_block` / `soft_block`, `cobble`;
+tephra `scoria` / none / `scoria`, `bomb`; capped_sediment `slab`, `platy` / `slab` / `platy`; coastal_basalt
+`column_segment`, `talus` / `columnar` / `beach_column`, `cobble`; alluvium `river_cobble` / none / `river_cobble`,
+`cobble` (classes that need RG-9c-g join as those rows land). Per weathering regime (frost, arid, semi-arid,
+temperate, wet; RG-9j) the entry lists and `field_stone_per_ha` may be overridden. `rockfall`, size ranges. **The source's rock models stay** (owner 2026-11-26):
 each learned model (`terrain_rock*`, rocks and menhirs of 14 m or more, `classify.rs:118-131`) is a pack-model entry
 with its bounds axis, learned scale range and learned count per region as weight; the library fills the sizes they
 do not cover. The mix is looked at again once the owner has seen generated rocks (WG-E3 check).
