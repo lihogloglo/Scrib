@@ -456,6 +456,30 @@ struct Runtime {
     promotions: Vec<PendingPromotion>,
 }
 
+/// What a [`Streaming::rehome`] hands back (`AI10c3b1`): the caller finishes the move on its own
+/// entity in the same system, so the entity's parent, local transform and the caller's own frame
+/// fields change in one frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rehomed {
+    /// The `Level::Near` group of the new cell: the entity becomes its direct child (`ChildOf`),
+    /// so that cell's near unload despawns it.
+    pub parent: Entity,
+    /// The new cell's origin: the entity's local translation under [`Self::parent`] is
+    /// `origin.delta_f32(position)` ([`Self::local`]).
+    pub origin: WorldPos,
+    /// The placement now sits in the new cell's Active list: its `deactivate` hook runs there
+    /// once, with that cell's [`ActivateCx`]. `false` when the new cell is only at `Level::Near`
+    /// or the old cell's Active list did not hold the placement.
+    pub listed: bool,
+}
+
+impl Rehomed {
+    /// The local translation under [`Self::parent`] of an entity at the absolute `pos`.
+    pub fn local(&self, pos: WorldPos) -> Vec3 {
+        self.origin.delta_f32(pos)
+    }
+}
+
 /// The streaming runtime (one per app).
 #[derive(Resource)]
 pub struct Streaming {
@@ -620,6 +644,53 @@ impl Streaming {
     /// The entity of a resident streaming cell.
     pub fn cell_entity(&self, ws: &WorldspaceId, cell: IVec3) -> Option<Entity> {
         self.rt.cells.get(&(ws.clone(), cell)).map(|c| c.entity)
+    }
+
+    /// Moves one live placement from loaded cell `from` to loaded cell `to` (`AI10c3b1`), the
+    /// runtime's bookkeeping only: a body or item that crossed into `to` then stays alive while
+    /// `from` unloads, and `to`'s unload is the one that deactivates and despawns it. Call it
+    /// from a normal system (`ResMut<Streaming>`, outside [`crate::StreamingSystems::Drive`]),
+    /// then in the same system set the entity's `ChildOf` to [`Rehomed::parent`] and its local
+    /// translation to [`Rehomed::local`]; the overlay (where `to` finds the placement on its
+    /// next fetch) is also the caller's.
+    ///
+    /// Refuses (`None`, nothing changed; retry on a later frame, the refusal allocates nothing)
+    /// when `from == to`, when either cell is not resident in `ws`, when `to` has no revealed
+    /// `Level::Near` group, when a stage of either cell is in flight (its work holds a copy of
+    /// the Active list), or when a static scene of `from` covers `id` (scene-drawn statics
+    /// never move). On success the placement's entry (its load-time pose: hooks find the entity
+    /// by its id) leaves `from`'s Active list and joins `to`'s when `to` is Active
+    /// ([`Rehomed::listed`]); with `to` at `Level::Near` it is dropped (`to`'s activation
+    /// fetches its list again), and with no entry in `from` (a Near-only `from`, or an id that
+    /// was never listed) nothing is listed, so no `deactivate` runs for it in `to`.
+    pub fn rehome(&mut self, ws: &WorldspaceId, id: PlacementId, from: IVec3, to: IVec3) -> Option<Rehomed> {
+        if from == to || self.in_flight(ws, from) || self.in_flight(ws, to) {
+            return None;
+        }
+        let parent = self.rt.cells.get(&(ws.clone(), to))?.groups.get(&Level::Near)?.entity;
+        let source = self.rt.cells.get_mut(&(ws.clone(), from))?;
+        if source.groups.values().any(|g| g.covered.contains(&id)) {
+            return None;
+        }
+        let moved = source.active.as_mut().and_then(|list| {
+            let i = list.iter().position(|p| p.placement.id == id)?;
+            Some(Arc::make_mut(list).remove(i))
+        });
+        let target = self.rt.cells.get_mut(&(ws.clone(), to)).and_then(|c| c.active.as_mut());
+        let listed = match (moved, target) {
+            (Some(p), Some(list)) => {
+                Arc::make_mut(list).push(p);
+                true
+            }
+            _ => false,
+        };
+        let origin = self.rt.info(ws).partition.cell_origin(to);
+        Some(Rehomed { parent, origin, listed })
+    }
+
+    /// A stage of `cell` is in flight: some request on it holds engine work.
+    fn in_flight(&self, ws: &WorldspaceId, cell: IVec3) -> bool {
+        self.rt.work.keys().filter_map(|id| self.scheduler.request(*id)).any(|r| r.cell == cell && r.worldspace == *ws)
     }
 
     /// The group entity of a resident cell's level (tests).

@@ -760,6 +760,27 @@ The 2026-10-12 spike and the M8 design are in `portals.md`: per-end frames
 from the bake, one render-to-texture portal view, crossing through
 `DoorLink::cross` with no fade; `FadeTransition` stays for fade-only links.
 
+## Re-homing a placement
+
+`AI10c3b1` (2026-11-26). A live placement spawned under cell A that moved into loaded cell B
+changes owner: `Streaming::rehome(ws, id, from, to)` moves its entry from A's Active list to B's
+(bookkeeping only) and returns B's `Level::Near` group and origin; the caller swaps `ChildOf` and
+the local transform in the same system, so B's unload deactivates and despawns it. Refused
+(nothing changed, retried next frame) while either cell has a stage in flight, while B has no
+revealed near group, or for a scene-covered static. Generic: actors (`AI10c3b2`) and physics items
+(`sf_physics_bevy` `ItemPivot`, later) use the same call.
+
+**Reuse check.** Bevy: a `ChildOf` swap is the native reparent; it has no notion of a streaming
+owner. Crates: `big_space` moves entities between grid cells (coordinates), not between streaming
+owners. Our own: none before this (the `PromoteToEntity` path spawns, it never moves).
+
+**Industry comparison.** The Bethesda family moves a reference between cells when it crosses
+(OpenMW `World::moveObject`, `apps/openmw/mwworld/worldimp.cpp` at `b8285cc9`: the object moves
+between cell stores, is never respawned, and leaves the scene only when the new cell is inactive;
+behaviour reference, no code ported). UE World Partition keeps an actor in the cell it was saved in
+and leaves moving actors to gameplay spawning (`Is Spatially Loaded` off). The Bethesda rule is the
+one that fits placed NPCs, and it is what `rehome` does.
+
 ## Industry comparison
 
 J9 (industry-audit.md), 2026-10-12, docs research only (`.sessions/j9rest.md`).

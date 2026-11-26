@@ -332,12 +332,19 @@ impl PlacementSpawner for TagSpawner {
     fn needs_model(&self, _: &IndexedPlacement) -> bool {
         false
     }
-    fn deactivate(&self, world: &mut World, cx: &ActivateCx<'_>, _: &IndexedPlacement) {
+    fn deactivate(&self, world: &mut World, cx: &ActivateCx<'_>, p: &IndexedPlacement) {
         if cx.discard {
             world.resource_mut::<Discards>().0 += 1;
         }
+        if let Some(mut calls) = world.get_resource_mut::<Deactivated>() {
+            calls.0.push((p.placement.id, cx.cell));
+        }
     }
 }
+
+/// Every [`TagSpawner`] `deactivate` call with its cell, when the resource is present (`AI10c3b1`).
+#[derive(Resource, Default)]
+struct Deactivated(Vec<(PlacementId, IVec3)>);
 
 fn tagged(app: &mut App, id: PlacementId) -> Vec<WorldPos> {
     app.world_mut().query::<&Tagged>().iter(app.world()).filter(|t| t.0 == id).map(|t| t.1).collect()
@@ -1098,4 +1105,203 @@ fn a_promoted_entity_and_its_model_leave_with_the_cell() {
     assert!(app.world().get_entity(batch).is_err(), "the promoted entity left with the cell");
     assert_eq!(app.world().resource::<Streaming>().model_users(&plate), None, "no slot left for the model");
     assert_eq!(app.world().resource::<Streaming>().stats().models_loaded, 0);
+}
+
+// -- re-homing a placement between two loaded cells (`AI10c3b1`) ----------------------------
+
+/// Cell `A` of [`two_cells`] (x and z 0..128 m): holds the dynamic `item` and `crate` (and plates).
+const CELL_A: IVec3 = IVec3::new(1, 1, 1);
+/// Cell `B` of [`two_cells`], east of `A` (x 128..256 m): plates only (content from x = 156 m).
+const CELL_B: IVec3 = IVec3::new(2, 1, 1);
+/// Anchor x on the A/B border: 16 m from both cells' content.
+const BORDER_X: f64 = 140.0;
+/// Anchor x inside `A` (`B` 96 m away).
+const IN_A_X: f64 = 60.0;
+/// Anchor x inside `B` (`A` 76 m away).
+const IN_B_X: f64 = 200.0;
+/// Anchor x with no content within any ring.
+const AWAY_X: f64 = 5000.0;
+
+/// An app with two adjacent loaded cells `A` and `B` and small rings (R0 and R1 load at 20 m,
+/// drop past 30 m; R2 100 / 120 m; every placement at `Level::Near`), so moving the gameplay
+/// anchor (R0) or the visual one (R1, R2) across the border changes one cell's level at a time.
+/// Returns the app, the visual anchor and the gameplay anchor, both on z = 60 m.
+fn two_cells(dir: &std::path::Path, config: StreamingConfig, gameplay_x: f64, visual_x: f64) -> (App, Entity, Entity) {
+    let ring = sf_world::RingRadii::new(20.0, 30.0);
+    let rings =
+        sf_world::RingConfig { active: ring, near: ring, far: sf_world::RingRadii::new(100.0, 120.0), ..sf_world::RingConfig::default() };
+    let config = StreamingConfig { scheduler: sf_world::SchedulerConfig { rings, ..config.scheduler }, ..config };
+    let mut app = streaming_app_config(dir, f32::MAX, config);
+    let mut spawners = PlacementSpawners::default();
+    spawners.set(PlacementClass::Dynamic, Arc::new(TagSpawner));
+    app.insert_resource(spawners).init_resource::<Deactivated>();
+    let root = WorldspaceRegistry::ensure_in(app.world_mut(), &ws()).root;
+    let (cell, transform) = to_grid(at_x(visual_x));
+    let visual = app.world_mut().spawn((cell, transform, StreamingAnchor::visual(), FloatingOrigin, ChildOf(root))).id();
+    let (cell, transform) = to_grid(at_x(gameplay_x));
+    let gameplay = app.world_mut().spawn((cell, transform, StreamingAnchor::gameplay(), ChildOf(root))).id();
+    assert_eq!((Partition::STREAMING.cell_of(at_x(IN_A_X)), Partition::STREAMING.cell_of(at_x(IN_B_X))), (CELL_A, CELL_B));
+    app.world_mut().resource_mut::<Streaming>().begin_burst();
+    settle_steady(&mut app);
+    (app, visual, gameplay)
+}
+
+/// [`settle`] until streaming stayed idle for 10 frames in a row: with this few cells the
+/// scheduler can be idle for a frame between one level step and the next.
+fn settle_steady(app: &mut App) {
+    let mut idle = 0;
+    for _ in 0..5000 {
+        settle(app);
+        idle = if app.world().resource::<Streaming>().is_idle() { idle + 1 } else { 0 };
+        if idle >= 10 {
+            return;
+        }
+    }
+    panic!("streaming never stayed idle");
+}
+
+fn at_x(x: f64) -> WorldPos {
+    WorldPos::from_f64(DVec3::new(x, 0.0, 60.0))
+}
+
+fn move_anchor(app: &mut App, anchor: Entity, x: f64) {
+    app.world_mut().entity_mut(anchor).insert(to_grid(at_x(x)));
+    settle_steady(app);
+}
+
+fn level_of(app: &App, cell: IVec3) -> Level {
+    app.world().resource::<Streaming>().scheduler().level(&ws(), cell)
+}
+
+fn deactivated(app: &App) -> Vec<(PlacementId, IVec3)> {
+    app.world().resource::<Deactivated>().0.clone()
+}
+
+fn rehome(app: &mut App, id: PlacementId, from: IVec3, to: IVec3) -> Option<Rehomed> {
+    app.world_mut().resource_mut::<Streaming>().rehome(&ws(), id, from, to)
+}
+
+/// The one entity [`TagSpawner`] spawned for `id`.
+fn body_of(app: &mut App, id: PlacementId) -> Entity {
+    let found: Vec<Entity> =
+        app.world_mut().query::<(Entity, &Tagged)>().iter(app.world()).filter(|(_, t)| t.0 == id).map(|(e, _)| e).collect();
+    assert_eq!(found.len(), 1, "one entity for the placement");
+    found[0]
+}
+
+/// The caller's half of a re-home: parent and local translation in one go.
+fn reparent(app: &mut App, body: Entity, r: Rehomed) {
+    let pos = app.world().get::<Tagged>(body).unwrap().1;
+    app.world_mut().entity_mut(body).insert((ChildOf(r.parent), Transform::from_translation(r.local(pos))));
+}
+
+fn item_and_crate() -> (PlacementId, PlacementId) {
+    (PlacementId::from_key("test", b"item"), PlacementId::from_key("test", b"crate"))
+}
+
+/// Both cells Active: the re-homed item outlives `A`'s unload, gets `B`'s deactivation once
+/// and leaves with `B`'s near level; `A`'s other dynamic placement is untouched.
+#[test]
+fn rehome_hands_a_placement_to_the_cell_that_unloads_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut app, visual, gameplay) = two_cells(dir.path(), StreamingConfig::default(), BORDER_X, BORDER_X);
+    assert_eq!((level_of(&app, CELL_A), level_of(&app, CELL_B)), (Level::Active, Level::Active));
+    let (item, crate_) = item_and_crate();
+    let body = body_of(&mut app, item);
+
+    assert_eq!(rehome(&mut app, item, CELL_A, CELL_A), None, "same cell");
+    let nobody = rehome(&mut app, PlacementId::from_key("test", b"nobody"), CELL_A, CELL_B).expect("an unlisted id moves");
+    assert!(!nobody.listed);
+    let r = rehome(&mut app, item, CELL_A, CELL_B).expect("both cells loaded and idle");
+    assert!(r.listed);
+    assert_eq!(Some(r.parent), app.world().resource::<Streaming>().group_entity(&ws(), CELL_B, Level::Near));
+    assert_eq!(r.origin, Partition::STREAMING.cell_origin(CELL_B));
+    reparent(&mut app, body, r);
+
+    move_anchor(&mut app, gameplay, IN_B_X);
+    assert_eq!((level_of(&app, CELL_A), level_of(&app, CELL_B)), (Level::Near, Level::Active));
+    assert_eq!(deactivated(&app), [(crate_, CELL_A)], "A deactivated its other placement only");
+
+    move_anchor(&mut app, visual, IN_B_X);
+    assert_eq!(level_of(&app, CELL_A), Level::Far);
+    assert!(app.world().get_entity(body).is_ok(), "the re-homed entity outlived A's near level");
+    assert!(tagged(&mut app, crate_).is_empty(), "A's other placement left with it");
+
+    move_anchor(&mut app, gameplay, AWAY_X);
+    assert_eq!(level_of(&app, CELL_B), Level::Near);
+    assert_eq!(deactivated(&app), [(crate_, CELL_A), (item, CELL_B)], "B deactivated it once");
+    assert!(app.world().get_entity(body).is_ok());
+
+    move_anchor(&mut app, visual, AWAY_X);
+    assert!(app.world().get_entity(body).is_err(), "B's near unload despawned it");
+    assert!(tagged(&mut app, item).is_empty());
+    assert_eq!(deactivated(&app).len(), 2);
+}
+
+/// `B` only at `Level::Near`: nothing to list, and the entity still outlives `A`.
+#[test]
+fn rehome_into_a_near_cell_lists_nothing_and_keeps_the_entity() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut app, visual, gameplay) = two_cells(dir.path(), StreamingConfig::default(), IN_A_X, BORDER_X);
+    assert_eq!((level_of(&app, CELL_A), level_of(&app, CELL_B)), (Level::Active, Level::Near));
+    let (item, crate_) = item_and_crate();
+    let body = body_of(&mut app, item);
+    let r = rehome(&mut app, item, CELL_A, CELL_B).expect("B has a near group");
+    assert!(!r.listed);
+    reparent(&mut app, body, r);
+
+    move_anchor(&mut app, gameplay, AWAY_X);
+    move_anchor(&mut app, visual, IN_B_X);
+    assert_eq!((level_of(&app, CELL_A), level_of(&app, CELL_B)), (Level::Far, Level::Near));
+    assert!(app.world().get_entity(body).is_ok(), "the entity outlived A");
+    assert_eq!(deactivated(&app), [(crate_, CELL_A)], "no deactivation for the moved item");
+}
+
+/// `B` at `Level::Far` or not resident: refused, and `A` still deactivates the item.
+#[test]
+fn rehome_without_a_near_target_changes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut app, _, gameplay) = two_cells(dir.path(), StreamingConfig::default(), IN_A_X, IN_A_X);
+    assert_eq!((level_of(&app, CELL_A), level_of(&app, CELL_B)), (Level::Active, Level::Far));
+    let (item, crate_) = item_and_crate();
+    assert_eq!(rehome(&mut app, item, CELL_A, CELL_B), None, "B is far: no near group");
+    assert_eq!(rehome(&mut app, item, CELL_A, IVec3::new(50, 0, 50)), None, "to not resident");
+    assert_eq!(rehome(&mut app, item, IVec3::new(50, 0, 50), CELL_A), None, "from not resident");
+
+    move_anchor(&mut app, gameplay, AWAY_X);
+    let calls = deactivated(&app);
+    assert_eq!(calls.len(), 2, "{} calls", calls.len());
+    assert!(calls.contains(&(item, CELL_A)) && calls.contains(&(crate_, CELL_A)), "A deactivated both, as before");
+}
+
+/// A stage in flight on either cell (here `A`'s deactivation, held one placement a frame):
+/// refused both ways, and the stage still sees the item.
+#[test]
+fn rehome_waits_while_a_stage_of_either_cell_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = StreamingConfig { placements_per_item: 1, ..StreamingConfig::default() };
+    config.scheduler.budgets.deactivate_ms = 1e-9;
+    let (mut app, _, gameplay) = two_cells(dir.path(), config, BORDER_X, BORDER_X);
+    let (item, _) = item_and_crate();
+    app.world_mut().entity_mut(gameplay).insert(to_grid(at_x(IN_B_X)));
+    let running = |app: &App| {
+        app.world()
+            .resource::<Streaming>()
+            .scheduler()
+            .requests()
+            .any(|r| r.cell == CELL_A && r.stage == sf_world::Stage::Deactivate && r.running)
+    };
+    let mut frames = 0;
+    while !running(&app) {
+        app.update();
+        frames += 1;
+        assert!(frames < 500, "A's deactivation never started");
+    }
+    assert_eq!(rehome(&mut app, item, CELL_A, CELL_B), None, "from in flight");
+    assert_eq!(rehome(&mut app, PlacementId::from_key("test", b"nobody"), CELL_B, CELL_A), None, "to in flight");
+    app.update();
+    assert!(running(&app), "the stage is still held");
+
+    settle_steady(&mut app);
+    assert!(deactivated(&app).contains(&(item, CELL_A)), "A's stage kept the item");
 }

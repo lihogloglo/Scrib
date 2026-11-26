@@ -66,7 +66,7 @@ pub use spawn::{
     visibility_range,
 };
 pub use stream::{
-    ActiveWorldspace, CellLoaded, CellUnloaded, DoorLinks, PromoteToEntity, RayTracingVariants, StreamCell, StreamStats, Streaming,
+    ActiveWorldspace, CellLoaded, CellUnloaded, DoorLinks, PromoteToEntity, RayTracingVariants, Rehomed, StreamCell, StreamStats, Streaming,
     StreamingAnchor, StreamingConfig, WorldIndexSource, WorldOverlay, WorldspaceActivated, WorldspaceRecords,
 };
 pub use worldspace::{OriginProxy, WorldspaceEntry, WorldspaceLayers, WorldspaceRegistry, WorldspaceRoot, dynamic_layer};

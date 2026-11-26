@@ -53,6 +53,14 @@ placement ends at the far handoff if far-eligible, else its ring's unload radius
 **Reveal.** A cell group stays `Visibility::Hidden` until `reveal` in the `Upload` stage (`stream.rs:1575`); `RevealGate`
 (`reveal.rs`) is what loading and door fades wait on.
 
+**Re-homing a placement (AI10c3b1).** `Streaming::rehome` (`stream.rs:666`) moves one placement's entry from loaded
+cell A's Active list to cell B's (only when B is Active: `Rehomed::listed`) and returns B's near group and origin
+(`Rehomed`, `stream.rs:463`); the caller swaps `ChildOf`, the local transform and its own frame fields in the same
+system, after which B's Deactivate runs the hook and B's near unload despawns the entity (`despawn_item` despawns
+every direct child of the group, `stream.rs:1850`). It refuses, changing nothing, when `from == to`, either cell is
+not resident, B has no revealed near group, a stage of either cell is in flight (`in_flight`, `stream.rs:692`) or a
+static scene covers the id.
+
 **Worldspace left behind (CW-9, on by default (owner 2026-11-17)).** Indoors the exterior stays resident: the residency-cache ghost
 (`scheduler.rs` `linger`) keeps its full rings while the player stands within 32 m of the way back (a small interior:
 the whole visit), and far-field L2/L3 nodes never leave. Without parking it all keeps ticking (visibility, big_space,
