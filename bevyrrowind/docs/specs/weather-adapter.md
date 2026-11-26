@@ -215,6 +215,12 @@ exist (M8). Underwater cells and the "has water" interiors keep their water fog 
   through the cascades, the terrain shadow-height map and the cloud shadow, and by the 32 nearest `LIGH` point
   lights; `--off froxels` (alias `godrays`) is the analytic-only A/B. The app's transparent NIF and particle
   materials still draw `StandardMaterial` (unfogged): switching blended ones to `FroxelFogMaterial` is a follow-up.
+- **Exposure and cloud ambient** (framework `exposure-tonemap.md` "Weather and twilight compensation", X2/X3; planned):
+  `SkyTerms::exposure_k_scale` = `exposure.weather.storm_scale` (0.6, owner 2026-11-26: storms stay darker) on
+  Thunderstorm, Ashstorm, Blight and Blizzard, 1 on every other preset. `SkyTerms::cloud_ambient_by_hour` = (luminance of
+  the weather's `Ambient Sunrise/Day/Sunset/Night Color` at the hour / Overcast's)^`sky.cloud.ini_brightness` (1), built
+  in `ambient.rs` with `tint_at`'s ratio code; Overcast is the reference (Clear has no deck). Both tunables live
+  (presets' terms rebuilt on change).
 - **Wind and trees**: `wind_profile` marks `meshes/f/flora_*` (the same rule as `mw_bake::far::is_flora`)
   as foliage. Kelp and bushes get leaf-level flutter only. Emperor parasols are stiff (trunk bend only).
 
