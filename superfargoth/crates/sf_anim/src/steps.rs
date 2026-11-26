@@ -22,8 +22,9 @@ use serde::{Deserialize, Serialize};
 use sf_bake::{BakeError, Baker, Digest, PlanCx, ProductKey, RunCx, Step};
 
 use crate::{
-    AnimImporter, AnimSource, CLIP_FORMAT, Clip, ClipRules, CookSettings, DistanceRules, RIG_PROFILE_FORMAT, RetargetRig, Retargeter, RigHints,
-    RigProfile, RootMotionRules, SKELETON_FORMAT, Skeleton, SkeletonRules, apply_distance, cook_clip_for, detect_profile, transfer_contacts,
+    AnimImporter, AnimSource, CLIP_FORMAT, Clip, ClipRules, CookSettings, RIG_PROFILE_FORMAT, RetargetRig, Retargeter, RigHints,
+    PostReport, RigProfile, RootMotionRules, SKELETON_FORMAT, Skeleton, SkeletonRules, apply_distance, cook_clip_for, detect_profile,
+    transfer_contacts,
 };
 
 pub const SKELETON_COOK: &str = "skeleton.cook";
@@ -128,6 +129,64 @@ pub trait AnimRules: Send + Sync {
     fn retarget_root(&self, _file: &str, _clip: &str, _skeleton: &str) -> Option<RootMotionRules> {
         None
     }
+    /// Whether clip `clip` of `file` cooked on `skeleton` is a retarget
+    /// source (its `anim.cook` product feeds `anim.retarget`): its
+    /// target-rig rules ([`ClipRules::pelvis_fit`], [`ClipRules::mirror`])
+    /// then apply on the target ([`retarget_product`]) and `anim.cook`
+    /// cooks it without them. Default: when [`Self::retarget_root`] is set.
+    fn retargeted(&self, file: &str, clip: &str, skeleton: &str) -> bool {
+        self.retarget_root(file, clip, skeleton).is_some()
+    }
+}
+
+/// `rules` without the target-rig rules ([`ClipRules::pelvis_fit`],
+/// [`ClipRules::mirror`]): the source cook of a retargeted clip
+/// ([`AnimRules::retargeted`]), which [`retarget_product`] fits and mirrors
+/// on the target.
+pub fn source_rules(rules: &ClipRules) -> ClipRules {
+    ClipRules { pelvis_fit: None, mirror: None, ..rules.clone() }
+}
+
+/// The `anim.retarget` product of `clip` (an `anim.cook` product on the
+/// retargeter's source skeleton, cooked with [`source_rules`]):
+/// [`Retargeter::clip_post`] with the root rule `root`
+/// ([`AnimRules::retarget_root`]) and `rules`' target-rig rules (the
+/// target's rig `profile`), the source clip's contacts carried over
+/// ([`transfer_contacts`], on the other side when mirrored:
+/// [`crate::mirror::mirror_side`]), then [`ClipRules::distance`] measured on
+/// the target's root track. A target-rig rule that can't apply fails the
+/// clip (the graph's fallback plays instead). The bake step and review tools
+/// that cook in process share it.
+pub fn retarget_product(
+    retargeter: &Retargeter,
+    clip: &Clip,
+    root: Option<&RootMotionRules>,
+    target: &Skeleton,
+    profile: &RigProfile,
+    rules: &ClipRules,
+    settings: &CookSettings,
+) -> Result<(Clip, PostReport), String> {
+    let (mut out, report) = retargeter.clip_post(clip, root, Some(profile), rules, settings).map_err(|e| e.to_string())?;
+    if let Some(Err(e)) = &report.pelvis_fit {
+        return Err(format!("pelvis fit: {e}"));
+    }
+    if let Some(Err(e)) = &report.mirror {
+        return Err(format!("mirror: {e}"));
+    }
+    match rules.mirror.filter(|_| report.mirror.is_some()) {
+        Some(m) => {
+            let mut contacts = clip.meta.contacts.clone();
+            for c in &mut contacts {
+                c.side = crate::mirror::mirror_side(m.axis, c.side);
+            }
+            transfer_contacts(&contacts, target, profile, &mut out);
+        }
+        None => transfer_contacts(&clip.meta.contacts, target, profile, &mut out),
+    }
+    if let Some(d) = &rules.distance {
+        apply_distance(&mut out, d);
+    }
+    Ok((out, report))
 }
 
 /// Framework defaults: guessed tags, default LODs, whole clips, no rigs.
@@ -298,6 +357,17 @@ impl Step for RigProfileStep {
 pub struct AnimCookStep(pub Arc<AnimBake>);
 
 impl AnimCookStep {
+    /// The clip's spec; a retarget source ([`AnimRules::retargeted`]) without
+    /// its target-rig rules ([`source_rules`]: `anim.retarget` applies and
+    /// keys them), so clips without those rules keep their keys.
+    fn spec(&self, file: &str, clip: &str, skeleton: &str) -> ClipSpec {
+        let mut spec = self.0.rules.clip(file, clip, skeleton);
+        if self.0.rules.retargeted(file, clip, skeleton) {
+            spec.rules = source_rules(&spec.rules);
+        }
+        spec
+    }
+
     fn parse(subject: &str) -> Result<(&str, &str, &str), BakeError> {
         parse_anim_subject(subject).ok_or_else(|| BakeError::step(&ProductKey::new(ANIM_COOK, subject), "bad subject"))
     }
@@ -325,7 +395,7 @@ impl Step for AnimCookStep {
         let (skeleton, file, clip) = Self::parse(subject)?;
         self.0.importers.plan(file, cx);
         cx.product(SKELETON_COOK, skeleton).product(RIG_PROFILE, skeleton);
-        cx.param("rules", bytes_of(&self.0.rules.clip(file, clip, skeleton)));
+        cx.param("rules", bytes_of(&self.spec(file, clip, skeleton)));
         if let Some(root) = self.0.rules.retarget_root(file, clip, skeleton) {
             cx.param("retarget_root", bytes_of(&root));
         }
@@ -339,7 +409,7 @@ impl Step for AnimCookStep {
         let skeleton = read_skeleton(&key, skeleton_path, cx)?;
         let profile = read_profile(&key, skeleton_path, cx)?;
         let source = self.0.import(&key, file, cx)?;
-        let mut spec = self.0.rules.clip(file, clip, skeleton_path);
+        let mut spec = self.spec(file, clip, skeleton_path);
         if self.0.rules.retarget_root(file, clip, skeleton_path).is_some() {
             // The motion stays in the pose: `anim.retarget` extracts it on the target.
             spec.rules.root_motion.extract = false;
@@ -378,11 +448,15 @@ impl AnimRetargetStep {
         self.0.rules.retarget_root(file, clip, skeleton)
     }
 
-    /// [`ClipRules::distance`] of the `anim.cook` subject `anim`: the curve
-    /// is measured again on the target's root track.
-    fn distance(&self, anim: &str) -> Option<DistanceRules> {
-        let (skeleton, file, clip) = parse_anim_subject(anim)?;
-        self.0.rules.clip(file, clip, skeleton).rules.distance
+    /// The cook rules of the `anim.cook` subject `anim`: its
+    /// [`ClipRules::distance`] is measured again on the target's root track,
+    /// its target-rig rules apply on the target ([`retarget_product`]) when
+    /// it is a retarget source ([`AnimRules::retargeted`]; otherwise its
+    /// `anim.cook` applied them).
+    fn rules(&self, anim: &str) -> ClipRules {
+        let Some((skeleton, file, clip)) = parse_anim_subject(anim) else { return ClipRules::default() };
+        let rules = self.0.rules.clip(file, clip, skeleton).rules;
+        if self.0.rules.retargeted(file, clip, skeleton) { rules } else { source_rules(&rules) }
     }
 }
 
@@ -398,7 +472,9 @@ impl Step for AnimRetargetStep {
         //    neck and head; the rigs are keyed too, this marks the output change).
         // 6: retarget-pose offsets per source and target rig (`sf_character::PoseOffset`,
         //    UE5 "Edit Retarget Pose"; in the keyed rigs' retarget poses).
-        6
+        // 7: target-rig rules `ClipRules::pelvis_fit` and `mirror` (`Retargeter::clip_post`,
+        //    `retarget_product`; keyed when set) and the leg IK fix of AN26b1.
+        7
     }
     fn plan(&self, subject: &str, cx: &mut PlanCx) -> Result<(), BakeError> {
         let (target, anim, source) = Self::parse(subject)?;
@@ -408,12 +484,19 @@ impl Step for AnimRetargetStep {
         if let Some(root) = self.root(anim) {
             cx.param("retarget_root", bytes_of(&root));
         }
-        // Only when set, so clips without the rule keep their keys. Needed:
-        // a `retarget_root` source cooks without root motion, so its
-        // `anim.cook` product (the input digest) is the same with or without
-        // the rule.
-        if let Some(d) = self.distance(anim) {
-            cx.param("distance", bytes_of(&d));
+        // Each only when set, so clips without the rule keep their keys.
+        // Needed: a `retarget_root` source cooks without root motion, and a
+        // retarget source without its target-rig rules, so its `anim.cook`
+        // product (the input digest) is the same with or without the rule.
+        let rules = self.rules(anim);
+        if let Some(d) = &rules.distance {
+            cx.param("distance", bytes_of(d));
+        }
+        if let Some(fit) = &rules.pelvis_fit {
+            cx.param("pelvis_fit", bytes_of(fit));
+        }
+        if let Some(m) = &rules.mirror {
+            cx.param("mirror", bytes_of(m));
         }
         cx.param("settings", self.0.settings.key_bytes());
         cx.param("format", CLIP_FORMAT.to_le_bytes().to_vec());
@@ -428,16 +511,10 @@ impl Step for AnimRetargetStep {
         let target = read_skeleton(&key, target_path, cx)?;
         let (source_rig, target_rig) = (self.rig(&key, source_path)?, self.rig(&key, target_path)?);
         let retargeter = Retargeter::new(&source, &source_rig, &target, &target_rig).map_err(|e| BakeError::step(&key, e))?;
-        let mut cooked = match self.root(anim) {
-            Some(root) => retargeter.clip_with_root(&clip, &root, &self.0.settings),
-            None => retargeter.clip(&clip, &self.0.settings),
-        }
-        .map_err(|e| BakeError::step(&key, e))?;
         let profile = read_profile(&key, target_path, cx)?;
-        transfer_contacts(&clip.meta.contacts, &target, &profile, &mut cooked);
-        if let Some(d) = self.distance(anim) {
-            apply_distance(&mut cooked, &d);
-        }
+        let root = self.root(anim);
+        let (cooked, _) = retarget_product(&retargeter, &clip, root.as_ref(), &target, &profile, &self.rules(anim), &self.0.settings)
+            .map_err(|e| BakeError::step(&key, e))?;
         Ok(cooked.to_bytes())
     }
 }

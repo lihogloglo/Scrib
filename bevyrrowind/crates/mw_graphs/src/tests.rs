@@ -279,5 +279,6 @@ fn classic_keeps_the_morrowind_graph() {
 /// to Classic too. Then B2a: `Clip` nodes gained `distance: None` (Debug text only; the
 /// graph and its RON are unchanged). `AN1c`: `FootGuards` gained `extension` (the
 /// over-extension unplant, default 0.99). `AN1d`: `FootGuards` gained `plant_speed`,
-/// `heel_rise`, `toe_rise` and `lift` (plant detection on the final pose).
-const CLASSIC_DIGEST: u64 = 0xf0a5_5a7c_38c5_673b;
+/// `heel_rise`, `toe_rise` and `lift` (plant detection on the final pose). `AN26b`: the seat
+/// montage slots (`seat.*`, sources.ron) joined `slot_clips`.
+const CLASSIC_DIGEST: u64 = 0xdec8_a70d_0758_f759;

@@ -72,12 +72,13 @@ fn slot(file: &str) -> Slot {
     let clip = file.rsplit('/').next().unwrap().trim_end_matches(".bvh").to_owned();
     Slot {
         graph: "humanoid".to_owned(),
-        candidates: vec![Candidate { source: SOURCE.to_owned(), clip, file: Some(file.to_owned()), range: None }],
+        candidates: vec![Candidate { source: SOURCE.to_owned(), clip, file: Some(file.to_owned()), range: None, mirror: None }],
         looping: sf_anim::Looping::default(),
         root: RootMotionMode::Drive,
         vertical: false,
         in_place: false,
         loop_cut: None,
+        pelvis_fit: None,
         fallback: ClipFallback::Drop,
     }
 }

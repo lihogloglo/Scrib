@@ -15,7 +15,7 @@ use std::fmt::Write as _;
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
-use sf_anim::{ClipRules, LoopCutRules, Looping, RootMotionMode, RootMotionRules};
+use sf_anim::{ClipRules, LoopCutRules, Looping, MirrorRules, PelvisFit, RootMotionMode, RootMotionRules};
 use sf_anim_graph::asset::{ClipFallback, ClipRef};
 use sf_character::PoseOffset;
 
@@ -145,11 +145,18 @@ pub struct Candidate {
     /// Seconds of the source clip to keep (long takes).
     #[serde(default)]
     pub range: Option<(f32, f32)>,
+    /// Cook it mirrored on the target rig (`sf_anim` `mirror.rs`): a
+    /// left-side take played as the right-side one. `Some(())` mirrors
+    /// across X (left and right), `Some((axis: Z))` across another plane.
+    #[serde(default)]
+    pub mirror: Option<MirrorRules>,
 }
 
 impl Candidate {
     /// The graph clip reference: `source:clip`, `source:file:clip` when the
-    /// file is named, `@start-end` appended for a range.
+    /// file is named, `@start-end` appended for a range, `#mirror` for a
+    /// mirrored candidate (`#mirror.Z` across another plane than X), so one
+    /// file feeds a plain and a mirrored slot.
     pub fn reference(&self) -> String {
         let mut r = match &self.file {
             Some(f) => format!("{}:{f}:{}", self.source, self.clip),
@@ -157,6 +164,13 @@ impl Candidate {
         };
         if let Some((a, b)) = self.range {
             let _ = write!(r, "@{a}-{b}");
+        }
+        match self.mirror.map(|m| m.axis) {
+            Some(sf_anim::mirror::Axis::X) => r.push_str("#mirror"),
+            Some(axis) => {
+                let _ = write!(r, "#mirror.{axis:?}");
+            }
+            None => {}
         }
         r
     }
@@ -185,6 +199,12 @@ pub struct Slot {
     /// slow down: `sf_anim` `loop_cut.rs`). Overrides `looping`.
     #[serde(default)]
     pub loop_cut: Option<LoopCutRules>,
+    /// Fit each candidate to a seat height on the target rig (`sf_anim`
+    /// `pelvis_fit.rs`): the pelvis sits `target_m` above the floor at the
+    /// `hub` end (`First`: exits and loops, `Last`: enters), the feet keep
+    /// their contacts. Slot level: one hub per piece.
+    #[serde(default)]
+    pub pelvis_fit: Option<PelvisFit>,
     /// After the last candidate: another graph clip (a Morrowind group) or drop.
     #[serde(default = "drop")]
     pub fallback: ClipFallback,
@@ -212,6 +232,8 @@ impl Slot {
                 ..RootMotionRules::default()
             },
             loop_cut: self.loop_cut.clone(),
+            pelvis_fit: self.pelvis_fit.clone(),
+            mirror: candidate.mirror,
             ..ClipRules::default()
         }
     }
@@ -316,6 +338,7 @@ impl SourcesManifest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sf_anim::HubEnd;
 
     #[test]
     fn shipped_manifest_parses_with_the_mantle_slot() {
@@ -340,14 +363,22 @@ mod tests {
         let getup = refs.iter().find(|r| r.reference.contains("fallAndGetUp2_subject3")).and_then(|r| r.retarget_root.clone()).unwrap();
         assert!(!getup.extract && getup.anchor_end);
         assert!(refs.iter().filter(|r| r.source != "lafan1" && r.source != "generated").all(|r| r.retarget_root.is_none()));
-        // Generated takes (Kimodo): root motion from the target pelvis, as LAFAN1's.
-        assert!(refs.iter().filter(|r| r.source == "generated").all(|r| r.retarget_root.as_ref().is_some_and(|m| m.extract && m.mode == RootMotionMode::Match)));
+        // Generated takes (Kimodo): root motion from the target pelvis, as LAFAN1's; the gait
+        // cycles capsule-driven (`Match`), the seat pieces driving the warp's root path (`Drive`).
+        let generated = |dir: &'static str| refs.iter().filter(move |r| r.source == "generated" && r.reference.contains(dir));
+        assert!(generated("loco1/").all(|r| r.retarget_root.as_ref().is_some_and(|m| m.extract && m.mode == RootMotionMode::Match)));
+        assert!(generated("sit1/").all(|r| r.retarget_root.as_ref().is_some_and(|m| m.extract && m.mode == RootMotionMode::Drive)));
+        assert_eq!(generated("sit1/").count(), 48, "36 sit1 picks + 12 mirrored right sides");
         assert_eq!(m.slots["traverse.climb.up"].candidates[0].reference(), "quaternius_ual1:ClimbLedge");
         assert_eq!(m.slots["traverse.mantle.high"].candidates[0].reference(), "quaternius_ual2:ClimbUp_2m");
         let rules = slot.rules(&slot.candidates[0]);
         assert_eq!(rules.root_motion.mode, RootMotionMode::Progress);
         assert!(rules.root_motion.vertical && rules.root_motion.extract);
         let (clips, slots) = m.graph_clips("humanoid");
+        // Seat slots: 6 family-bands x (front + left + mirrored right) x (enter, exit) + 2 loops.
+        let seats = slots.iter().filter(|s| s.starts_with("seat.")).count();
+        assert_eq!(seats, 6 * 8, "seat slots");
+        let slots: Vec<&String> = slots.iter().filter(|s| !s.starts_with("seat.")).collect();
         assert_eq!(
             slots,
             [
@@ -413,6 +444,35 @@ mod tests {
         assert_eq!(slot.rules(&slot.candidates[0]).loop_cut, Some(LoopCutRules { max_strides: 3, ..LoopCutRules::default() }));
         let plain = &m.slots["plain"];
         assert_eq!(plain.rules(&plain.candidates[0]).loop_cut, None);
+    }
+
+    #[test]
+    fn a_slot_passes_its_pelvis_fit_and_a_candidate_its_mirror_to_the_cook() {
+        let text = r#"(
+          sources: { "g": (license: CC0, page: "", files: [(name: "sit.bvh", sha256: "")]) },
+          slots: { "seat.enter.left": (graph: "humanoid", candidates: [(source: "g", clip: "sit")], in_place: true,
+                     pelvis_fit: Some((target_m: 0.69, hub: Last))),
+                   "seat.enter.right": (graph: "humanoid", candidates: [(source: "g", clip: "sit", mirror: Some(()))], in_place: true,
+                     pelvis_fit: Some((target_m: 0.69, hub: Last))),
+                   "seat.top": (graph: "humanoid", candidates: [(source: "g", clip: "sit", mirror: Some((axis: Z)))]) },
+        )"#;
+        let m = SourcesManifest::parse(text).unwrap();
+        let rules = |slot: &str| m.slots[slot].rules(&m.slots[slot].candidates[0]);
+        let fit = PelvisFit::new(0.69, HubEnd::Last);
+        assert_eq!((rules("seat.enter.left").pelvis_fit, rules("seat.enter.left").mirror), (Some(fit.clone()), None));
+        assert_eq!((rules("seat.enter.right").pelvis_fit, rules("seat.enter.right").mirror), (Some(fit), Some(MirrorRules::default())));
+        assert_eq!((rules("seat.top").pelvis_fit, rules("seat.top").mirror), (None, Some(MirrorRules { axis: sf_anim::mirror::Axis::Z })));
+        // One file feeds the plain and the mirrored slots: three references,
+        // each resolving to the same file and clip.
+        let refs = m.references().unwrap();
+        let names: Vec<&str> = refs.iter().map(|r| r.reference.as_str()).collect();
+        assert_eq!(names, ["g:sit", "g:sit#mirror", "g:sit#mirror.Z"]);
+        assert!(refs.iter().all(|r| r.file == "sit.bvh" && r.clip == "sit"));
+        let (clips, _) = m.graph_clips("humanoid");
+        assert_eq!(clips.iter().find(|(n, _)| n == "seat.enter.right").unwrap().1.source, "g:sit#mirror");
+        // The same mirrored candidate with another fit is another cook of one reference.
+        let clash = text.replace("mirror: Some((axis: Z))", "mirror: Some(())");
+        assert!(SourcesManifest::parse(&clash).unwrap_err().contains("other cook rules"));
     }
 
     #[test]

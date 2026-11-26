@@ -2,11 +2,16 @@
 //! fixture biped's left-side take played as the right-side one.
 #![allow(clippy::float_cmp, clippy::cast_precision_loss)]
 
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+
 use glam::{Affine3A, Quat, Vec3};
 use serde::Serialize;
+use sf_bake::{BakeError, Baker, Digest, Input, Inputs, ProductKey, Store};
 
 use crate::fixtures::{biped, sampled};
 use crate::mirror::{Axis, mirror_side};
+use crate::steps::{AnimBake, AnimImporters, AnimRules, ClipSpec};
 use crate::*;
 
 fn smooth(t: f32) -> f32 {
@@ -292,4 +297,156 @@ fn the_mirror_keeps_the_fitted_seat_height() {
     }
     let y = mb.translation(hips).y;
     assert!((y - 0.6).abs() <= tolerance, "hub pelvis at {y}");
+}
+
+// --- The bake path: `anim.cook` + `anim.retarget` -------------------------------------
+
+/// Two-second take of the fixture biped: the left thigh swings out over the
+/// first second (the left foot steps to +x), then holds; the hips stand.
+fn stand_and_step() -> SourceClip {
+    SourceClip {
+        name: "step".into(),
+        duration: 2.0,
+        tracks: vec![SourceTrack {
+            joint: "thigh_l".into(),
+            rotation: Some(sampled(2.0, |t| Quat::from_rotation_z(0.3 * smooth(t.min(1.0))))),
+            ..SourceTrack::default()
+        }],
+        curves: Vec::new(),
+        events: Vec::new(),
+        markers: Vec::new(),
+    }
+}
+
+/// Imports any `.biped` file as the fixture biped with [`stand_and_step`].
+struct BipedImporter;
+
+impl AnimImporter for BipedImporter {
+    fn extensions(&self) -> &[&str] {
+        &["biped"]
+    }
+    fn version(&self) -> u32 {
+        1
+    }
+    fn import(&self, _path: &str, _bytes: &[u8]) -> Result<AnimSource, ImportError> {
+        let s = biped();
+        let joints = (0..s.len()).map(|i| SourceJoint { name: s.name(i).to_owned(), parent: s.parent(i), rest: s.rest()[i] }).collect();
+        Ok(AnimSource { skeleton: Some(joints), clips: vec![stand_and_step()], root_motion: Some("root".into()) })
+    }
+}
+
+#[derive(Default)]
+struct Files(RwLock<HashMap<String, Vec<u8>>>);
+
+impl Inputs for Files {
+    fn file_fingerprint(&self, path: &str) -> Result<Option<Digest>, BakeError> {
+        Ok(self.0.read().unwrap().get(path).map(|b| Digest::of(b)))
+    }
+    fn read_file(&self, path: &str) -> Result<Vec<u8>, BakeError> {
+        self.0.read().unwrap().get(path).cloned().ok_or_else(|| BakeError::MissingInput(Input::File(path.into())))
+    }
+    fn record_fingerprint(&self, _kind: &str, _id: &str) -> Result<Option<Digest>, BakeError> {
+        Ok(None)
+    }
+}
+
+const SEAT_M: f32 = 0.69;
+
+/// Library-like rules: every clip retargets, `step_fit` fits the seat
+/// height, `step_fit_mirror` also mirrors (both from the source take `step`).
+struct SeatRules;
+
+impl AnimRules for SeatRules {
+    fn skeleton(&self, _path: &str) -> SkeletonRules {
+        SkeletonRules { root_motion_joint: Some("root".into()), ..SkeletonRules::default() }
+    }
+    fn clip(&self, _file: &str, clip: &str, _skeleton: &str) -> ClipSpec {
+        let fit = Some(PelvisFit::new(SEAT_M, HubEnd::Last));
+        let rules = match clip {
+            "step_fit" => ClipRules { pelvis_fit: fit, ..ClipRules::default() },
+            "step_fit_mirror" => ClipRules { pelvis_fit: fit, mirror: Some(MirrorRules::default()), ..ClipRules::default() },
+            _ => ClipRules::default(),
+        };
+        ClipSpec { source: "step".into(), rules }
+    }
+    fn rig(&self, _path: &str) -> Option<RetargetRig> {
+        let c = |name: &str, joints: &[&str]| RetargetChain { name: name.into(), joints: joints.iter().map(|&j| j.to_owned()).collect(), ik: false, solver: None };
+        Some(RetargetRig {
+            chains: vec![
+                c("hips", &["hips"]),
+                c("spine", &["spine", "chest"]),
+                c("head", &["head"]),
+                c("leg_l", &["thigh_l", "shin_l", "foot_l"]),
+                c("leg_r", &["thigh_r", "shin_r", "foot_r"]),
+                c("arm_l", &["upperarm_l", "forearm_l", "hand_l"]),
+                c("arm_r", &["upperarm_r", "forearm_r", "hand_r"]),
+            ],
+            retarget_pose: Vec::new(),
+            hips: Some("hips".into()),
+        })
+    }
+    fn retargeted(&self, _file: &str, _clip: &str, _skeleton: &str) -> bool {
+        true
+    }
+}
+
+/// `(kind, side, start, end)` of each contact, in time order.
+fn contact_sides(clip: &Clip, side: impl Fn(Side) -> Side) -> Vec<(ContactKind, Side, u32, u32)> {
+    let mut v: Vec<_> = clip.meta.contacts.iter().map(|c| (c.kind, side(c.side), c.start.to_bits(), c.end.to_bits())).collect();
+    v.sort_by_key(|c| (c.2, c.1 == Side::Right));
+    v
+}
+
+/// `ClipRules::pelvis_fit` and `mirror` through the bake: `anim.cook` cooks
+/// the source without them (the same product as the plain clip's), and
+/// `anim.retarget` fits the hub pelvis to the seat on the target and plays
+/// the left step as the right one, its contacts on the other side.
+#[test]
+fn the_bake_fits_and_mirrors_on_the_target() {
+    let files = Arc::new(Files::default());
+    for p in ["chars/a.biped", "chars/b.biped"] {
+        files.0.write().unwrap().insert(p.into(), b"biped".to_vec());
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let bake = AnimBake::new(AnimImporters::new().with(Arc::new(BipedImporter)), Arc::new(SeatRules), CookSettings::default());
+    let mut baker = Baker::new(Store::open(dir.path()).unwrap(), files);
+    bake.register(&mut baker);
+    let (a, b) = ("chars/a.biped", "chars/b.biped");
+    let cook = |clip: &str| ProductKey::new(steps::ANIM_COOK, steps::anim_subject(a, a, clip));
+    let moved = |clip: &str| ProductKey::new(steps::ANIM_RETARGET, steps::retarget_subject(b, &steps::anim_subject(a, a, clip)));
+    let keys: Vec<_> = ["step", "step_fit", "step_fit_mirror"].iter().flat_map(|n| [cook(n), moved(n)]).collect();
+    let report = baker.bake(&keys);
+    assert_eq!(report.failures().count(), 0, "{:?}", report.failures().collect::<Vec<_>>());
+    let bytes = |k: &ProductKey| baker.store().get(&baker.product(k).unwrap()).unwrap();
+    let get = |k: &ProductKey| Clip::from_bytes(&bytes(k)).unwrap();
+
+    // The source cook leaves the target-rig rules out; the retarget keys them.
+    let mut source = get(&cook("step_fit_mirror"));
+    "step".clone_into(&mut source.name);
+    assert_eq!(source.to_bytes(), bytes(&cook("step")));
+    assert_ne!(baker.product(&moved("step_fit")).unwrap(), baker.product(&moved("step")).unwrap());
+
+    let (plain, fitted, mirrored) = (get(&moved("step")), get(&moved("step_fit")), get(&moved("step_fit_mirror")));
+    let s = biped();
+    let at = |clip: &Clip, t: f32| {
+        let (mut pose, mut model) = (LocalPose::new(s.len()), ModelPose::new(s.len()));
+        clip.sample(t, &mut pose, None);
+        local_to_model(&s, &pose, &mut model, &Affine3A::IDENTITY);
+        model
+    };
+    let (end, hips) = (fitted.duration, joint("hips"));
+    assert!((at(&plain, end).translation(hips).y - 1.0).abs() < 1e-3, "the plain clip stands");
+    for clip in [&fitted, &mirrored] {
+        let y = at(clip, end).translation(hips).y;
+        assert!((y - SEAT_M).abs() < 1e-3, "hub pelvis at {y}, want {SEAT_M}");
+    }
+    // The left foot stepped to +x; mirrored, the right foot steps to -x.
+    let (fl, fr) = (joint("foot_l"), joint("foot_r"));
+    let step = at(&fitted, end).translation(fl).x - at(&fitted, 0.0).translation(fl).x;
+    let mirrored_step = at(&mirrored, end).translation(fr).x - at(&mirrored, 0.0).translation(fr).x;
+    assert!(step > 0.05, "the take steps out: {step}");
+    assert!((mirrored_step + step).abs() < 1e-3, "{mirrored_step} vs {step}");
+    // The contacts: the same kinds and times, on the other side.
+    assert!(!fitted.meta.contacts.is_empty(), "the source cook measured contacts");
+    assert_eq!(contact_sides(&mirrored, |s| s), contact_sides(&fitted, |s| mirror_side(Axis::X, s)));
 }

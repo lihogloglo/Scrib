@@ -153,7 +153,8 @@ pub fn cook_library_clip(source: &str, path: &Path, clip: Option<&str>, rules: &
 }
 
 /// [`cook_library_clip`] with the cook's report (the loop cut of
-/// [`ClipRules::loop_cut`]: its window and seam errors, or why none was cut).
+/// [`ClipRules::loop_cut`]: its window and seam errors, or why none was cut;
+/// the [`ClipRules::pelvis_fit`] lift and foot errors on the target rig).
 pub fn cook_library_clip_report(
     source: &str,
     path: &Path,
@@ -178,9 +179,9 @@ pub fn cook_library_clip_report(
     let (map, source_rig) = library_rig(&skeleton, source).ok_or_else(|| format!("{name}: its skeleton has no humanoid retarget rig"))?;
     let hints = RigHints { profile: map.profile(&skeleton).ok(), ..RigHints::default() };
     let profile = sf_anim::detect_profile(&skeleton, &hints).map_err(|e| e.to_string())?;
-    // anim.cook
+    // anim.cook: a retarget source, cooked without its target-rig rules.
     let retarget_root = library.root_from_pelvis.then(|| rules.root_motion.clone());
-    let mut cook_rules = rules.clone();
+    let mut cook_rules = sf_anim::steps::source_rules(rules);
     if retarget_root.is_some() {
         cook_rules.root_motion.extract = false;
         cook_rules.root_motion.anchor_end = false;
@@ -191,19 +192,12 @@ pub fn cook_library_clip_report(
     }
     .ok_or_else(|| format!("{name}: no clip {}", clip.unwrap_or("(the file has none)")))?;
     let settings = CookSettings::default();
-    let (cooked, report) = sf_anim::cook_clip_report(&skeleton, Some(&profile), src, &cook_rules, &settings).map_err(|e| e.to_string())?;
-    // anim.retarget
+    let (cooked, mut report) = sf_anim::cook_clip_report(&skeleton, Some(&profile), src, &cook_rules, &settings).map_err(|e| e.to_string())?;
+    // anim.retarget: fit and mirror on the target, contacts, distance curve.
     let retargeter = sf_anim::Retargeter::new(&skeleton, &source_rig, &target.skeleton, &target.rig).map_err(|e| e.to_string())?;
-    let mut out = match &retarget_root {
-        Some(root) => retargeter.clip_with_root(&cooked, root, &settings),
-        None => retargeter.clip(&cooked, &settings),
-    }
-    .map_err(|e| e.to_string())?;
-    sf_anim::transfer_contacts(&cooked.meta.contacts, &target.skeleton, &target.profile, &mut out);
-    // As `anim.retarget`: the distance curve is measured on the target's root track.
-    if let Some(d) = &rules.distance {
-        sf_anim::apply_distance(&mut out, d);
-    }
+    let (mut out, post) =
+        sf_anim::steps::retarget_product(&retargeter, &cooked, retarget_root.as_ref(), &target.skeleton, &target.profile, rules, &settings)?;
+    report.pelvis_fit = post.pelvis_fit;
     out.name.clone_from(&src.name);
     Ok((out, report))
 }
@@ -685,6 +679,10 @@ impl AnimRules for MwAnimRules {
     /// Library sources without a root bone (`root_from_pelvis`).
     fn retarget_root(&self, file: &str, clip: &str, _skeleton: &str) -> Option<RootMotionRules> {
         self.library.get(clip).filter(|r| r.file == file).and_then(|r| r.retarget_root.clone())
+    }
+    /// Library references always retarget onto the actor's skeleton.
+    fn retargeted(&self, file: &str, clip: &str, _skeleton: &str) -> bool {
+        self.library.get(clip).is_some_and(|r| r.file == file)
     }
 }
 
