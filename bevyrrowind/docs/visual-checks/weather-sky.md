@@ -415,6 +415,37 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   FG-7, WE-11, WE-12 looks changed (fog behind ridges, fog over sea, deck from above).
 - Status: partial (owner 2026-11-13: shimmer better, but the clouds "still look goofy and a bit weird"; a bigger cloud-shape pass later).
 
+### WE-18: Summit inside a deck (CL-7, CL-8; clouds.md "Nubis look and decks below the peaks")
+- Scene: `scene summit-vivec --weather ashstorm` at 10:00 (Red Mountain summit, eye ~300 m, deck 150-400 m), then
+  `--weather overcast` (deck from 220 m). Stand still, pan, then walk downhill out of the deck base and back up.
+- Look for: a fog-like grey-lit view inside the deck, wisps drifting past near the eye, slopes fading out within
+  ~100-300 m, the sun disk gone; leaving the base, the deck's underside appears overhead with no pop or band.
+- Must not: smear or ghost trails when walking or turning; bright sky leaking at silhouettes; WE-12 unchanged.
+- A/B: `--off cloudinside` (no near steps, old history weight). Status: planned (after CL-8).
+
+### WE-19: Summit above a deck, sea of clouds (CL-7, CL-8)
+- Scene: `scene summit-vivec --weather foggy --hour 7` (stratus 40-140 m); look east into the low sun, then south over
+  the West Gash toward Vivec and down into the Ashlands.
+- Look for: a flat lit deck below the summit, Ashlands ridges and Red Mountain's flanks poking through, sunlit tops
+  and a silver rim toward the sun, valleys under the deck seen only through holes, fogged; the horizon continuous.
+- Must not: deck missing below the horizon (WE12-DIAG), terrain drawn over by cloud, a seam at the deck's edge.
+- A/B: `--off clouddecks` (today's 1 500 m altostratus). Status: planned (after CL-8).
+
+### WE-20: Towering cumulus with Nubis undersides (CL-1..CL-4, CL-7)
+- Scene: `scene clouds-cumulus` (Balmora toward Red Mountain, noon), then `scene we3-ridge --weather cloudy` (West
+  Gash ridge, 14:00); still camera, then a slow pan.
+- Look for: separate heaps 2-4 km tall with flat bases, cauliflower billows and curl wisps at the tops, no squashed
+  or stretched puffs; darker, higher-contrast bases and crevices that still read (floor), towns still lit; distant
+  clouds smooth, not mushy or shimmering.
+- A/B: `--off cloudnoise2` (old noise), `--off cloudambient` (flat ambient), `--off cloudlod`. Status: planned (after CL-7).
+
+### WE-21: Silver lining A/B (CL-5)
+- Scene: `view "Balmora" --day 173 --hour 18.5 --weather cloudy`, clock paused (P), face the setting sun with cumulus
+  around it; then `scene summit-vivec --weather foggy --hour 7` facing the sun (deck tops).
+- Live arms: `set sky.cloud.silver_lining strong` (default) vs `subtle` (today). Look for: bright rims and glowing
+  thin edges near the sun with `strong`; the sun-away side unchanged. Answer: keep strong (yes/no)?
+- Status: planned (after CL-5).
+
 ## Exposure and tonemapping (superfargoth `exposure-tonemap.md`)
 
 ### EX-1: Night darkness, three arms (E0, launch flags only, no build)

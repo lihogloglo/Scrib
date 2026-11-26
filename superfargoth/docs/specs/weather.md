@@ -21,7 +21,7 @@ Note: "proposed changes at the end" now lives in [weather/history.md](weather/hi
 | File | Contents |
 |---|---|
 | [weather/state.md](weather/state.md) | Weather state machine and presets as data; WE1 and WE3 as built (`sf_weather`, `sf_weather_bevy`) |
-| [weather/clouds.md](weather/clouds.md) | Volumetric clouds: model, genera, scale, motion, shadows, sun occlusion; as built |
+| [weather/clouds.md](weather/clouds.md) | Volumetric clouds: model, genera, scale, motion, shadows, sun occlusion; Nubis look + decks below the peaks (CL-1..CL-8, specced); as built (history in `archive/clouds-history.md`) |
 | [weather/fog.md](weather/fog.md) | Aerial perspective, height fog, ground fog, froxel fog, god rays; as built |
 | [weather/wind.md](weather/wind.md) | Wind field, `sf_wind` / `sf_wind_bevy`; WD1 as built |
 | [weather/precipitation-surface.md](weather/precipitation-surface.md) | Precipitation and surface state (wetness, snow) |

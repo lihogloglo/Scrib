@@ -224,6 +224,31 @@ exist (M8). Underwater cells and the "has water" interiors keep their water fog 
 - **Wind and trees**: `wind_profile` marks `meshes/f/flora_*` (the same rule as `mw_bake::far::is_flora`)
   as foliage. Kelp and bushes get leaf-level flutter only. Emperor parasols are stiff (trunk bend only).
 
+### Cloud decks (CL-7, planned; framework weather/clouds.md "Nubis look and decks below the peaks")
+
+Owner 2026-11-26: towering 2-4 km cumulus; some decks below the peaks, so a summit stands inside or above a deck.
+Fixed-altitude decks per weather (Nubis), not terrain-anchored; the world weather map gives each region its own.
+Vanilla heights above sea level: Red Mountain 271 m (p95 242), Ashlands max 198 (p95 114), Molag Amur 113, West Gash
+102, Grazelands 83, Bitter Coast 81, Solstheim 69 (worldgen-adapter.md). Base / thickness in metres (today in brackets):
+
+| Weather | Genus | Base | Thickness | Views |
+|---|---|---|---|---|
+| Clear | clear | 600 (600) | 350 (350) | above every peak |
+| Cloudy | fair | 600 (600) | 2 000 (500) | towering cumulus over Balmora / West Gash |
+| Foggy | stratus (new genus, HZD 11 % profile) | 40 (altostratus 1 500) | 100 (450) | West Gash hills inside, Ashlands ridges and Red Mountain above: sea of clouds |
+| Overcast | overcast | 220 (350) | 700 (750) | Red Mountain summit inside the base |
+| Rain, Snow | overcast | 200 (350) | 900 (750) | summit inside |
+| Blizzard | overcast | 120 (350) | 600 (750) | Solstheim under the deck |
+| Thunderstorm | storm | 300 (450) | 4 000 (1 600) | towers; summit under or in the base |
+| Ashstorm, Blight | stratocumulus | 150 (450) | 250 (325) | summit (eye ~300 m) inside, Ashlands ridges in the ragged base |
+
+Cumulus by name (`--clouds cumulus`, mods): 600 / 3 500. Values are `Guess` against the LAND heights, signed off in
+WE-18..WE-20. Tunables: `mw.cloud.max_thickness_m` 4 000 (1 600-6 000 m; Owner 2026-11-26, replaces
+`MAX_CLOUD_THICKNESS_M`), `mw.cloud.world_scale` 0.5 (0.25-1 ratio; Reference: compressed island, replaces
+`CLOUD_WORLD_SCALE`) for genus defaults, `mw.cloud.deck_scale` 1 (1-10 ratio; Reference: worldgen x10 summit 2.7 km)
+multiplying the low-deck rows (Foggy to Blizzard, ash) in a vertically scaled world. `--off clouddecks` = today's
+heights. Test: `mw_weather` table exact, and decks listed as below 271 m are.
+
 ### Surface weather (`sf_surface`, framework spec `surface-weather.md`)
 
 - **Climates = regions.** Wetness and puddles are kept per climate (`mw_region/<id>`); snow and ash per 32 m
