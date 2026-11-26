@@ -110,11 +110,16 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   is placed with no view test, else `resolve_promotion`); Cleanup gives a body that left the store its allocated tier
   (staggered). Tunables `ai.tier.promote_*`; `ai.stats` prints a `logical:` line.
 - **Greeting** (MA4c2, 2026-11-26; `mw_walkers_bevy/src/greeting.rs`): every awake AI actor steps `mw_ai`'s OpenMW
-  greeting machine (`greeting_step`, MA4c1) on the fixed tick in `GreetSystems` (`add` `greeting.rs:215`): Decide
-  (`:255`, after `ReactionSystems::React`; asks for the Hello when a greeting starts), the voices' answer
-  (`mw_audio_bevy` `say_hellos`, dev only), Apply (`:336`, before `drive_directives`), Hold (`:374`, after
+  greeting machine (`greeting_step`, MA4c1) on the fixed tick in `GreetSystems` (`add` `greeting.rs:271`): Decide
+  (`:311`, after `ReactionSystems::React`; asks for the Hello when a greeting starts), the voices' answer
+  (`mw_audio_bevy` `say_hellos`, dev only), Apply (`:400`, before `drive_directives`), Hold (`:438`, after
   `ReactionSystems::Apply`: stand + facing). While it holds, the wander and a `GoTo` pause (`walkers.rs` drive,
-  `directive_drive.rs`). No voice answer (non-dev builds): the greeting goes Done, no turn.
+  `directive_drive.rs`). No voice answer (non-dev builds): the greeting goes Done, no turn. "In combat" is a serving
+  `Fight` directive only (`:358`, OpenMW `isInCombat`), not the Alerted band (AI-13: sight latches a seen player at
+  Alerted within a second, which reset every greeting); gap: no drive pushes `Fight` yet (MA10 / AI15), so an NPC
+  OpenMW would fight greets. A perception reaction still pauses it: in plain view at 1.5 m the NPC reacts, searches,
+  walks back to its post, then greets about 2 s after first sight. Proof line on full updates, on change, at most once
+  a second (`:393`): `greeting: N in reach (C in combat, P other package, U not seen, H player hidden or dead), G greeting`.
 - **Worldspace graph** (MA21, 2026-11-26; `mw_exterior_bevy/src/nav_links.rs`, added next to `mw_doors_bevy::add`):
   `NavWorldGraphPlugin` over `DoorLinks`; each link end's approach point is the PGRD node nearest its arrival, in front
   of the door plane and within `mw.nav.door_approach_m` (4 m), else the arrival (vanilla: 77% of 3656 ends from PGRD);

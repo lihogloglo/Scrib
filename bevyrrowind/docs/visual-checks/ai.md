@@ -87,6 +87,13 @@ Log: `ai: N wanderers on navmesh, M on pathgrid fallback (since start: X navmesh
 - Status: FAIL (owner 2026-11-26, dev exe at 1c699df9): "doesn't seem to greet me no ... don't think I saw them
   turn smoothly either". Log `%TEMP%/bw-owner-2026-11-26-2011/last.log`: player body present, 30 movers, head track
   "1 tracking the player", no `greeting:` line: no greeting ever started. Cause and fix: see the re-check below.
+- Re-check (fix 2026-11-26, AI-13 fix commit): the greeting read "fully noticed" (the Alerted awareness band) as "in
+  combat", and a player in plain view reaches Alerted within a second, so the greeting reset every tick. Now only a
+  `Fight` directive is combat. Same scene and command. An NPC greets ~2 s after it first sees you (it looks, may step
+  toward you, then greets): stand in front of it for 3 s. New proof line, logged before any greeting:
+  `greeting: N in reach (C in combat, P other package, U not seen, H player hidden or dead), G greeting` (N > 0 once
+  you stand within ~2.5 m of an NPC), then `greeting: N greeted (M without a voice)`. Q1-Q4 as above.
+- Status (re-check): awaiting owner.
 
 ### AI-14: far NPCs run at tier 0 and come back without a pop (AI10c2, 2026-11-26)
 - Kind: game, dev build. `owner_launch.sh view "Balmora" --hour 12` (exterior, noon), F11 drops the player.

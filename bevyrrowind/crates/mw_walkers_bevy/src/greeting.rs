@@ -18,11 +18,17 @@
 //!   last two sight periods, `sf_ai_bevy::seen_recently`). Our sight check casts the LOS ray and
 //!   already applies the crime stealth rules (sneak, light, facing) that `OpenMW`'s
 //!   `awarenessCheck` rolls, so no second roll is made.
-//! - In combat: the Alerted band toward the player (the head tracking's "engaged"), or a `Fight`
-//!   directive serving. Swimming: [`MoverMode::Swim`]. Package: the serving directive of the
+//! - In combat (`OpenMW` `isInCombat`: the actor actually fights): a `Fight` directive serving.
+//!   Not the awareness band: Alerted means fully noticed, not fighting (sight fills a seen
+//!   player's band to Alerted within a second and latches it; `AI-13`: reading it as combat kept
+//!   every NPC that saw the player from greeting). Named gap: until the fight drive pushes `Fight`
+//!   directives (roadmap `MA10` / `AI15`), an NPC that `OpenMW` would already be fighting greets
+//!   instead; [`mw_ai::settings::engages_on_sight`] (`MA4d`) is the rule that drive will run.
+//!   Swimming: [`MoverMode::Swim`]. Package: the serving directive of the
 //!   actor's stack is a `StayNear` (`AI_W`) or a `GoTo` (`AI_T`), or there is none; while a
 //!   perception reaction ([`Reaction::owns`]: search, curious or suspicious turn, return) drives
-//!   the actor it counts as another package, so the greeting resets and the reaction wins.
+//!   the actor it counts as another package, so the greeting resets and the reaction wins; it
+//!   starts counting once the reaction hands the actor back to its routine.
 //! - Paralysed: the actor's [`PARALYZE`] magnitude above 0 (named gap: absent from the stat table
 //!   until the effects adapter adds it, so never paralysed yet). `movement_forced`: false (named
 //!   gap: no `ForceJump`/`ForceSneak` flags exist yet). Smooth movement: on
@@ -65,8 +71,13 @@
 //! AI tiers' processing range) keep their state unstepped, except a knocked-down one (dormant
 //! while held), which steps and cannot say.
 //!
-//! Proof line (owner check): `greeting: N greeted (M without a voice)`, logged at the first
-//! greeting and each time the total doubles.
+//! Proof lines (owner check): `greeting: N greeted (M without a voice)`, logged at the first
+//! greeting and each time the total doubles; and, on full updates, when it changes (at most once
+//! per [`REACH_LOG_PERIOD_S`]), `greeting: N in reach (C in combat, P other package, U not seen,
+//! H player hidden or dead), G greeting`: the awake actors within their Hello reach of the player
+//! body, and why each one is not counting up, first reason in the machine's order (a swimming
+//! actor counts under other package, the same reset; a paralysed one under none of them, never
+//! yet: named gap above); G passes every gate (counting up or greeting, not Done).
 
 use std::sync::Arc;
 
@@ -88,7 +99,7 @@ use sf_controller_bevy::{Avoider, ControllerSystems, Dormant, Held, MoveIntent, 
 use sf_records::RecordDb;
 use sf_stats_bevy::{StatTableRes, Stats};
 
-use crate::head_track::{HeadTrackRules, HeadTrackSettings, engaged_with_player, host_hidden_magnitudes, seen_player, sight_window};
+use crate::head_track::{HeadTrackRules, HeadTrackSettings, host_hidden_magnitudes, seen_player, sight_window};
 use crate::physics::{Dead, KnockedDown};
 use crate::reaction::{Reaction, ReactionSystems};
 
@@ -99,6 +110,8 @@ pub const HELLO: &str = "hello";
 pub const PARALYZE: &str = "paralyze";
 /// `OpenMW`'s smooth movement setting as our controller has it.
 pub const SMOOTH_MOVEMENT: bool = true; // tunables: const (a fact of our controller: it always turns smoothly)
+/// The reach proof line's floor between two lines, s.
+const REACH_LOG_PERIOD_S: f64 = 1.0; // tunables: const (log rate limit)
 
 /// The greeting's order points on the fixed tick, all in [`ControllerSystems::Drive`].
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -194,6 +207,49 @@ struct GreetLog {
     logged: u32,
 }
 
+/// The reach proof line (module docs): `(in reach, in combat, other package, not seen, player
+/// hidden or dead, greeting)`.
+type ReachCounts = (u32, u32, u32, u32, u32, u32);
+
+/// The reach proof line's last counts and when they were logged.
+#[derive(Default)]
+struct ReachLog {
+    last: Option<ReachCounts>,
+    at_s: Option<f64>,
+}
+
+impl ReachLog {
+    /// Logs `counts` when they changed and the last line is old enough.
+    fn offer(&mut self, counts: ReachCounts, now_s: f64) {
+        if self.last == Some(counts) || self.at_s.is_some_and(|t| now_s - t < REACH_LOG_PERIOD_S) {
+            return;
+        }
+        self.last = Some(counts);
+        self.at_s = Some(now_s);
+        let (reach, combat, package, unseen, hidden, greeting) = counts;
+        info!(
+            "greeting: {reach} in reach ({combat} in combat, {package} other package, {unseen} not seen, \
+             {hidden} player hidden or dead), {greeting} greeting"
+        );
+    }
+
+    /// Adds one in-reach actor's reason (module docs) to `counts`.
+    fn count(counts: &mut ReachCounts, input: &GreetInput, state: GreetingState) {
+        counts.0 += 1;
+        if input.in_combat {
+            counts.1 += 1;
+        } else if input.swimming || !input.package_allows {
+            counts.2 += 1;
+        } else if !(input.los && input.aware) {
+            counts.3 += 1;
+        } else if input.player_dead || input.player_hidden {
+            counts.4 += 1;
+        } else if !input.paralyzed && state != GreetingState::Done {
+            counts.5 += 1;
+        }
+    }
+}
+
 /// The Morrowind heading (`rot[2]`: 0 north, toward east positive) of an engine yaw (about +Y, 0
 /// facing +Z, which is south).
 #[allow(clippy::cast_possible_truncation, reason = "angles in f32, normalised in f64 as OpenMW does")]
@@ -256,6 +312,7 @@ fn decide(
     time: Res<Time>,
     settings: Res<GreetSettings>,
     mut clock: ResMut<GreetClock>,
+    mut reach_log: Local<ReachLog>,
     head: Option<Res<HeadTrackSettings>>,
     percept: Option<Res<AiPerceptClock>>,
     perception: Option<Res<AiPerceptionSettings>>,
@@ -276,6 +333,7 @@ fn decide(
     });
     let window = sight_window(percept.as_deref(), perception.as_deref());
     let keys = table.as_deref().map(|t| (t.0.find(HELLO), t.0.find(PARALYZE)));
+    let mut reach: ReachCounts = (0, 0, 0, 0, 0, 0);
     for (actor, mover, mut greeting, sheet, awareness, reaction, knocked_down, dormant) in &mut actors {
         let greeting = &mut *greeting;
         greeting.pending = None;
@@ -297,7 +355,7 @@ fn decide(
             distance_units,
             angle_to_player,
             heading: heading_of_yaw(mover.loco.motion.yaw),
-            in_combat: engaged_with_player(awareness) || matches!(serving, Some(DirectiveKind::Fight(_))),
+            in_combat: matches!(serving, Some(DirectiveKind::Fight(_))),
             swimming: matches!(mover.loco.mode, MoverMode::Swim { .. }),
             package_allows: !reaction.is_some_and(Reaction::owns)
                 && matches!(serving, None | Some(DirectiveKind::StayNear { .. } | DirectiveKind::GoTo(_))),
@@ -312,6 +370,9 @@ fn decide(
             smooth_movement: SMOOTH_MOVEMENT,
             turn_only,
         };
+        if !turn_only && !dormant && hello > 0 && distance_units <= settings.gmst.hello_distance(hello) {
+            ReachLog::count(&mut reach, &input, greeting.greet.state);
+        }
         let mut trial = greeting.greet;
         let mut action = greeting_step(&mut trial, &input, &settings.gmst);
         if turn_only && trial.state == GreetingState::InProgress {
@@ -327,6 +388,9 @@ fn decide(
             greeting.greet = trial;
             greeting.action = action;
         }
+    }
+    if !turn_only && player.is_some() {
+        reach_log.offer(reach, time.elapsed_secs_f64());
     }
 }
 
@@ -405,5 +469,49 @@ mod pure_tests {
         // The heading greet_geometry gives toward a player north of the actor, as a yaw: north.
         let (_, h) = greet_geometry(Vec3::ZERO, Vec3::new(0.0, 0.0, -2.0));
         assert!((yaw_of_heading(h).abs() - PI).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_reach_line_counts_the_first_reason_and_logs_changes_at_most_once_a_second() {
+        let open = GreetInput {
+            hello: 30,
+            distance_units: 100.0,
+            angle_to_player: 0.0,
+            heading: 0.0,
+            in_combat: false,
+            swimming: false,
+            package_allows: true,
+            player_dead: false,
+            paralyzed: false,
+            player_hidden: false,
+            los: true,
+            aware: true,
+            can_say_hello: true,
+            movement_forced: false,
+            smooth_movement: true,
+            turn_only: false,
+        };
+        let mut c: ReachCounts = (0, 0, 0, 0, 0, 0);
+        let none = GreetingState::None;
+        ReachLog::count(&mut c, &GreetInput { in_combat: true, package_allows: false, ..open }, none);
+        ReachLog::count(&mut c, &GreetInput { swimming: true, ..open }, none);
+        ReachLog::count(&mut c, &GreetInput { package_allows: false, los: false, ..open }, none);
+        ReachLog::count(&mut c, &GreetInput { aware: false, player_dead: true, ..open }, none);
+        ReachLog::count(&mut c, &GreetInput { player_hidden: true, ..open }, none);
+        ReachLog::count(&mut c, &open, none);
+        ReachLog::count(&mut c, &open, GreetingState::InProgress);
+        ReachLog::count(&mut c, &open, GreetingState::Done);
+        assert_eq!(c, (8, 1, 2, 1, 1, 2));
+
+        let mut log = ReachLog::default();
+        log.offer(c, 10.0);
+        assert_eq!((log.last, log.at_s), (Some(c), Some(10.0)));
+        let changed = (1, 0, 0, 0, 0, 1);
+        log.offer(changed, 10.5);
+        assert_eq!(log.last, Some(c), "a change within the second waits");
+        log.offer(changed, 11.0);
+        assert_eq!((log.last, log.at_s), (Some(changed), Some(11.0)));
+        log.offer(changed, 20.0);
+        assert_eq!(log.at_s, Some(11.0), "unchanged counts are not logged again");
     }
 }

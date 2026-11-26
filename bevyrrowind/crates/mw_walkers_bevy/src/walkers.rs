@@ -1824,3 +1824,7 @@ mod script_ai_tests;
 #[cfg(test)]
 #[path = "greeting_tests.rs"]
 mod greeting_tests;
+
+#[cfg(test)]
+#[path = "greeting_sight_tests.rs"]
+mod greeting_sight_tests;

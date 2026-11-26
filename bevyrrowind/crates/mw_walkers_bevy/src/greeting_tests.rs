@@ -41,12 +41,12 @@ const AWAY_M: f32 = 12.0;
 
 /// The test voice: says (or refuses) every asked Hello and counts the asks.
 #[derive(Resource)]
-struct Voice {
-    say: bool,
-    asks: u32,
+pub(super) struct Voice {
+    pub(super) say: bool,
+    pub(super) asks: u32,
 }
 
-fn answer(mut voice: ResMut<Voice>, mut greetings: Query<&mut Greeting>) {
+pub(super) fn answer(mut voice: ResMut<Voice>, mut greetings: Query<&mut Greeting>) {
     for mut g in &mut greetings {
         if g.hello == HelloAsk::Asked {
             voice.asks += 1;
@@ -60,13 +60,8 @@ fn answer(mut voice: ResMut<Voice>, mut greetings: Query<&mut Greeting>) {
 /// far away.
 fn app(say: bool) -> (App, Entity) {
     let mut app = app_with(|app| {
-        let def = StatDef { key: HELLO.into(), kind: StatKind::Value { min: 0.0, cap: None }, group: "ai".into(), public: false, label: String::new() };
-        let table = StatTable::new(vec![def], &[]).expect("table builds");
-        app.insert_resource(StatTableRes(Arc::new(table)))
-            .insert_resource(AiPerceptClock { tick: TICK, tick_s: 1.0 / 60.0 })
-            .init_resource::<AiPerceptionSettings>()
-            .insert_resource(Voice { say, asks: 0 })
-            .add_systems(FixedUpdate, answer.after(GreetSystems::Decide).before(GreetSystems::Apply));
+        hello_table_and_voice(app, say);
+        app.insert_resource(AiPerceptClock { tick: TICK, tick_s: 1.0 / 60.0 }).init_resource::<AiPerceptionSettings>();
     });
     let feet = home().offset(Vec3::new(0.0, 0.0, AWAY_M + 10.0));
     let body = ActionBody::new(Locomotion::new(feet, 0.0), MoverParams::default(), WorldPos::ORIGIN);
@@ -74,9 +69,25 @@ fn app(say: bool) -> (App, Entity) {
     (app, player)
 }
 
+/// The one-stat table (Hello) and the test voice answering between Decide and Apply.
+pub(super) fn hello_table_and_voice(app: &mut App, say: bool) {
+    let def = StatDef { key: HELLO.into(), kind: StatKind::Value { min: 0.0, cap: None }, group: "ai".into(), public: false, label: String::new() };
+    let table = StatTable::new(vec![def], &[]).expect("table builds");
+    app.insert_resource(StatTableRes(Arc::new(table)))
+        .insert_resource(Voice { say, asks: 0 })
+        .add_systems(FixedUpdate, answer.after(GreetSystems::Decide).before(GreetSystems::Apply));
+}
+
 /// An NPC with `hello` on its sheet, its stack holding `before` above the record wander.
 fn npc(app: &mut App, key: u128, hello: f32, before: Vec<DirectiveKind>) -> Entity {
     let (e, _) = spawn(app, key, before);
+    let sheet = hello_sheet(app, key, hello);
+    app.world_mut().entity_mut(e).insert((sheet, seen()));
+    e
+}
+
+/// Actor `key`'s sheet with `hello` as its Hello.
+pub(super) fn hello_sheet(app: &App, key: u128, hello: f32) -> Stats {
     let table = Arc::clone(&app.world().resource::<StatTableRes>().0);
     let rules = TestModel::default().rules();
     let owner = StatOwner::Actor(ActorKey(key));
@@ -86,8 +97,7 @@ fn npc(app: &mut App, key: u128, hello: f32, before: Vec<DirectiveKind>) -> Enti
     let ops = [StatOp::SetBase { stat: StatIdx(0), value: hello }];
     assert_eq!(sf_stats_bevy::sf_stats::apply(&table, &rules, &mut sheet, &ops, &ctx, &mut Vec::new()), 0);
     sheet.settle(&table, &rules, &inputs, Settle::NewCharacter);
-    app.world_mut().entity_mut(e).insert((Stats::new(owner, sheet, inputs), seen()));
-    e
+    Stats::new(owner, sheet, inputs)
 }
 
 /// An awareness meter that just saw the player (a faint sight: the band stays Unaware).
@@ -249,7 +259,7 @@ fn asks_with(before: Vec<DirectiveKind>, setup: impl FnOnce(&mut App, Entity, En
 }
 
 #[test]
-fn gates_combat_swimming_package_unseen_dead_player() {
+fn gates_fight_swimming_package_unseen_dead_player_not_alerted() {
     let none = (0, GreetingState::None);
     let alerted = asks_with(vec![], |app, e, _| {
         let cfg = AiPerceptionSettings::default().awareness;
@@ -257,7 +267,10 @@ fn gates_combat_swimming_package_unseen_dead_player() {
         let mut a = app.world_mut().get_mut::<AiAwareness>(e).unwrap();
         a.0.raise_to_floor(&cfg, PLAYER, AwarenessBand::Alerted, seen, PerceptClock::new(TICK, 1.0 / 60.0));
     });
-    assert_eq!(alerted, none, "in combat with the player");
+    // Alerted is fully noticed, not fighting (`AI-13`): with no `Fight` directive it greets.
+    assert_eq!(alerted.0, 1, "an Alerted NPC with no Fight directive greets");
+    let fighting = asks_with(vec![DirectiveKind::Fight(ActorKey(99))], |_, _, _| {});
+    assert_eq!(fighting, none, "in combat: a Fight directive serving");
     let swimming = asks_with(vec![], |app, e, _| {
         app.world_mut().get_mut::<Mover>(e).unwrap().loco.mode = MoverMode::Swim { surface: 1.0 };
     });
