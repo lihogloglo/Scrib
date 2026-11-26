@@ -626,6 +626,7 @@ fn htn_wander_on_navmesh_stays_within_radius_and_rolls_exact_idles() {
             yaw: 0.0,
             dt,
             nav: nav_state,
+            decide: true,
         };
         let mut trace = TraceEntry::new(tick, 2);
         let out = driver.step_htn(Some(&graph), &ctx, &cfg, Some(&mut trace));
@@ -750,6 +751,7 @@ fn htn_wander_on_navmesh_stays_within_radius_and_rolls_exact_idles() {
             yaw: 0.0,
             dt,
             nav: NavMoveState::Following,
+            decide: true,
         };
         let mut trace = TraceEntry::new(i, 2);
         let out = stuck_driver.step_htn(Some(&graph), &ctx, &cfg, Some(&mut trace));
@@ -808,6 +810,7 @@ fn navmesh_walk_left_mid_way_continues_on_the_pathgrid() {
         yaw: 0.0,
         dt: 0.1,
         nav: NavMoveState::Idle,
+        decide: true,
     };
     let out = driver.step_htn(Some(&graph), &ctx, &ExecConfig::default(), None);
     assert!(matches!(out.nav, NavCommand::MoveTo { .. }), "{:?}", out.nav);
@@ -885,6 +888,7 @@ fn navmesh_give_ups_remember_the_goal_not_pathgrid_edges() {
             yaw: 0.0,
             dt: 0.1,
             nav: nav_state,
+            decide: true,
         };
         let stuck = driver.stuck_count();
         let out = driver.step_htn(Some(&graph), &ctx, &cfg, None);

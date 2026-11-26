@@ -60,6 +60,13 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   listeners by `WorldGraph::path_distance` through doors and into other worldspaces, closed doors + `closed_door_m`,
   `hearing.rs` `PortalPaths`; tier 1 straight line in its space; no `NavWorldGraph`: straight line, same space only). A walker whose strongest entry is Searching stops wandering and searches (`search.rs`: LKP, look,
   widening rings) while the band is held, until the ttl gives up, then decays and wanders again.
+- **Tiers** (AI9; `sf_ai_bevy/src/alloc.rs`): the allocator gives each awake `AiActor` an `AiTier` (Full / Reduced /
+  Logical, caps per CPU tier) and a staggered `first_decide_tick`. Sight checks at its tier's period (AI9e). The wander
+  HTN plans on its decide ticks only (AI9g, `mw_walkers_bevy/src/walkers.rs:840` `AiDecideGate::due` ->
+  `ExecContext::decide`, gate in `sf_ai/src/exec.rs:659` `ensure_plan`): Full every `ai.alloc.full_decide_s` (0.15 s),
+  Reduced every `ai.alloc.reduced_decide_s` (1 s); a walker whose step ran out stands until then. Operators and events
+  (dirty read key, failed precondition, failed walk) run every tick; untiered actors plan every tick; Logical walkers
+  stand (no planner) until AI10; the pathgrid fallback is not gated. `ai.tiers` prints the plans of the last second.
 - **Greeting** (MA4c2, 2026-11-26; `mw_walkers_bevy/src/greeting.rs`): every awake AI actor steps `mw_ai`'s OpenMW
   greeting machine (`greeting_step`, MA4c1) on the fixed tick in `GreetSystems` (`add` `greeting.rs:215`): Decide
   (`:255`, after `ReactionSystems::React`; asks for the Hello when a greeting starts), the voices' answer

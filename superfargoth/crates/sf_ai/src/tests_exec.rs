@@ -28,6 +28,7 @@ fn ctx_at(x: f32, z: f32, yaw: f32, dt: f32, nav: NavMoveState) -> ExecContext {
         yaw,
         dt,
         nav,
+        decide: true,
     }
 }
 
@@ -431,4 +432,88 @@ fn plan_runner_executes_htn_resumes_pause_monitors_preconditions_and_mtr_replans
     assert_eq!(trace.len(), 8);
     assert_eq!(trace.iter().nth(6).unwrap().trigger, Trigger::Replan);
     assert_eq!(trace.iter().nth(7).unwrap().trigger, Trigger::Replan);
+}
+
+/// One `step_htn` of the fixture's root at `(x, 0)` facing `yaw`, on a decide tick or not (`AI9g`).
+fn step_gated(
+    runner: &mut PlanRunner,
+    f: &HtnFixture,
+    x: f32,
+    yaw: f32,
+    nav: NavMoveState,
+    decide: bool,
+) -> ExecOutput {
+    let ctx = ExecContext { decide, ..ctx_at(x, 0.0, yaw, 0.1, nav) };
+    runner.step_htn(f.root, &f.state, &f.lib, &f.bindings, &ctx, &ExecConfig::default(), None)
+}
+
+/// A held tick: stands, plans nothing, runs no operator.
+fn assert_held(out: &ExecOutput, what: &str) {
+    assert_eq!(out.nav, NavCommand::Stop, "{what}: stands");
+    assert_eq!(out.plan_outcome, None, "{what}: no planning");
+    assert_eq!(out.operator, None, "{what}: no operator");
+}
+
+#[test]
+fn plan_runner_plans_periodically_on_decide_ticks_and_on_events_at_once() {
+    let mut f = build_htn_fixture();
+    let mut runner = PlanRunner::new();
+
+    // No plan, not a decide tick: holds. The decide tick decomposes `m_patrol` ([t_move, t_face] + Pause).
+    assert_held(&step_gated(&mut runner, &f, 0.0, 0.0, NavMoveState::Idle, false), "before the first decide");
+    assert!(runner.plan().is_none());
+    let out = step_gated(&mut runner, &f, 0.0, 0.0, NavMoveState::Pending, true);
+    assert_eq!(out.plan_outcome, Some(PlanOutcome::Planned));
+    assert_eq!(out.operator.unwrap().operator, f.op_ids.move_to);
+
+    // Operators run on every tick: the two steps finish off the decide ticks.
+    let out = step_gated(&mut runner, &f, 5.0, 0.0, NavMoveState::Arrived, false);
+    assert_eq!(out.operator.unwrap().status, OperatorStatus::Succeeded);
+    let out = step_gated(&mut runner, &f, 5.0, FRAC_PI_2, NavMoveState::Idle, false);
+    assert_eq!(out.operator.unwrap().status, OperatorStatus::Succeeded);
+
+    // The segment ran out: the resume past `Pause` waits for the decide tick, standing.
+    for _ in 0..3 {
+        assert_held(&step_gated(&mut runner, &f, 5.0, FRAC_PI_2, NavMoveState::Idle, false), "segment done");
+        assert!(runner.plan().is_some_and(Decomposition::is_partial), "the partial plan is kept");
+    }
+    let out = step_gated(&mut runner, &f, 5.0, FRAC_PI_2, NavMoveState::Idle, true);
+    assert_eq!(out.plan_outcome, Some(PlanOutcome::Continued));
+    assert_eq!(out.operator.unwrap().operator, f.op_ids.wait);
+    let out = step_gated(&mut runner, &f, 5.0, FRAC_PI_2, NavMoveState::Idle, false);
+    assert_eq!(out.operator.unwrap().status, OperatorStatus::Succeeded);
+    assert!(runner.is_complete());
+
+    // The next plan after completion (an explicit request: periodic) waits for the decide tick too.
+    runner.request_replan();
+    assert_held(&step_gated(&mut runner, &f, 5.0, FRAC_PI_2, NavMoveState::Idle, false), "requested");
+    let out = step_gated(&mut runner, &f, 0.0, 0.0, NavMoveState::Pending, true);
+    assert_eq!(out.plan_outcome, Some(PlanOutcome::Planned));
+    assert_eq!(out.operator.unwrap().operator, f.op_ids.move_to);
+
+    // Event: an operator failure. The caller's re-request after it plans on the next tick, decide or not.
+    let out = step_gated(&mut runner, &f, 0.0, 0.0, NavMoveState::Failed, false);
+    assert_eq!(out.operator.unwrap().status, OperatorStatus::Failed);
+    runner.request_replan();
+    let out = step_gated(&mut runner, &f, 0.0, 0.0, NavMoveState::Pending, false);
+    assert_eq!(out.plan_outcome, Some(PlanOutcome::Planned), "after a failure: at once");
+    assert_eq!(out.operator.unwrap().operator, f.op_ids.move_to);
+    // Consumed: the next request is periodic again (the running plan goes on).
+    runner.request_replan();
+    let out = step_gated(&mut runner, &f, 0.0, 0.0, NavMoveState::Following, false);
+    assert_eq!(out.plan_outcome, None, "a request off the decide tick waits");
+    assert_eq!(out.operator.unwrap().status, OperatorStatus::Running);
+
+    // Event: the current primitive's precondition fails -> fresh decomposition on this tick (`m_fallback`).
+    f.state.set_bit(f.k_patrol, false);
+    let out = step_gated(&mut runner, &f, 0.0, 0.0, NavMoveState::Following, false);
+    assert_eq!(out.plan_outcome, Some(PlanOutcome::Planned), "failed precondition: at once");
+    assert_eq!(out.operator.unwrap().operator, f.op_ids.wait);
+
+    // Event: a dirty read key -> MTR replan on this tick (`m_alert` wins).
+    f.state.set_bit(f.k_alert, true);
+    runner.mark_dirty(StateKey::Bit(f.k_alert));
+    let out = step_gated(&mut runner, &f, 0.0, 0.0, NavMoveState::Idle, false);
+    assert_eq!(out.plan_outcome, Some(PlanOutcome::Replaced), "dirty read key: at once");
+    assert_eq!(out.operator.unwrap().operator, f.op_ids.face);
 }

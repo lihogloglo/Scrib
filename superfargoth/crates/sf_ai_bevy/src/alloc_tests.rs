@@ -306,3 +306,48 @@ fn measure_2000_actors() {
         s.held_in_view
     );
 }
+
+#[test]
+fn decide_ticks_follow_each_tier_period() {
+    // Caps 1/1, no player: key 1 is Full, key 2 Reduced, the rest Logical (rank by key).
+    let mut app = app(Some(TierCaps { full: 1, reduced: 1 }));
+    let actors = ten_actors(&mut app);
+    step(&mut app);
+    #[allow(clippy::cast_possible_truncation)]
+    let tick_s = (1.0 / HZ) as f32;
+    let config = app.world().resource::<AiAllocSettings>().config;
+    let mut decides = [0u32; 3];
+    for _ in 0..600 {
+        step(&mut app);
+        let tick = app.world().resource::<AiAllocStats>().tick;
+        for (n, &e) in decides.iter_mut().zip(&actors) {
+            let t = *app.world().get::<AiTier>(e).expect("allocated");
+            *n += u32::from(t.decides_at(tick, &config, tick_s));
+        }
+    }
+    println!("decide ticks in 600 at 60 Hz: full {}, reduced {}, logical {}", decides[0], decides[1], decides[2]);
+    assert_eq!(tiers(&app, &actors[..3]), [Tier::Full, Tier::Reduced, Tier::Logical]);
+    assert!((66..=67).contains(&decides[0]), "Full: every 9 ticks (0.15 s)");
+    assert_eq!(decides[1], 10, "Reduced: every 60 ticks (1 s)");
+    assert_eq!(decides[2], 0, "Logical: no planner");
+}
+
+#[test]
+fn decide_stats_roll_once_a_second() {
+    let mut app = app(None);
+    {
+        let mut d = app.world_mut().resource_mut::<AiDecideStats>();
+        d.record_plan(Some(Tier::Full), true);
+        d.record_plan(Some(Tier::Reduced), false);
+        d.record_plan(None, true);
+    }
+    for _ in 0..59 {
+        step(&mut app);
+    }
+    assert_eq!(app.world().resource::<AiDecideStats>().last_second(), DecideCounts::default(), "not a second yet");
+    step(&mut app);
+    assert_eq!(
+        app.world().resource::<AiDecideStats>().last_second(),
+        DecideCounts { full: 1, reduced: 1, untiered: 1, events: 1 }
+    );
+}

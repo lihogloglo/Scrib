@@ -378,6 +378,7 @@ fn step_one_actor(
         yaw: mover.loco.motion.yaw,
         dt,
         nav: nav_state,
+        decide: true,
     };
 
     let prev_op = exec.last_output.as_ref().and_then(|o| o.operator);

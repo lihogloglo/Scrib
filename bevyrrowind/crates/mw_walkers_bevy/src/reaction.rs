@@ -355,7 +355,7 @@ fn react(
                 .walk_speed
                 .or_else(|| walker.as_ref().map(|w| w.driver.walk_speed))
                 .unwrap_or(nav.follower.speed);
-            let ctx = ExecContext { location: loc.clone(), yaw, dt, nav: nav_move_state(&nav) };
+            let ctx = ExecContext { location: loc.clone(), yaw, dt, nav: nav_move_state(&nav), decide: true };
             let mode = awareness
                 .as_deref()
                 .zip(setup.as_ref())

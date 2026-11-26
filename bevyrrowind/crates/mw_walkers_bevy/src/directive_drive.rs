@@ -373,7 +373,7 @@ pub(crate) fn drive_directives(
                 .or_else(|| walker.as_ref().map(|w| w.driver.walk_speed))
                 .unwrap_or(nav.follower.speed);
             let half_height = 0.5 * mover.params.height;
-            let ctx = ExecContext { location: Location::new(space.0.clone(), pos), yaw, dt, nav: nav_move_state(nav) };
+            let ctx = ExecContext { location: Location::new(space.0.clone(), pos), yaw, dt, nav: nav_move_state(nav), decide: true };
             let step = step_goto(g, &ctx, &exec_cfg, ops, &travel, speed, half_height, nav, &mut intent, queries.as_deref_mut());
             match step {
                 GoToStep::Walking => {

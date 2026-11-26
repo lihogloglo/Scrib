@@ -249,3 +249,79 @@ pub(super) fn wrap(a: f32) -> f32 {
     let t = a.rem_euclid(std::f32::consts::TAU);
     if t > std::f32::consts::PI { t - std::f32::consts::TAU } else { t }
 }
+
+/// `AI9g`: the wander's HTN plans on its tier's cadence. Two navmesh wanderers, one pinned Full,
+/// one Reduced (caps 1/1). Phase 1, 0.05 s fidgets only (each step ends long before the next
+/// decide tick, so the cadence alone sets the rate): over 10 s the Reduced one plans about once a
+/// second, the Full one at most every 0.15 s (9 ticks). Phase 2, 1 m walks only: both walk.
+#[test]
+fn the_wander_plans_on_its_tier_cadence() {
+    use sf_ai::{Pin, Tier, TierCaps};
+    use sf_ai_bevy::{AiActor, AiAllocSettings, AiAllocStats, AiDecideStats, AiPin, AiTier};
+
+    /// `ticks` updates: plans (full, reduced, events) summed over the closed one-second windows,
+    /// and each walker's farthest distance from its home.
+    fn run(app: &mut App, walkers: [Entity; 2], homes: [WorldPos; 2], ticks: u32) -> ([u32; 3], [f32; 2]) {
+        let (mut sums, mut moved) = ([0u32; 3], [0.0f32; 2]);
+        for _ in 0..ticks {
+            app.update();
+            let world = app.world();
+            for (i, e) in walkers.into_iter().enumerate() {
+                let off = homes[i].delta_f32(world.get::<Mover>(e).unwrap().loco.position);
+                assert!(off.is_finite(), "walker {i}: NaN position");
+                moved[i] = moved[i].max(off.with_y(0.0).length());
+            }
+            if world.resource::<AiAllocStats>().tick.is_multiple_of(60) {
+                let d = world.resource::<AiDecideStats>().last_second();
+                sums[0] += d.full;
+                sums[1] += d.reduced;
+                sums[2] += d.events;
+            }
+        }
+        (sums, moved)
+    }
+    fn set_steps(app: &mut App, e: Entity, idle_chances: [u8; 8]) {
+        let mut walker = app.world_mut().get_mut::<Walker>(e).unwrap();
+        let planner = &mut walker.driver.planner;
+        planner.wander.distance = 1.0;
+        planner.wander.idle_chances = idle_chances;
+        planner.idle_mult = 1.0;
+        planner.idle_seconds = [0.05; 8];
+    }
+
+    let mut app = app();
+    app.world_mut().resource_mut::<AiAllocSettings>().set_caps(TierCaps { full: 1, reduced: 1 });
+    let homes = [home().offset(Vec3::new(-10.0, 0.0, -10.0)), home().offset(Vec3::new(10.0, 0.0, 10.0))];
+    let full = spawn_wanderer(&mut app, &nav_ws(), homes[0], 1, 11);
+    let reduced = spawn_wanderer(&mut app, &nav_ws(), homes[1], 2, 12);
+    for (e, key) in [(full, 1u128), (reduced, 2)] {
+        app.world_mut().entity_mut(e).insert(AiActor(ActorKey(key)));
+        // Fidgets 2 and 3 alternate (no group twice in a row): every step a fidget.
+        set_steps(&mut app, e, [100, 100, 0, 0, 0, 0, 0, 0]);
+    }
+    app.world_mut().entity_mut(full).insert(AiPin(Pin::Scripted));
+    // Settle: the first allocation, then start counting on a window boundary.
+    loop {
+        app.update();
+        let tick = app.world().resource::<AiAllocStats>().tick;
+        if tick > 0 && tick.is_multiple_of(60) {
+            break;
+        }
+    }
+    let tier = |app: &App, e: Entity| app.world().get::<AiTier>(e).map(|t| t.tier);
+    assert_eq!((tier(&app, full), tier(&app, reduced)), (Some(Tier::Full), Some(Tier::Reduced)));
+
+    let ([full_plans, reduced_plans, events], _) = run(&mut app, [full, reduced], homes, 600);
+    for e in [full, reduced] {
+        set_steps(&mut app, e, [0; 8]);
+    }
+    let (walk_plans, moved) = run(&mut app, [full, reduced], homes, 600);
+    println!(
+        "AI9g 600 ticks at 60 Hz, fidgets: full {full_plans} plans, reduced {reduced_plans} ({events} on events); then walks: full {} plans, reduced {}, moved full {:.2} m, reduced {:.2} m",
+        walk_plans[0], walk_plans[1], moved[0], moved[1]
+    );
+    assert!((9..=11).contains(&reduced_plans), "Reduced: about 1 Hz, got {reduced_plans} plans in 10 s");
+    assert!(full_plans <= 600 / 9 + 1 + events, "Full: at most one periodic plan per 0.15 s, got {full_plans}");
+    assert!(full_plans >= 30, "Full: the cadence, not the steps, sets the rate ({full_plans} plans)");
+    assert!(moved[0] > 0.0 && moved[1] > 0.0, "a walker never moved ({moved:?})");
+}

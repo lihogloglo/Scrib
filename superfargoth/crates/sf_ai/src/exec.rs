@@ -143,6 +143,13 @@ pub struct ExecContext {
     pub yaw: f32,
     pub dt: f32,
     pub nav: NavMoveState,
+    /// Whether this tick is one of the actor's decide ticks (`ai.md` "Tiers and budget", `AI9g`:
+    /// [`crate::decide_due`] on its tier's staggered period; `true` for an actor without a tier).
+    /// [`PlanRunner::step_htn`] runs its periodic planning (a fresh decomposition, a resume past a
+    /// `Pause`, an explicit [`PlanRunner::request_replan`]) only on these ticks and holds
+    /// ([`NavCommand::Stop`]) in between; events (a dirty read key, a failed precondition, the
+    /// replan after an operator failure) and the operators themselves run on every tick.
+    pub decide: bool,
 }
 
 /// Navigation command emitted by an executor step for the Bevy shell (`NavCorridor`).
@@ -463,6 +470,7 @@ impl OperatorResolver for OperatorBindings {
 /// keys, resuming across [`SubtaskDef::Pause`](crate::htn::SubtaskDef::Pause) markers, and recording
 /// [`OperatorState`] + [`PathState`] into [`TraceEntry`].
 #[derive(Clone, Debug, Default)]
+#[allow(clippy::struct_excessive_bools)] // independent runner flags (request, event, completed, failed), not a state enum
 pub struct PlanRunner {
     plan: Option<Decomposition>,
     cursor: usize,
@@ -470,6 +478,11 @@ pub struct PlanRunner {
     queue: VecDeque<(OperatorId, OperatorKind)>,
     dirty: KeySet,
     replan_requested: bool,
+    /// An event since the last planning (`AI9g`: an operator failed): the next planning runs on
+    /// any tick, not only on a decide tick. Survives [`Self::clear`] (it is a fact about what
+    /// happened, not plan state: a caller that clears and re-requests after a failure still
+    /// re-plans at once); planning consumes it.
+    event_replan: bool,
     completed: bool,
     failed: bool,
     last_status: Option<OperatorStatus>,
@@ -524,7 +537,9 @@ impl PlanRunner {
         self.dirty.union(keys);
     }
 
-    /// Forces a replan (or fresh decomposition if idle/completed/failed) on the next [`Self::step_htn`].
+    /// Forces a replan (or fresh decomposition if idle/completed/failed) on the next
+    /// [`Self::step_htn`] that is a decide tick ([`ExecContext::decide`]): a request is periodic
+    /// work, not an event (`AI9g`; its callers hand over a step they chose, or a new root).
     pub fn request_replan(&mut self) {
         self.replan_requested = true;
         self.completed = false;
@@ -553,6 +568,7 @@ impl PlanRunner {
         self.queue.clear();
         self.dirty.clear();
         self.replan_requested = false;
+        self.event_replan = false;
         self.completed = false;
         self.failed = false;
     }
@@ -617,6 +633,7 @@ impl PlanRunner {
         lib: &Library,
         trace: Option<&mut TraceEntry>,
     ) -> Result<PlanOutcome, ExecOutput> {
+        self.event_replan = false;
         if let Ok(fresh) = decompose(ws, root, lib, trace) {
             self.plan = Some(fresh);
             self.cursor = 0;
@@ -635,19 +652,28 @@ impl PlanRunner {
         }
     }
 
+    /// Plans as needed before the current step. `decide` gates the periodic work (`AI9g`, see
+    /// [`ExecContext::decide`]): steps 2 (resume / next segment) and 3 (fresh decomposition) and an
+    /// explicit request wait for a decide tick unless an event is pending, and the actor holds
+    /// ([`NavCommand::Stop`], no plan outcome) meanwhile; step 1's dirty read-key hit and step 4's
+    /// failed precondition are events and run on any tick.
     fn ensure_plan(
         &mut self,
         root: TaskId,
         ws: &WorldState,
         lib: &Library,
+        decide: bool,
         mut trace: Option<&mut TraceEntry>,
     ) -> Result<Option<PlanOutcome>, ExecOutput> {
         let mut planned_outcome: Option<PlanOutcome> = None;
+        let periodic_ok = decide || self.event_replan;
+        let hold = |plan_outcome| ExecOutput { nav: NavCommand::Stop, plan_outcome, ..ExecOutput::default() };
 
-        // 1. Dirty read-key monitoring or explicit replan request while a plan is running.
+        // 1. Dirty read-key monitoring (an event: any tick) or an explicit replan request (periodic:
+        //    a decide tick) while a plan is running.
         if let Some(ref current) = self.plan {
             let dirty_hit = current.reads.intersects(&self.dirty);
-            if self.replan_requested || dirty_hit {
+            if dirty_hit || (self.replan_requested && periodic_ok) {
                 self.dirty.clear();
                 self.replan_requested = false;
                 if let Some(ref mut e) = trace {
@@ -675,6 +701,10 @@ impl PlanRunner {
             && self.cursor >= current.steps.len()
         {
             if current.is_partial() {
+                if !periodic_ok {
+                    // Periodic: the next segment waits for the decide tick; stand meanwhile.
+                    return Err(hold(planned_outcome));
+                }
                 if let Ok(resumed) = resume(ws, current, lib, trace.as_deref_mut()) {
                     self.plan = Some(resumed);
                     self.cursor = 0;
@@ -699,8 +729,11 @@ impl PlanRunner {
             }
         }
 
-        // 3. Initial decomposition when no plan is active.
+        // 3. Initial decomposition when no plan is active (periodic: a decide tick, or an event).
         if self.plan.is_none() {
+            if !periodic_ok {
+                return Err(hold(planned_outcome));
+            }
             self.dirty.clear();
             self.replan_requested = false;
             self.completed = false;
@@ -720,10 +753,15 @@ impl PlanRunner {
             planned_outcome = Some(self.decompose_fresh(root, ws, lib, trace)?);
         }
 
+        if planned_outcome.is_some() {
+            self.event_replan = false;
+        }
         Ok(planned_outcome)
     }
 
-    /// Steps the runner under HTN `root` against `ws` and `lib`.
+    /// Steps the runner under HTN `root` against `ws` and `lib`. Planning follows
+    /// [`ExecContext::decide`] (periodic work on decide ticks, events on any tick); the active
+    /// operator steps every tick.
     #[allow(clippy::too_many_arguments)]
     pub fn step_htn<R: OperatorResolver>(
         &mut self,
@@ -749,7 +787,7 @@ impl PlanRunner {
             return ExecOutput::default();
         }
 
-        let planned_outcome = match self.ensure_plan(root, ws, lib, trace.as_deref_mut()) {
+        let planned_outcome = match self.ensure_plan(root, ws, lib, ctx.decide, trace.as_deref_mut()) {
             Ok(outcome) => outcome,
             Err(early) => return early,
         };
@@ -784,6 +822,7 @@ impl PlanRunner {
                 self.plan = None;
                 self.cursor = 0;
                 self.failed = true;
+                self.event_replan = true;
                 self.last_status = Some(OperatorStatus::Failed);
                 return ExecOutput {
                     nav: NavCommand::Stop,
@@ -830,6 +869,7 @@ impl PlanRunner {
                 self.plan = None;
                 self.cursor = 0;
                 self.failed = true;
+                self.event_replan = true;
             }
         }
 

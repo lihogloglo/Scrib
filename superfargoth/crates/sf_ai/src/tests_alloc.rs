@@ -1,6 +1,6 @@
 //! `AI9a`: the tier allocator (hard caps, ranking, hysteresis, pins, in-view holds, determinism, stagger).
 
-use crate::alloc::{AllocConfig, AllocInput, Allocator, CpuTier, Pin, Tier, TierCaps, first_decide_after};
+use crate::alloc::{AllocConfig, AllocInput, Allocator, CpuTier, Pin, Tier, TierCaps, decide_due, first_decide_after};
 use crate::sight::stagger_phase;
 use sf_ids::ActorKey;
 
@@ -304,4 +304,22 @@ fn promotions_get_stable_staggered_first_decides() {
     assert_eq!(out.changes[0].first_decide_tick, None);
     let p = u64::from(stagger_phase(a(7), 9));
     assert_eq!(first_decide_after(a(7), 9 + p, 9), 18 + p);
+}
+
+#[test]
+fn decide_due_is_first_tick_then_every_period() {
+    // The first tick, then its multiples; nothing before it.
+    assert!(decide_due(12, 9, 12));
+    assert!(decide_due(12, 9, 21));
+    assert!(decide_due(12, 9, 12 + 9 * 100));
+    assert!(!decide_due(12, 9, 13));
+    assert!(!decide_due(12, 9, 20));
+    assert!(!decide_due(12, 9, 3), "before the first tick (12 - 9: no wrap-around)");
+    assert!(!decide_due(12, 9, 11));
+    // Period 1 (and 0, clamped): every tick from the first.
+    assert!((12..40).all(|t| decide_due(12, 1, t)));
+    assert!((12..40).all(|t| decide_due(12, 0, t)));
+    assert!(!decide_due(12, 1, 11));
+    // 600 ticks at a 60-tick period: 10 decides.
+    assert_eq!((1..=600).filter(|&t| decide_due(31, 60, t)).count(), 10);
 }

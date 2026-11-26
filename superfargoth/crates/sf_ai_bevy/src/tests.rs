@@ -154,7 +154,7 @@ fn ai_tiers_and_stats_read_the_allocator() {
         info(&run(&mut app, "ai.tiers")),
         [
             "tiers: full 2/2, reduced 2/2, logical 1; pinned 0, over cap full 0 reduced 0, held in view 0; \
-             cpu tier floor (set)"
+             cpu tier floor (set); plans last second: full 0, reduced 0, untiered 0 (0 on events)"
         ]
     );
     assert_eq!(
@@ -166,7 +166,7 @@ fn ai_tiers_and_stats_read_the_allocator() {
     );
     // Back to auto: the line says so.
     app.world_mut().resource_mut::<AiAllocSettings>().cpu_tier_choice = None;
-    assert!(info(&run(&mut app, "ai.tiers"))[0].ends_with(" (auto)"));
+    assert!(info(&run(&mut app, "ai.tiers"))[0].contains(" (auto); plans last second: "));
 }
 
 #[test]

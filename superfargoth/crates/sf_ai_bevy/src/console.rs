@@ -10,7 +10,7 @@ use sf_console_bevy::sf_console::{ArgKind, CommandSpec, Param};
 
 use crate::alloc::CPU_TIER_CHOICES;
 use crate::{
-    AiAllocSettings, AiAllocStats, AiLibrary, AiSelected, AiTraces, DEFAULT_TRACE_LINES, actor_hex, directives_text,
+    AiAllocSettings, AiAllocStats, AiDecideStats, AiLibrary, AiSelected, AiTraces, DEFAULT_TRACE_LINES, actor_hex, directives_text,
     parse_actor, trace_text,
 };
 
@@ -102,7 +102,7 @@ fn register_summaries(app: &mut App) {
         |inv| {
             let world = &*inv.ctx;
             let text = match (world.get_resource::<AiAllocStats>(), world.get_resource::<AiAllocSettings>()) {
-                (Some(stats), Some(settings)) => tiers_text(stats, settings),
+                (Some(stats), Some(settings)) => tiers_text(stats, settings, world.get_resource::<AiDecideStats>()),
                 _ => traced_tiers_text(world.resource::<AiTraces>()),
             };
             inv.log.info(&text);
@@ -140,8 +140,8 @@ fn register_summaries(app: &mut App) {
     );
 }
 
-/// The `ai.tiers` line from the allocator's last run.
-fn tiers_text(alloc: &AiAllocStats, settings: &AiAllocSettings) -> String {
+/// The `ai.tiers` line from the allocator's last run, with the plans of the last second (`AI9g`).
+fn tiers_text(alloc: &AiAllocStats, settings: &AiAllocSettings, decides: Option<&AiDecideStats>) -> String {
     let (s, caps) = (&alloc.stats, alloc.caps);
     let tier = CpuTier::ALL
         .iter()
@@ -150,9 +150,16 @@ fn tiers_text(alloc: &AiAllocStats, settings: &AiAllocSettings) -> String {
         .copied()
         .unwrap_or("?");
     let how = if settings.cpu_tier_choice.is_some() { "set" } else { "auto" };
+    let plans = decides.map_or_else(String::new, |d| {
+        let d = d.last_second();
+        format!(
+            "; plans last second: full {}, reduced {}, untiered {} ({} on events)",
+            d.full, d.reduced, d.untiered, d.events
+        )
+    });
     format!(
         "tiers: full {}/{}, reduced {}/{}, logical {}; pinned {}, over cap full {} reduced {}, \
-         held in view {}; cpu tier {tier} ({how})",
+         held in view {}; cpu tier {tier} ({how}){plans}",
         s.full, caps.full, s.reduced, caps.reduced, s.logical, s.pinned, s.over_cap_full, s.over_cap_reduced,
         s.held_in_view,
     )

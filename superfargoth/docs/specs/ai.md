@@ -401,6 +401,9 @@ Fact store, Nemesis-style relations and vendettas, bounded gossip, reputation pe
   drives, HTN or perception run. Every `DirectiveKind` registers its tier-0 transition; one without it fails at load.
 - **Staggered first update** (UE Mass): an actor joining the simulated set (cell load, open door, promotion) gets
   `first_decide_tick = tick + hash(ActorKey) % period` of its tier, for decisions and sight (AI9e).
+- **Periodic vs event planning** (AI9g, as built): on decide ticks only: a fresh decomposition, the resume past a
+  `Pause`, an explicit `request_replan` (callers hand over a chosen step); on any tick: a dirty read key, a failed
+  precondition, the replan after an operator failure. Between decide ticks an actor whose plan ran out stands.
 - **Promotion resolve**, queued nearest-first (distance to the nearest player), at most `ai.tier.promote_per_tick` per
   tick (count, 1-64, Guess 4; a count, not a time budget, so traces reproduce); pins jump the queue; a queued actor
   stays tier 0 and keeps advancing. Resolve: place the actor where its state puts it at tick `t`, snapped to the

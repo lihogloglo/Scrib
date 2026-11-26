@@ -433,3 +433,10 @@ pub fn first_decide_after(actor: ActorKey, tick: u64, period: u32) -> u64 {
     let offset = (phase + period - next % period) % period;
     next.saturating_add(offset)
 }
+
+/// Whether `tick` is a decide tick of an actor whose cadence starts at `first_decide_tick` with a
+/// `period_ticks` decide period (`ai.md` "Tiers and budget": the planner's periodic work runs on
+/// these ticks only; events run on any tick). A period of 0 counts as 1 (every tick from `first`).
+pub fn decide_due(first_decide_tick: u64, period_ticks: u32, tick: u64) -> bool {
+    tick >= first_decide_tick && (tick - first_decide_tick).is_multiple_of(u64::from(period_ticks.max(1)))
+}

@@ -24,17 +24,22 @@
 //!   pick the `ai.alloc.caps_*` pair; an explicit tier wins. [`AiAllocSettings::cpu_tier`] resolves
 //!   on every read, so a change to the tunable or the host applies on the next tick.
 //!
-//! Not yet: what a tier does (sight/hearing cadence and executor detail by tier come in later
-//! slices; today every actor still runs at tier 2), the `ai.stats` / `ai.tiers` console lines.
+//! - **Decide cadence** (slice `AI9g`): [`AiTier::decides_at`] says whether a tick is one of the
+//!   actor's decide ticks (`sf_ai::decide_due` from its staggered `first_decide_tick` on the
+//!   tier's `ai.alloc.*_decide_s` period); hosts read it through [`AiDecideGate`] and pass it as
+//!   `sf_ai::ExecContext::decide`, so the HTN planner's periodic work runs at Full 0.15 s / Reduced
+//!   1 s while operators and events run every tick. [`AiDecideStats`] counts the plans per tier
+//!   over the last second (rolled here, on the allocator's tick) for the `ai.tiers` line.
 
 use std::time::Instant;
 
 use bevy_app::{App, FixedUpdate, Plugin};
 use bevy_ecs::prelude::*;
+use bevy_ecs::system::SystemParam;
 use bevy_time::{Fixed, Time};
 use sf_ai::{
     ActorKey, AllocConfig, AllocInput, AllocStats, Allocator, CpuTier, PerceptTarget, Pin, Tier, TierCaps,
-    first_decide_after,
+    decide_due, first_decide_after, seconds_to_ticks,
 };
 use sf_controller_bevy::{ControllerSystems, Dormant, Mover};
 use sf_coords::WorldPos;
@@ -279,6 +284,94 @@ pub struct AiTier {
     pub first_decide_tick: Option<u64>,
 }
 
+impl AiTier {
+    /// Whether `tick` (on [`AiAllocStats::tick`]'s clock) is one of this actor's decide ticks:
+    /// `sf_ai::decide_due` on its tier's period from `first_decide_tick` (so a tier change restarts
+    /// the cadence at the new tier's first tick). Never for tier 0 (events only, no planner).
+    pub fn decides_at(&self, tick: u64, config: &AllocConfig, tick_s: f32) -> bool {
+        config
+            .decide_period_ticks(self.tier, tick_s)
+            .is_some_and(|period| self.first_decide_tick.is_none_or(|first| decide_due(first, period, tick)))
+    }
+}
+
+/// Plans per tier in one counting window ([`AiDecideStats`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DecideCounts {
+    /// Plans (any planning that produced an outcome) by actors at tier 2 / tier 1 / without a tier.
+    pub full: u32,
+    pub reduced: u32,
+    pub untiered: u32,
+    /// Of those, plans on a tick that was not the actor's decide tick (events).
+    pub events: u32,
+}
+
+/// How often the planner ran per tier (`AI9g`): the counts of the last full second and of the
+/// second running now, rolled by the allocator on its tick. Hosts add plans through
+/// [`AiDecideGate::record_plan`]; `ai.tiers` prints [`Self::last_second`].
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AiDecideStats {
+    current: DecideCounts,
+    last: DecideCounts,
+    window_start: u64,
+}
+
+impl AiDecideStats {
+    /// The counts of the last full one-second window.
+    pub fn last_second(&self) -> DecideCounts {
+        self.last
+    }
+
+    /// Adds one plan by an actor at `tier` (`None`: no tier yet); `on_decide_tick` false = an event.
+    pub fn record_plan(&mut self, tier: Option<Tier>, on_decide_tick: bool) {
+        let c = &mut self.current;
+        match tier {
+            Some(Tier::Full) => c.full += 1,
+            Some(Tier::Reduced) => c.reduced += 1,
+            // Tier 0 runs no planner; a host that plans for it anyway is counted with the untiered.
+            Some(Tier::Logical) | None => c.untiered += 1,
+        }
+        c.events += u32::from(!on_decide_tick);
+    }
+
+    /// Closes the window once `window_ticks` have passed since it opened.
+    fn roll(&mut self, tick: u64, window_ticks: u32) {
+        if tick.saturating_sub(self.window_start) >= u64::from(window_ticks) {
+            self.last = std::mem::take(&mut self.current);
+            self.window_start = tick;
+        }
+    }
+}
+
+/// The decide gate for a host's planner system (`AI9g`): reads the allocator's tick and config and
+/// counts plans into [`AiDecideStats`]. Without the allocator every tick is a decide tick.
+#[derive(SystemParam)]
+pub struct AiDecideGate<'w> {
+    alloc: Option<Res<'w, AiAllocStats>>,
+    settings: Option<Res<'w, AiAllocSettings>>,
+    fixed: Option<Res<'w, Time<Fixed>>>,
+    stats: Option<ResMut<'w, AiDecideStats>>,
+}
+
+impl AiDecideGate<'_> {
+    /// Whether this tick is a decide tick of an actor at `tier` (`None`: not allocated yet, decides
+    /// every tick until its first allocation).
+    pub fn due(&self, tier: Option<&AiTier>) -> bool {
+        let (Some(t), Some(alloc), Some(settings)) = (tier, self.alloc.as_deref(), self.settings.as_deref()) else {
+            return true;
+        };
+        let tick_s = self.fixed.as_deref().map_or(Time::<Fixed>::default().timestep(), Time::<Fixed>::timestep).as_secs_f32();
+        t.decides_at(alloc.tick, &settings.config, tick_s)
+    }
+
+    /// Counts one plan by an actor at `tier`, on its decide tick (`due`) or as an event.
+    pub fn record_plan(&mut self, tier: Option<&AiTier>, due: bool) {
+        if let Some(stats) = self.stats.as_deref_mut() {
+            stats.record_plan(tier.map(|t| t.tier), due);
+        }
+    }
+}
+
 /// Marker the host writes on an actor visible to any player (camera frustum, any player's view,
 /// an open seamless doorway: the adapter decides). A visible actor ranks first and never drops
 /// to tier 0.
@@ -352,6 +445,7 @@ impl Plugin for AiAllocPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AiAllocSettings>()
             .init_resource::<AiAllocStats>()
+            .init_resource::<AiDecideStats>()
             .insert_resource(AllocState { timings: self.timings, ..AllocState::default() })
             .configure_sets(
                 FixedUpdate,
@@ -366,6 +460,8 @@ impl Plugin for AiAllocPlugin {
 
 // tunables: const (maths: seconds to microseconds)
 const MICROS_PER_S: f32 = 1e6;
+// tunables: const (units: the AiDecideStats window is one second, a per-second rate)
+const DECIDE_WINDOW_S: f32 = 1.0;
 
 /// Distance from `feet` to the nearest of `players`, meters (infinite with no player).
 #[allow(clippy::cast_possible_truncation)] // distances between loaded actors fit f32
@@ -373,12 +469,13 @@ fn nearest_player_m(feet: WorldPos, players: &[WorldPos]) -> f32 {
     players.iter().map(|&p| feet.delta(p).length()).fold(f64::INFINITY, f64::min) as f32
 }
 
-#[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments, clippy::type_complexity)]
 fn allocate_tiers(
     fixed: Option<Res<Time<Fixed>>>,
     settings: Res<AiAllocSettings>,
     mut state: ResMut<AllocState>,
     mut out: ResMut<AiAllocStats>,
+    decides: Option<ResMut<AiDecideStats>>,
     players: Query<(&Perceivable, Option<&Mover>, Option<&PerceivablePose>)>,
     mut actors: Query<(Entity, &AiActor, &Mover, Option<&AiPin>, Has<AiInView>, Option<&mut AiTier>), Without<Dormant>>,
     mut commands: Commands,
@@ -386,6 +483,9 @@ fn allocate_tiers(
     let tick_s = fixed.map_or(Time::<Fixed>::default().timestep(), |f| f.timestep()).as_secs_f32();
     out.tick += 1;
     let tick = out.tick;
+    if let Some(mut d) = decides {
+        d.roll(tick, seconds_to_ticks(DECIDE_WINDOW_S, tick_s));
+    }
     let caps = settings.caps();
     let config = settings.config;
     let AllocState { allocator, timings, inputs, keys, prev_keys, missing, players: player_pos } = &mut *state;

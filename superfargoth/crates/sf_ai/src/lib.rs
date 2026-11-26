@@ -56,7 +56,7 @@ pub mod trace;
 
 pub use alloc::{
     AllocConfig, AllocInput, AllocStats, Allocation, Allocator, CpuTier, Pin, Tier, TierCaps, TierChange,
-    first_decide_after,
+    decide_due, first_decide_after,
 };
 pub use directive::{
     Directive, DirectiveDone, DirectiveEnd, DirectiveKind, DirectiveSource, DirectiveSpec, DirectiveStack, DirectiveStatus,

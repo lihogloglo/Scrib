@@ -47,10 +47,10 @@ use mw_ai::{
 };
 use mw_graphs::build::params as gp;
 use sf_ai::{
-    ExecConfig, ExecContext, NavCommand, NavMoveState, TraceEntry,
+    ExecConfig, ExecContext, NavCommand, NavMoveState, Tier, TraceEntry,
 };
 use sf_ai_bevy::{
-    AiActor, AiExecPlugin, AiExecSettings, AiExecTick, AiLibrary, AiPlugin, AiTraces,
+    AiActor, AiDecideGate, AiExecPlugin, AiExecSettings, AiExecTick, AiLibrary, AiPlugin, AiTier, AiTraces,
     add_exec_tunables, to_controller_gait,
 };
 use sf_anim_bevy::{AnimLod, AnimStats, Animator};
@@ -727,6 +727,15 @@ pub(crate) fn clear_corridor_goal(nav: &mut NavCorridor, queries: Option<&mut Na
 /// before [`NavSystems::Corridor`]; off the navmesh (fliers or unbaked cells), runs the pathgrid
 /// fallback route. While a perception reaction owns the actor ([`Reaction::owns`], `AI8i`: a search
 /// or the walk back to its post, [`crate::reaction`], which runs before this) the wander is paused.
+///
+/// Tiers (`AI9g`, `ai.md` "Tiers and budget"): the HTN planner decides on the actor's [`AiTier`]
+/// cadence ([`AiDecideGate::due`]: Full every `ai.alloc.full_decide_s`, Reduced every
+/// `ai.alloc.reduced_decide_s`, staggered; every tick before the first allocation), passed as
+/// [`ExecContext::decide`]: a walker whose step ran out stands until its next decide tick, while
+/// the running operator (steering, idle timers) and events (a dirty key, a failed precondition, a
+/// failed walk) run every tick. Gaps: a tier-0 (Logical) walker stands where it is (no planner) until
+/// `AI10` gives tier 0 its state machine (removal path: AI10 replaces this stand); the pathgrid
+/// fallback (`WanderDriver::update_fallback`, off the navmesh) still chooses every tick, as before.
 #[allow(
     clippy::needless_pass_by_value,
     clippy::too_many_arguments,
@@ -755,6 +764,7 @@ fn drive(
             &Reaction,
             Option<&crate::directive_drive::DirectiveDrive>,
             Option<&crate::greeting::Greeting>,
+            Option<&AiTier>,
         ),
         Without<Dormant>,
     >,
@@ -762,6 +772,7 @@ fn drive(
     mut give_ups: ResMut<GiveUps>,
     mut modes: ResMut<WanderModes>,
     mut animators: Query<&mut Animator>,
+    mut decide_gate: AiDecideGate,
 ) {
     tick.0 += 1;
     let current_tick = tick.0;
@@ -780,6 +791,7 @@ fn drive(
         reaction,
         directive,
         greeting,
+        tier,
     ) in &mut walkers
     {
         let walker = &mut *walker;
@@ -792,9 +804,12 @@ fn drive(
             walker.held_intent = None;
             continue;
         }
-        if directive.is_some_and(crate::directive_drive::DirectiveDrive::stands) {
+        if directive.is_some_and(crate::directive_drive::DirectiveDrive::stands)
+            || tier.is_some_and(|t| t.tier == Tier::Logical)
+        {
             // MA2d4: no package left on its stack (`OpenMW`: an empty `AiSequence` runs
-            // nothing): it stands where it is, facing where it faces.
+            // nothing): it stands where it is, facing where it faces. AI9g: so does a tier-0
+            // walker (no planner) until AI10's tier-0 state machine replaces this stand.
             if let Some(nav) = corridor.as_deref_mut() {
                 clear_corridor_goal(nav, queries.as_deref_mut());
             }
@@ -822,11 +837,13 @@ fn drive(
         let (walking, idle_variant) = if on_navmesh {
             let nav = corridor.as_deref_mut().expect("on_navmesh requires corridor");
             let nav_state = nav_move_state(nav);
+            let decide = decide_gate.due(tier);
             let ctx = ExecContext {
                 location: loc,
                 yaw: mover.loco.motion.yaw,
                 dt,
                 nav: nav_state,
+                decide,
             };
             let out = {
                 let wants_trace = actor
@@ -841,6 +858,9 @@ fn drive(
                 if walker.driver.stuck_count() > stuck {
                     let _ = give_ups.record(entity, mover, edge, ground.probe());
                     modes.navmesh_give_ups += 1;
+                }
+                if out.plan_outcome.is_some() {
+                    decide_gate.record_plan(tier, decide);
                 }
                 if let (Some(a), Some(t), Some(e)) = (actor, traces.as_mut(), entry)
                     && (out.plan_outcome.is_some() || out.operator.is_some())

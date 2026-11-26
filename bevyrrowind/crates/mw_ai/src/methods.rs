@@ -773,6 +773,7 @@ impl WanderDriver {
                         yaw: 0.0,
                         dt,
                         nav: NavMoveState::Arrived,
+                        decide: true,
                     };
                     let _ = self.runner.step_htn(
                         self.vocab.root,
@@ -801,6 +802,7 @@ impl WanderDriver {
                         yaw: 0.0,
                         dt,
                         nav: NavMoveState::Failed,
+                        decide: true,
                     };
                     let _ = self.runner.step_htn(
                         self.vocab.root,
@@ -820,6 +822,7 @@ impl WanderDriver {
                     yaw: 0.0,
                     dt,
                     nav: NavMoveState::Following,
+                    decide: true,
                 };
                 let _ = self.runner.step_htn(
                     self.vocab.root,
@@ -842,6 +845,7 @@ impl WanderDriver {
                 yaw: 0.0,
                 dt,
                 nav: NavMoveState::Idle,
+                decide: true,
             };
             let exec_out = self.runner.step_htn(
                 self.vocab.root,

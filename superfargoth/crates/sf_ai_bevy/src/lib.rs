@@ -61,8 +61,8 @@ mod perception_gizmos;
 pub mod sight;
 
 pub use alloc::{
-    ALLOC_TUNABLES, AiAllocPlugin, AiAllocSettings, AiAllocStats, AiAllocSystems, AiInView, AiPin, AiTier,
-    add_alloc_tunables,
+    ALLOC_TUNABLES, AiAllocPlugin, AiAllocSettings, AiAllocStats, AiAllocSystems, AiDecideGate, AiDecideStats,
+    AiInView, AiPin, AiTier, DecideCounts, add_alloc_tunables,
 };
 pub use exec::{
     AiExecPlugin, AiExecSettings, AiExecTick, AiExecutor, AiSystems, EXEC_ARRIVE_DIST_M,
