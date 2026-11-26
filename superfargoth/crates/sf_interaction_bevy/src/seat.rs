@@ -37,6 +37,13 @@
 //!    preemption) clears the aim that tick; the action layer stands a seated body up, and its
 //!    later `SeatExited` writes nothing (the hold is gone already).
 //!
+//! **Clips** ([`SeatClips`]): from the offer on, the user carries the slot's clip family, band (cm)
+//! and the enter and exit sides, for the animation side to pick its clip set (the anim contract:
+//! `<family>.b<band cm>.{enter.<side>, loop, exit.<side>}`); the exit side follows [`pick_exit`]
+//! while the use lasts. It is removed when the use ends: the stand-up's `SeatExited`, a refused
+//! enter, a lost claim before the body sat, the slot given back. A lost claim while seated keeps it
+//! until the stand-up's `SeatExited` (the stand-up plays the exit clip of the last exit side).
+//!
 //! **Latency** at one fixed tick per frame: an `ActivateCommand` validated on tick N is approved
 //! in that frame's `Update`, its claim applies on tick N+1 and the enter starts on tick N+1 (the
 //! grant is read after `Apply`, before `Step`). `SeatEntered` on tick M occupies on M+1;
@@ -53,7 +60,7 @@ use sf_action_bevy::{ActionBody, ActionCharacter, SeatAim, SeatSense};
 use sf_anim::RootPose;
 use sf_coords::WorldPos;
 use sf_interaction::{
-    Entrance, Frame, Op, Request, Side, SlotDef, SlotKind, SlotRef, SlotTerms, TagId, UserKey, VerbTarget, compose, pick_entrance,
+    ClipFamily, Entrance, Frame, Op, Request, Side, SlotDef, SlotKind, SlotRef, SlotTerms, TagId, UserKey, VerbTarget, compose, pick_entrance,
     pick_exit, to_local,
 };
 use sf_script_bevy::sf_script::Handle;
@@ -80,6 +87,46 @@ pub struct InteractionUser {
     pub priority: u8,
     /// The user's tags, for the slots' `users` filters.
     pub tags: SmallVec<[TagId; 4]>,
+}
+
+/// The clips of the seat a user is entering, sitting in or getting up from (module docs, "Clips"):
+/// on the user's entity from the offer to the end of the use, absent otherwise. Inserted and
+/// removed rather than a required `Option` (like [`SeatAim`]): its presence is the state, it changes
+/// twice per use (two archetype moves, negligible), and readers query it directly.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub struct SeatClips {
+    /// The slot's [`SlotDef::clips`] (data: the game names its families).
+    pub family: ClipFamily,
+    /// The slot's [`SlotDef::band`] (the surface's height above the floor), centimetres, rounded.
+    pub band_cm: u16,
+    /// The entrance [`pick_entrance`] chose; `Side::Front` for a slot with no entrances (entered
+    /// from where the feet were).
+    pub enter: Side,
+    /// The exit [`pick_exit`] chooses now; `Side::Front` when none is free or the slot has no
+    /// entrances (the user gets up where its feet were when the claim was granted).
+    pub exit: Side,
+}
+
+/// A slot band in metres as whole centimetres (clamped to `u16`).
+fn band_cm(band: f32) -> u16 {
+    let cm = (band * 100.0).round();
+    if cm.is_nan() || cm <= 0.0 {
+        0
+    } else if cm >= f32::from(u16::MAX) {
+        u16::MAX
+    } else {
+        // In range and whole: exact.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let cm = cm as u16;
+        cm
+    }
+}
+
+/// Removes `entity`'s [`SeatClips`] if it has them.
+fn clear_clips(commands: &mut Commands, entity: Entity, has: bool) {
+    if has && let Ok(mut e) = commands.get_entity(entity) {
+        e.try_remove::<SeatClips>();
+    }
 }
 
 /// The `TargetId` the action layer names placement `placement`'s slots by: its id's low 64 bits.
@@ -264,9 +311,10 @@ pub(crate) fn seat_offers(
     defs: Res<InteractionDefs>,
     free: Res<EndPoseFree>,
     users: Query<&InteractionUser>,
-    mut bodies: Query<(&ActionBody, &mut SeatAim)>,
+    mut bodies: Query<(&ActionBody, &mut SeatAim, Option<&mut SeatClips>)>,
     mut seats: ResMut<SeatUses>,
     mut out: MessageWriter<ClaimRequest>,
+    mut commands: Commands,
 ) {
     for a in answered.read() {
         let Op::Claim { slot, .. } = a.request.op else { continue };
@@ -283,9 +331,10 @@ pub(crate) fn seat_offers(
     let free = &*free.0;
     seats.0.retain(|key, u| {
         let user = users.get(u.entity).ok().filter(|i| i.user == *key);
-        let Some(((body, mut aim), user)) = bodies.get_mut(u.entity).ok().zip(user) else {
-            // The character is gone: let the slot go.
+        let Some(((body, mut aim, mut clips), user)) = bodies.get_mut(u.entity).ok().zip(user) else {
+            // The character is gone (or no longer this user): let the slot go.
             out.write(ClaimRequest(Request { user: *key, priority: u8::MAX, op: Op::Release }));
+            clear_clips(&mut commands, u.entity, true);
             return false;
         };
         if u.phase == SeatPhase::Asked {
@@ -300,10 +349,14 @@ pub(crate) fn seat_offers(
             aim.0 = None;
             return match u.phase {
                 SeatPhase::Seated | SeatPhase::Leaving => {
+                    // The stand-up still plays this seat's exit clip: the clips stay to `SeatExited`.
                     u.phase = SeatPhase::Leaving;
                     true
                 }
-                _ => false,
+                _ => {
+                    clear_clips(&mut commands, u.entity, clips.is_some());
+                    false
+                }
             };
         };
         if u.phase == SeatPhase::Leaving {
@@ -320,15 +373,28 @@ pub(crate) fn seat_offers(
                     // No way in: give the slot back, nothing else (no other verb).
                     out.write(request(user, Op::Release));
                     aim.0 = None;
+                    clear_clips(&mut commands, u.entity, clips.is_some());
                     return false;
                 };
                 u.entry = Some(e.side);
             }
             u.phase = SeatPhase::Offered;
         }
-        let exit = u
-            .entry
-            .and_then(|side| pick_exit(slot_def, side, valid))
+        let exit_entrance = u.entry.and_then(|side| pick_exit(slot_def, side, valid));
+        let exit_side = exit_entrance.map_or(Side::Front, |e| e.side);
+        match clips.as_deref_mut() {
+            Some(c) if c.exit != exit_side => c.exit = exit_side,
+            Some(_) => {}
+            None => {
+                commands.entity(u.entity).insert(SeatClips {
+                    family: slot_def.clips.clone(),
+                    band_cm: band_cm(slot_def.band),
+                    enter: u.entry.unwrap_or(Side::Front),
+                    exit: exit_side,
+                });
+            }
+        }
+        let exit = exit_entrance
             .map_or(u.from, |e| compose(&object, &Frame { translation: e.approach, rotation: Quat::IDENTITY }).translation);
         let feet = body.loco.position;
         let yaw = yaw_of(slot_world.rotation);
@@ -348,9 +414,11 @@ pub(crate) fn seat_events(
     mut characters: Query<(&ActionCharacter, &InteractionUser, &mut SeatAim)>,
     mut seats: ResMut<SeatUses>,
     mut out: MessageWriter<ClaimRequest>,
+    mut commands: Commands,
 ) {
     seats.0.retain(|key, seat| {
         let Ok((c, user, mut aim)) = characters.get_mut(seat.entity) else { return true };
+        // Always queued (no presence check): ordered after a same-tick insert from the offer step.
         if user.user != *key {
             return true;
         }
@@ -367,11 +435,13 @@ pub(crate) fn seat_events(
                         out.write(request(user, Op::Release));
                     }
                     aim.0 = None;
+                    clear_clips(&mut commands, seat.entity, true);
                     return false;
                 }
                 ActionEventKind::SeatRefused(s) if s == seat.slot.slot && seat.phase == SeatPhase::Offered => {
                     out.write(request(user, Op::Release));
                     aim.0 = None;
+                    clear_clips(&mut commands, seat.entity, true);
                     return false;
                 }
                 _ => {}

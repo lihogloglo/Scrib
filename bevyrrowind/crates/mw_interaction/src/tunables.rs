@@ -48,6 +48,12 @@ pub const COUNTER_STAND_M: Def<f32> = length(def!(float "mw.interact.counter_sta
     .range(0.1, 0.6)
     .help("Root of a standing or leaning user at a table or counter, out from its edge"));
 
+/// `mw.interact.floor_seat_band_m`: a seat whose top is lower than this above the floor is sat on
+/// from the floor (clip family `seat.floor`, cross-legged or kneeling), whatever its shape.
+pub const FLOOR_SEAT_BAND_M: Def<f32> = length(def!(float "mw.interact.floor_seat_band_m" = 0.3)
+    .range(0.1, 0.5)
+    .help("A seat whose top is lower than this above the floor is sat on from the floor (clip family seat.floor)"));
+
 /// A bake-time measuring threshold (`IN32b1`, [`crate::measure()`]): net `Gameplay` (the defs feed
 /// gameplay), scope `Dev`, source `Guess`, lifetime `Bake` (part of the bake key).
 const fn measuring(d: Def<f32>) -> Def<f32> {
@@ -109,6 +115,7 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &EDGE_SEAT_INSET_M,
     &COUNTER_SPACING_M,
     &COUNTER_STAND_M,
+    &FLOOR_SEAT_BAND_M,
     &BACKREST_ABOVE_M,
     &BACKREST_OFFSET,
     &UPRIGHT_MIN_AREA,
@@ -134,6 +141,8 @@ pub struct FurnitureParams {
     pub counter_spacing_m: f32,
     /// [`COUNTER_STAND_M`], m.
     pub counter_stand_m: f32,
+    /// [`FLOOR_SEAT_BAND_M`], m.
+    pub floor_seat_band_m: f32,
 }
 
 impl Default for FurnitureParams {
@@ -145,6 +154,7 @@ impl Default for FurnitureParams {
             edge_seat_inset_m: EDGE_SEAT_INSET_M.default_value(),
             counter_spacing_m: COUNTER_SPACING_M.default_value(),
             counter_stand_m: COUNTER_STAND_M.default_value(),
+            floor_seat_band_m: FLOOR_SEAT_BAND_M.default_value(),
         }
     }
 }

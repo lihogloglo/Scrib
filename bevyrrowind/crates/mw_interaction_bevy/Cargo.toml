@@ -1,0 +1,47 @@
+[package]
+name = "mw_interaction_bevy"
+description = "Morrowind wiring of the interaction shell (interaction-adapter.md, IN32c1): baked furniture defs into the slot index as cells load, the player as an interaction user, the focus ray as its focus candidate and the Use press as an ActivateCommand"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# A thin shell (build-perf.md rule 1): the logic is in `mw_interaction` and `sf_interaction`.
+[dependencies]
+bevy_app = { workspace = true, features = ["std"] }
+# `AssetServer` / `UntypedHandle`: the wrapped spawner's `prepare`.
+bevy_asset.workspace = true
+bevy_ecs = { workspace = true, features = ["std"] }
+bevy_log.workspace = true
+# `decode_interact_defs`, the `mw.interact.defs` product (IN32b2).
+mw_bake.workspace = true
+# `PlayerBody`, `HOST_KEY`.
+mw_game_core.workspace = true
+# The furniture rows' prompts, `mw.rules.interaction.sit` and the adapter's tunables.
+mw_interaction.workspace = true
+# `Focus` (the ray's raw hit, the HUD's prompt) and `UsePresses` (the latched Use press).
+mw_player_bevy.workspace = true
+mw_world.workspace = true
+# `Store` / `Manifest`: where the baked defs are.
+sf_bake.workspace = true
+# `WorldTransform`: placement frames.
+sf_coords.workspace = true
+sf_interaction.workspace = true
+sf_interaction_bevy.workspace = true
+sf_records.workspace = true
+# `PLAYER`, `ScriptPlacements`.
+sf_script_bevy.workspace = true
+sf_tunables_bevy.workspace = true
+sf_world.workspace = true
+sf_world_bevy.workspace = true
+smallvec.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+# The test placements' transforms and the expected frames.
+glam.workspace = true
+# Encodes the test defs product.
+postcard.workspace = true
+
+[lints]
+workspace = true

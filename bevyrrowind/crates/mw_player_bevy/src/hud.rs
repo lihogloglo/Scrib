@@ -120,7 +120,7 @@ fn drive_hud(
     let prompt = focus.target.as_ref().map(|t| match t.verb {
         Some(verb) => UsePrompt {
             verb: localized(localizer, &format!("hud-use-{}", verb.to_lowercase()), verb),
-            target: Some(t.name.clone()),
+            target: (!t.name.is_empty()).then(|| t.name.clone()),
             ready: true,
             action: Some(mw_controls_bevy::Control::Use.id()),
         },

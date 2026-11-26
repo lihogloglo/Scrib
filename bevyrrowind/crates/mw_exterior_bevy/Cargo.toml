@@ -29,6 +29,8 @@ mw_doors_bevy.workspace = true
 mw_environment_bevy.workspace = true
 mw_game_core.workspace = true
 mw_graphs.workspace = true
+# The interaction shell's game wiring (IN32c1).
+mw_interaction_bevy.workspace = true
 mw_physics.workspace = true
 mw_player_bevy.workspace = true
 mw_rpg_bevy.workspace = true

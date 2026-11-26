@@ -5474,6 +5474,7 @@ dependencies = [
  "mw_game_core",
  "mw_graphs",
  "mw_install",
+ "mw_interaction_bevy",
  "mw_physics",
  "mw_player_bevy",
  "mw_records",
@@ -5599,6 +5600,34 @@ dependencies = [
  "sf_records",
  "sf_tunables",
  "smallvec",
+]
+
+[[package]]
+name = "mw_interaction_bevy"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_asset",
+ "bevy_ecs",
+ "bevy_log",
+ "glam 0.33.12",
+ "mw_bake",
+ "mw_game_core",
+ "mw_interaction",
+ "mw_player_bevy",
+ "mw_world",
+ "postcard",
+ "sf_bake",
+ "sf_coords",
+ "sf_interaction",
+ "sf_interaction_bevy",
+ "sf_records",
+ "sf_script_bevy",
+ "sf_tunables_bevy",
+ "sf_world",
+ "sf_world_bevy",
+ "smallvec",
+ "workspace-hack",
 ]
 
 [[package]]

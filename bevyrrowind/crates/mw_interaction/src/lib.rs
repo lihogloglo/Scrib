@@ -24,11 +24,11 @@ pub mod tunables;
 pub use activation::{
     Availability, Classic, Condition, DefaultAction, ROWS, RecordClass, Row, Switch, offered, primary, rows,
 };
-pub use defs::{Basis, Facing, Measured, def_for};
+pub use defs::{Basis, CLASS_VERB_PRIORITY, Facing, Measured, POSE_VERB_PRIORITY, class_verb, def_for};
 pub use furniture::{Kind, classify};
 pub use measure::measure;
 /// The def types [`def_for`] fills (re-exported so the bake needs no `sf_interaction` dependency).
-pub use sf_interaction::{InteractableDef, Side, SlotDef};
+pub use sf_interaction::{InteractableDef, Side, SlotDef, TagId};
 pub use tunables::{FurnitureParams, MeasureParams, TUNABLES};
 
 #[cfg(test)]

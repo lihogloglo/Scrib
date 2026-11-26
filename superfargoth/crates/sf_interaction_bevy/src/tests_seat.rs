@@ -250,6 +250,15 @@ fn aim(app: &App, e: Entity) -> Option<sf_action::SeatSense> {
     app.world().get::<SeatAim>(e).unwrap().0
 }
 
+fn clips(app: &App, e: Entity) -> Option<SeatClips> {
+    app.world().get::<SeatClips>(e).cloned()
+}
+
+/// The chair's clips as offered: its family, 0.45 m as 45 cm, in and out by its one (Front) entrance.
+fn chair_clips() -> SeatClips {
+    SeatClips { family: ClipFamily("seat.chair".into()), band_cm: 45, enter: Side::Front, exit: Side::Front }
+}
+
 fn claim(app: &App) -> Option<(UserKey, Phase)> {
     app.world().resource::<InteractionClaims>().0.claim_on(SLOT).map(|c| (c.user, c.phase))
 }
@@ -291,6 +300,7 @@ fn seated() -> (App, Entity) {
     assert_eq!(claim(&app), Some((player(), Phase::Reserved)));
     let offered = aim(&app, p).expect("the claimed seat is offered");
     assert_eq!((offered.target, offered.slot), (seat_target(CHAIR), 0));
+    assert_eq!(clips(&app, p), Some(chair_clips()), "the clips come with the offer");
     assert!(until(&mut app, 120, |a| mov(a, p) == RuleKey::of(LOOP)), "sat: {:?}", mov(&app, p));
     frames(&mut app, 2);
     (app, p)
@@ -305,6 +315,7 @@ fn an_approved_sit_claims_then_the_body_sits_and_the_claim_is_occupied() {
     assert_eq!(claim(&app), Some((player(), Phase::Occupied)));
     assert_eq!(kinds(&app), vec![(player(), EventKind::Claimed), (player(), EventKind::Entered)]);
     assert_eq!(seat_kinds(&app, p), vec![sf_action::EventKind::SeatEntered(0)]);
+    assert_eq!(clips(&app, p), Some(chair_clips()), "seated: unchanged");
     assert_eq!(app.world().resource::<SeatUses>().get(player()).map(|u| u.phase), Some(SeatPhase::Seated));
     assert_eq!(app.world().resource::<SeatUses>().get(player()).and_then(|u| u.entry), Some(Side::Front));
     // The body sits on the slot frame (world), facing its way.
@@ -333,6 +344,7 @@ fn a_jump_stands_up_and_releases_the_claim() {
     );
     assert_eq!(seat_kinds(&app, p), vec![sf_action::EventKind::SeatEntered(0), sf_action::EventKind::SeatExited(0)]);
     assert_eq!(aim(&app, p), None);
+    assert_eq!(clips(&app, p), None, "gone after the exit");
     assert!(app.world().resource::<SeatUses>().get(player()).is_none());
 }
 
@@ -344,6 +356,7 @@ fn removing_the_seat_while_seated_stands_the_body_up_and_frees_the_slot() {
     assert_eq!(aim(&app, p), None, "the aim clears on the invalidating tick");
     assert_eq!(claim(&app), None);
     assert_eq!(app.world().resource::<SeatUses>().get(player()).map(|u| u.phase), Some(SeatPhase::Leaving));
+    assert_eq!(clips(&app, p), Some(chair_clips()), "the stand-up still plays this seat's exit");
     assert!(until(&mut app, 120, |a| mov(a, p) == RuleKey::of("loco")), "stood: {:?}", mov(&app, p));
     frames(&mut app, 2);
     assert_eq!(
@@ -356,6 +369,7 @@ fn removing_the_seat_while_seated_stands_the_body_up_and_frees_the_slot() {
     );
     assert_eq!(seat_kinds(&app, p), vec![sf_action::EventKind::SeatEntered(0), sf_action::EventKind::SeatExited(0)]);
     assert!(app.world().resource::<SeatUses>().get(player()).is_none());
+    assert_eq!(clips(&app, p), None, "gone once the lost seat's stand-up ended");
     // No release follows the exit: the hold ended with the object.
     let releases = app.world().resource::<Log>().answered.iter().filter(|a| matches!(a.request.op, Op::Release)).count();
     assert_eq!(releases, 0);
@@ -376,6 +390,7 @@ fn a_second_user_on_an_occupied_seat_is_refused_and_stays_standing() {
     assert_eq!(npc_answers[0].1, Err(Refusal::Taken));
     assert_eq!(claim(&app), Some((player(), Phase::Occupied)));
     assert_eq!(aim(&app, n), None);
+    assert_eq!(clips(&app, n), None, "a refused claim offers no clips");
     assert!(!ever(&app, n, ENTER));
     assert!(seat_kinds(&app, n).is_empty());
     assert!(app.world().resource::<SeatUses>().get(npc()).is_none());
@@ -393,6 +408,23 @@ fn an_enter_refused_in_the_air_releases_the_claim_and_clears_the_aim() {
     assert_eq!(kinds(&app), vec![(player(), EventKind::Claimed), (player(), EventKind::Released)]);
     assert_eq!(claim(&app), None);
     assert_eq!(aim(&app, p), None);
+    assert_eq!(clips(&app, p), None, "gone after the refused enter");
     assert!(app.world().resource::<SeatUses>().get(player()).is_none());
     assert!(!ever(&app, p, ENTER));
+}
+
+#[test]
+fn a_claim_lost_before_sitting_removes_the_clips_on_that_tick() {
+    let mut app = app();
+    let p = spawn(&mut app, 1, Vec3::ZERO, player(), PLAYER, 30);
+    frames(&mut app, 10);
+    app.world_mut().write_message(sit_command());
+    frames(&mut app, 2);
+    assert_eq!(clips(&app, p), Some(chair_clips()));
+    assert_ne!(app.world().resource::<SeatUses>().get(player()).map(|u| u.phase), Some(SeatPhase::Seated), "still entering");
+    app.world_mut().write_message(IndexChange::Remove { placement: CHAIR, reason: InvalidReason::OwnerDestroyed });
+    frames(&mut app, 1);
+    assert_eq!(aim(&app, p), None);
+    assert_eq!(clips(&app, p), None);
+    assert!(app.world().resource::<SeatUses>().get(player()).is_none());
 }

@@ -28,9 +28,12 @@
 //!   arm subtracted from the hit distance; what has a name is activatable ([`activatable`]).
 //!   The ray is cast on the physics world ([`focus_ray`]: statics, doors, items, the hit body
 //!   mapped back to its placement) plus the actors' capsules ([`ActorShape`]); the nearest hit
-//!   is the focus. `scripts.rs` writes `sf_script_bevy::Activated { target, actor: PLAYER }` for
-//!   it on E, never while paused;
-//!   unhandled outcomes run the default action (`doors.rs` opens doors; dialogue consumes NPCs).
+//!   is the focus. Its raw hit ([`FocusHit`]) is the player's focus candidate for the
+//!   interaction shell (`mw_interaction_bevy`, `IN32c1`), which also gives furniture its verb
+//!   prompt. `mw_scripts_bevy` latches E on the focus into [`UsePresses`], never while paused;
+//!   the shell turns each press into one `ActivateCommand` on the next fixed tick, validated
+//!   into `sf_script_bevy::Activated { target, actor: PLAYER }`; unhandled outcomes run the
+//!   default action (`doors.rs` opens doors; dialogue consumes NPCs; seats seat the player).
 //! - **Seam.** [`PlayerMode::paused`] suspends the controls and frees the cursor (menus,
 //!   dialogue). Movement and camera feel are modern (`sf_action` rules); a classic
 //!   `mw_rules` controller would replace the rules and params, not this module.
@@ -49,7 +52,7 @@ pub mod grip;
 pub mod hud;
 pub mod vitals;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use bevy_app::prelude::*;
@@ -69,8 +72,8 @@ use bevy_transform::prelude::*;
 use bevy_window::{CursorGrabMode, CursorOptions, PrimaryWindow, Window};
 use bevy_enhanced_input::prelude::*;
 use sf_action::{
-    ActionClass, ActionState, BASE_RULES, CharacterId, CharacterParams, Origin, RootPath, RuleKey, RuleSetBuilder, SlotInfo, SlotTable,
-    TRAVERSAL_RULES,
+    ActionClass, ActionState, BASE_RULES, CharacterId, CharacterParams, Origin, RootPath, RuleKey, RuleSetBuilder, SEAT_RULES, SlotInfo,
+    SlotTable, TRAVERSAL_RULES,
 };
 use sf_action_bevy::{
     ActionBody, ActionCharacter, ActionInputPlugin, ActionRules, ActionSystems, AwaitingGround, PlayerAction, PlayerControls, PlayerId,
@@ -176,13 +179,14 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, start_on: bool, start: Play
         .insert_resource(Activation { db, reach_m })
         .insert_resource(start)
         .init_resource::<Focus>()
+        .init_resource::<UsePresses>()
         .add_systems(Startup, setup)
         .add_systems(
             Update,
             (toggle, apply_mode, rebind, arrive, follow_worldspace, guard_fall, obstacle, controls_active, grab_cursor).chain(),
         )
         .add_systems(Update, await_ground::<Physics>.after(arrive).before(StreamingSystems::Transition))
-        .add_systems(Update, update_focus.in_set(FocusUpdate).before(ScriptSlot::Update))
+        .add_systems(Update, update_focus.in_set(FocusUpdate).in_set(FocusRay).before(ScriptSlot::Update))
         .add_systems(RunFixedMainLoop, regrid.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop).after(ActionSystems::Interpolate))
         .add_systems(PostUpdate, (avatar::link, avatar::feed::<Physics>, grip::feed).chain().in_set(sf_anim_bevy::AnimSystems::Probe));
     // FP-2b: the view copies' material (first person with `ComfortSettings::view_model`).
@@ -227,7 +231,8 @@ fn rules(clips: &[SlotClip], sheet: Option<&CompiledSheet>) -> ActionRules {
         slots = slots.with_root(&c.slot, root);
     }
     let mut rules = RuleSetBuilder::new();
-    rules.add_ron(&Origin::Framework, BASE_RULES).add_ron(&Origin::Framework, TRAVERSAL_RULES);
+    // `IN32c1`: sit and stand on a claimed slot (the interaction shell offers it, `mw_interaction_bevy`).
+    rules.add_ron(&Origin::Framework, BASE_RULES).add_ron(&Origin::Framework, TRAVERSAL_RULES).add_ron(&Origin::Framework, SEAT_RULES);
     if let Some(sheet) = sheet {
         sheet.add_rules(&mut rules, &Origin::Mod("bevyrrowind".into()));
     }
@@ -768,11 +773,34 @@ struct Activation {
     reach_m: f32,
 }
 
-/// What E activates now (`scripts.rs` writes `Activated` for it).
+/// What E activates now: the HUD's prompt; `mw_scripts_bevy` latches a press on it into
+/// [`UsePresses`], which `mw_interaction_bevy` turns into an `ActivateCommand` (`IN32c1`).
 #[derive(Resource, Default, Debug)]
 pub struct Focus {
     pub target: Option<FocusTarget>,
+    /// The ray's first hit within reach, activatable or not (a nameless static such as a chair):
+    /// the player's focus candidate for the interaction shell (`mw_interaction_bevy`).
+    pub hit: Option<FocusHit>,
 }
+
+/// The focus ray's raw first hit: the placement (its script handle) and its distance.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FocusHit {
+    pub handle: ScriptHandle,
+    /// From the player's side (the camera arm subtracted), meters.
+    pub distance: f32,
+}
+
+/// Use presses latched in `Update` on the focused target, each consumed once by the next fixed
+/// tick (`mw_interaction_bevy` writes one `ActivateCommand` per press): a frame with no fixed tick
+/// loses none, a frame with two doubles none.
+#[derive(Resource, Default, Debug)]
+pub struct UsePresses(pub VecDeque<ScriptHandle>);
+
+/// The focus ray's system (inside [`FocusUpdate`]): systems that refine [`Focus`] before the HUD
+/// and the Use press read it order `.in_set(FocusUpdate).after(FocusRay)`.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FocusRay;
 
 #[derive(Clone, Debug)]
 pub struct FocusTarget {
@@ -852,6 +880,7 @@ fn update_focus(
     mut names: Local<HashMap<String, Option<Activatable>>>,
 ) {
     focus.target = None;
+    focus.hit = None;
     let Some(db) = activation.db.as_deref() else { return };
     if fade.is_active() || mode.paused {
         return;
@@ -885,6 +914,9 @@ fn update_focus(
     let picked = focus_ray(world, here.pos, global.forward().as_vec3(), reach + arm, owner, &shapes);
     let Some((handle, t)) = picked else { return };
     let distance = t - arm;
+    if distance <= reach {
+        focus.hit = Some(FocusHit { handle, distance });
+    }
     let Some(placed) = placements.loaded.get(&handle) else { return };
     let cached = names.entry(placed.record.clone()).or_insert_with(|| activatable(db, &placed.record));
     let Some((name, verb)) = cached else { return };

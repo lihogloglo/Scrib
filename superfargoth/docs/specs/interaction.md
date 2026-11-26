@@ -512,6 +512,8 @@ slot; no entrance or none free → where the feet were at the grant (entrances a
 enter N+1; entered M → Occupied M+1; exited K → released K+1. Open: `interact.sit.exit` has no `stand`, so the
 stand-up carries ~7 cm past the exit pose (action-layer rule data).
 
+**IN32c0 (2026-11-26):** from the offer to the end of the use the seat default puts `SeatClips { family, band_cm, enter, exit }` on the user (no entrance or no free exit: `Front`; `exit` follows `pick_exit`; kept through a lost-claim stand-up until `SeatExited`), inserted and removed rather than a required component, for the animation side to resolve its clip set.
+
 ## Owner questions
 
 1. Destruction scope: every crate and barrel, or only some ("fragile" list per material)? Which weapons break what

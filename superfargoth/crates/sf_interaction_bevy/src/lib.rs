@@ -78,7 +78,7 @@ pub use activate::{
     UseApproved, UseRefused,
 };
 pub use focus::{FocusCandidates, FocusState, PlayerFocus};
-pub use seat::{EndPoseFree, EndPoseTest, InteractionUser, SeatPhase, SeatSystems, SeatUse, SeatUses, seat_target};
+pub use seat::{EndPoseFree, EndPoseTest, InteractionUser, SeatClips, SeatPhase, SeatSystems, SeatUse, SeatUses, seat_target};
 
 // --- Tunables ---------------------------------------------------------------------------------
 

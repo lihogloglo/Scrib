@@ -25,11 +25,11 @@ use bevy_transform::components::Transform;
 use mw_controls_bevy::{UseAction, use_pressed};
 use mw_game_core::doors::DoorUser;
 use mw_game_core::player::{FocusUpdate, PlayerBody, PlayerMode};
-use mw_player_bevy::Focus;
+use mw_player_bevy::{Focus, UsePresses};
 use sf_coords::WorldPos;
 use sf_script::{ContextConfig, Handle, Limits, ScriptRuntime, ScriptSource};
 use sf_script_bevy::{
-    Activated, ActivationOutcome, PLAYER, Placed, ScriptFact, ScriptPlacements, ScriptSlot, Scripts, ScriptsPlugin,
+    ActivationOutcome, Placed, ScriptFact, ScriptPlacements, ScriptSlot, Scripts, ScriptsPlugin,
     WorldCommand, table,
 };
 use sf_vfs::Vfs;
@@ -322,8 +322,10 @@ fn cell_facts(mut loaded: MessageReader<CellLoaded>, mut facts: MessageWriter<Sc
 
 /// E activates the player's focus (`player::Focus`: `OpenMW`'s camera ray within
 /// `iMaxActivateDist`, on the physics world, `player.rs`); `--activate N` activates it
-/// automatically, once a second. Nothing activates while the player is paused (a menu or
-/// dialogue is open), so a door can't travel under the journal.
+/// automatically, once a second. The press is latched into [`UsePresses`]; the interaction shell
+/// (`mw_interaction_bevy`, `IN32c1`) writes one `ActivateCommand` for it on the next fixed tick,
+/// validated into `Activated`. Nothing activates while the player is paused (a menu or dialogue
+/// is open), so a door can't travel under the journal.
 #[allow(clippy::needless_pass_by_value)] // system parameters
 fn activate(
     uses: Query<&bevy_enhanced_input::prelude::ActionEvents, With<bevy_enhanced_input::prelude::Action<UseAction>>>,
@@ -332,7 +334,7 @@ fn activate(
     focus: Res<Focus>,
     mode: Res<PlayerMode>,
     placements: Res<ScriptPlacements>,
-    mut out: MessageWriter<Activated>,
+    mut presses: ResMut<UsePresses>,
 ) {
     if mode.paused {
         return;
@@ -350,8 +352,10 @@ fn activate(
         return;
     }
     if let Some(f) = &focus.target {
-        info!("activate: {} ({}, {:.1} m, handle {:032x})", f.name, f.record, f.distance, f.handle.0);
-        out.write(Activated { target: f.handle, actor: PLAYER, verb: None });
+        // A verb-only prompt (furniture) has no name: the verb stands in.
+        let name = if f.name.is_empty() { f.verb.unwrap_or_default() } else { f.name.as_str() };
+        info!("activate: {name} ({}, {:.1} m, handle {:032x})", f.record, f.distance, f.handle.0);
+        presses.0.push_back(f.handle);
         return;
     }
     let (true, Some(player)) = (automatic, placements.player.as_ref()) else { return };

@@ -6,7 +6,8 @@ use glam::{Quat, Vec3};
 use sf_interaction::{InteractableDef, Side, SlotDef, SlotKind, TagId};
 use sf_records::RecordId;
 
-use crate::defs::{Basis, Facing, Measured, def_for};
+use crate::activation::RecordClass;
+use crate::defs::{Basis, CLASS_VERB_PRIORITY, Facing, Measured, POSE_VERB_PRIORITY, class_verb, def_for};
 use crate::furniture::Kind;
 use crate::tunables::FurnitureParams;
 
@@ -299,6 +300,7 @@ fn params_default_to_the_declarations() {
     assert!((p.edge_seat_inset_m - 0.2).abs() < EPS);
     assert!((p.counter_spacing_m - 0.6).abs() < EPS);
     assert!((p.counter_stand_m - 0.3).abs() < EPS);
+    assert!((p.floor_seat_band_m - 0.3).abs() < EPS);
     let names: Vec<&str> = crate::TUNABLES.iter().map(|d| d.name()).collect();
     assert_eq!(
         names,
@@ -309,6 +311,7 @@ fn params_default_to_the_declarations() {
             "mw.interact.edge_seat_inset_m",
             "mw.interact.counter_spacing_m",
             "mw.interact.counter_stand_m",
+            "mw.interact.floor_seat_band_m",
             "mw.interact.measure.backrest_above_m",
             "mw.interact.measure.backrest_offset",
             "mw.interact.measure.upright_min_area",
@@ -321,4 +324,68 @@ fn params_default_to_the_declarations() {
     // Every number has a range: the shell's registration accepts the whole list.
     let mut registry = sf_tunables::Tunables::default();
     registry.register_all(crate::TUNABLES).expect("registers");
+}
+
+// --- Seat families (IN32c0) -----------------------------------------------------------------------
+
+fn seat_clips(m: &Measured) -> Vec<String> {
+    def(Kind::Seat, m).slots.iter().map(|s| s.clips.0.clone()).collect()
+}
+
+fn with_basis(mut m: Measured, basis: Basis) -> Measured {
+    m.basis = basis;
+    m
+}
+
+#[test]
+fn seat_families_by_places_backrest_and_band() {
+    let one = measured([0.45, 0.45], 0.45, Facing::PosZ);
+    assert_eq!(seat_clips(&one), ["seat.chair"], "a backrest: chair");
+    for basis in [Basis::PlusZ, Basis::LongSide] {
+        assert_eq!(seat_clips(&with_basis(one, basis)), ["seat.stool"], "no backrest: stool ({basis:?})");
+    }
+    // Two places: a bench, with or without a backrest.
+    let bench = measured([1.1, 0.4], 0.45, Facing::PosZ);
+    assert_eq!(seat_clips(&bench), ["seat.bench"; 3]);
+    assert_eq!(seat_clips(&with_basis(bench, Basis::LongSide)), ["seat.bench"; 3]);
+}
+
+#[test]
+fn a_low_seat_is_a_floor_seat_whatever_its_shape() {
+    let band = FurnitureParams::default().floor_seat_band_m;
+    for (footprint, basis) in [([0.45, 0.45], Basis::Upright), ([0.45, 0.45], Basis::PlusZ), ([1.1, 0.4], Basis::LongSide)] {
+        let low = with_basis(measured(footprint, 0.2, Facing::PosZ), basis);
+        let d = def(Kind::Seat, &low);
+        assert!(d.slots.iter().all(|s| s.clips.0 == "seat.floor" && (s.band - 0.2).abs() < EPS), "{footprint:?} {basis:?}");
+    }
+    // The rule is strict: a top exactly at the threshold is not a floor seat.
+    assert_eq!(seat_clips(&measured([0.45, 0.45], band, Facing::PosZ)), ["seat.chair"]);
+    assert_eq!(seat_clips(&with_basis(measured([0.45, 0.45], band, Facing::PosZ), Basis::PlusZ)), ["seat.stool"]);
+    // The threshold is the parameter's.
+    let p = FurnitureParams { floor_seat_band_m: 0.5, ..FurnitureParams::default() };
+    let d = def_for(&RecordId::new("furn_x"), Kind::Seat, &measured([0.45, 0.45], 0.45, Facing::PosZ), &p).expect("a def");
+    assert_eq!(d.slots[0].clips.0, "seat.floor");
+}
+
+#[test]
+fn bed_edges_keep_their_family_however_low() {
+    let d = def(Kind::Bed, &measured([0.7, 1.9], 0.12, Facing::PosZ));
+    let clips: Vec<&str> = d.slots.iter().map(|s| s.clips.0.as_str()).collect();
+    assert_eq!(clips, ["bed.lie", "seat.bed_edge", "seat.bed_edge"]);
+}
+
+// --- Class verbs (IN32c0) -------------------------------------------------------------------------
+
+#[test]
+fn containers_and_activators_keep_their_primary_verb_above_the_pose_verbs() {
+    let open = class_verb(RecordClass::Container).expect("a container opens");
+    assert_eq!((open.verb, open.priority), (TagId::of("open"), CLASS_VERB_PRIORITY));
+    let used = class_verb(RecordClass::Activator).expect("an activator is used");
+    assert_eq!((used.verb, used.priority), (TagId::of("use"), CLASS_VERB_PRIORITY));
+    const { assert!(CLASS_VERB_PRIORITY > POSE_VERB_PRIORITY) };
+    assert!(def(Kind::Seat, &measured([0.45, 0.45], 0.45, Facing::PosZ)).slots.iter().all(|s| s.verb.priority == POSE_VERB_PRIORITY));
+    // Furniture's own rows and a creature (nothing unconditional offered) give none.
+    assert_eq!(class_verb(RecordClass::Furniture(Kind::Seat)), None);
+    assert_eq!(class_verb(RecordClass::Creature), None);
+    assert!(def(Kind::Table, &measured([1.2, 0.8], 0.84, Facing::PosZ)).verbs.is_empty(), "def_for adds no class verb");
 }

@@ -147,6 +147,36 @@ helpers: `furniture_records(db)` (the census record scan) and `model_soups(nif)`
   no defs; 0 models failed. Open: 34 of 46 beds take the head fallback (a head at the foot is possible; the owner
   check in IN32c shows it); 266 table stations (~9.5 per table) may want a coarser `counter_spacing_m`.
 
+### As built (IN32c1 + IN32c0, 2026-11-26)
+
+New thin crate `bevyrrowind/crates/mw_interaction_bevy` (`add(app, store, manifest)`, called by `mw_exterior_bevy`
+after the player; registers `mw_interaction::TUNABLES` and `sf_interaction_bevy::InteractionPlugin`).
+- **Defs:** `mw.interact.defs` decoded once at startup into `FurnitureDefs` (base `RecordId` -> `Arc<InteractableDef>`);
+  missing or undecodable: one warning, no defs, the game runs as before. Log `interact: N furniture defs loaded (S slots)`.
+- **Index:** `FurnitureHook` wraps the STAT/ACTI/CONT spawners: R0 activation of a def'd base writes
+  `IndexChange::Insert` (placement world frame, scale ignored; owner = cell entity) while `mw.rules.interaction.sit` is
+  on, deactivation or discard `IndexChange::unload`; `ResidentFurniture` makes the switch live (off removes, on
+  re-inserts). Log once per cell: `interact: indexed M furniture placements in <ws> (x, y, z)`. The index has no
+  worldspace key (one worldspace resident at a time).
+- **Player:** `InteractionUser` (live `priority_player`, no tags) on `PlayerBody`; `sf_action::SEAT_RULES` in the
+  player's rules. `mw_player_bevy::Focus::hit` (the ray's first hit in reach, activatable or not) is the single
+  `FocusCandidates` entry per fixed tick (score `1/(1+d)`, `held: false`: no hold list yet). Each Use press (or
+  `--activate`) is latched in `UsePresses` (`mw_scripts_bevy::activate`) and becomes exactly one
+  `FocusState::command` between `InteractionSystems::Focus` and `::Activate` (none lost on a zero-tick frame, none
+  doubled on two). Def-less targets: `verb: None` as before. Prompt: a pose verb shows verb-only from the rows
+  (Sit / Lie down / Lean), anything else keeps `activatable`'s name + verb.
+- **Class verb (IN32c0):** a def'd census `CONT`/`ACTI` keeps its class's primary use (`class_verb`: open / use) as a
+  slotless verb at `CLASS_VERB_PRIORITY` 1, above every pose verb (0), so its best verb and prompt are unchanged; its
+  pose verbs follow (hold list later). Install: ACTI 55 defs (use kept), CONT 0.
+- **Seat families (IN32c0, anim contract `<family>[.<style>].b<band cm>.{enter.<side>, loop, loop.fidget,
+  exit.<side>}`, provisional until ANIM-9):** top under `mw.interact.floor_seat_band_m` (0.3 m, Guess, strict) ->
+  `seat.floor` (wins); else one place with a backrest (`Basis::Upright`) `seat.chair`, one without `seat.stool`, more
+  `seat.bench`. Bake `mw.interact.defs` v2 (report counts CONT/ACTI defs).
+- Still default handlers on `ActivationOutcome` (IN32c2 moves them to `UseApproved`). The player's sit is refused
+  (`NoRootPath`) until the slot table has the `interact.sit.*` clips (anim AN26c reads `SeatClips`).
+- Open: ACTI placements are not in `ScriptPlacements` (`mw_scripts_bevy` hook skips ACTIVATOR), so an activator is
+  never focused (pre-existing; its 55 furniture defs are indexed but unreachable by the player).
+
 ## World rules mapping (IN41, IN38, IN19)
 
 **Material rows** (`sf.interact.material` + a pattern table in `mw_interaction`, checked against the install at cook,

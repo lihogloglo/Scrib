@@ -10,7 +10,10 @@
 //! [`FurnitureParams`] defaults. **Floor offset:** slots and approach points stand on the measured floor (the
 //! soup's lowest point, [`Measured::floor`]), so a model authored with its origin off its floor still seats
 //! its user on the ground; the report counts the models whose floor is off the origin by a centimetre or more.
-//! Shelves and unmeasured records (no model, no usable top) get no def.
+//! Shelves and unmeasured records (no model, no usable top) get no def. **Class verb** (`IN32c0`): a def'd
+//! `CONT` or `ACTI` keeps its class's primary use ([`mw_interaction::class_verb`]: open, use) as a slotless
+//! verb ranked above its pose verbs; the report counts them ([`InteractDefs::container_defs`],
+//! [`InteractDefs::activator_defs`]).
 //!
 //! The record list (id, kind, model) and both parameter sets are the step's plan parameters, every model a
 //! tracked file read, so a mod editing a furniture record or replacing its mesh re-bakes the defs. Nothing is
@@ -21,7 +24,9 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use mw_interaction::{Basis, FurnitureParams, InteractableDef, Kind, MeasureParams, Measured, def_for, measure};
+use mw_interaction::{
+    Basis, FurnitureParams, InteractableDef, Kind, MeasureParams, Measured, RecordClass, class_verb, def_for, measure,
+};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sf_bake::{BakeError, Baker, PlanCx, ProductKey, RunCx, Step};
@@ -78,6 +83,10 @@ pub struct InteractDefs {
     pub counts: BTreeMap<String, KindCounts>,
     /// Model path -> why it gave no triangles (missing, load error).
     pub failed: Vec<(String, String)>,
+    /// Defs of `CONT` records (each with the container's open verb).
+    pub container_defs: u32,
+    /// Defs of `ACTI` records (each with the activator's use verb).
+    pub activator_defs: u32,
 }
 
 impl InteractDefs {
@@ -107,6 +116,15 @@ pub fn measure_record(kind: Kind, soups: &Soups, p: &MeasureParams) -> Option<(M
     })
 }
 
+/// The record class whose own primary use a def'd census record keeps (`STAT`: none).
+fn record_class(record: &str) -> Option<RecordClass> {
+    match record {
+        "CONT" => Some(RecordClass::Container),
+        "ACTI" => Some(RecordClass::Activator),
+        _ => None,
+    }
+}
+
 /// The product from the records and their models' soups (model path, lowercase -> soups or why none).
 pub fn interact_defs(
     records: &[FurnitureRecord],
@@ -133,7 +151,14 @@ pub fn interact_defs(
         counts.render += u32::from(source == "render");
         // Centimetres: the report's precision.
         counts.floor_offset += u32::from((m.floor * 100.0).round().abs() >= 1.0);
-        if let Some(def) = def_for(&RecordId::new(&r.id), r.kind, &m, furniture) {
+        if let Some(mut def) = def_for(&RecordId::new(&r.id), r.kind, &m, furniture) {
+            if let Some(verb) = record_class(r.record).and_then(class_verb) {
+                def.verbs.push(verb);
+                match r.record {
+                    "CONT" => out.container_defs += 1,
+                    _ => out.activator_defs += 1,
+                }
+            }
             counts.defs += 1;
             counts.slots += u32::try_from(def.slots.len()).unwrap_or(u32::MAX);
             out.defs.push(def);
@@ -156,7 +181,7 @@ pub struct InteractDefsStep {
 
 impl InteractDefsStep {
     /// Bump when the product's bytes change for the same inputs.
-    pub const VERSION: u32 = 1;
+    pub const VERSION: u32 = 2;
 
     pub fn new(records: Vec<FurnitureRecord>, furniture: FurnitureParams, measuring: MeasureParams) -> Self {
         Self { records, furniture, measuring }
@@ -252,6 +277,7 @@ impl fmt::Display for InteractReport {
                 }
                 write!(f, ";")?;
             }
+            write!(f, " CONT {} defs, ACTI {} defs (class verb kept);", d.container_defs, d.activator_defs)?;
             write!(f, " {} models failed;", d.failed.len())?;
         }
         write!(

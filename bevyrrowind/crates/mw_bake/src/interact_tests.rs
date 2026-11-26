@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use glam::Vec3;
 use sf_bake::{Digest, Inputs, Store};
-use mw_interaction::{Side, SlotDef};
+use mw_interaction::{Side, SlotDef, TagId};
 
 use super::*;
 
@@ -221,4 +221,41 @@ fn step_bakes_and_decodes_without_files() {
     assert_eq!(baker.bake(std::slice::from_ref(&key)).failures().count(), 0);
     let s = baker.step_stats()[INTERACT_DEFS];
     assert_eq!((s.hits, s.built), (1, 0));
+}
+
+/// `IN32c0`: seat families from the measured backrest and band, and a def'd `CONT` / `ACTI` keeps its
+/// class's primary verb (slotless, above the pose verbs); a `STAT` gets none.
+#[test]
+fn families_and_class_verbs() {
+    let records = vec![
+        FurnitureRecord { record: "CONT", ..record("furn_chest_seat", Kind::Seat) },
+        record("furn_chair", Kind::Seat),
+        FurnitureRecord { record: "ACTI", ..record("furn_cushion", Kind::Seat) },
+        record("furn_stool", Kind::Seat),
+    ];
+    let model = |id: &str| format!("meshes/f/{id}.nif");
+    let soups = [
+        ("furn_chest_seat", soup(&[([-0.2, 0.0, -0.2], [0.2, 0.45, 0.2])])),
+        ("furn_chair", chair()),
+        // A floor cushion, 0.15 m high.
+        ("furn_cushion", soup(&[([-0.25, 0.0, -0.25], [0.25, 0.15, 0.25])])),
+        ("furn_stool", soup(&[([-0.2, 0.0, -0.2], [0.2, 0.6, 0.2])])),
+    ]
+    .into_iter()
+    .map(|(id, s)| (model(id), Ok((s, Vec::new()))))
+    .collect();
+    let out = interact_defs(&records, &soups, &FurnitureParams::default(), &MeasureParams::default());
+    let def = |id: &str| out.def(&RecordId::new(id)).unwrap();
+    let clips = |id: &str| def(id).slots.iter().map(|s| s.clips.0.clone()).collect::<Vec<_>>();
+    assert_eq!(clips("furn_chair"), ["seat.chair"]);
+    assert_eq!(clips("furn_stool"), ["seat.stool"]);
+    assert_eq!(clips("furn_chest_seat"), ["seat.stool"]);
+    assert_eq!(clips("furn_cushion"), ["seat.floor"]);
+    let verbs = |id: &str| def(id).verbs.iter().map(|v| (v.verb, v.priority)).collect::<Vec<_>>();
+    assert_eq!(verbs("furn_chest_seat"), [(TagId::of("open"), mw_interaction::CLASS_VERB_PRIORITY)]);
+    assert_eq!(verbs("furn_cushion"), [(TagId::of("use"), mw_interaction::CLASS_VERB_PRIORITY)]);
+    assert!(def("furn_chair").verbs.is_empty() && def("furn_stool").verbs.is_empty());
+    assert_eq!((out.container_defs, out.activator_defs), (1, 1));
+    let shown = InteractReport { defs: Some(out), ..InteractReport::default() }.to_string();
+    assert!(shown.contains("CONT 1 defs, ACTI 1 defs"), "{shown}");
 }

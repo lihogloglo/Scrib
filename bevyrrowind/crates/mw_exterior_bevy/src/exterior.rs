@@ -789,6 +789,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     let scene_camera = mw_game_core::scenes::active().is_some_and(mw_game_core::scenes::SceneDef::fixed_camera);
     let clips = player_clips(&options.store, &manifest);
     mw_player_bevy::add(&mut app, options.actors.clone(), !bench && options.screenshot.is_none() && !scene_camera, player_start, clips);
+    // IN32c1: the interaction shell: baked furniture defs into the slot index, the player's focus
+    // and Use press through the activation contract, its seat default.
+    mw_interaction_bevy::add(&mut app, &options.store, &manifest);
     // `--use-door` and the `BEVYRROWIND_AUTO` dev hook (physics.rs) wait for it.
     app.add_systems(Update, mark_settled.run_if(in_state(WorldAlive)));
     mw_devtools_bevy::live_ab::add(&mut app, !bench && options.screenshot.is_none());

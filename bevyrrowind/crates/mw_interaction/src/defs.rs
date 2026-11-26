@@ -7,15 +7,20 @@
 //! carries the surface height and picks the clip band) and its +Z is the way the user faces; an
 //! entrance's approach point is on the floor where the enter clip starts. Pose families and verbs
 //! are the IN2 tags: family `seat` / `bed` / `counter`, verb `sit` / `lie` / `lean`
-//! ([`crate::activation::verb`]); clip prefixes `seat.chair`, `seat.bench`, `seat.bed_edge`,
-//! `bed.lie`, `counter.table`, `counter.bar`.
+//! ([`crate::activation::verb`]); clip families `seat.chair`, `seat.stool`, `seat.bench`,
+//! `seat.floor`, `seat.bed_edge`, `bed.lie`, `counter.table`, `counter.bar` (the anim contract's
+//! `<family>[.<style>].b<band cm>.{enter.<side>, loop, loop.fidget, exit.<side>}`: the animation
+//! side resolves a slot's family, band and sides to its nearest clip set).
 //!
 //! - **Seat** ([`Kind::Seat`]): places of [`FurnitureParams::bench_seat_m`] along the axis across
 //!   its front (at least one; a chair is a bench of one). A bench of `n` > 1 places also gets the
 //!   `n - 1` places between them, each overlapping its two neighbours: slot `k` of the `2n - 1`
 //!   (left to right) has exclusion bits `k - 1` and `k` (a two-place bench: `0b01`, `0b11`,
 //!   `0b10`, def.rs's example). Benches too wide for the 8-bit mask (more than 5 places) get the
-//!   whole places only, which don't overlap. One entrance, Front.
+//!   whole places only, which don't overlap. One entrance, Front. Family: `seat.floor` when the top
+//!   is under [`FurnitureParams::floor_seat_band_m`] above the floor (strictly: a top exactly at it
+//!   is not a floor seat; floor wins over every other seat family), else one place with a backrest
+//!   ([`Basis::Upright`]) `seat.chair`, one place without `seat.stool`, more places `seat.bench`.
 //! - **Bed** (anim contract AN25, motion-generation.md "Interaction families"): a `lie` slot at the
 //!   centre whose +Z points to the head ([`Measured::head`]): the body lies along +Z, face up. It is
 //!   got into from the long sides, entrances Left and Right: the lier's own sides (the user's right
@@ -31,6 +36,12 @@
 //!
 //! [`FurnitureParams::sit`] off (Classic) = no def for any kind: the furniture is inert, as in
 //! vanilla.
+//!
+//! **Class verb** ([`class_verb`]): a def'd record of a class with its own primary use (a census
+//! `CONT` opens, an `ACTI` is used: [`crate::activation::primary`]) keeps it, as a slotless verb
+//! above every pose verb ([`CLASS_VERB_PRIORITY`] over [`POSE_VERB_PRIORITY`]), so its best verb is
+//! the class's and the pose verbs follow (the hold list). The bake adds it ([`def_for`] knows only
+//! the census kind).
 
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
@@ -41,7 +52,7 @@ use sf_interaction::{
 use sf_records::RecordId;
 use smallvec::{SmallVec, smallvec};
 
-use crate::activation::verb;
+use crate::activation::{self, RecordClass, verb};
 use crate::furniture::Kind;
 use crate::tunables::FurnitureParams;
 
@@ -51,6 +62,14 @@ const FIT_EPS: f32 = 1.0e-4;
 
 /// Exclusion mask width (`SlotDef::group` is a `u8`).
 const MASK_BITS: u8 = 8;
+
+/// Focus order of every pose slot's verb.
+// tunables: const (ordering: the rank of the pose verbs among a def's verbs, not a feel value)
+pub const POSE_VERB_PRIORITY: i16 = 0;
+
+/// Focus order of a record class's own primary verb ([`class_verb`]): above every pose verb.
+// tunables: const (ordering: the class's own use ranks first, interaction-adapter.md)
+pub const CLASS_VERB_PRIORITY: i16 = POSE_VERB_PRIORITY + 1;
 
 /// A horizontal direction in the object's frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -94,7 +113,8 @@ pub struct Measured {
     /// A bed's head end: its `lie` slot's +Z. Seats, tables, counters and shelves don't read it
     /// ([`crate::measure()`] sets it to `front`).
     pub head: Facing,
-    /// Where `front` / `head` came from (reported by the bake; [`def_for`] doesn't read it).
+    /// Where `front` / `head` came from (reported by the bake; [`def_for`] reads it for a seat's
+    /// family: a single place with a backrest is a chair, without one a stool).
     pub basis: Basis,
 }
 
@@ -176,7 +196,7 @@ fn pose(family: &str, clips: &str, verb: &str, local: Frame, band: f32) -> SlotD
         kind: SlotKind::Pose { family: TagId::of(family) },
         local,
         band,
-        verb: VerbDef { verb: TagId::of(verb), priority: 0, requires: TagFilter::default() },
+        verb: VerbDef { verb: TagId::of(verb), priority: POSE_VERB_PRIORITY, requires: TagFilter::default() },
         entrances: SmallVec::new(),
         clips: ClipFamily(clips.to_owned()),
         ik: IkTargets::default(),
@@ -206,7 +226,7 @@ pub fn def_for(base: &RecordId, kind: Kind, m: &Measured, p: &FurnitureParams) -
     }
     let b = Box2::of(m, m.front);
     let slots = match kind {
-        Kind::Seat => seat_slots(&b, m.top, p),
+        Kind::Seat => seat_slots(&b, m.top, m.basis, p),
         Kind::Bed => bed_slots(&Box2::of(m, m.head), m.top, p),
         Kind::Table => station_slots(&b, m.top, p, "counter.table", &[b.front, -b.front, b.across, -b.across]),
         Kind::Counter => station_slots(&b, m.top, p, "counter.bar", &[b.front, -b.front]),
@@ -222,10 +242,38 @@ pub fn def_for(base: &RecordId, kind: Kind, m: &Measured, p: &FurnitureParams) -
     })
 }
 
-fn seat_slots(b: &Box2, top: f32, p: &FurnitureParams) -> Vec<SlotDef> {
+/// The slot verb a def'd record of `class` keeps from its class: its primary offered row's verb
+/// (`CONT` open, `ACTI` use) at [`CLASS_VERB_PRIORITY`], slotless; `None` for a class with no offered
+/// unconditional row (furniture, a creature) or whose rows are all conditional.
+#[must_use]
+pub fn class_verb(class: RecordClass) -> Option<VerbDef> {
+    if matches!(class, RecordClass::Furniture(_)) {
+        return None;
+    }
+    activation::primary(class, |_| false, |_| true).map(|row| VerbDef {
+        verb: TagId::of(row.verb),
+        priority: CLASS_VERB_PRIORITY,
+        requires: TagFilter::default(),
+    })
+}
+
+/// A seat's clip family (module docs, "Seat").
+fn seat_family(whole: u8, top: f32, basis: Basis, p: &FurnitureParams) -> &'static str {
+    if top < p.floor_seat_band_m {
+        "seat.floor"
+    } else if whole > 1 {
+        "seat.bench"
+    } else if basis == Basis::Upright {
+        "seat.chair"
+    } else {
+        "seat.stool"
+    }
+}
+
+fn seat_slots(b: &Box2, top: f32, basis: Basis, p: &FurnitureParams) -> Vec<SlotDef> {
     let width = b.half_width * 2.0;
     let whole = places(width, p.bench_seat_m);
-    let clips = if whole == 1 { "seat.chair" } else { "seat.bench" };
+    let clips = seat_family(whole, top, basis, p);
     // Whole places and the ones between them (half a pitch apart) while their masks fit.
     let between = whole > 1 && 2 * u16::from(whole) - 2 <= u16::from(MASK_BITS);
     let pitch = width / f32::from(whole);
