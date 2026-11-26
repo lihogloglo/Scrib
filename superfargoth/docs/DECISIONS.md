@@ -2065,3 +2065,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (specs-7, AN38c): every physics tint kind runs on the pinned pelvis; the balanced-legs variant for Sway is
   not built (the followed upper body reaches the pose, then drifts to 8-10 degrees mean / 27-34 max, and the legs leave
   the clip). AN40b loses its coexistence step (physics-tint.md "Design", "Performance").
+- 2026-11-26 (specs-7, AN38d, one run): the tint provider steps tints and takeovers through Delirium's group step and
+  takes agents from a pre-built pool (building one costs 5 ms); cap 2 -> 4 (Low 2), 1.61 ms median at N = 4. The
+  split at 6 agents is a Delirium constant, not a setting; AN38e decides a cap of 8 (physics-tint.md "Performance").

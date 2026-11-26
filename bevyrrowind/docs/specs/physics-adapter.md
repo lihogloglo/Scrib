@@ -144,8 +144,9 @@ provider for creatures; quadruped reactions wait for a procedural animation syst
   step in the same `FixedUpdate` loop; `DeliriumStats.step_us` sums both, plus a `tints` count. A `DeliriumReaction` on a
   tinted root promotes it: the takeover reuses the built agent, else starts as today. A tinted agent on a balancer that
   falls (`agent.fallen`) sends that `DeliriumReaction` itself the same tick (AN38b: a body on the ground costs twice;
-  no kind stands on a balancer in AN40b). Each agent is stepped on its own, as takeovers are (`takeover.rs:625`);
-  a grouped step is AN38d's measurement, not today's path.
+  no kind stands on a balancer in AN40b). Today each takeover steps its own agent (`takeover.rs:625`) and builds it
+  at its start (5 ms, AN38d); the provider moves tints and takeovers into one `Agent::step_group` per tick and takes
+  agents from a pool of `anim.tint.cap` pre-built ones (spec "Performance").
 - **Bands (walkers' impacts, `HitRules`):** 1-10 N s `HitReact` (as today); 10 to `anim.tint.band.max_ns` a Stagger tint;
   from there to `certain_fall` (100) today's push takeover; above, push + knockdown. `HitRules::takeover` becomes the band
   top.
