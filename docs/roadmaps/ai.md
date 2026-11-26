@@ -299,9 +299,9 @@ optional `sf_crowd` (Q2), Nemesis content.
 5. **Companion opinions:** remarks on your deeds, and may they leave? Recommended: remarks yes; leaving only where a
    pack's content says so.
 6. **Can the player silence gossip?** Recommended: yes in Modern: bribe or intimidate makes one holder drop one fact;
-   people already told keep it; no planting lies (ai-memory.md). Pending owner (asked 2026-11-26).
+   people already told keep it; no planting lies (ai-memory.md). **Answered (owner 2026-11-26): as recommended.**
 7. **Does a companion told to wait, wait forever?** Recommended: yes; a pack can add a timeout (Skyrim: home after
-   3 days). **8. Companions per player in Modern?** Recommended: 4, no cap in Classic (followers.md). Pending owner.
+   3 days). **8. Companions per player in Modern?** Recommended: 4, no cap in Classic (followers.md). **Answered (owner 2026-11-26): Q7 and Q8 as recommended.**
 
 Owner answers 2026-11-25: Q1 a Skyrim-style sneak eye (how noticed you are overall), no per-NPC markers. Q2 later (parked). Q3 yes, except NPCs whose
 schedule works at night (guards, night trades). Q4 yes, and people find cover where they can. Q5 much later (parked).

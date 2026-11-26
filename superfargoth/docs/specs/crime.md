@@ -417,16 +417,21 @@ LW19-LW21, LW10, LW22; 5 Classic A8. Rules first: LW1-LW5 need no AI, Bevy or UI
 
 ## Open questions (owner)
 
-All pending owner (roadmap §7); each answer is the recommendation, which the spec follows until then.
-
-1. **Minigame feel?** Lockpick sweet spot (Skyrim, KCD2), pickpocket KCD2 hold-to-search; "auto" and Classic roll.
-2. **Can headgear hide who you are?** Yes in Modern, law and acquaintances see through it; a `Description` report
-   charges once guards identify the player; Classic off.
-3. **One bounty or one per region?** One in Morrowind, locality from heat and gossip; framework per jurisdiction.
-4. **Jail without skill loss in Modern?** Yes, plus a reputation hit; Classic keeps skill loss.
-5. **Do stolen goods cool off?** Yes in Modern, fences buy hot goods at a discount; Classic permanent.
+None open (roadmap §7). Q3 is being rewritten (LW0f).
 
 Answered:
+
+- Q1 minigame feel (owner 2026-11-26, as recommended): lockpick sweet spot (Skyrim, KCD2), pickpocket KCD2
+  hold-to-search; "auto" and Classic roll.
+- Q2 headgear (owner 2026-11-26, as recommended): hides you in Modern, law and acquaintances see through it; a
+  `Description` report charges no bounty until a guard identifies the player; Classic off.
+- Q3 bounty scope (owner 2026-11-26, **changed**): per jurisdiction in Morrowind too (the framework model), Morrowind
+  jurisdictions as data from regions, settlements and factions; single-value script functions act on the
+  jurisdiction the player is in (recommended). Adapter rewrite LW0f.
+- Q4 jail (owner 2026-11-26, as recommended): Modern time and confiscation, no skill loss, a reputation hit; Classic
+  keeps skill loss.
+- Q5 stolen goods (owner 2026-11-26, as recommended): cool off in Modern, fences buy hot goods at a discount;
+  Classic permanent.
 
 - Solo jail clock (owner 2026-11-25): the days pass as in Morrowind (`JailClock::PassTime`).
 - Co-op scope (2026-11-25, decision 15): per player, `SharedBounty` later.

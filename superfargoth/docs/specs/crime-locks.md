@@ -120,7 +120,7 @@ IN18's; the lock giving way is crime's noise.
 - **Roll** (Classic, auto): `pick_chance` against the seeded roll; one attempt costs `tool_wear`. Classic keeps the
   ported rule's `Impossible` (Morrowind `x <= 0`). Auto in Modern floors the chance at `lock.auto_min_chance`, so only
   the data flag refuses.
-- **Minigame** (Modern default; feel pending owner Q1, recommended: rotate to a sweet spot, Skyrim and KCD2): the host
+- **Minigame** (Modern default; feel owner 2026-11-26 Q1: rotate to a sweet spot, Skyrim and KCD2): the host
   opens a `PickSession { object, tool, seed, window }` and sends the seed and window to the client. The sweet spot is
   an angle from the seed. The client sends a `PickInput { tick, angle, turning }` stream; the host re-simulates it with
   `simulate(&PickSession, &[PickInput]) -> LockOutcome` and its result is final. Turning outside the window for

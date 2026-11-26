@@ -2021,3 +2021,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (meta, vehicles, industry standard): jumping off a vehicle above 3x the jump-off speed tumbles (GTA/RDR2);
   seated passengers use items and non-attack spells, attacks wait for mounted combat; mounting from behind or onto a
   moving mount is later. An own ridden mount is predicted with its rider (net.md "Prediction"). interaction-vehicles.md.
+- 2026-11-26 (owner, combat/crime/AI): non-lethal Q11-Q15 as recommended (humans yield via morale, Finish prompt,
+  KO wakes, witnessed finish = murder, no player yield, GetDead death-only), Q10 tag open; crime Q1, Q2, Q4, Q5 as
+  recommended; **Q3 changed: per-jurisdiction bounties in Morrowind** (LW0f); companions wait forever, cap 4, gossip silencing drops one fact.

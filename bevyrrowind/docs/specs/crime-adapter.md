@@ -289,11 +289,11 @@ Strings (`sNotifyMessage*`, `sKeyUsed`, `sLock*`, `sTrap*`, `sUnlocked`, `sTrapp
 | `detection` | Meter + one sneak eye (MA5, decision 6) | one seeded roll per sight check (MA5) |
 | `reporters` | witnesses who saw or heard, `alarm >= 100` | any reportable actor in radius, `alarm >= 100` |
 | `report_cancel` | dead, downed, bribed, threatened, timeout | dead, downed (decided, open questions 1, 2) |
-| `recognition` | `Unknown`/`Description`/`Identified` with `Disguise` (owner Q2 pending) | always `Identified` |
-| `jurisdictions` | one island-wide (owner Q3 pending, recommended) | one island-wide |
+| `recognition` | `Unknown`/`Description`/`Identified` with `Disguise` (owner Q2 2026-11-26) | always `Identified` |
+| `jurisdictions` | per jurisdiction (owner Q3 changed 2026-11-26; design in LW0f) | per jurisdiction (LW0f) |
 | `law` | framework ladder, decay, murder floor, heat | `iCrimeThreshold` ladder, no decay |
 | `locks` | `Minigame` ("auto" rolls), tier label, forcing (IN37) | `Roll` with `Impossible`, raw level, no forcing |
-| `pickpocket` | KCD2 timer window, "auto" rolls (owner Q1 pending) | roll (A4) |
+| `pickpocket` | KCD2 timer window, "auto" rolls (owner Q1 2026-11-26) | roll (A4) |
 | `stolen` | reconcile, cool-down, other merchants refuse hot lots | permanent, only the victim refuses |
 | `prompt` | owned/stolen marker on crosshair and item rows | none (item names only) |
 | `jail` | confiscation, reputation hit, no skill loss (owner Q4 pending) | confiscation, skill loss hook shown at release |
@@ -356,7 +356,8 @@ One deliverable per slice; rows, order and checks: [crime roadmap](../../../docs
 ## Open questions
 
 Framework and preset questions (minigame feel, headgear, one bounty, jail skill loss in Modern, stolen cool-down) are
-crime roadmap §7 and crime.md "Open questions"; this spec follows their recommendations.
+answered (owner 2026-11-26, crime roadmap §7): all as recommended except one bounty, changed to per jurisdiction
+(rewrite LW0f; the island-wide lines above are superseded until then).
 
 1. **Can a Classic witness be bribed or threatened out of reporting?** **Decided (meta, 2026-11-26): no.** Bribe and Threat are Modern;
    Morrowind has no such dialogue, so Classic keeps its outcome.

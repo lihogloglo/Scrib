@@ -88,6 +88,7 @@ Owner checks `LW-n` go in `bevyrrowind/docs/visual-checks/crime.md` (new). `sf_c
 | LW0c | crime.md "Locks and traps": decisions 8-10 | docs | - | **done 2026-11-26** (new `crime-locks.md`) |
 | LW0d | crime.md ownership, jail, build plan, open questions | docs | LW0a-c | **done 2026-11-26** (crime.md ownership, jail `JailClock`, build plan, questions) |
 | LW0e | crime-adapter.md: decision 14, A2 at delivery, options | docs | LW0a, LW0b | **done 2026-11-26** (crime-adapter.md 28 KB; history in archive) |
+| LW0f | Per-jurisdiction bounties (owner Q3 changed 2026-11-26): crime-adapter.md jurisdictions as data (regions, settlements, factions), script single-value mapping; crime.md touches; research OpenMW + Tamriel Rebuilt, Skyrim holds, KCD2, RDR2 | docs | LW0e | doccheck |
 
 ### Stage 1: locks, keys, traps, owned things
 
@@ -191,6 +192,12 @@ AI43 (`Wanted` spread at gossip speed) and AI44 reputation complete it.
 | Stats, services, save, anim | `Counter`, `DealVeto`, `sf_save_bevy`; Kimodo pick/search/surrender clips | `StolenVeto`, `sf/crime` |
 
 ## 7. Owner questions (each with a recommended answer)
+
+**Answered (owner 2026-11-26):** Q1, Q2 (no bounty until a guard identifies you, Modern only), Q4, Q5 as recommended.
+**Q3 changed:** not one island-wide bounty: per-jurisdiction bounties (a Hla Oad bounty does not apply in Telvanni
+towns; Tamriel Rebuilt needs it too), Morrowind jurisdictions as data from regions, settlements and factions (Great
+House territories, Imperial legion towns); single-value script functions (`GetPCCrimeLevel`, `PayFine`...) read and
+write the jurisdiction the player is in (recommended; settle in LW0f).
 
 1. **Lockpicking and pickpocketing minigames: which feel?** Recommended: lockpick = rotate to a sweet spot (Skyrim,
    KCD2), skill and pick quality widen it, a wrong turn jams and snaps the pick loudly; pickpocket = KCD2 hold to

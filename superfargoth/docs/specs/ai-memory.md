@@ -212,4 +212,4 @@ Order and status: [docs/roadmaps/ai.md](../../../docs/roadmaps/ai.md) §4, stage
 ## Open questions
 
 1. **Can the player silence gossip?** Recommended: yes in Modern, a bribe or intimidate option makes one holder drop
-   one fact (people already told keep it); no planted lies (no mutation). Pending owner.
+   one fact (people already told keep it); no planted lies (no mutation). **Answered (owner 2026-11-26): yes, as recommended.**

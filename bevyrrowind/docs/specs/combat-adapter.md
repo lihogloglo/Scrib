@@ -198,7 +198,7 @@ Tactics(
 
 ## Non-lethal and mercy (C22, C23)
 
-Framework side: combat.md "Non-lethal and mercy" (C20, C21); Q10-Q15 pending owner, recommended answers designed in.
+Framework side: combat.md "Non-lethal and mercy" (C20, C21); Q11-Q15 answered as recommended (owner 2026-11-26); Q10 open, recommended answer designed in.
 - **Tags** (C22, Q10): `weapon_classes.ron` marks `HandToHand` and the blunt types (blunt 1H, blunt 2H close, blunt 2H
   wide) `NonLethal`; a record-id override list in the same file adds "subdue" items or a pack's own; blades, axes,
   spears, ranged and creature attacks stay `Lethal`. Spell damage is never a packet (effects-adapter.md): it kills.
