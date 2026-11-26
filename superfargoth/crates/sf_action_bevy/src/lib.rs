@@ -312,6 +312,7 @@ fn step_actions<G: GroundProbe + Resource>(
             refused: gate.map_or(ClassSet::EMPTY, |g| g.0),
             lock_target: lock.and_then(|l| l.0),
             soft_target: soft.and_then(|s| s.0),
+            seat: None,
         };
         sf_action::step(&ctx, &mut c.state, &c.command, &sense, &mut c.output);
         log_traversal_press(&rules.rules, &c.command, obstacle.as_ref(), &c.output);

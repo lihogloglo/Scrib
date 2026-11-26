@@ -2,6 +2,7 @@
 
 Format: `date | tried | result | verdict | commit or doc`. Newest first. Owner checks are IN- ids in `bevyrrowind/docs/visual-checks.md`.
 
+2026-11-26 | IN2a sit/stand in `sf_action`: `SeatSense`, `WarpTarget::{Slot, SlotExit}`, `Owner::Seated` + `ExitOn::Stand`, `SeatEntered/SeatExited` events, `SEAT_RULES` data | 7 new exact tests (sf_action 68 pass), clippy sf_action + sf_action_bevy clean | kept; IN2b glue next; seated save not yet | spec "As built (IN2a)"
 2026-11-26 | IN31b2 per-player focus: `FocusCandidates` -> `PlayerFocus`/`FocusState` (stabilized target, verbs frozen while held, `list_open`), `command()` -> `ActivateCommand`; `offered_verbs` shared with validation | 6 new headless tests (shell 21, core 39), clippy clean | kept; game wiring in IN32 | spec "As built (IN31b2)"
 2026-11-26 | IN31b1 activation pipeline: `ActivateCommand` validated on FixedUpdate -> `Activated`(+verb) -> scripts -> `ActivationSystems` gates -> `UseApproved`/`UseRefused`; `ScriptActivate` enters at the gates | 6 new headless tests (shell 15, core 39, sf_script_bevy 9); clippy, deny, hakari, bevy_variants [1] clean | kept; slot not yet on `UseApproved` | spec "As built (IN31b1)"
 2026-11-26 | IN31a-fix: shell hosts `owner_moved` from a claim-time anchor frame (`InteractionFrames`), re-insert ends holds on disabled/removed slots | 3 new headless tests (drift adds up, turn-only, re-insert), shell 9 + core 39 pass, clippy -D warnings clean | kept | spec "As built (IN31a)"

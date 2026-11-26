@@ -137,6 +137,7 @@ pub mod legacy {
                             warp: None,
                             forced: None,
                             lock: None,
+                            seat: None,
                         },
                         locomotion: b.locomotion,
                     }

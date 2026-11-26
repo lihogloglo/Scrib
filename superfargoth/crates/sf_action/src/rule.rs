@@ -58,8 +58,8 @@ impl Category {
     }
 }
 
-/// Who moves the gameplay body (action.md "Motion owners"). A1 built `Sim`, B2a `Warp`;
-/// `Docked`, `Clip` and `Physics` arrive with B3, E1 and the ragdoll work.
+/// Who moves the gameplay body (action.md "Motion owners"). A1 built `Sim`, B2a `Warp`, E1 `Clip`,
+/// `IN2a` `Seated`; `Docked` and `Physics` arrive with B3 and the ragdoll work.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Owner {
     #[default]
@@ -89,6 +89,13 @@ pub enum Owner {
         #[serde(default = "one")]
         rate: f32,
     },
+    /// Held in an interaction slot (interaction.md "Using a slot" 3, Docked-like): the root is pinned
+    /// where the enter warp ([`WarpTarget::Slot`]) landed and the mover is off (no gravity, stick or
+    /// steering; [`crate::ActionOutput::warp`] holds the pose). Requests don't latch while seated:
+    /// the stick past the deadzone, a Jump or an Interact press is the exit input, and the slot
+    /// sense going away ([`crate::Sense::seat`]) forces it; both fire its [`ExitOn::Stand`] exit.
+    /// The chain's slot is the loop.
+    Seated,
 }
 
 fn one() -> f32 {
@@ -145,6 +152,15 @@ pub enum WarpTarget {
     /// hand contact onto the top at the lip (where [`crate::LedgeGrip`] holds it), then the clip's own
     /// landing past it, pulled in to the probed run-out and down or up to the far floor.
     Vault,
+    /// Onto the held interaction slot's enter pose ([`crate::SeatSense::enter`]): the enter clip's
+    /// end is aligned onto the slot frame; refused ([`crate::Refused::Slot`]) with no slot sensed,
+    /// ([`crate::Refused::MaxCorrection`]) over `refuse_ratio`.
+    Slot,
+    /// Off the slot onto its exit pose ([`crate::SeatSense::exit`], the shell's `pick_exit`), else
+    /// (the sense is gone: invalidation) back onto the pose the user entered from
+    /// ([`crate::SeatState::back`]), else as baked. Never refused for its correction: a seated body
+    /// always stands up.
+    SlotExit,
 }
 
 /// Obstacle classes the shell's context probe reports (`sf_controller::Affordance`).
@@ -252,6 +268,9 @@ pub enum ExitOn {
     Touchdown,
     /// The body is off the ground (walked off an edge, knocked up).
     Airborne,
+    /// A [`Owner::Seated`] move's exit: the stick past the deadzone, a Jump or Interact press, or its
+    /// slot no longer sensed ([`crate::Sense::seat`] gone or another slot). Not on its first tick.
+    Stand,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -482,7 +501,7 @@ impl RuleSetBuilder {
             if let Owner::Warp { refuse_ratio, target, stand, .. } = r.owner {
                 let inset = match target {
                     WarpTarget::LedgeTop { inset } => inset,
-                    WarpTarget::Vault => 0.0,
+                    WarpTarget::Vault | WarpTarget::Slot | WarpTarget::SlotExit => 0.0,
                 };
                 let stand_ok = stand.is_none_or(|s| s.is_finite() && s > 0.0);
                 if !(refuse_ratio.is_finite() && refuse_ratio >= 0.0 && inset.is_finite() && stand_ok) {
@@ -491,6 +510,12 @@ impl RuleSetBuilder {
                 if r.slots.is_empty() || r.launch.is_some() {
                     errors.push(err(origin, r, "a Warp owner needs slots (its root path) and no launch".into()));
                 }
+            }
+            if r.owner == Owner::Seated && (r.slots.is_empty() || r.launch.is_some()) {
+                errors.push(err(origin, r, "a Seated owner needs a slot (its loop) and no launch".into()));
+            }
+            if r.owner != Owner::Seated && r.exits.iter().any(|e| e.on == ExitOn::Stand) {
+                errors.push(err(origin, r, "exit on Stand needs a Seated owner".into()));
             }
             if let Owner::Clip { root_scale, rate, .. } = r.owner
                 && !(root_scale.is_finite() && root_scale >= 0.0 && rate.is_finite() && rate > 0.0)

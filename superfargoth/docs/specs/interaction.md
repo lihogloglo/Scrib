@@ -478,6 +478,19 @@ the prompt offers exactly what is accepted); while held on an unchanged target t
 with no message keeps its state, an empty list clears focus. `FocusState::command(player, actor, choice)` builds the
 `ActivateCommand` (best verb + slot, a hold-list choice, or a def-less primary use). Game wiring: IN32.
 
+## As built (IN2a, 2026-11-26)
+
+Sit and stand in `sf_action` (`tests_seat.rs`, 7 exact tests via `step`). `Sense::seat: Option<SeatSense { target,
+slot, enter, exit }>` (poses from the feet, world axes; the shell fills it only while this user holds the claim, and
+on the same tick as the Interact press). `WarpTarget::Slot` lands on `enter` (no seat: `Refused::Slot`; over
+`refuse_ratio`: `MaxCorrection`); `Owner::Seated` + `ExitOn::Stand` hold the body (root pinned via the warp output,
+mover off) until the stick passes `deadzone`, Jump or Interact, or the seat sense is gone or changed (forced
+stand-up); `WarpTarget::SlotExit` lands on the sensed exit, else the pose recorded at entry, and is never refused (a
+seated body can't get stuck). `EventKind::SeatEntered(slot)` / `SeatExited(slot)` once each (target in the event):
+IN2b turns them into `occupy` / `release`. Rules are data in `seat_rules.ron` (`SEAT_RULES`: `interact.sit.enter`,
+`.loop`, `.exit`; not in `BASE_RULES`). `ActionState::seat` is `serde(skip)`: a save made while seated loads standing
+(the spec's `seated: Option<SlotRef>` in `CharacterSave` is still to do, with IN2b).
+
 ## Owner questions
 
 1. Destruction scope: every crate and barrel, or only some ("fragile" list per material)? Which weapons break what

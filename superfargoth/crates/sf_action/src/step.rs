@@ -15,7 +15,7 @@ use sf_anim::{RootChain, RootPath, RootPose, WarpPlan};
 
 use crate::ids::{CharacterId, ClockTime, MovesetKey, RuleKey, SlotKey, TagId, TargetId, Tick, TICK_HZ};
 use crate::rule::{Category, CompiledRule, ExitOn, Launch, StickSide, Mode, ObstacleClass, Owner, Phase, PrevKey, ProbeNeed, RuleSet, SquareUp, WarpTarget};
-use crate::state::{ActionClock, ActionState, CharacterParams, RATE_ONE, WarpState};
+use crate::state::{ActionClock, ActionState, CharacterParams, RATE_ONE, SeatState, WarpState};
 use crate::windows::{Gates, SlotSource, WindowKind, buffering, gates, locate, open_windows};
 
 /// Extra choose rounds when a move ends or exits on its first tick (bounded settle).
@@ -59,6 +59,23 @@ pub struct Sense {
     /// The attack's soft-aim target relative to the feet (world axes; combat.md "Lock-on and
     /// camera", C4): with no lock, an Attack's `Turn` windows aim at it.
     pub soft_target: Option<Vec3>,
+    /// The interaction slot this character holds the claim on (`IN2a`): the interaction shell fills
+    /// it only while this user holds the claim (the step checks no claims). [`WarpTarget::Slot`]
+    /// enters it, [`Owner::Seated`] holds it while it stays sensed.
+    pub seat: Option<SeatSense>,
+}
+
+/// A claimed interaction slot (a seat, a bench end, a workstation), as the interaction shell
+/// senses it. Poses are relative to the feet this tick, world axes, world yaw (like [`Obstacle`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SeatSense {
+    pub target: TargetId,
+    /// The slot index on the target (`sf_interaction::SlotRef::slot`).
+    pub slot: u8,
+    /// The slot frame the enter clip's end lands on.
+    pub enter: RootPose,
+    /// Where standing up lands (the shell's `pick_exit`).
+    pub exit: RootPose,
 }
 
 /// An obstacle ahead, classified by the shell's context probe. Positions are relative to the
@@ -102,6 +119,12 @@ pub enum EventKind {
     Land,
     /// "Press to use": a request to activate the focus target. Host-validated in co-op.
     Activate(TagId),
+    /// The enter warp landed in slot `.0` of the event's target ([`Owner::Seated`] began): the
+    /// interaction shell occupies the claim. Once per seating.
+    SeatEntered(u8),
+    /// The exit move ended (or anything else took the body out of the slot): the shell releases
+    /// it. Once per [`EventKind::SeatEntered`]; an enter cut short before landing sends neither.
+    SeatExited(u8),
 }
 
 /// Gameplay events are data: sent, replayed, de-duplicated by (tick, source, kind).
@@ -138,6 +161,8 @@ pub enum Refused {
     Prev,
     /// Not locked on, or the stick is on another side of the target ([`crate::Entry::lock`]).
     Lock,
+    /// A [`WarpTarget::Slot`] move with no interaction slot sensed ([`Sense::seat`]).
+    Slot,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -347,6 +372,11 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
     // 2. Clock.
     state.clock.advance();
     let mut cur = rules.index_of(state.mov);
+    // Seated (IN2a): requests don't latch; the stick, a Jump or an Interact press (or the slot
+    // sense going away) is the exit input ([`ExitOn::Stand`]).
+    let seated = cur.is_some_and(|i| rules.at(i).rule.owner == Owner::Seated);
+    let stand = seated
+        && (stick_active || cmd.buttons.pressed.contains(ActionClass::Jump) || cmd.buttons.pressed.contains(ActionClass::Interact) || seat_lost(state.seat.as_ref(), sense.seat.as_ref()));
     let gates_of = |cur: Option<usize>, state: &ActionState| {
         cur.map_or(Gates { ended: true, ..Gates::OPEN }, |i| {
             let r = rules.at(i);
@@ -356,7 +386,9 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
 
     // 3. Buffer: latch inside accept; an airborne Jump goes to the jump buffer instead.
     let g = gates_of(cur, state);
-    for c in cmd.buttons.pressed.intersection(ClassSet::LATCHABLE).iter() {
+    let g = if seated { Gates { accept: ClassSet::EMPTY, ..g } } else { g };
+    let pressed = if seated { ClassSet::EMPTY } else { cmd.buttons.pressed.intersection(ClassSet::LATCHABLE) };
+    for c in pressed.iter() {
         if c == ActionClass::Jump && !sense.grounded && !coyote {
             state.timers.jump_pressed = Some(tick);
         } else if g.accept.contains(c) {
@@ -409,6 +441,7 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
                     ExitOn::End => g.ended,
                     ExitOn::Touchdown => landed && !fresh,
                     ExitOn::Airborne => !sense.grounded && !fresh,
+                    ExitOn::Stand => stand && !fresh,
                 });
                 // An automatic move lasts while its entry holds; a hold move while its class is held.
                 let released = r.holds() && !fresh && cmd.buttons.held.intersection(r.classes).is_empty();
@@ -445,7 +478,7 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
                 .entry(r)
                 .and(if prev_ok(r, cur_rule) { Ok(()) } else { Err(Refused::Prev) })
                 .and(if gated { Err(Refused::Gate) } else { Ok(()) })
-                .and_then(|()| plan_warp(ctx, r, sense));
+                .and_then(|()| plan_warp(ctx, r, sense, state.seat.as_ref()));
             match checked {
                 Ok(plan) => {
                     winner = Some((i, plan));
@@ -488,7 +521,7 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
     let fresh = out.started;
     write_clip(ctx, cur, cmd, sense, fresh, out);
 
-    write_output(ctx, state, cur, &facts, out);
+    write_output(ctx, state, cur, &facts, sense.yaw, out);
 }
 
 /// The stick steers the Sim owner unless the rule says no; never a Warp or Clip owner.
@@ -652,13 +685,51 @@ impl RootPath for StandAt<'_> {
     }
 }
 
-/// A Warp rule's plan (validators `EndPoseFree` via the probe's room check, `MaxCorrection`):
-/// start at the feet facing into the face; `LedgeTop`: target on top `inset` past the lip (kept a
-/// radius inside a shallower top); `Vault`: [`Vault::plan`]. Other owners plan nothing.
-fn plan_warp(ctx: &StepCtx<'_>, r: &CompiledRule, sense: &Sense) -> Result<Option<WarpState>, Refused> {
+/// A Warp rule's plan: [`plan_slot`] for the seat targets, else [`plan_obstacle`]. Other owners
+/// plan nothing.
+fn plan_warp(ctx: &StepCtx<'_>, r: &CompiledRule, sense: &Sense, seat: Option<&SeatState>) -> Result<Option<WarpState>, Refused> {
     let Owner::Warp { target, profile, refuse_ratio, .. } = r.rule.owner else {
         return Ok(None);
     };
+    match target {
+        WarpTarget::Slot | WarpTarget::SlotExit => plan_slot(ctx, r, target, (profile, refuse_ratio), sense, seat).map(Some),
+        WarpTarget::LedgeTop { .. } | WarpTarget::Vault => plan_obstacle(ctx, r, target, profile, refuse_ratio, sense).map(Some),
+    }
+}
+
+/// An interaction slot's warp, from the feet at their current yaw: `Slot` onto the sensed enter
+/// pose (refused with none, or over `refuse_ratio`); `SlotExit` onto the sensed exit, else the
+/// pose the user entered from, else the clip's own end (never refused).
+fn plan_slot(
+    ctx: &StepCtx<'_>,
+    r: &CompiledRule,
+    target: WarpTarget,
+    (profile, refuse_ratio): (sf_anim::WarpProfile, f32),
+    sense: &Sense,
+    seat: Option<&SeatState>,
+) -> Result<WarpState, Refused> {
+    let start = RootPose::new(Vec3::ZERO, sense.yaw);
+    let plan = if target == WarpTarget::Slot {
+        let s = sense.seat.ok_or(Refused::Slot)?;
+        with_root_path(r, ctx.slots, |path| WarpPlan::try_new(path, start, s.enter, profile, refuse_ratio))
+            .ok_or(Refused::NoRootPath)?
+            .map_err(|_| Refused::MaxCorrection)?
+    } else {
+        let held = match (seat, sense.seat) {
+            (Some(s), Some(x)) if x.target == s.target && x.slot == s.slot => Some(x.exit),
+            (Some(s), _) => Some(s.back),
+            (None, x) => x.map(|x| x.exit),
+        };
+        with_root_path(r, ctx.slots, |path| WarpPlan::new(path, start, held.unwrap_or_else(|| start.then(path.root_at(path.duration()))), profile))
+            .ok_or(Refused::NoRootPath)?
+    };
+    Ok(WarpState { plan, grip: None })
+}
+
+/// An obstacle warp (validators `EndPoseFree` via the probe's room check, `MaxCorrection`): start
+/// at the feet facing into the face; `LedgeTop`: target on top `inset` past the lip (kept a
+/// radius inside a shallower top); `Vault`: [`Vault::plan`].
+fn plan_obstacle(ctx: &StepCtx<'_>, r: &CompiledRule, target: WarpTarget, profile: sf_anim::WarpProfile, refuse_ratio: f32, sense: &Sense) -> Result<WarpState, Refused> {
     let o = sense.obstacle.ok_or(Refused::Probe)?;
     let into = Vec3::new(-o.normal.x, 0.0, -o.normal.z).normalize_or_zero();
     if into == Vec3::ZERO {
@@ -684,10 +755,11 @@ fn plan_warp(ctx: &StepCtx<'_>, r: &CompiledRule, sense: &Sense) -> Result<Optio
             }
             (plan, false)
         }
+        WarpTarget::Slot | WarpTarget::SlotExit => return Err(Refused::Probe),
     };
     // Hands on the lip (B2b), from the slot clip's baked hand contacts.
     let grip = with_root_path(r, ctx.slots, |path| LedgeGrip::plan(path, &plan, lip, into, mirror)).flatten();
-    Ok(Some(WarpState { plan, grip }))
+    Ok(WarpState { plan, grip })
 }
 
 /// A vault's measured obstacle, for [`Vault::plan`].
@@ -761,7 +833,7 @@ impl Vault<'_> {
 const VAULT_REACH_SLACK: f32 = 0.3;
 
 /// 10. Output: move, slot chain, playhead, and the "press to use" prompt.
-fn write_output(ctx: &StepCtx<'_>, state: &ActionState, cur: Option<usize>, facts: &Facts, out: &mut ActionOutput) {
+fn write_output(ctx: &StepCtx<'_>, state: &ActionState, cur: Option<usize>, facts: &Facts, yaw: f32, out: &mut ActionOutput) {
     write_warp(ctx, state, cur, out);
     let rules = ctx.rules;
     out.rule = state.mov;
@@ -774,6 +846,16 @@ fn write_output(ctx: &StepCtx<'_>, state: &ActionState, cur: Option<usize>, fact
     out.slot = at.slot;
     out.chain = at.chain;
     out.playhead = at.local.secs();
+    if r.rule.owner == Owner::Seated {
+        // Pinned where the enter landed (the move's start feet), the loop clip wrapped on its root
+        // path's length. Interact stands up here: no prompt, nothing buffers.
+        let yaw = state.seat.map_or(yaw, |s| s.yaw);
+        let len = at.slot.and_then(|k| ctx.slots.root(k)).map_or(0.0, RootPath::duration);
+        let progress = if len > 1e-6 { out.playhead.rem_euclid(len) } else { out.playhead };
+        out.warp = Some(WarpOutput { root: RootPose::new(Vec3::ZERO, yaw), progress, settle: false });
+        out.buffering = ClassSet::EMPTY;
+        return;
+    }
     if let Some(f) = facts.focus {
         let ready = gates(r, ctx.slots, state.clock.elapsed).accept.contains(ActionClass::Interact);
         out.prompt = rules
@@ -845,8 +927,17 @@ fn start(
     if r.rule.redo_ticks > 0 {
         state.timers.redo.push((r.key, Tick(tick.0.wrapping_add(u32::from(r.rule.redo_ticks)))));
     }
+    if let Some(left) = seat_chain(r, state, sense) {
+        out.events.push(event(Some(left.target), EventKind::SeatExited(left.slot)));
+    }
     let focus = r.focus.as_ref().and(sense.focus);
     out.events.push(event(focus.map(|f| f.target), EventKind::MoveStart(r.key)));
+    if r.rule.owner == Owner::Seated
+        && let Some(seat) = state.seat.as_mut().filter(|s| !s.entered)
+    {
+        seat.entered = true;
+        out.events.push(event(Some(seat.target), EventKind::SeatEntered(seat.slot)));
+    }
     if let Some(f) = focus {
         out.events.push(event(Some(f.target), EventKind::Activate(f.tag)));
     }
@@ -861,6 +952,36 @@ fn start(
         out.events.push(event(None, EventKind::Launch));
     }
     out.started = true;
+}
+
+/// The seat chain (`IN2a`) on a move start, before its `MoveStart`: a [`WarpTarget::Slot`] move
+/// records the slot it enters ([`SeatState`]); a [`Owner::Seated`] or [`WarpTarget::SlotExit`] move
+/// keeps it; any other move leaves the slot and returns it if the enter had landed (the caller
+/// sends [`EventKind::SeatExited`], once).
+fn seat_chain(r: &CompiledRule, state: &mut ActionState, sense: &Sense) -> Option<SeatState> {
+    if matches!(r.rule.owner, Owner::Seated | Owner::Warp { target: WarpTarget::SlotExit, .. }) {
+        return None;
+    }
+    let left = state.seat.take().filter(|s| s.entered);
+    if let Owner::Warp { target: WarpTarget::Slot, .. } = r.rule.owner {
+        state.seat = sense.seat.map(|s| SeatState {
+            target: s.target,
+            slot: s.slot,
+            back: RootPose::new(-s.enter.position, sense.yaw),
+            yaw: s.enter.yaw,
+            entered: false,
+        });
+    }
+    left
+}
+
+/// The held slot is no longer sensed (gone, or the shell reports another one): a seated move
+/// stands up at once. No seat memory (a loaded save) counts as lost.
+fn seat_lost(seat: Option<&SeatState>, sensed: Option<&SeatSense>) -> bool {
+    match (seat, sensed) {
+        (Some(s), Some(x)) => x.target != s.target || x.slot != s.slot,
+        _ => true,
+    }
 }
 
 /// The lock target's planar direction from the feet (world XZ as x, y), unless standing on it.

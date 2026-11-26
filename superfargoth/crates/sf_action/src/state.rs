@@ -93,6 +93,28 @@ pub struct ActionState {
     pub forced: Option<Forced>,
     /// The lock-on target (stable id); the shell senses its position ([`crate::Sense::lock_target`]).
     pub lock: Option<TargetId>,
+    /// The interaction slot this character is entering, seated in or leaving (`IN2a`): set when a
+    /// [`crate::WarpTarget::Slot`] move starts, cleared when a move outside the seat chain starts.
+    /// Not serialized yet, as [`ActionState::warp`]: a save while seated loads with none, and the
+    /// seated move then stands up as baked with no exit event (the shell re-claims nothing).
+    #[serde(skip)]
+    pub seat: Option<SeatState>,
+}
+
+/// The slot a character sits in ([`ActionState::seat`]).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SeatState {
+    pub target: TargetId,
+    /// The slot index on the target (`sf_interaction::SlotRef::slot`).
+    pub slot: u8,
+    /// The pose the user entered from, relative to the seated feet (world axes, world yaw): the
+    /// exit lands here when the slot sense is gone ([`crate::WarpTarget::SlotExit`]).
+    pub back: sf_anim::RootPose,
+    /// The seated yaw (the enter pose's), radians: the [`crate::Owner::Seated`] hold faces it.
+    pub yaw: f32,
+    /// The enter warp landed ([`crate::EventKind::SeatEntered`] sent): leaving sends
+    /// [`crate::EventKind::SeatExited`].
+    pub entered: bool,
 }
 
 /// A forced move request ([`ActionState::forced`]).
@@ -126,6 +148,7 @@ impl ActionState {
             warp: None,
             forced: None,
             lock: None,
+            seat: None,
         }
     }
 }

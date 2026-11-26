@@ -91,7 +91,7 @@ Stages 2 and 3 run in parallel after Stage 1; Stage 6 can start any time (IN20 n
 | IN31a | Shell part 1: new `sf_interaction_bevy`, `Claims` + `PointIndex` resources, claim/index request messages applied as one sorted batch on `FixedUpdate`, lease ticks, `InteractionEvent` out, live `interact.*` binding | `sf_interaction_bevy` | IN0a, IN0b | **done 2026-11-26** (6 headless tests; spec "As built (IN31a)") |
 | IN31b | Shell part 2: per-player `FocusStabilizer`, best verb + hold list, `Activate` → `Activated` (+ verb) → gates → default | `sf_interaction_bevy` | IN31a | **done 2026-11-26** (b1 activation pipeline, b2 per-player focus; 12 tests; spec "As built (IN31b1)", "(IN31b2)") |
 | IN32 | Adapter defs (census) + each existing class's activation as a default verb, Classic switches | `mw_interaction` | IN31, IN29 | exact per class, unchanged; def counts |
-| IN2 | Player sits/stands: Interaction move, `Seated`, side entrances, Kimodo clips | `sf_interaction`, `sf_action` | IN31 | exact via `step`; owner IN-2 |
+| IN2 | Player sits/stands: Interaction move, `Seated`, side entrances, Kimodo clips | `sf_interaction`, `sf_action` | IN31 | **a done 2026-11-26** (sf_action sit/stand moves, 7 exact tests; spec "As built (IN2a)"); b glue next; owner IN-2 waits for AN26 |
 | IN3 | Beds, lean spots, rest hook, hand IK | `sf_interaction_bevy`, `mw_interaction` | IN2 | hook once; owner IN-3 |
 | IN33 | Swing doors (doors, containers; "Locked" read from crime's `LockState`, crime.md decision 8), hinge, doorway queue, `WorldChange` | `sf_interaction(_bevy)`, `mw_interaction` | IN31 | exact transitions; owner IN-33 |
 

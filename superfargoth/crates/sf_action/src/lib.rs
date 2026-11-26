@@ -24,6 +24,11 @@
 //!
 //! Slice B2c: wall brace ([`WallBrace`]): a free hand plants on a wall within reach while moving
 //! along or into it, its target and weight fed to the same hand IK by the host (presentation only).
+//!
+//! Slice `IN2a`: sit and stand ([`SEAT_RULES`]): a [`WarpTarget::Slot`] warp onto the claimed slot the
+//! shell senses ([`Sense::seat`]), the [`Owner::Seated`] hold (root pinned, mover off, exit on the
+//! stick, Jump, Interact or the slot's loss), a [`WarpTarget::SlotExit`] warp off it, and
+//! [`EventKind::SeatEntered`] / [`EventKind::SeatExited`] for the interaction shell.
 
 mod brace;
 mod command;
@@ -40,6 +45,8 @@ mod tests;
 mod tests_lock;
 #[cfg(test)]
 mod tests_brace;
+#[cfg(test)]
+mod tests_seat;
 #[cfg(test)]
 mod tests_warp;
 
@@ -58,9 +65,9 @@ pub use rule::{
     Prev, PrevKey, ProbeNeed, RuleSet, RuleSetBuilder, SquareUp, StickSide, WarpTarget, WindowPolicy,
 };
 pub use state::{
-    ActionClock, ActionState, BodyMemory, CharacterParams, Forced, GaitTable, InputBuffer, ModeProfile, ModeState, RATE_ONE, Timers, WarpState,
+    ActionClock, ActionState, BodyMemory, CharacterParams, Forced, GaitTable, InputBuffer, ModeProfile, ModeState, RATE_ONE, SeatState, Timers, WarpState,
 };
-pub use step::{ActionEvent, ActionOutput, ClipOutput, EventKind, Focus, MAX_SETTLE, Obstacle, Prompt, Refusal, Refused, Sense, StepCtx, WarpOutput, step};
+pub use step::{ActionEvent, ActionOutput, ClipOutput, EventKind, Focus, MAX_SETTLE, Obstacle, Prompt, Refusal, Refused, SeatSense, Sense, StepCtx, WarpOutput, step};
 /// The root-path trait a [`SlotSource`] hands Warp moves (hosts implement or box it).
 pub use sf_anim::RootPath;
 pub use windows::{Gates, HitMask, Located, SlotInfo, SlotSource, SlotTable, Window, WindowKind, buffering, gates, locate, open_windows};
@@ -72,3 +79,8 @@ pub const BASE_RULES: &str = include_str!("base_rules.ron");
 /// The framework's traversal rules (B2: the waist and high mantles), added after [`BASE_RULES`] by hosts
 /// whose slot source has the traversal slots and whose shell senses obstacles ([`Sense::obstacle`]).
 pub const TRAVERSAL_RULES: &str = include_str!("traversal_rules.ron");
+
+/// The framework's seat rules (`IN2a`: sit enter, seated loop, stand up), added after [`BASE_RULES`] by
+/// hosts whose interaction shell senses claimed slots ([`Sense::seat`]); a missing clip's root path
+/// refuses the enter ([`Refused::NoRootPath`]), so the press falls through to plain activation.
+pub const SEAT_RULES: &str = include_str!("seat_rules.ron");
