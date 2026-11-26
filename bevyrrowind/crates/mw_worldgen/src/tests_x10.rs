@@ -266,6 +266,25 @@ fn shipped_height_curve_file_parses_to_the_defaults() {
 }
 
 #[test]
+fn shipped_climate_file_parses() {
+    use sf_worldgen::climate::ClimateFile;
+    let file = ClimateFile::parse_toml(include_str!("../../../worldgen/climate-x10.toml")).unwrap();
+    assert_eq!(file.declared.len(), 18);
+    assert!(file.overrides.is_empty());
+    // The values tuned on the island (WG-E1c3b); every other one is the framework default.
+    let tuned = ["capacity", "background_km", "drain_area_min_m2", "drain_area_max_m2"];
+    let defaults = ClimateFile::defaults();
+    for (d, def) in file.declared.iter().zip(&defaults.declared) {
+        assert_eq!(d.name, def.name);
+        assert_eq!(d.v == def.v, !tuned.contains(&d.name), "{}", d.name);
+    }
+    assert_eq!(file.climate.capacity, 75_000.0);
+    assert_eq!(file.climate.background_km, 50.0);
+    assert_eq!(file.climate.drain_area_min_m2, 1e4);
+    assert_eq!(file.climate.drain_area_max_m2, 1e7);
+}
+
+#[test]
 fn sea_connectivity_ignores_inland_depressions() {
     // 5x5: a wet border column on the west, an inland wet sample in the middle.
     let mut h = vec![10.0_f32; 25];

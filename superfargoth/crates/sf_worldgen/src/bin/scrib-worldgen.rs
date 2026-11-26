@@ -8,6 +8,7 @@
 //! scrib-worldgen stamp-volcano --base GUIDE --params FILE.toml --out DIR [--arms V1,V2]
 //! scrib-worldgen measure GUIDE... [--ref GUIDE]... [--base GUIDE] [--mask-sea] [--region X0,Y0,X1,Y1] [--summit auto|X,Y] --out FILE.md|json
 //! scrib-worldgen geology --base GUIDE --table GEOLOGY.toml [--set NAME=V]... --out DIR
+//! scrib-worldgen climate --base GUIDE [--params CLIMATE.toml] [--classes CLASSES.toml] [--set NAME=V]... --out DIR
 //! scrib-worldgen place --base GUIDE --geology GEOLOGY.toml [--recipe LANDFORMS.toml] [--set NAME=V]... --out DIR [--world-filter FILTER.toml]
 //! scrib-worldgen landforms GUIDE [--names NAMES.json] [--scale S] [--origin X,Y] [--set NAME=V]... --out DIR
 //! ```
@@ -140,6 +141,26 @@ enum Cmd {
         /// Geology table TOML (`[[unit]]`, `[shares]`, `[region."<name>"] shares`, `[values]`).
         #[arg(long)]
         table: PathBuf,
+        /// One declared value `name=value`; repeatable.
+        #[arg(long = "set")]
+        sets: Vec<String>,
+        /// Output folder.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Climate product (`sf_worldgen::climate_map`, WG-E1): temperature, precipitation, moisture and climate class
+    /// per guide sample, written to `<out>/climate/`.
+    Climate {
+        /// Base guide folder (v1).
+        #[arg(long)]
+        base: PathBuf,
+        /// Climate params TOML (`[params]`, optional `[override_columns]` and `[regions.*]`); default: the declared
+        /// defaults, no region override.
+        #[arg(long)]
+        params: Option<PathBuf>,
+        /// Class table TOML (`source`, `t_edges_c`, `p_edges_mm`, `classes`); default: the shipped Whittaker table.
+        #[arg(long)]
+        classes: Option<PathBuf>,
         /// One declared value `name=value`; repeatable.
         #[arg(long = "set")]
         sets: Vec<String>,
@@ -389,6 +410,25 @@ fn geology(base: PathBuf, table: PathBuf, sets: &[String], out: PathBuf) -> sf_w
     .map(|_| ())
 }
 
+fn climate(
+    base: PathBuf,
+    params: Option<PathBuf>,
+    classes: Option<PathBuf>,
+    sets: &[String],
+    out: PathBuf,
+) -> sf_worldgen::Result<()> {
+    use sf_worldgen::climate_map::{ClimateRequest, run_climate};
+    let sets = parse_sets(sets)?;
+    run_climate(&ClimateRequest {
+        base,
+        params,
+        classes,
+        sets,
+        out,
+    })
+    .map(|_| ())
+}
+
 fn measure(a: MeasureArgs) -> sf_worldgen::Result<()> {
     use sf_worldgen::measure::{MeasureParams, MeasureRequest, Summit, run_measure};
     let bad = |m: &str| sf_worldgen::Error::Invalid(m.into());
@@ -536,6 +576,19 @@ fn main() -> ExitCode {
             sets,
             out,
         } => match geology(base, table, &sets, out) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("scrib-worldgen: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Cmd::Climate {
+            base,
+            params,
+            classes,
+            sets,
+            out,
+        } => match climate(base, params, classes, &sets, out) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("scrib-worldgen: {e}");

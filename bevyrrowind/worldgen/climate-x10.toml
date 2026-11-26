@@ -1,0 +1,35 @@
+# WG-E1: climate of the "same map at 10x" island (guide x10hs-b2w: 3329 x 3073 samples at 18.288 m, 60.9 x 56.2 km,
+# 31.9 % land, summit 5.5 km). Spec: superfargoth/docs/specs/worldgen.md stage 6. Code: sf_worldgen::climate,
+# climate_map. Run from the repo root:
+#   target/release/scrib-worldgen climate --base <guide> --params bevyrrowind/worldgen/climate-x10.toml --out <dir>
+# Every value: { v, unit, min, max, source }. `Guess` = tuned on numbers only (WG-E1c3b, docs/ledger/worldgen.md
+# 2026-11-26), the owner's look settles them. Values not listed as tuned below are the framework defaults.
+#
+# Tuned here, on the real rasters (land percentiles of the run's summary line):
+# - `capacity` scales every rain value linearly and the wettest slope is about capacity x 0.9 / slope length, so it
+#   is a per-world value: set for a land p99 inside 2500-4000 mm/yr (the research note's windward-slope target).
+# - `background_km`: lowland rain is about carried moisture / background_km; set for a land median of temperate
+#   lowland rain (600-1000 mm/yr). Its range starts below the framework's 100 km: the island is only 61 km wide.
+# - `drain_area_min_m2` / `drain_area_max_m2`: the island's drainage areas are p50 2.9e3, p90 3.0e4, p99 1.2e6,
+#   max 5.2e7 m2; the ramp runs from the top fifth of the land (hollows and valley lines) to its main rivers.
+# Region overrides (the ash regions, the swamp coast) are not declared yet: they are a look decision.
+
+[params]
+lapse_k_per_km = { v = 6.5, unit = "K/km", min = 4, max = 9.8, source = "Industry(standard atmosphere lapse rate)" }
+sea_temperature_c = { v = 18, unit = "C", min = -5, max = 30, source = "Guess" }
+vertical_scale = { v = 1, unit = "ratio", min = 0.5, max = 4, source = "Guess" }
+latitude_k_per_km = { v = 0, unit = "K/km", min = -0.05, max = 0.05, source = "Guess" }
+wind_toward_deg = { v = 90, unit = "deg", min = 0, max = 360, source = "Guess" }
+capacity = { v = 75000, unit = "mm/yr km", min = 50000, max = 500000, source = "Guess" }
+capacity_per_k = { v = 0.07, unit = "1/K", min = 0.04, max = 0.08, source = "Industry(Clausius-Clapeyron, about 7 % per K)" }
+evaporation_km = { v = 60, unit = "km", min = 20, max = 200, source = "Guess" }
+land_recycling = { v = 0.15, unit = "ratio", min = 0, max = 0.5, source = "Guess" }
+fallout_km = { v = 6, unit = "km", min = 2, max = 20, source = "Industry(Smith-Barstad fallout time 1000 s at 6-10 m/s)" }
+background_km = { v = 50, unit = "km", min = 40, max = 1000, source = "Guess" }
+inflow_saturation = { v = 1, unit = "ratio", min = 0, max = 1, source = "Industry(mapgen4 map.ts: wind enters the map at humidity 1)" }
+pet_mm_per_c = { v = 58.93, unit = "mm/yr/C", min = 30, max = 90, source = "Industry(Holdridge potential evapotranspiration, 58.93 x biotemperature)" }
+drain_area_min_m2 = { v = 1e4, unit = "m2", min = 1e3, max = 1e7, source = "Guess" }
+drain_area_max_m2 = { v = 1e7, unit = "m2", min = 1e7, max = 1e11, source = "Guess" }
+drain_weight = { v = 0.5, unit = "ratio", min = 0, max = 1, source = "Guess" }
+override_blend_m = { v = 2000, unit = "m", min = 0, max = 20000, source = "Guess" }
+drain_flow_exponent = { v = 1.1, unit = "ratio", min = 0.5, max = 10, source = "Industry(Freeman 1991 p 1.1)" }

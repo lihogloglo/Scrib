@@ -181,3 +181,106 @@ fn writes_and_reads_back() {
     assert_eq!(build(&gd, &file, &table).unwrap().hash(), hash);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Writes the fixture guide (no region grid) as a v1 guide folder.
+fn write_guide_folder(dir: &Path) -> Guide {
+    let mut gd = guide();
+    gd.regions = None;
+    std::fs::create_dir_all(dir).unwrap();
+    let meta = serde_json::json!({
+        "format": 1,
+        "dims": [W, H],
+        "sample_spacing_m": 100.0,
+        "sea_level_m": 10.0,
+        "origin_m": [500.0, -300.0],
+    });
+    std::fs::write(dir.join("meta.json"), meta.to_string()).unwrap();
+    let bytes: Vec<u8> = gd.heights.iter().flat_map(|x| x.to_le_bytes()).collect();
+    std::fs::write(dir.join("heights.f32"), bytes).unwrap();
+    gd
+}
+
+#[test]
+fn runs_from_a_guide_folder_with_set_values() {
+    let dir = std::env::temp_dir().join(format!("sf_worldgen_climate_run_{}", std::process::id()));
+    let gd = write_guide_folder(&dir.join("guide"));
+    let request = |sets: &[(&str, f64)]| ClimateRequest {
+        base: dir.join("guide"),
+        params: None,
+        classes: None,
+        sets: sets.iter().map(|(k, v)| ((*k).to_string(), *v)).collect(),
+        out: dir.join("out"),
+    };
+    let table = ClassTable::whittaker();
+
+    // No --set: the declared defaults.
+    let plain = run_climate(&request(&[])).unwrap();
+    assert_eq!(plain.hash(), build(&gd, &ClimateFile::defaults(), &table).unwrap().hash());
+
+    // --set capacity: the value reaches the build and the written declaration.
+    let map = run_climate(&request(&[("capacity", 100_000.0)])).unwrap();
+    let mut file = ClimateFile::defaults();
+    file.declared.iter_mut().find(|d| d.name == "capacity").unwrap().v = 100_000.0;
+    file.climate = Climate::from_declared(&file.declared).unwrap();
+    assert_eq!(file.climate.capacity, 100_000.0);
+    assert_eq!(map.hash(), build(&gd, &file, &table).unwrap().hash());
+    assert_ne!(map.precipitation, plain.precipitation);
+    let out = dir.join("out").join("climate");
+    let read_json =
+        |name: &str| serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(out.join(name)).unwrap()).unwrap();
+    assert_eq!(read_json("meta.json")["blake3"], serde_json::json!(map.hash()));
+    let values = &read_json("climate.json")["values"];
+    assert_eq!(values["capacity"]["v"], serde_json::json!(100_000.0));
+    assert_eq!(values["capacity"]["source"], serde_json::json!("Input(--set)"));
+    assert_eq!(values["fallout_km"]["source"], serde_json::json!("Industry(Smith-Barstad fallout time 1000 s at 6-10 m/s)"));
+
+    // An unknown name and a value outside its declared range (capacity 5e4..5e5) are refused.
+    let err = run_climate(&request(&[("nope", 1.0)])).unwrap_err().to_string();
+    assert!(err.contains("unknown value nope"), "{err}");
+    assert!(run_climate(&request(&[("capacity", 1.0)])).is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn stage_times_cover_the_build() {
+    let (map, times) = build_timed(&guide(), &ClimateFile::defaults(), &ClassTable::whittaker()).unwrap();
+    let names: Vec<&str> = times.iter().map(|(name, _)| *name).collect();
+    assert_eq!(
+        names,
+        ["heights", "temperature", "rain", "overrides", "flood", "mfd", "moisture", "classes", "to f32"]
+    );
+    assert!(times.iter().all(|(_, s)| s.is_finite() && *s >= 0.0));
+    assert_eq!(map.hash(), build(&guide(), &ClimateFile::defaults(), &ClassTable::whittaker()).unwrap().hash());
+}
+
+#[test]
+#[ignore = "measurement: land drainage-area percentiles of the guide folder in SF_WORLDGEN_GUIDE (tuning of drain_area_min_m2 / drain_area_max_m2)"]
+fn measure_drainage_area_on_a_guide() {
+    let dir = std::env::var("SF_WORLDGEN_GUIDE").expect("set SF_WORLDGEN_GUIDE to a guide folder");
+    let gd = Guide::read(Path::new(&dir)).unwrap();
+    let heights = Grid {
+        w: gd.w,
+        h: gd.h,
+        spacing: gd.spacing_m,
+        data: gd.heights.iter().map(|&x| f64::from(x) - gd.sea_level_m).collect(),
+    };
+    let (wet, z) = routing_surface(&heights);
+    let exponent = ClimateFile::defaults().climate.drain_flow_exponent;
+    let (area, stuck) = mfd_area(gd.w, gd.h, gd.spacing_m, &z, &wet, exponent);
+    let mut land: Vec<f64> = area.iter().zip(&wet).filter(|(_, w)| !**w).map(|(a, _)| *a).collect();
+    land.sort_unstable_by(f64::total_cmp);
+    let q = |f: f64| land[((land.len() - 1) as f64 * f).round() as usize];
+    println!(
+        "drainage area, {} land samples of {} (cell {:.1} m2, stuck {stuck}), m2:",
+        land.len(),
+        area.len(),
+        gd.spacing_m * gd.spacing_m
+    );
+    for f in [0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 0.999, 0.9999, 1.0] {
+        println!("  p{:<6} {:.3e}", 100.0 * f, q(f));
+    }
+    for a in [1e3, 3e3, 1e4, 3e4, 1e5, 1e6, 1e7, 1e8, 1e9] {
+        let above = land.len() - land.partition_point(|x| *x < a);
+        println!("  >= {a:.0e} m2: {:.3} % of land", 100.0 * above as f64 / land.len() as f64);
+    }
+}
