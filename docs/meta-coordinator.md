@@ -71,6 +71,18 @@ The working rules are still `CONTRIBUTING.md`; this page only says how the coord
 - A bug the owner reports in passing: log it in the ROADMAP with the evidence (log path, scene, exe commit), offer
   a lane for it, don't guess its cause in the docs.
 
+## Context and succession
+
+- **Watch every orchestrator's context**, yours included: `bash tools/session_context.sh` prints each recent
+  session's context (last usage record of its transcript). Lane prompts ask for "ctx Nk" in every message to meta.
+  Check at least every hour and whenever a lane reports a commit. 2026-11-26: all four orchestrators went past 200k
+  in about 2 h, unnoticed until the owner asked.
+- At ~200k, tell the lane: no new slices, collect the running one, commit, hand off, archive, message meta. Then open
+  its successor (`<lane>-<n+1>`, prompt in `.sessions/_prompts/<name>.md`: continue from the archived handoff, same
+  communication and commit rules), so a finished session is always replaced while its lane has a queue.
+- Meta's own successor: update the "Current meta:" line in `.sessions/meta.md`, open the new meta window, and the new
+  meta announces its name to every lane. Lanes always address the meta named on that line.
+
 ## Meta's log and handoff
 
 - `.sessions/meta.md`: Scope, Status, then one line per relay, commit, decision and verdict, plus the map from
