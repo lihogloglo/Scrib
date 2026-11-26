@@ -2,7 +2,7 @@
 //! conversion): which key types the data uses, and whether quadratic
 //! (Bezier) tangents are stored per segment (Hermite on `[0, 1]`, the
 //! convention `mw_nif::anim` follows) or per second. Ignored by default:
-//! `cargo test -p mw_anim --release --test kf_curve_conventions -- --ignored --nocapture`.
+//! `cargo test -p mw_anim --release --test it kf_curve_conventions:: -- --ignored --nocapture`.
 
 use std::collections::BTreeMap;
 

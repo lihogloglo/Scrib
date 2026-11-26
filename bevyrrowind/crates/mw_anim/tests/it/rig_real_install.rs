@@ -132,7 +132,7 @@ fn masks_partition_the_skeleton_into_the_four_groups() {
 }
 
 fn quaternius_universal() -> Skeleton {
-    let bytes = include_bytes!("../../../../superfargoth/crates/sf_character/tests/data/quaternius_universal_rig.gltf");
+    let bytes = include_bytes!("../../../../../superfargoth/crates/sf_character/tests/data/quaternius_universal_rig.gltf");
     let src = GltfAnimImporter.import("quaternius_universal_rig.gltf", bytes).expect("fixture imports");
     Skeleton::new(&src.skeleton.expect("skin joints")).expect("valid").0
 }

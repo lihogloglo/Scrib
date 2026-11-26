@@ -1,5 +1,5 @@
 //! Snap and rotation-spline audit on the real game data. Ignored by default:
-//! `cargo test -p mw_anim --release --test kf_snaps -- --ignored --nocapture`
+//! `cargo test -p mw_anim --release --test it kf_snaps:: -- --ignored --nocapture`
 //! (`AUDIT_FILE=<substr>` limits the files and prints every snap).
 //!
 //! - *Snaps*: translation segments that jump far in one frame (root-motion

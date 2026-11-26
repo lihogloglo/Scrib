@@ -180,7 +180,7 @@ Verify: `cargo test -p mw_nif`, `cargo test -p mw_bake --test it skins_real_inst
 animation import (`mw_anim`, which divides each tangent by its segment's
 duration for `sf_anim`). Verified 2026-10-12 (kftangents) against OpenMW
 (`components/nif/nifkey.hpp`, GPL, fine here) and the base-game data; audit:
-`cargo test -p mw_anim --release --test kf_curve_conventions -- --ignored --nocapture`.
+`cargo test -p mw_anim --release --test it kf_curve_conventions:: -- --ignored --nocapture`.
 
 | Key type | Stored | As built |
 |---|---|---|
@@ -222,7 +222,7 @@ tangent differs from that chord by more than ¼ of the jump, so authored
 handles that didn't see the snap keep their shape. Cutting a group never
 interpolates across a snap at its ends either (`Start`/`Stop` keys bound
 the cut), so loops wrap from their own end pose. Audit:
-`cargo test -p mw_anim --release --test kf_snaps -- --ignored --nocapture`.
+`cargo test -p mw_anim --release --test it kf_snaps:: -- --ignored --nocapture`.
 Cut clips with translation overshoot past a segment's keys: max 3.77 →
 0.84 m, over 10 cm 44 → 33, over 1 cm 157 → 149; the rest are authored
 zero-chord handles (netch, hircine spear, slaughterfish `Hit1`). Cook
