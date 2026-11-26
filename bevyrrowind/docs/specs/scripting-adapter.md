@@ -1,7 +1,7 @@
 # Scripting adapter (MWScript interpreter)
 
 Status: design rewritten 2026-11-25 (DQ-1, docs only) for the interpreter we have. Built: front end (W1),
-native interpreter for dialogue results and console lines (W3, [rpg-adapter.md](rpg-adapter.md) "As built (W3)").
+native interpreter for dialogue results and console lines (W3, [archive/rpg-adapter-as-built.md](archive/rpg-adapter-as-built.md) "As built (W3, 2026-10-23)").
 Not running yet: object (local), global and start scripts (DQ-4..DQ-11, `docs/roadmaps/dialogue-quests.md` Stage 1).
 The October design (translate to Luau at bake time) is superseded:
 [archive/scripting-adapter-luau-translation-2026-10.md](archive/scripting-adapter-luau-translation-2026-10.md);
