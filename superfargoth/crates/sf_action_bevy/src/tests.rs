@@ -417,3 +417,92 @@ fn a_seat_aim_sits_with_no_press() {
     assert_eq!(entered[0].target, Some(seat.target));
     assert!(!seen.0.iter().any(|e| matches!(e.kind, sf_action::EventKind::SeatRefused(_))), "{:?}", seen.0);
 }
+
+/// `AN26c`: a slot table with only seat clip slots (no `interact.sit.*`); offers the same claimed
+/// slot as [`a_seat_aim_sits_with_no_press`] to a character with or without `aliases`, and returns
+/// its seat events, rules by tick and the output slots seen during the enter.
+fn sit_through_aliases(aliases: Option<ActionAliases>) -> (SeatEvents, Vec<Option<sf_action::SlotKey>>) {
+    let slots = SlotTable::new()
+        .with("loco.move", SlotInfo::looping())
+        .with("air.fall", SlotInfo::looping())
+        .with("air.jump", SlotInfo::once(0.3))
+        .with("air.land.normal", SlotInfo::once(0.25))
+        .with("air.land.hard", SlotInfo::once(0.5))
+        .with("seat.chair.b48.enter.front", SlotInfo::once(0.5))
+        .with("seat.chair.b48.loop", SlotInfo::looping())
+        .with("seat.chair.b48.exit.front", SlotInfo::once(0.5))
+        .with_root("seat.chair.b48.enter.front", std::sync::Arc::new(SitDown));
+    let mut b = sf_action::RuleSetBuilder::new();
+    b.add_ron(&sf_action::Origin::Framework, BASE_RULES).add_ron(&sf_action::Origin::Framework, sf_action::SEAT_RULES);
+    let rules = ActionRules { rules: b.build().expect("base and seat rules"), slots: Box::new(slots) };
+    let mut app = app(60);
+    app.insert_resource(rules)
+        .init_resource::<SeatEvents>()
+        .add_systems(FixedUpdate, write_idle.in_set(ActionSystems::Command))
+        .add_systems(FixedUpdate, record_seat.after(ActionSystems::Step));
+    let e = spawn(&mut app);
+    if let Some(aliases) = aliases {
+        app.world_mut().entity_mut(e).insert(aliases);
+    }
+    let pi = std::f32::consts::PI;
+    let seat = SeatSense {
+        target: sf_action::TargetId(9),
+        slot: 2,
+        enter: sf_anim::RootPose::new(Vec3::new(0.0, 0.0, 0.5), pi),
+        exit: sf_anim::RootPose::new(Vec3::ZERO, pi),
+    };
+    while app.world().resource::<SeatEvents>().1.len() < 10 {
+        app.update();
+    }
+    app.world_mut().entity_mut(e).insert(SeatAim(Some(seat)));
+    let (sit, enter) = (RuleKey::of("interact.sit.loop"), RuleKey::of("interact.sit.enter"));
+    let mut enter_slots = Vec::new();
+    for _ in 0..200 {
+        app.update();
+        let c = app.world().get::<ActionCharacter>(e).expect("character");
+        if c.state.mov == enter {
+            enter_slots.push(c.output.slot);
+        }
+        if app.world().resource::<SeatEvents>().1.contains(&sit) {
+            break;
+        }
+    }
+    let seen = app.world_mut().remove_resource::<SeatEvents>().expect("seat events");
+    (seen, enter_slots)
+}
+
+/// `AN26c`: aliases bind the seat rules' fixed slots to the seat's clip slots, so the step reads
+/// their timing and root path and sits; the output names the rule's slot, not the clip's.
+#[test]
+fn seat_aliases_sit_on_clip_slots() {
+    let mut aliases = SlotAliases::default();
+    for (rule, clip) in [
+        ("interact.sit.enter", "seat.chair.b48.enter.front"),
+        ("interact.sit.loop", "seat.chair.b48.loop"),
+        ("interact.sit.exit", "seat.chair.b48.exit.front"),
+    ] {
+        assert!(aliases.bind(sf_action::SlotKey::of(rule), sf_action::SlotKey::of(clip)));
+    }
+    let (seen, enter_slots) = sit_through_aliases(Some(ActionAliases(aliases)));
+    let (sit, enter) = (RuleKey::of("interact.sit.loop"), RuleKey::of("interact.sit.enter"));
+    assert!(seen.1.contains(&enter), "never entered: {:?}", seen.1);
+    let loop_at = seen.1.iter().position(|&k| k == sit).expect("sat within the ticks");
+    assert!(loop_at <= 10 + 40, "sat after {loop_at} ticks");
+    let entered: Vec<_> = seen.0.iter().filter(|e| e.kind == sf_action::EventKind::SeatEntered(2)).collect();
+    assert_eq!(entered.len(), 1, "{:?}", seen.0);
+    assert_eq!(entered[0].target, Some(sf_action::TargetId(9)));
+    assert!(!seen.0.iter().any(|e| matches!(e.kind, sf_action::EventKind::SeatRefused(_))), "{:?}", seen.0);
+    assert!(!enter_slots.is_empty(), "no enter tick sampled");
+    assert!(enter_slots.iter().all(|&s| s == Some(sf_action::SlotKey::of("interact.sit.enter"))), "{enter_slots:?}");
+}
+
+/// `AN26c`: the same seat clip slots with no aliases: the enter has no root path, so the offer is
+/// refused (`NoRootPath`, plain activation) and the body stays in locomotion.
+#[test]
+fn seat_clip_slots_without_aliases_refuse() {
+    let (seen, enter_slots) = sit_through_aliases(None);
+    assert!(seen.0.iter().any(|e| matches!(e.kind, sf_action::EventKind::SeatRefused(2))), "{:?}", seen.0);
+    assert!(!seen.0.iter().any(|e| matches!(e.kind, sf_action::EventKind::SeatEntered(_))), "{:?}", seen.0);
+    assert!(enter_slots.is_empty(), "entered: {enter_slots:?}");
+    assert!(seen.1.iter().skip(10).all(|&k| k == RuleKey::of("loco")), "{:?}", seen.1);
+}

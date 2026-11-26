@@ -274,6 +274,32 @@ Planned Bevy-free `sf_interaction` (M4): interaction points (seat, door, lever; 
 slots) and edges (ledge, ladder; authored or baked from collision per cell). Until the bake,
 ledges come from live `ContextProbes`. Sketch: [archive](archive/action-history.md#interaction-points-and-edges-b4-c1).
 
+### Per-character slot aliases (AN26c, 2026-11-26)
+
+A rule names fixed slots (`interact.sit.enter`), but the clip depends on what is used and by whom (seat family,
+height band, entry side; later bed sides, door push/pull, body-type styles). The slot source is one table for all
+characters, so each character carries **slot aliases**: a small map "rule slot -> clip slot" (`sf_action::SlotAliases`).
+The step reads timing and root paths through it (`Aliased`, a `SlotSource` wrapper: an aliased slot answers with its
+clip slot's `SlotInfo` and root path; a slot with no alias answers as before), and the presentation plays the aliased
+clip. `ActionOutput::slot` stays the rule's slot; whoever plays a clip resolves it with the same aliases.
+
+- **Not new gameplay state.** Aliases are an input of the tick, like the senses: a binder derives them from what the
+  character uses (seats: `sf_interaction_bevy::SeatClips`, itself derived from the claim) before `ActionSystems::Step`,
+  and rebuilds them after a load. A binder never rebinds an alias while its slot plays (the exit side is fixed for the
+  length of the stand-up), and removes its aliases when the use ends.
+- **Seat binder** (`sf_interaction_bevy`, `seat_clips.rs`): the naming contract `<family>[.<style>].b<cm>.{enter.<side>,
+  loop, exit.<side>}` (interaction.md "Using a slot", motion-generation.md "Interaction families"). `SeatClipSets`
+  indexes the host's slot names once; a use takes its family's set with the nearest band, else the fallback family's
+  (`seat.chair`, data), else nothing (the enter is refused `NoRootPath` as before: plain activation).
+- **Reuse check.** Bevy 0.20: its `AnimationGraph` has no per-instance clip substitution and our characters don't run
+  on it (wiki `engine/animation.md`). Crates: none, this is a map in front of our own `SlotSource`. Ours: ~40 lines.
+- **Industry comparison.** Unity `AnimatorOverrideController` (per-character table replacing a controller's
+  placeholder clips: the same shape). UE5: the ability plays the montage it is handed per activation (GAS
+  `PlayMontageAndWait`; a Smart Object's behaviour or a Contextual Animation scene picks the per-role animation by
+  selection criteria), and Linked Anim Layers swap a character's clip set per weapon. Match: a per-use table chosen by
+  data. Gap: UE selects among candidates by distance and facing (Contextual Animation selectors); ours picks by family
+  and band only, and the entry side comes from the interaction shell's `pick_entrance`.
+
 ## How mods add moves
 
 A mod ships, with no code:

@@ -30,6 +30,7 @@
 //! stick, Jump, Interact or the slot's loss), a [`WarpTarget::SlotExit`] warp off it, and
 //! [`EventKind::SeatEntered`] / [`EventKind::SeatExited`] for the interaction shell.
 
+mod alias;
 mod brace;
 mod command;
 mod grip;
@@ -50,6 +51,7 @@ mod tests_seat;
 #[cfg(test)]
 mod tests_warp;
 
+pub use alias::{Aliased, SlotAliases};
 pub use brace::{
     BRACE_BAND, BRACE_BEND, BRACE_CONFIRM, BRACE_FALL, BRACE_FAN, BRACE_FIRM_SPEED, BRACE_HALFLIFE, BRACE_LIGHT, BRACE_LOOKAHEAD, BRACE_MAX_NORMAL_Y, BRACE_MIN_SPEED,
     BRACE_PALM_GAP, BRACE_RISE, BRACE_STRAIGHT, BRACE_ELBOW_ROOM, BRACE_FINGERS_UP, BRACE_LEAD, BRACE_HEAD_ON, BRACE_SPREAD, BRACE_CHEST, BRACE_TUCK, BraceBody, HandBrace, PalmFrame, WallBrace,

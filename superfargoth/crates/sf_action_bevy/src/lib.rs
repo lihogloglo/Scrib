@@ -38,9 +38,9 @@ use bevy_time::{Fixed, Time, Virtual};
 use bevy_transform::components::Transform;
 use sf_action::{
     ActionClass, ActionOutput, ActionState, CharacterId, CharacterParams, ClassSet, ClipOutput, Command, Focus, Obstacle, ObstacleClass, RuleSet,
-    Sense, SlotSource, StepCtx, Tick, WarpOutput,
+    Aliased, Sense, SlotSource, StepCtx, Tick, WarpOutput,
 };
-pub use sf_action::{PlayerId, SeatSense, TICK_HZ};
+pub use sf_action::{PlayerId, SeatSense, SlotAliases, TICK_HZ};
 use sf_controller::{
     Affordance, ContextHit, ContextParams, ContextProbes, ContextQuery, ContextRequest, CorrectionParams, GroundProbe, KinematicMover, Locomotion,
     MoveInput, MoverMode, MoverParams, RenderCorrection, RootMotion,
@@ -128,6 +128,12 @@ impl ActionCharacter {
         Self { id, state, params, command: Command::default(), focus: None, output: ActionOutput::default() }
     }
 }
+
+/// The character's slot aliases (`AN26c`): rule slot -> clip slot, an input of the tick a binder
+/// writes before [`ActionSystems::Step`]. The step reads timing and root paths through them; the
+/// output's slot stays the rule's, so whoever plays the clip resolves it with the same aliases.
+#[derive(Component, Clone, Debug, Default)]
+pub struct ActionAliases(pub SlotAliases);
 
 /// A drawn root pose at the end of a tick (moved to `sf_controller` so the NPC movers of
 /// `sf_controller_bevy` interpolate with the same type: one mechanism).
@@ -287,7 +293,7 @@ impl ActionBody {
 /// How far ahead the ledge probe looks, m (the context probe's `ObstacleAhead` range).
 const OBSTACLE_RANGE_M: f32 = 1.5;
 
-/// What [`step_actions`] reads per character: the gate, the lock and soft-aim senses and the seat.
+/// What [`step_actions`] reads per character: the gate, the lock and soft-aim senses and the seat and the slot aliases.
 type StepQuery = (
     &'static mut ActionCharacter,
     &'static ActionBody,
@@ -295,6 +301,7 @@ type StepQuery = (
     Option<&'static LockAim>,
     Option<&'static SoftAim>,
     Option<&'static SeatAim>,
+    Option<&'static ActionAliases>,
 );
 
 #[allow(clippy::needless_pass_by_value)]
@@ -305,9 +312,15 @@ fn step_actions<G: GroundProbe + Resource>(
     mut characters: Query<StepQuery>,
 ) {
     let Some(rules) = rules else { return };
-    for (mut c, body, gate, lock, soft, seat) in &mut characters {
+    for (mut c, body, gate, lock, soft, seat, aliases) in &mut characters {
         let c = &mut *c;
-        let ctx = StepCtx { rules: &rules.rules, slots: &*rules.slots, params: &c.params, source: c.id };
+        let base: &dyn SlotSource = &*rules.slots;
+        let aliased = aliases.filter(|a| !a.0.is_empty()).map(|a| Aliased { base, aliases: &a.0 });
+        let slots: &dyn SlotSource = match &aliased {
+            Some(a) => a,
+            None => base,
+        };
+        let ctx = StepCtx { rules: &rules.rules, slots, params: &c.params, source: c.id };
         let v = body.loco.motion.velocity;
         // Only a jump or up press can start a traversal: probe then, not every tick.
         let wants = [ActionClass::Jump, ActionClass::Up].into_iter().any(|a| c.command.pressed(a) || c.command.held(a));
