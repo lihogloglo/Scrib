@@ -147,7 +147,7 @@ the `from` pose to the `to` pose; the body keeps model + correction. Ends 0/0, w
 - `review.html` in the output folder: a grid of MP4s per activity/phase/band with id, prompt, seed; the owner writes
   verdicts in `verdicts.toml` (`id = "keep" | "maybe" | "reject" | "note: ..."`, id = the clip's file stem), which MG9
   (later) turns into sources.ron candidates. `clip-preview --browse` writes it in the browsed folder: Y keep, N reject,
-  M maybe (each advances), Backspace clear, U next unrated, Z undo (the session's last verdict action, newest
+  M maybe (each advances), Backspace clear, U next unrated, Space / `.` / `-` `=` transport (AN46b), Z undo (the session's last verdict action, newest
   first: the entry's exact previous value and the view come back; `BrowseList::undo`, AN46a); sorted keys, existing entries kept, atomic save.
 
 #### Browse review: diagnosis (AN9, 2026-11-26)
@@ -176,7 +176,9 @@ Nothing reads `grades.json` (gates `skate`/`jerk`/`turn_mag`, `mirror_candidate`
    256 actions per session, single and group review; undo never switches the review mode).
 5. **Judging contact needs slow motion.** Skate and sliding feet are what rejects hinge on, yet there is no pause, frame
    step, speed or foot-contact marker; only a fixed loop. Fix: Space pause, `,` `.` step, `[` `]` speed, optional
-   contact-lock markers from the grader. **New** (with AN10: sync control is shared).
+   contact-lock markers from the grader. **Built 2026-11-26** (AN46b: Space pause, `.` one 1/30 s
+   frame forward, `-` / `=` speed over 0.1 / 0.25 / 0.5 / 1; one `Transport` scales every seat and the row clock; play
+   resumes on a new clip, a verdict key or G). Not built: a backward step, contact markers.
 6. **Wrong-way turns look like rejects.** `mirror_candidate` clips are usable relabels but show as plain bad takes.
    Fix: show the flag and preview the mirror. **AG2** (flag), mirror preview **new**.
 7. **A clip is seen on one body, free-standing.** Skate or foot trouble that only shows at slot speed or on another

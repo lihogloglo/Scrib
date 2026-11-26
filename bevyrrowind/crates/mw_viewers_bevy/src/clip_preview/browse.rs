@@ -101,6 +101,93 @@ impl UndoLog {
     }
 }
 
+/// Playback speeds Minus / Equal step through, slowest first.
+// tunables: const (dev-tool UI ladder, the speeds of a video scrubber)
+pub const SPEED_LADDER: [f32; 4] = [0.1, 0.25, 0.5, 1.0];
+
+/// One clip frame, the time a frame step (Period) advances: clips are cooked at 30 fps.
+// tunables: const (clip format frame time, 1/30 s)
+pub const FRAME_S: f32 = 1.0 / 30.0;
+
+/// The review playback transport: pause / resume, one frame step while paused, a speed
+/// out of [`SPEED_LADDER`]. [`Transport::scale`] gives the animator's time scale for a frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Transport {
+    paused: bool,
+    /// Index into [`SPEED_LADDER`].
+    speed: usize,
+    /// A frame step waiting for the next frame with a positive `dt`; steps never queue up.
+    step: bool,
+}
+
+impl Default for Transport {
+    fn default() -> Self {
+        Self { paused: false, speed: SPEED_LADDER.len() - 1, step: false }
+    }
+}
+
+impl Transport {
+    pub fn paused(&self) -> bool {
+        self.paused
+    }
+
+    /// The playing speed (a factor of real time).
+    pub fn speed(&self) -> f32 {
+        SPEED_LADDER[self.speed]
+    }
+
+    pub fn toggle_pause(&mut self) {
+        self.paused = !self.paused;
+        self.step = false;
+    }
+
+    pub fn slower(&mut self) {
+        self.speed = self.speed.saturating_sub(1);
+    }
+
+    pub fn faster(&mut self) {
+        self.speed = (self.speed + 1).min(SPEED_LADDER.len() - 1);
+    }
+
+    /// Step one frame forward; pressed while playing, it pauses first. Two presses before a
+    /// frame collapse to one step.
+    pub fn step_frame(&mut self) {
+        self.paused = true;
+        self.step = true;
+    }
+
+    /// A clip, group or mode change (rating and undo too): play resumes, the speed stays.
+    pub fn resume(&mut self) {
+        self.paused = false;
+        self.step = false;
+    }
+
+    /// The time scale for this frame of `dt` seconds: the speed while playing, `0.0` while
+    /// paused, and once per pending step `FRAME_S / dt` (exactly one clip frame whatever the
+    /// display rate). `dt <= 0` yields `0.0` and keeps the step pending.
+    pub fn scale(&mut self, dt: f32) -> f32 {
+        if !self.paused {
+            return self.speed();
+        }
+        if self.step && dt > 0.0 {
+            self.step = false;
+            return FRAME_S / dt;
+        }
+        0.0
+    }
+
+    /// The overlay's transport label: `"paused"`, `"x0.25"`, empty at speed 1 playing.
+    pub fn label(&self) -> String {
+        if self.paused {
+            "paused".to_owned()
+        } else if self.speed == SPEED_LADDER.len() - 1 {
+            String::new()
+        } else {
+            format!("x{}", self.speed())
+        }
+    }
+}
+
 /// The verdict filter navigation follows (cycled all -> unrated -> maybe -> keep).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum View {
@@ -957,6 +1044,93 @@ mod tests {
         let root = Path::new("gen");
         let paths = ["sit.chair/loop/b.bvh", "sit.chair/enter/a.bvh", "carry.sack/loop/c.bvh", "top.bvh", "sit.chair/exit/d.bvh"];
         BrowseList::from_paths(root, paths.iter().map(|p| root.join(p))).unwrap()
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)] // exact by design: ladder values, 1/30 over 1/60 is exactly 2 in f32
+    fn transport_speed_ladder_clamps_at_both_ends() {
+        let mut t = Transport::default();
+        assert_eq!(t.speed(), 1.0);
+        let mut down = Vec::new();
+        for _ in 0..4 {
+            t.slower();
+            down.push(t.speed());
+        }
+        assert_eq!(down, [0.5, 0.25, 0.1, 0.1]);
+        let mut up = Vec::new();
+        for _ in 0..4 {
+            t.faster();
+            up.push(t.speed());
+        }
+        assert_eq!(up, [0.25, 0.5, 1.0, 1.0]);
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)] // exact by design: ladder values, 1/30 over 1/60 is exactly 2 in f32
+    fn transport_scale_is_speed_playing_and_zero_paused() {
+        let mut t = Transport::default();
+        t.slower();
+        t.slower();
+        assert_eq!(t.scale(1.0 / 60.0), 0.25);
+        t.toggle_pause();
+        assert!(t.paused());
+        assert_eq!(t.scale(1.0 / 60.0), 0.0);
+        t.toggle_pause();
+        assert_eq!(t.scale(1.0 / 60.0), 0.25);
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)] // exact by design: ladder values, 1/30 over 1/60 is exactly 2 in f32
+    fn transport_frame_step_advances_one_clip_frame_once() {
+        let mut t = Transport::default();
+        t.toggle_pause();
+        t.step_frame();
+        assert_eq!(t.scale(1.0 / 60.0), 2.0);
+        assert_eq!(t.scale(1.0 / 60.0), 0.0);
+        // Two presses before a frame collapse to one step.
+        t.step_frame();
+        t.step_frame();
+        assert_eq!(t.scale(1.0 / 60.0), 2.0);
+        assert_eq!(t.scale(1.0 / 60.0), 0.0);
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)] // exact by design: ladder values, 1/30 over 1/60 is exactly 2 in f32
+    fn transport_frame_step_while_playing_pauses_and_steps_once() {
+        let mut t = Transport::default();
+        t.step_frame();
+        assert!(t.paused());
+        assert_eq!(t.scale(1.0 / 30.0), 1.0);
+        assert_eq!(t.scale(1.0 / 30.0), 0.0);
+        assert!(t.paused());
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)] // exact by design: ladder values, 1/30 over 1/60 is exactly 2 in f32
+    fn transport_zero_dt_keeps_the_step_pending() {
+        let mut t = Transport::default();
+        t.step_frame();
+        assert_eq!(t.scale(0.0), 0.0);
+        assert_eq!(t.scale(-1.0), 0.0);
+        assert_eq!(t.scale(1.0 / 60.0), 2.0);
+        assert_eq!(t.scale(1.0 / 60.0), 0.0);
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)] // exact by design: ladder values, 1/30 over 1/60 is exactly 2 in f32
+    fn transport_resume_keeps_speed_and_labels() {
+        let mut t = Transport::default();
+        assert_eq!(t.label(), "");
+        t.slower();
+        t.toggle_pause();
+        t.step_frame();
+        assert_eq!(t.label(), "paused");
+        t.resume();
+        assert!(!t.paused());
+        assert_eq!(t.speed(), 0.5);
+        assert_eq!(t.scale(1.0 / 60.0), 0.5);
+        t.slower();
+        assert_eq!(t.label(), "x0.25");
     }
 
     #[test]

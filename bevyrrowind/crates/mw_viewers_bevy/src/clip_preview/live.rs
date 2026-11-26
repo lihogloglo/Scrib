@@ -31,7 +31,7 @@ use sf_anim_graph::slot::LOOP_FOREVER;
 use sf_character::Readiness;
 use sf_character_bevy::{Character, CharacterReadiness};
 
-use super::browse::{BrowseClip, BrowseList, GROUP_MAX, GroupClock, GroupRated, Grades, Prov, Tally, Verdict, Verdicts, row_x};
+use super::browse::{BrowseClip, BrowseList, GROUP_MAX, GroupClock, GroupRated, Grades, Prov, Tally, Transport, Verdict, Verdicts, row_x};
 use super::cook::{self, ClipJob};
 use super::{ActorQuery, Phase, Preview, play_full};
 
@@ -104,8 +104,8 @@ pub(super) struct Browse {
     /// The last cook's status line, and the last verdict key's message.
     status: String,
     message: String,
-    /// The playing clip and when it last started (seconds of `Time`); `None` once it loops in the slot
-    /// (a cut loop, never replayed).
+    /// The playing clip and its clip seconds played since it last started (the transport's scaled
+    /// time); `None` once it loops in the slot (a cut loop, never replayed).
     playing: Option<(Arc<LateClip>, Option<f32>)>,
     /// Cut cycle takes into loops (L toggles; the raw take otherwise).
     loop_cut: bool,
@@ -113,6 +113,8 @@ pub(super) struct Browse {
     cut: String,
     /// Group review (AN10).
     group: GroupPlay,
+    /// Pause / frame step / speed, both review modes.
+    transport: Transport,
 }
 
 impl Browse {
@@ -138,7 +140,26 @@ impl Browse {
             loop_cut: true,
             cut: String::new(),
             group: GroupPlay::default(),
+            transport: Transport::default(),
         }
+    }
+
+    /// Space (pause / resume), Period (one frame, pausing first), Minus / Equal (slower / faster);
+    /// `true` if the overlay needs a refresh.
+    fn transport_keys(&mut self, keys: &ButtonInput<KeyCode>) -> bool {
+        let mut changed = false;
+        for (key, act) in [
+            (KeyCode::Space, Transport::toggle_pause as fn(&mut Transport)),
+            (KeyCode::Period, Transport::step_frame),
+            (KeyCode::Minus, Transport::slower),
+            (KeyCode::Equal, Transport::faster),
+        ] {
+            if keys.just_pressed(key) {
+                act(&mut self.transport);
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// Y / N / M / Backspace / U / Z; `true` if the overlay needs a refresh.
@@ -221,6 +242,10 @@ impl Browse {
         };
         let cut = if self.cut.is_empty() { String::new() } else { format!("{}\n", self.cut) };
         let l = if self.loop_cut { "L: raw take" } else { "L: loop cut" };
+        let transport = match self.transport.label() {
+            label if label.is_empty() => label,
+            label => format!("   [{label}]"),
+        };
         let (group, keys) = match &self.list.group {
             Some(s) => (
                 format!(
@@ -230,12 +255,12 @@ impl Browse {
                     s.selected + 1,
                     if s.final_round() { "   (final: Y keep / M maybe)" } else { "   (N rejects down to 2, then Y / M)" }
                 ),
-                "1-4 / Left/Right: select take  N reject  Y keep  M maybe  Bksp clear  Z undo  U next unrated   Up/Down: group   G: single clips",
+                "1-4 / Left/Right: select take  N reject  Y keep  M maybe  Bksp clear  Z undo  U next unrated   Up/Down: group   G: single clips   Space pause  . frame  -/= speed",
             ),
-            None => (String::new(), "Y keep  N reject  M maybe  Bksp clear  Z undo  U next unrated   G: group side by side   Left/Right: clip   Up/Down: activity"),
+            None => (String::new(), "Y keep  N reject  M maybe  Bksp clear  Z undo  U next unrated   G: group side by side   Left/Right: clip   Up/Down: activity   Space pause  . frame  -/= speed"),
         };
         format!(
-            "{group}{} ({}/{})   clip {}/{} of {} in all   {}\n{}   band: {}   {}\n{cut}prompt: {}\n{grade}verdict: {verdict}   activity: {tally}   all: {all}   {}\n\
+            "{group}{} ({}/{})   clip {}/{} of {} in all   {}{transport}\n{}   band: {}   {}\n{cut}prompt: {}\n{grade}verdict: {verdict}   activity: {tally}   all: {all}   {}\n\
              {keys}   C candidates only  V view   {l}   drag: orbit   wheel: zoom",
             activity.name,
             self.list.activity + 1,
@@ -357,6 +382,7 @@ impl Browse {
         }
         self.group.active = true;
         self.group.step = RowStep::Cook;
+        self.transport.resume();
         self.message.clear();
     }
 
@@ -366,6 +392,7 @@ impl Browse {
         let mut changed = false;
         if keys.just_pressed(KeyCode::KeyG) {
             self.list.leave_group(self.verdicts.as_ref().ok());
+            self.transport.resume();
             "single clips".clone_into(&mut self.message);
             return true;
         }
@@ -401,7 +428,8 @@ impl Browse {
             }
             changed = true;
         }
-        changed |= self.group_verdict_keys(keys);
+        let rated = self.group_verdict_keys(keys);
+        changed |= rated;
         // A take new on stage (another group, or the same group's next takes) needs its cook.
         let fresh = match (&before, &self.list.group) {
             (_, None) => false,
@@ -410,6 +438,11 @@ impl Browse {
         };
         if fresh {
             self.group.step = RowStep::Cook;
+        }
+        // New takes, a re-cook (L, filters) or a verdict action: play resumes, the speed stays.
+        // Selecting a take keeps a pause: the row on stage is the same.
+        if rated || self.group.step == RowStep::Cook {
+            self.transport.resume();
         }
         changed
     }
@@ -457,11 +490,12 @@ impl Browse {
     /// Group review's actors: park them once it ended; else place the row, cook new takes, start
     /// them together once every seat has its body, and run the shared clock.
     #[allow(clippy::too_many_lines)]
-    fn group_play(&mut self, dt: f32, actors: &mut Actors<'_, '_>, roots: &mut Roots<'_, '_>, windows: &mut Query<&mut Window>) {
+    /// `scale`: the transport's time scale for this frame ([`Transport::scale`]), the same for every seat.
+    fn group_play(&mut self, dt: f32, scale: f32, actors: &mut Actors<'_, '_>, roots: &mut Roots<'_, '_>, windows: &mut Query<&mut Window>) {
         let Some(stage) = self.list.group.clone() else {
             // Back to single clips: the copies hidden and stopped, seat 0 on the mark, the cursor's clip cooked.
             for ((mut animator, ..), parent) in &mut *actors {
-                animator.time_scale = 1.0;
+                animator.time_scale = scale;
                 if seat_of(roots, parent.parent()).is_some_and(|s| s > 0) {
                     let asset = Arc::clone(&animator.asset);
                     if let Some(slot) = asset.graph.slot(mw_graphs::build::slots::FULL) {
@@ -529,6 +563,8 @@ impl Browse {
         } else {
             let Some(clock) = self.group.clock.as_mut() else { return };
             clock.set_length(ends.iter().copied());
+            // The row clock runs on the transport's time, so a slowed row plays its takes out.
+            clock.rate = scale;
             clock.tick(dt)
         };
         let Some(clock) = self.group.clock else { return };
@@ -537,13 +573,15 @@ impl Browse {
             let Some(late) = self.group.clips[seat].clone() else { continue };
             if restart {
                 lod.forced = Some(AnimTier::A0);
-                animator.time_scale = 1.0;
+                animator.time_scale = scale;
                 if let Err(e) = play_full(&mut animator, &mut transform, root, late, BROWSE_BLEND_IN, 0) {
                     eprintln!("error: seat {seat}: {e}");
                 }
-            } else if clock.holds(take_end(&late)) && animator.time_scale != 0.0 {
+            } else if clock.holds(take_end(&late)) {
                 // A shorter take holds its last frame until the row restarts.
                 animator.time_scale = 0.0;
+            } else {
+                animator.time_scale = scale;
             }
         }
     }
@@ -574,6 +612,8 @@ pub(super) fn browse_step(
         return;
     }
     let Some(b) = preview.browse.as_mut() else { return };
+    let dt = time.delta_secs();
+    let transport_refresh = b.transport_keys(&keys);
     let group_refresh = if b.list.group.is_none() {
         let entering = keys.just_pressed(KeyCode::KeyG);
         if entering {
@@ -582,10 +622,12 @@ pub(super) fn browse_step(
         entering
     } else {
         b.group_keys(&keys)
-    };
+    } || transport_refresh;
     if b.group.active {
         let status = b.status.clone();
-        b.group_play(time.delta_secs(), &mut actors, &mut roots, &mut windows);
+        // Once per frame, the same scale for every seat (a row stays in step).
+        let scale = b.transport.scale(dt);
+        b.group_play(dt, scale, &mut actors, &mut roots, &mut windows);
         // Parking hands the actor back to single clips: their cook refreshes the overlay.
         if b.group.active && (group_refresh || b.status != status) {
             let text = b.overlay_text();
@@ -619,6 +661,10 @@ pub(super) fn browse_step(
         b.message = format!("loop cut {}", if b.loop_cut { "on" } else { "off: raw takes" });
     }
     let refresh = b.filter_keys(&keys) | b.verdict_keys(&keys);
+    // A clip change (navigation, L, a rating, undo, back from group review): play resumes, the speed stays.
+    if b.pending {
+        b.transport.resume();
+    }
     if refresh && !b.pending {
         let text = b.overlay_text();
         for mut t in &mut overlay {
@@ -627,7 +673,8 @@ pub(super) fn browse_step(
     }
     // Single-clip review plays on seat 0, the stage's own NPC.
     let Some(((mut animator, _, mut transform, root), _)) = actors.iter_mut().find(|(_, p)| seat_of(&roots, p.parent()) == Some(0)) else { return };
-    let now = time.elapsed_secs();
+    let scale = b.transport.scale(dt);
+    animator.time_scale = scale;
     if b.pending {
         b.pending = false;
         let Some(target) = b.target.as_ref() else { return };
@@ -646,9 +693,8 @@ pub(super) fn browse_step(
         }
         b.status = match cooked {
             Ok((late, looped)) => {
-                animator.time_scale = 1.0;
                 let s = format!("{:.2} s, cooked + retargeted in {:.0} ms", late.clip.duration, t.elapsed().as_secs_f32() * 1000.0);
-                b.playing = Some((late, (!looped).then_some(now)));
+                b.playing = Some((late, (!looped).then_some(0.0)));
                 s
             }
             Err(e) => {
@@ -672,14 +718,16 @@ pub(super) fn browse_step(
     }
     // The loop: replay from the mark just before the clip ends, inertialized from its last pose (a raw take has no
     // loop range; replaying after the end would first blend out to the idle, then cut to frame 0).
-    let Some((late, started)) = b.playing.as_mut() else { return };
+    let Some((late, played)) = b.playing.as_mut() else { return };
     // A cut loop walks on in the slot (the floor and camera follow it); only a raw take replays.
-    let Some(started) = started else { return };
-    if now - *started >= (late.clip.duration - BROWSE_REPLAY_LEAD).max(0.1) {
+    let Some(played) = played else { return };
+    // Clip time as the transport scales it: a slowed take plays out before it replays.
+    *played += dt * scale;
+    if *played >= (late.clip.duration - BROWSE_REPLAY_LEAD).max(0.1) {
         if let Err(e) = play_full(&mut animator, &mut transform, root, Arc::clone(late), BROWSE_BLEND_IN, 0) {
             eprintln!("error: {e}");
         }
-        *started = now;
+        *played = 0.0;
     }
 }
 
