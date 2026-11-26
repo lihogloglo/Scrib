@@ -204,6 +204,7 @@ sf_atmos_bevy = { path = "superfargoth/crates/sf_atmos_bevy", version = "0.1.0" 
 sf_audio = { path = "superfargoth/crates/sf_audio", version = "0.1.0" }
 sf_audio_bevy = { path = "superfargoth/crates/sf_audio_bevy", version = "0.1.0", features = ["settings", "weather"] }
 sf_bake = { path = "superfargoth/crates/sf_bake", version = "0.1.0" }
+sf_bigworld = { path = "superfargoth/crates/sf_bigworld", version = "0.1.0" }
 sf_calendar = { path = "superfargoth/crates/sf_calendar", version = "0.1.0" }
 sf_camera = { path = "superfargoth/crates/sf_camera", version = "0.1.0" }
 sf_camera_bevy = { path = "superfargoth/crates/sf_camera_bevy", version = "0.1.0" }

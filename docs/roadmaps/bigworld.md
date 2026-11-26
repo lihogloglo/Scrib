@@ -45,7 +45,7 @@ with no build time or crates taken from other lanes. **Every build slice is `[p]
 ## 4. Stages
 
 **Stage A: ceiling and core.** Decides whether the slot path holds before anything else is built.
-- [p] **BW-1** `sf_bigworld` core: tiles, ring planner, tier bands, 16 B instance format, `InstanceSource` plus a
+- [~] **BW-1** `sf_bigworld` core (owner go for Stage A, 2026-11-26): tiles, ring planner, tier bands, 16 B instance format, `InstanceSource` plus a
   synthetic source. NEW Bevy-free crate. Verify: exact tests, plus a measurement test printing ring counts.
 - [p] **BW-2** ceiling bench `forest_ceiling` (NEW `sf_bigworld_bevy`, example only). Verify: the orchestrator runs
   one run per arm (10⁵ / 3·10⁵ / 10⁶ slots). Stop rule in the spec.

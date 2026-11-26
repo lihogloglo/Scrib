@@ -1,0 +1,15 @@
+[package]
+name = "sf_bigworld"
+description = "Bevy-free big-world rendering core for superfargoth: scatter tiles, the 16-byte tile instance format, deterministic instance sources, tier bands by screen size and the ring planner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Bevy-free core (ARCHITECTURE §8b rule 1; spec `docs/specs/big-world-rendering.md`): pure functions of (tile, seed,
+# view), so every peer and the GPU producer's CPU twin agree. Listed in `.config/hakari.toml` final-excludes.
+[dependencies]
+sf_tunables.workspace = true
+
+[lints]
+workspace = true
