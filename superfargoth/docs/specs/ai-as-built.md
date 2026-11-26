@@ -73,6 +73,14 @@ that same sighting (same target, `LastSeen.tick`) gives `None`, so a guard who g
 MGS V); a newer sighting re-arms. `ReactGoal::operators` = `SearchGoal::operators` shape (Face; MoveTo + Face). Serde,
 no RNG. Tunables `ai.perception.react_*` (4, Guess), bound by AI8h2. 11 exact tests.
 
+## AI8c3: noise over portal paths (2026-11-26)
+
+- **As built (AI8c3, 2026-11-26):** `sf_ai_bevy` `PortalPaths` (default `NoisePropagation`) asks `path_distance` over
+  `NavWorldGraph` (≤ `ai.perception.noise_max_hops` = 3 links; links not open in `NavDoorStates` are closed doors) for
+  tier-2 listeners, other worldspaces included; the straight-line prefilter runs only in the same space; no graph: other
+  spaces unheard. UE hearing is straight-line; this is room/portal propagation (Wwise rooms & portals, OpenMW `heard`).
+  A Notify's delay reads the heard distance (path + `closed_door_m` per shut door): a shout behind a shut door lands later.
+
 ## AI8c1: hearing system `sf_ai_bevy` (2026-11-25)
 
 `hearing.rs` + `hearing_tests.rs` (9 pass; sf_ai_bevy 37). `NoiseEvent` message (spec fields + `notify`; `space:
@@ -145,6 +153,27 @@ next ray, then head rays of chests just blocked), `RayTickStats`, `SightCache`. 
 `SightConfig`; 3D cone angle (UE); a blocked chest out of budget casts only its head next tick; a full queue or cache
 refuses (fixed capacity, `prune` frees the cache); `SightTimer::poll` counts at most one period (no burst after a
 tier change); results sorted by (owner, kind, subject).
+
+## Perception profile: groggy option and `EffectivePerception` hook (AI8b, AI8g)
+
+Moved from `ai.md` "Perception profile".
+
+- **Groggy (option, decided in AI8b):** AI8a's built-in groggy (`AwarenessMeter::groggy`, `groggy_s`,
+  `groggy_alertness`) may become a framework `groggy` state pushed on `wake()` (`alertness` = `groggy_alertness`,
+  timed `groggy_s`), so a preset can make heavy sleepers; the effective config then sets `groggy_alertness` = 1 so it is
+  never applied twice. Keeping it as built is equally valid: nothing else depends on the choice.
+- **Hook: a cached resolved view, not scaling at each call.** `EffectivePerception` (component, `Copy`, ~120 B) holds
+  a scaled `AwarenessConfig` copy, `SightParams { range_m, lose_m, central_half_deg, peripheral_half_deg, rate,
+  darkness }`, `hearing_mul`, `SearchParams { ttl_s, error_m, widen_mps }` and `next_expiry`. Rebuilt only when the
+  profile or states change, `next_expiry ≤ tick` (one compare per actor per tick) or a tunable reloads: no per-tick
+  allocation or multiply (UE keeps per-instance sense configs the same way). Actors with neither profile nor states
+  have no component and read the global config. Hook points, AI8a unchanged (it already takes `&AwarenessConfig`;
+  callers pass `&eff.cfg`): `cfg.decay_curious / decay_suspicious / decay_searching` × `decay` (read by `update` and
+  `apply` through `settle`); `cfg.noise_gain` × `alertness` (read by `noise_gain`). AI8b's gain uses `eff.sight.rate`
+  (= `rate` × `sight_gain` × `alertness`), its range for the grid prefilter and `f_dist`, its cone for `f_cone`,
+  `darkness` on `light` before `DetectionRules::concealment`; `AwarenessMeter::alertness` stays the band/groggy factor
+  on top. AI8c passes `HeardNoise.loudness_m` = reach × `eff.hearing_mul` × `weather_mask`, so `noise_gain` and the
+  sleeper rule (`asleep_wake_m`) read it unchanged. AI8f reads `eff.search`.
 
 ## AI8g: perception profile core `sf_ai::profile` (2026-11-25)
 
@@ -400,3 +429,41 @@ raw vs. final drive score and `SubtaskFailed` (backtrack) rejections. `TraceStor
 Option<&mut TraceEntry>` is the off switch, so `decide` takes `Option<&mut TraceEntry>`; the ring recycles entries.
 Cap: watched (newest first), then admission order; later actors never evict earlier ones. `budget_us` is `None` with
 timings off (reproducible traces). `ai.trace` is registered in AI3; the core exposes `format_trace` and JSON dumps.
+
+## Original build plan, AI0-AI18 (2026-11-08)
+
+Moved from `ai.md` "Build plan"; the roadmap `docs/roadmaps/ai.md` holds the live plan.
+
+| Slice | Deliverable | Test |
+|---|---|---|
+| **AI0** docs | this spec, nav.md, ai-adapter.md; doc changes after the owner's go | doccheck |
+| **AI1** trace | `sf_ai::trace` ring buffer, JSON dump, `ai.trace` (debugger first) | synthetic trace dump exact |
+| **AI2** HTN core | records, typed state, decomposition, partial plans, rejections traced | exact decompositions |
+| **AI3** overlay | `sf_ai_bevy` gizmos, `ai.select`/`ai.tiers`, BRP | headless smoke; log line |
+| **AI4** directives | stack, `StackPolicy`, completion events | exact orders, policy double |
+| **AI5** saves | `sf/ai` section | round trip; old saves load |
+| **AI6** move executors (**built 2026-11-18**) | `MoveTo`, `Wait`, `Face` over `sf_nav` (then MA3 drops `PathWalkScaffold`) | headless goals reached, no stuck |
+| **AI7** drives (**built 2026-11-17**) | arbiter, considerations, curves, momentum | exact scores and switch ticks |
+| **AI8** perception | sight, hearing, stimuli, per-player awareness, batched LOS | exact on synthetic scenes |
+| **AI9** allocator | tiers 2/1, fixed `sim.cpu_tier` caps, pins; per-actor tier-2 cost in `ai.stats` | exact assignment + hysteresis; cost line logged |
+| **AI10** tier 0 | logical state, promotion resolve, `fast_forward` | tier invariance; no in-view promotion |
+| **AI11** schedules | records, `ScheduleRules`, quest-safety validator | exact pushes at window edges |
+| **AI12** doors | `Traverse` (open, cross, close behind), fade-only "unseen" rule (supersedes seamless SI14; seamless branch on the `sf_portal` core, SI2) | follower through both door modes (seamless on the core double) |
+| **AI13** memory | fact store, relations, decay, `MemoryRules`, bounded vendetta encounters, `sf/aimemory` | exact decay, eviction, round trip; vendetta pauses when its target is offline |
+| **AI14** smart objects | `UseSlot` + fragments (after the `sf_interaction` spec) | claim conflicts deterministic |
+| **AI15** combat | C6 operators, attack tokens, reactions | scripted duel, tokens respected |
+| **AI16** net | replicated AI state via `sf_net` (after N2) | loopback sees activity, barks |
+| **AI17** Luau | `@sf/ai` (when Lua is unparked) | push/done round trip |
+| **AI18** advisor seam | `Advisor`, protocol schema, null advisor, deadline | late answer ignored; saved |
+| AI19-AI25, AIM2 | world reactions: concerns, notice drive, discovery by tier, investigate/report, suspicion, tidy, consequences ([world-reactions.md](world-reactions.md)) | there |
+| **AIM** measurement | Floor and High cap sweeps ("Tiers and budget"), AI + mover + animation ms together | owner runs; provisional rows filled |
+
+Order: AI1 → AI2 → AI3 → AI4 → AI5 → AI6 (needs NV6, NV7a, NV8; worldspace from `WorldPosOf::location`, DECISIONS 2026-11-17) → AI7 → AI8 → AI9 → AI10 (needs NV12) →
+AI11 → AI12 (needs NV11, SI2) → AI13 → AI15 → AI14 → AI16-AI18 later. NV0 runs in parallel with AI1-AI3. The
+adapter's schedules pack (MA8) waits for AI10-AI12. AI10, AI12 and NV11 are seamless M9b (they replace SI13-SI15).
+
+## Doc changes for shared files (2026-11-08)
+
+The ready-to-paste DECISIONS bullets and the exact edits for net.md, CONTRIBUTING, streaming.md, action.md,
+ARCHITECTURE, ROADMAP (3.9, 3.10) and SYSTEMS.md are in `../research/ai-nav-decisions-2026-11-08.md` "Ready-to-paste
+edits for shared docs" (they supersede the list this section held).
