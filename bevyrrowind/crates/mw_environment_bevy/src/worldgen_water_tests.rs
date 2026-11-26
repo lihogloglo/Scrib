@@ -3,6 +3,7 @@
 #![allow(clippy::float_cmp)] // exact: copied levels
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bevy_app::App;
@@ -11,13 +12,16 @@ use bevy_camera::visibility::RenderLayers;
 use bevy_ecs::prelude::*;
 use bevy_mesh::{Mesh, VertexAttributeValues};
 use bevy_transform::components::Transform;
-use glam::DVec2;
+use glam::{DVec2, DVec3, Vec3};
+use sf_coords::WorldPos;
+use sf_water::{BedHeights, Capsule, WaterBody, WaterKind, WaterQuery, WaterSample, WaterShape, WaterWorld, WorldspaceWater};
 use sf_water_bevy::{WaterLook, WaterMeshSurface};
+use sf_world::Worldspace;
 use sf_world_bevy::WorldspaceRegistry;
 use sf_world_bevy::big_space::prelude::CellCoord;
-use sf_worldgen::water::GuideWater;
+use sf_worldgen::water::{GuideWater, Lake, River};
 
-use super::{GuideWaterBody, RiverFlow, add, river_speeds};
+use super::{GuideWaterBody, RIBBON_CHUNK, RiverFlow, add, guide_bodies, river_speeds};
 
 /// One lake (a 100 m square at 12.5 m with a 20 m square hole) and one 3-point river (20 → 18 → 15 m), guide frame.
 const WATER_JSON: &str = r#"{
@@ -47,7 +51,8 @@ fn run(dir: &Path, want: usize) -> App {
     app.init_resource::<Assets<Mesh>>().init_resource::<WorldspaceRegistry>();
     WorldspaceRegistry::ensure_in(app.world_mut(), &mw_world::ids::exterior());
     let guide = GuideWater::read(dir).expect("read water.json");
-    add(&mut app, guide, WaterLook::default());
+    let settings = super::settings(&mut app);
+    add(&mut app, guide, WaterLook::default(), settings);
     let start = Instant::now();
     loop {
         app.update();
@@ -295,4 +300,198 @@ fn flow_tunables_bind_live() {
         foam: 0.3,
     };
     assert_eq!(f, want, "every water.flow.* tunable reaches WaterFlowSettings");
+}
+
+// FL-5a: the guide's lakes and rivers in the CPU water query.
+
+/// A 100 m square lake at 120 m with a 20 m square hole, and a 3-point river (130 → 128 → 125 m), guide frame.
+fn query_guide() -> GuideWater {
+    GuideWater {
+        sea_level_m: 0.0,
+        lakes: vec![Lake {
+            id: 4,
+            level_m: 120.0,
+            outline: vec![[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]],
+            holes: vec![vec![[40.0, 40.0], [60.0, 40.0], [60.0, 60.0], [40.0, 60.0]]],
+        }],
+        rivers: vec![River {
+            id: 9,
+            kind: "river".into(),
+            points: vec![[200.0, 0.0, 10.0, 130.0], [200.0, 100.0, 12.0, 128.0], [250.0, 200.0, 14.0, 125.0]],
+        }],
+    }
+}
+
+/// Flat terrain at a fixed height.
+struct FlatBed(f32);
+
+impl BedHeights for FlatBed {
+    fn bed_height(&self, _: WorldPos) -> Option<f32> {
+        Some(self.0)
+    }
+}
+
+/// The exterior's query as `water.rs` builds it: the ocean at 0 m, then the guide's bodies, over `bed`.
+fn query_of(guide: &GuideWater, chunk: usize, bed: Option<f32>) -> WorldspaceWater {
+    let ext = mw_world::ids::exterior();
+    let mut ws = Worldspace::new("exterior");
+    ws.has_terrain = true;
+    ws.sea_level = Some(0.0);
+    let mut bodies = vec![WaterBody::from_worldspace(&ext, &ws).expect("the ocean")];
+    bodies.extend(guide_bodies(guide, &RiverFlow::default(), chunk));
+    let mut water = WorldspaceWater::new(bodies);
+    water.set_bed(bed.map(|b| Arc::new(FlatBed(b)) as Arc<dyn BedHeights>));
+    water
+}
+
+/// Engine position of guide `(x, y)` at height `h`.
+fn at(x: f64, y: f64, h: f64) -> WorldPos {
+    WorldPos::from_f64(DVec3::new(x, h, -y))
+}
+
+#[test]
+fn guide_bodies_records() {
+    let bodies = guide_bodies(&query_guide(), &RiverFlow::default(), 64);
+    let ids: Vec<&str> = bodies.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(ids, ["guide:lake:4", "guide:river:9:0"]);
+    let (lake, river) = (&bodies[0], &bodies[1]);
+    assert_eq!((lake.kind, lake.level, lake.priority), (WaterKind::Lake, 120.0, 20));
+    assert_eq!((river.kind, river.level, river.priority), (WaterKind::River, 130.0, 30));
+    assert_eq!(lake.waves, sf_water::WaveTerms::for_kind(WaterKind::Lake));
+    assert_eq!(river.waves, sf_water::WaveTerms::FLAT);
+    for b in &bodies {
+        assert_eq!(b.worldspace, mw_world::ids::exterior());
+        assert_eq!(b.optics.as_ref().map(|r| r.id.as_str()), Some(super::LOOK));
+        assert_eq!(b.flow, None);
+    }
+    let WaterShape::Polygon { outline, holes } = &lake.shape else { panic!("a lake is a polygon") };
+    assert_eq!(outline[2], DVec2::new(100.0, -100.0), "guide (x, y) at engine (x, −y)");
+    assert_eq!(holes[0][0], DVec2::new(40.0, -40.0));
+}
+
+#[test]
+fn guide_river_answers_the_query() {
+    let guide = query_guide();
+    let water = query_of(&guide, 64, Some(117.0));
+    let speeds = river_speeds(&guide.rivers[0].points, &RiverFlow::default());
+    #[allow(clippy::cast_possible_truncation)]
+    let speed = |i: usize, t: f64| speeds[i] as f32 + (speeds[i + 1] as f32 - speeds[i] as f32) * t as f32;
+
+    // A quarter down the first segment, on the centre line: engine −Z, 129.5 m.
+    let first = water.sample(at(200.0, 25.0, 0.0)).expect("water on the river");
+    assert_eq!((first.body.as_str(), first.kind), ("guide:river:9:0", WaterKind::River));
+    assert_eq!(first.height, 129.5);
+    assert!((first.velocity - Vec3::new(0.0, 0.0, -1.0) * speed(0, 0.25)).length() < 1e-4, "{:?} vs {}", first.velocity, speed(0, 0.25));
+    assert_eq!(first.depth, 12.5);
+
+    // Halfway down the second segment, 2 m off the centre line.
+    let (from, to) = (DVec2::new(200.0, -100.0), DVec2::new(250.0, -200.0));
+    let segment = to - from;
+    let off = (from + to) * 0.5 + segment.perp().normalize() * 2.0;
+    let second = water.sample(WorldPos::from_f64(DVec3::new(off.x, 0.0, off.y))).expect("water on the river");
+    assert_eq!(second.kind, WaterKind::River);
+    // `WorldPos` keeps an f32 offset in its cell: the off-grid point moves by ~1e-5 m, the level by ~1e-7 m.
+    assert!((second.height - 126.5).abs() < 1e-6, "lerped level {}", second.height);
+    let dir = segment.normalize().as_vec2();
+    assert!((second.velocity - Vec3::new(dir.x, 0.0, dir.y) * speed(1, 0.5)).length() < 1e-4, "{:?}", second.velocity);
+}
+
+#[test]
+fn guide_lake_answers_the_query() {
+    let water = query_of(&query_guide(), 64, Some(117.0));
+    let s = water.sample(at(20.0, 20.0, 0.0)).expect("water in the lake");
+    assert_eq!((s.body.as_str(), s.kind, s.height, s.depth), ("guide:lake:4", WaterKind::Lake, 120.0, 3.0));
+    assert_eq!(s.velocity, Vec3::ZERO, "a lake does not flow");
+    assert_eq!(water.sample(at(50.0, 50.0, 0.0)), None, "the lake's hole is land (the ocean is dry above its bed)");
+    assert_eq!(water.sample(at(150.0, 50.0, 0.0)), None, "land outside the lake and the river");
+
+    // A capsule from 118 m to 121 m standing in the lake: 2 of its 3 m under the surface.
+    let mut world = WaterWorld::new();
+    world.insert(mw_world::ids::exterior(), water);
+    let capsule = Capsule { a: at(20.0, 20.0, 118.5), b: at(20.0, 20.0, 120.5), radius: 0.5 };
+    let imm = world.immersion(&mw_world::ids::exterior(), capsule);
+    assert_eq!(imm.depth, 2.0);
+    #[allow(clippy::cast_possible_truncation)]
+    let want = (2.0_f64 / 3.0) as f32;
+    assert_eq!(imm.fraction, want);
+    assert_eq!(imm.sample.map(|s| s.kind), Some(WaterKind::Lake));
+}
+
+#[test]
+fn long_river_splits_into_seamless_chunks() {
+    // A straight 20-point river due north at x = 1 km, 10 m wide, dropping 1 cm per metre.
+    let points: Vec<[f64; 4]> = (0..20).map(|i| f64::from(i) * 20.0).map(|y| [1000.0, y, 10.0, 100.0 - 0.01 * y]).collect();
+    let guide = GuideWater { rivers: vec![River { id: 5, kind: "river".into(), points }], ..GuideWater::default() };
+    let chunks = guide_bodies(&guide, &RiverFlow::default(), 8);
+    let ids: Vec<&str> = chunks.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(ids, ["guide:river:5:0", "guide:river:5:1", "guide:river:5:2"], "points 0-7, 7-14, 14-19");
+    let splines: Vec<_> = chunks
+        .iter()
+        .map(|b| match &b.shape {
+            WaterShape::Ribbon { spline } => spline.clone(),
+            other => panic!("a river is a ribbon: {other:?}"),
+        })
+        .collect();
+    assert_eq!(splines.iter().map(Vec::len).collect::<Vec<_>>(), [8, 8, 6]);
+    for w in splines.windows(2) {
+        assert_eq!(w[0].last(), w[1].first(), "consecutive chunks share their seam point");
+    }
+    assert_eq!(chunks[1].level, splines[1][0].height, "a chunk's level is its first point's");
+
+    let (split, whole) = (query_of(&guide, 8, Some(0.0)), query_of(&guide, 512, Some(0.0)));
+    assert_eq!(whole.bodies().len(), 2, "the ocean and one river body");
+    // At a seam both chunks hold the point, at their end and start: equal up to the lerp's rounding.
+    let same = |a: &WaterSample, b: &WaterSample| {
+        a.kind == b.kind && (a.height - b.height).abs() < 1e-9 && (a.velocity - b.velocity).length() < 1e-6 && (a.depth - b.depth).abs() < 1e-5
+    };
+    // The seams (points 7 and 14), mid-segments either side and across each chunk, off the centre line too.
+    for (x, y) in [(1000.0, 140.0), (1000.0, 280.0), (1000.0, 130.0), (1000.0, 150.0), (1003.0, 290.0), (998.0, 50.0), (1001.0, 370.0)] {
+        let (a, b) = (split.sample(at(x, y, 0.0)).expect("chunked river"), whole.sample(at(x, y, 0.0)).expect("whole river"));
+        assert_eq!(a.kind, WaterKind::River);
+        assert!(same(&a, &b), "guide ({x}, {y}): {a:?} vs {b:?}");
+    }
+}
+
+#[test]
+fn short_river_gives_no_body() {
+    let guide = GuideWater { rivers: vec![River { id: 1, kind: "braid".into(), points: vec![[0.0, 0.0, 5.0, 10.0]] }], ..GuideWater::default() };
+    assert!(guide_bodies(&guide, &RiverFlow::default(), 64).is_empty());
+}
+
+/// FL-5a: ns per `WorldspaceWater::sample` on a real guide (`GW3_WATER_DIR`, default the x10s-b2w build output), on
+/// every river point and on a 200 x 200 grid over the guide, at the default `water.query.ribbon_chunk` and at 512.
+#[test]
+#[ignore = "measurement: CPU water query sample time on a real guide's water.json"]
+#[allow(clippy::cast_precision_loss)] // sample counts
+fn measure_real_guide_query() {
+    let dir = std::env::var("GW3_WATER_DIR").unwrap_or_else(|_| r"C:\cargo-target\scrib\worldgen\x10s-b2w".into());
+    let Ok(Some(guide)) = GuideWater::read(Path::new(&dir)) else {
+        println!("no water.json in {dir}");
+        return;
+    };
+    let rivers: Vec<WorldPos> = guide.rivers.iter().flat_map(|r| r.points.iter().map(|p| at(p[0], p[1], 0.0))).collect();
+    let all = guide.rivers.iter().flat_map(|r| r.points.iter().map(|p| [p[0], p[1]])).chain(guide.lakes.iter().flat_map(|l| l.outline.iter().copied()));
+    let (lo, hi) = all.fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]));
+    let grid: Vec<WorldPos> = (0..200)
+        .flat_map(|i| (0..200).map(move |j| (f64::from(i) / 199.0, f64::from(j) / 199.0)))
+        .map(|(u, v)| at(lo[0] + (hi[0] - lo[0]) * u, lo[1] + (hi[1] - lo[1]) * v, 0.0))
+        .collect();
+    let longest = guide.rivers.iter().map(|r| r.points.len()).max().unwrap_or(0);
+    for chunk in [RIBBON_CHUNK.default_value() as usize, 512] {
+        let water = query_of(&guide, chunk, None);
+        let ns = |pts: &[WorldPos]| {
+            let t = Instant::now();
+            let wet = pts.iter().filter(|p| std::hint::black_box(water.sample(**p)).is_some_and(|s| s.kind != WaterKind::Ocean)).count();
+            (t.elapsed().as_nanos() as f64 / pts.len().max(1) as f64, wet)
+        };
+        let ((river_ns, river_wet), (grid_ns, grid_wet)) = (ns(&rivers), ns(&grid));
+        println!(
+            "{dir}: ribbon_chunk {chunk}: {} bodies ({} lakes, {} rivers, longest {longest} points); sample {river_ns:.0} ns on {} river points ({river_wet} in a guide body), {grid_ns:.0} ns on a {} point grid ({grid_wet} in a guide body)",
+            water.bodies().len(),
+            guide.lakes.len(),
+            guide.rivers.len(),
+            rivers.len(),
+            grid.len()
+        );
+    }
 }

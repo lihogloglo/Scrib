@@ -136,8 +136,22 @@ game data ──adapter──> guides ──stage graph──> products ──Te
 evenly spaced ridges and valleys (Perron et al. 2009), the "motherboard" look the owner rejected. The layout enters
 as **uplift and erodibility fields** varying per cell (rock types, region edges, cellular noise), never as a target
 height; runs start noisy and stop at a finite time, not at strict equilibrium.
-6. **Material fields:** slope, curvature, flow, wetness, altitude, rock type, exposure → splat inputs (the adapter
-   maps them to its layers: LTEX or pack textures) and scatter density fields.
+6. **Climate, then material fields.** *Climate (WG-E1, `sf_worldgen::climate`; model and sources:
+   `../research/climate-fields-2026-11-26.md` §1):* four passes on the height grid, deterministic on any thread count.
+   (a) **Temperature**: linear lapse from the sea-level temperature (`climate.lapse_k_per_km` 6.5, standard
+   atmosphere), optional latitude term. (b) **Precipitation**: an upwind moisture-budget sweep, column by column along
+   the dominant wind axis with a two-tap interpolation of the upwind column: the air's capacity falls with temperature,
+   the sea refills it, the excess rains out with a fallout length, so windward slopes are wet and the lee is a rain
+   shadow with no extra rule; mass is conserved (a test). (c) **Moisture** 0..1: aridity (precipitation over potential
+   evapotranspiration) blended with the log of the flow accumulation area from stage 5. (d) **Classes**: a
+   Whittaker-style (temperature, precipitation) table shipped as data, one class id per sample, next to the raw rasters
+   (scatter rules and Magna Urbis's forest field read the continuous values). **Per-region override** (recipe data,
+   the painted-ecotope equivalent): scale, add or pin temperature and precipitation per region after (b), blended over
+   a border width. Wind direction and sea-level temperature are recipe data per world (`Guess` until tuned by eye).
+   Slices: WG-E1a (a) + (b) and the hash test; WG-E1b (c) + (d); WG-E1c overrides and the guide product. Cost target:
+   the whole stage under 1 s on 6.4 M samples (estimate, measured at E1a).
+   *Material fields:* slope, curvature, flow, wetness, altitude, rock type, exposure, climate → splat inputs (the
+   adapter maps them to its layers: LTEX or pack textures) and scatter density fields.
 7. **Runtime detail (< 2 m):** one stateless detail function guided by the material fields: an analytic
    gradient-aligned erosion filter plus integer-hash noise, each point evaluated in isolation (WG-R1), evaluated on the GPU when clipmap levels fill and by a CPU twin for height queries,
    physics and nav (the water "wave twin" pattern). Not a bake during play: nothing is stored.
@@ -205,6 +219,11 @@ Godotwind erosion/hydrology (WISHLIST §3-4) is an anecdote, not a design.
   the published descriptions; the MPL code is not copied.
 - **Learned amplification:** Terrain Diffusion (arXiv 2512.08309, MIT code and weights) evaluated: CUDA/PyTorch,
   30-90 m per pixel, no timings, no determinism. Not adopted; it may become an import path for intent heights later.
+- **Climate (WG-E1R, 2026-11-26; `../research/climate-fields-2026-11-26.md` §3-4):** Bevy has none. No crate for
+  orographic precipitation or Whittaker classes (crates.io "orographic", "climate biome": placeholders or dead);
+  `rustfft`/`realfft` only matter for the Smith-Barstad FFT model, not chosen (no moisture budget, no sea-distance
+  term, periodic wrap). Veloren has no rain shadow (noise + altitude mixes): nothing to port. Own code after
+  mapgen4's `assignRainfall` sweep (Apache-2.0, idea only), made conservative with a temperature-limited capacity.
 - **Tools:** Gaea, World Machine and Houdini are import sources for intent heights, never dependencies.
 - **Data:** SRTM and ETOPO are public domain (unverified); Copernicus GLO-30 has its own licence with attribution, and
   redistribution of derived patches is unconfirmed. Recipes ship **measured statistics**, never DEM tiles.
@@ -217,6 +236,7 @@ Godotwind erosion/hydrology (WISHLIST §3-4) is an anecdote, not a design.
 | Hydraulic + thermal erosion for mid detail | Mei et al. 2007 (U); Gaea Erosion2 on GPU, Houdini HeightField Erode (U) | match: stage 3, fixed-point wgpu kernels + CPU twin; vendors themselves treat GPU determinism as open |
 | Authored content first, procedural between | Ghost Recon Wildlands, GDC 2017 (V): World Machine on a ~80-PC farm for the base, Houdini for roads and rivers, "procedural and manual don't mix"; Far Cry 5, GDC 2018 (V): procedural biome, water, cliff and texturing tools, not heights | match: anchors; the generated base is locked and hand edits are a separate layer on top |
 | Rule-based placement | Horizon Zero Dawn, GDC 2017 (V): runtime GPU placement of objects (not terrain) | stage 8 / WG-N2 |
+| Climate / biome fields | Shipped games paint ecotopes or derive them by rule (Horizon, V summaries; Far Cry 5, U); mapgen4 wind sweep (V); Smith-Barstad linear model in landscape evolution codes (fastscape, V); Gaea Erosion 2 rain shadow controls (release notes) | stage 6: lapse + conservative wind sweep, Whittaker table as data; the per-region override is our painted ecotope. Differ from games on purpose: a 10x world has no artist to paint it |
 | Runtime amplification of a coarse base | Outerra: DEM + GPU fractal refinement (secondary sources); Grenier et al. 2024 real-time erosion patterns; runevision 2026 analytic filter | match: stage 7, analytic erosion filter + noise, GPU with CPU twin |
 | Learned amplification | Guérin et al. 2017 cGAN (U); Terrain Diffusion 2025 (V): CUDA, 30-90 m | differ: not for the bake (stack, resolution, determinism, data provenance) |
 | Curvature | the "world bending" vertex trick (Animal Crossing, Blightbound); planet engines use true spheres; no realistic-scale open world found doing it | flat gameplay, world-space drop about the camera, applied to shadows and effects too |

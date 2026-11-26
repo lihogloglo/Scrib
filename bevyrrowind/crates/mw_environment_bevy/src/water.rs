@@ -261,6 +261,11 @@ pub fn add(
     ws.sea_level = Some(0.0);
     let mut bodies = Vec::new();
     source.bodies(&exterior, &ws, &mut bodies);
+    // FL-5a: a generated world's lakes and rivers answer the query too (the meshes are `worldgen_water::add`'s).
+    let guide_settings = crate::worldgen_water::settings(app);
+    if let Some(guide) = inputs.guide.as_ref().filter(|_| guide_settings.on) {
+        bodies.extend(crate::worldgen_water::guide_bodies(guide, &guide_settings.flow, guide_settings.ribbon_chunk));
+    }
     let mut water = WorldspaceWater::new(bodies);
     water.set_waves(Some(WaveTwin::new(&params, &cascades, SEED, 1, TWIN_RESOLUTION)));
     let mut world = WaterWorld::new();
@@ -312,7 +317,7 @@ pub fn add(
             .expect("spawn the shore bake thread");
         (handle, Instant::now())
     });
-    crate::worldgen_water::add(app, inputs.guide, look_of(crate::worldgen_water::LOOK));
+    crate::worldgen_water::add(app, inputs.guide, look_of(crate::worldgen_water::LOOK), guide_settings);
     let tier = bind_quality(app);
     bind_gate(app);
     bind_medium(app);

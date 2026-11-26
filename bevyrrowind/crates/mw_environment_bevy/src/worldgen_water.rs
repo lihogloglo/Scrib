@@ -33,8 +33,12 @@ use mw_world::ids;
 use sf_coords::WorldPos;
 use sf_tunables_bevy::sf_tunables::{AnyDef, Def, Group, Lifetime, Source, Unit, def};
 use sf_tunables_bevy::{Tunables, TunablesAppExt};
-use sf_water::{BodyMesh, LakeMeshParams, RiverMeshParams, RiverPoint, lake_mesh, river_mesh};
+use sf_records::RecordId;
+use sf_water::{
+    BodyMesh, LakeMeshParams, RiverMeshParams, RiverPoint, WaterBody, WaterKind, WaterOptics, WaterShape, WaveTerms, lake_mesh, river_mesh,
+};
 use sf_water_bevy::{WaterLook, WaterMeshSurface};
+use sf_world::RecordRef;
 use sf_world_bevy::WorldspaceRegistry;
 use sf_world_bevy::big_space::prelude::Stationary;
 use sf_worldgen::water::{GuideWater, to_engine_xz};
@@ -95,9 +99,32 @@ pub const RIVER_STEEP_N: Def<bool> = def!(bool "water.guide.river_steep_n" = tru
     .group(Group::Water)
     .lifetime(Lifetime::Restart);
 
+/// `water.query.ribbon_chunk`: the most points of one river body in the CPU water query ([`guide_bodies`]). A
+/// ribbon sample tests every segment of each body whose box holds the point, so a long river is split into chunks
+/// the query's box tree can cull. Guess: keeps a query sample <= 2 us on a 1490-point river.
+pub const RIBBON_CHUNK: Def<u32> = def!(count "water.query.ribbon_chunk" = 64)
+    .range(8, 512)
+    .unit(Unit::Count)
+    .help("Generated rivers in the CPU water query: most points per river body (fewer = cheaper samples, more bodies); read at start")
+    .source(Source::Guess)
+    .group(Group::Water)
+    .lifetime(Lifetime::Restart);
+
 /// This module's tunables (the app's catalog).
-pub const TUNABLES: &[&dyn AnyDef] =
-    &[&GUIDE_BODIES, &RIVER_MANNING_N, &RIVER_STEEP_N, &RIVER_SLOPE_WINDOW_M, &RIVER_SPEED_MIN_MPS, &RIVER_SPEED_MAX_MPS];
+pub const TUNABLES: &[&dyn AnyDef] = &[
+    &GUIDE_BODIES,
+    &RIVER_MANNING_N,
+    &RIVER_STEEP_N,
+    &RIVER_SLOPE_WINDOW_M,
+    &RIVER_SPEED_MIN_MPS,
+    &RIVER_SPEED_MAX_MPS,
+    &RIBBON_CHUNK,
+];
+
+/// A guide lake's priority in the water query: above the ocean (0), so a lake below sea level still owns its outline.
+const LAKE_PRIORITY: i32 = 20; // tunables: const (overlap rule: ocean 0 < guide lakes < guide rivers)
+/// A guide river's priority: above the lakes, so a river running into a lake keeps its flow up to its mouth.
+const RIVER_PRIORITY: i32 = 30; // tunables: const (overlap rule: ocean 0 < guide lakes < guide rivers)
 
 /// Magna Urbis's carved bed depth from the river width, `clamp(base + per_width · w, min, max)` m
 /// (`terrain/src/vector_water/incision.rs:14`, rev 21e2217): the depth the terrain was carved with.
@@ -231,16 +258,92 @@ enum GuideWaterBodies {
     Ready(Vec<(GuideWaterBody, WorldPos, Handle<Mesh>)>),
 }
 
-/// Starts the bake of `guide`'s bodies and the system that spawns them; nothing without a guide or with
-/// [`GUIDE_BODIES`] off.
-pub(crate) fn add(app: &mut App, guide: Option<GuideWater>, look: WaterLook) {
+/// The guide water's start-time tunables ([`settings`]): shared by the query bodies and the mesh bake.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct GuideSettings {
+    /// [`GUIDE_BODIES`].
+    pub on: bool,
+    pub flow: RiverFlow,
+    /// [`RIBBON_CHUNK`].
+    pub ribbon_chunk: usize,
+}
+
+/// Registers this module's start-time tunables and reads them (once, at app build).
+pub(crate) fn settings(app: &mut App) -> GuideSettings {
     let on = app.add_tunable(&GUIDE_BODIES).id();
     let steep_n = app.add_tunable(&RIVER_STEEP_N).id();
+    let chunk = app.add_tunable(&RIBBON_CHUNK).id();
     let ids = [&RIVER_MANNING_N, &RIVER_SLOPE_WINDOW_M, &RIVER_SPEED_MIN_MPS, &RIVER_SPEED_MAX_MPS].map(|d| app.add_tunable(d).id());
     let tunables = app.world().resource::<Tunables>();
     let (on, steep_n) = (tunables.read(on), tunables.read(steep_n));
     let [manning_n, window_m, min_mps, max_mps] = ids.map(|id| f64::from(tunables.read(id)));
-    let flow = RiverFlow { manning_n, steep_n, window_m, min_mps, max_mps };
+    let ribbon_chunk = usize::try_from(tunables.read(chunk)).unwrap_or(usize::MAX);
+    GuideSettings { on, flow: RiverFlow { manning_n, steep_n, window_m, min_mps, max_mps }, ribbon_chunk }
+}
+
+/// A river's points as a ribbon spline in the engine frame, at `speeds` (one per point, [`river_speeds`]).
+#[allow(clippy::cast_possible_truncation)] // widths are metres, speeds m/s
+fn river_spline(points: &[[f64; 4]], speeds: &[f64]) -> Vec<RiverPoint> {
+    points
+        .iter()
+        .zip(speeds)
+        .map(|(&[x, y, w, level], &v)| RiverPoint {
+            center: DVec2::from_array(to_engine_xz([x, y])),
+            width: w as f32,
+            height: level,
+            flow_speed: v as f32,
+        })
+        .collect()
+}
+
+/// `guide`'s lakes and rivers as water query records (W-QUERY; FL-5a), engine frame, in the exterior: one
+/// [`WaterShape::Polygon`] per lake at its level, and each river (whatever its `kind`) as [`WaterShape::Ribbon`]s of
+/// at most `ribbon_chunk` points, consecutive chunks sharing their seam point (no gap), with the speeds of the
+/// whole river ([`river_speeds`], the mesh bake's). Ids `guide:lake:<id>` and `guide:river:<id>:<chunk>`; a river
+/// of fewer than 2 points gives none.
+pub(crate) fn guide_bodies(guide: &GuideWater, flow: &RiverFlow, ribbon_chunk: usize) -> Vec<WaterBody> {
+    let engine = |p: [f64; 2]| DVec2::from_array(to_engine_xz(p));
+    let worldspace = ids::exterior();
+    let optics = Some(RecordRef::new(WaterOptics::KIND, LOOK));
+    let body = |id: String, kind: WaterKind, shape: WaterShape, level: f64, priority: i32| WaterBody {
+        id: RecordId::new(&id),
+        worldspace: worldspace.clone(),
+        kind,
+        shape,
+        level,
+        priority,
+        optics: optics.clone(),
+        waves: WaveTerms::for_kind(kind),
+        flow: None,
+    };
+    let mut out = Vec::new();
+    for lake in &guide.lakes {
+        let outline = lake.outline.iter().copied().map(engine).collect();
+        let holes = lake.holes.iter().map(|h| h.iter().copied().map(engine).collect()).collect();
+        out.push(body(format!("guide:lake:{}", lake.id), WaterKind::Lake, WaterShape::Polygon { outline, holes }, lake.level_m, LAKE_PRIORITY));
+    }
+    let step = ribbon_chunk.max(2) - 1;
+    for river in &guide.rivers {
+        if river.points.len() < 2 {
+            continue;
+        }
+        let spline = river_spline(&river.points, &river_speeds(&river.points, flow));
+        let (mut start, mut k) = (0, 0);
+        while start + 1 < spline.len() {
+            let chunk = spline[start..(start + step + 1).min(spline.len())].to_vec();
+            let level = chunk[0].height;
+            out.push(body(format!("guide:river:{}:{k}", river.id), WaterKind::River, WaterShape::Ribbon { spline: chunk }, level, RIVER_PRIORITY));
+            start += step;
+            k += 1;
+        }
+    }
+    out
+}
+
+/// Starts the bake of `guide`'s bodies and the system that spawns them, with the [`settings`] read at start;
+/// nothing without a guide or with [`GUIDE_BODIES`] off.
+pub(crate) fn add(app: &mut App, guide: Option<GuideWater>, look: WaterLook, settings: GuideSettings) {
+    let GuideSettings { on, flow, .. } = settings;
     let Some(guide) = guide.filter(|_| on) else { return };
     let job = std::thread::Builder::new()
         .name("guide-water-bake".into())
@@ -268,13 +371,7 @@ fn bake(guide: &GuideWater, flow: &RiverFlow) -> Baked {
     }
     for river in &guide.rivers {
         let speed = river_speeds(&river.points, flow);
-        #[allow(clippy::cast_possible_truncation)] // widths are metres, speeds m/s
-        let spline: Vec<RiverPoint> = river
-            .points
-            .iter()
-            .zip(&speed)
-            .map(|(&[x, y, w, level], &v)| RiverPoint { center: engine([x, y]), width: w as f32, height: level, flow_speed: v as f32 })
-            .collect();
+        let spline = river_spline(&river.points, &speed);
         speeds.extend(speed);
         let origin = centre(&spline.iter().map(|p| p.center).collect::<Vec<_>>());
         let body = river_mesh(&spline, &river_params, origin);

@@ -138,8 +138,9 @@ inlet/outlet zones; constants, an overlap rule). Bed carving under the ribbon st
 
 ### FL-5: guide bodies in the query, swimming carried by the current (worldgen-2, first)
 
-- **FL-5a**: `worldgen_water::guide_bodies(&GuideWater, &RiverFlow) -> Vec<WaterBody>` (pure): lakes `Polygon` (kind
-  Lake, `WaveTerms::of(Lake)`: `first_cascade` 2, so the CPU twin, cascade 0 only, leaves them flat, `query.rs:328`),
+- **FL-5a** (built 2026-11-26, worldgen-3: 844 ns per river sample on x10s-b2w at chunk 64, 2296 ns unchunked):
+  `worldgen_water::guide_bodies(&GuideWater, &RiverFlow, ribbon_chunk) -> Vec<WaterBody>` (pure): lakes `Polygon` (kind
+  Lake, `WaveTerms::for_kind(Lake)`: `first_cascade` 2, so the CPU twin, cascade 0 only, leaves them flat, `query.rs:328`),
   rivers `Ribbon` in chunks of `water.query.ribbon_chunk` points with a one-point overlap (a 1490-point river in one
   body costs a 1490-segment scan per sample; chunks keep the BVH tight and a sample ≤ 2 µs), kind River, `FLAT` waves,
   ids `guide:lake:<id>`, `guide:river:<id>:<k>`. `water.rs:262-264` appends them before `WorldspaceWater::new`; speeds
