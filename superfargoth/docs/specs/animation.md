@@ -433,6 +433,14 @@ NPCs and hundreds of high-detail ones (Assassin's Creed Unity: 40 real AIs,
 Crowd on Assassin's Creed Unity: AI Recycling*, GDC 2015). The 150-NPC
 scenario is our M3 floor, not the ceiling.
 
+## Motion style
+
+Why an old, heavy, drunk, wounded or tired character moves differently: [animation-style.md](animation-style.md)
+(AN12). A per-individual `MotionProfile` picks a gait class (a per-graph clip remap compiled from data, fallback
+to the identity class then the base set) and drives the `Limp` op (before `FootPlacement`) and the `Posture` op
+(after it, before `Lean`), both identity at weight 0. Per tier: A0 all layers, A1 class + bone ops, A2 class + speed
+match, A3 none; style share ≤ 3 µs of the 25 µs A0 character. Classic: no style.
+
 ## Bevy integration (`sf_anim_bevy`)
 
 - Components: `Animator { graph, instance, params }` on the character root,

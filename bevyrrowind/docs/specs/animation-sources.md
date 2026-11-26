@@ -278,3 +278,37 @@ play rate clamped 0.8-1.25. Gaits 1.6 / 4.5 / 7.0 m/s. Dance card: `superfargoth
 - **Measured** (`mw_graphs/tests/slope_walk.rs player_gaits`, retargeted onto `base_anim`): natural speeds walk 1.61,
   jog 5.32, sprint 7.85 m/s; rates walk 1.00, jog 0.92, sprint 0.94, walk stick 0.3 0.80 (clamp; stride 0.62); walk<->run
   switch +0.02/+0.03 cycle (one frame) at all 5 points. Heading drift per loop is not applied (`Match`: capsule-driven).
+
+### Gait classes (AN12, 3.4d; framework: `superfargoth/docs/specs/animation-style.md`)
+
+How Morrowind fills the framework's classes (spec, not built). Modern preset only.
+- **Class rows:** `bevyrrowind/crates/mw_graphs/data/animation/styles.ron` (launch: `neutral`, `old`, `heavy`,
+  `drunk`, `limp_l`, `limp_r`; fatigue and load are modifiers, not classes; more in batches, owner 2026-11-25).
+- **Slot rows** (`sources.ron`): `loco.<class>.<gait>.<part>` beside the base `loco.<gait>.<part>`, e.g.
+  `loco.old.walk.cycle`, `loco.drunk.jog.cycle`, idles `loco.<class>.idle.cycle` over a base `loco.idle.cycle` whose
+  `fallback: Clip(...)` is Morrowind's idle group. Same rules as the base set (`root: Match`, `loop_cut`,
+  `fallback: Drop` for class rows: a missing class clip drops to the identity class, then the base set, then
+  Morrowind's sets). `limp_r` rows are `limp_l`'s files with `mirror: Some(())` (`#mirror` candidates). AN20 picks.
+- **Profile from records (AN21, `mw_walkers_bevy`):** `style_id`: `heavy` when the RACE record's weight for the
+  NPC's sex is at least `mw.style.heavy_weight`, a female neutral class once one passes review, else `neutral`;
+  `age`: 0 unless the override file `animation/style_overrides.ron` (NPC id -> age, class) names the NPC (owner
+  2026-11-25: nobody is very old except chosen NPCs); `injury`: health ratio mapped from
+  `mw.style.injury_health_hi` (0) to `_lo` (1), side from the first hit's side, else a stable roll by reference id,
+  recovering as health returns (NPCs and companions); `fatigue`: 1 - current/base Fatigue over
+  `mw.style.fatigue_start`; `load`: encumbrance / capacity over `mw.style.load_start`; `intoxication`: rises by
+  `mw.style.intox_per_drink` per ALCH record on the drink list in `style_overrides.ron` (Morrowind has no drunk
+  effect), decays by the framework smoothing; `mood`: 0 until AI moods feed it (fleeing -0.6, later).
+- **Speed:** Modern walkers and the player move at the class `gait_speed`; Morrowind's encumbrance speed term
+  (`fEncumberedMoveEffect`; AN21 checks the term against OpenMW's source) is Classic rules, so the style `load_slow` is
+  the only load slowdown in Modern.
+- **Player** (owner Q3): fatigue, load and drunk sway on; limp only with `mw.style.player_limp` (default false,
+  Owner 2026-11-25).
+- **Classic:** none: no profile written, no `styles.ron` compiled, the pinned Classic graph unchanged.
+
+| `mw.style.*` | Default | Range | Source |
+|---|---|---|---|
+| `heavy_weight` (RACE weight) | 1.15 | 0.5-2 | Guess |
+| `injury_health_hi` / `injury_health_lo` (health ratio) | 0.5 / 0.15 | 0-1 | Guess |
+| `fatigue_start` / `load_start` | 0.5 / 0.6 | 0-1 | Guess |
+| `intox_per_drink` | 0.35 | 0-1 | Guess |
+| `player_limp` | false | bool | Owner 2026-11-25 |
