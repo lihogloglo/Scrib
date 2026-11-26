@@ -28,3 +28,5 @@
 !/.ignore
 # Systems map (docs/SYSTEMS.md): the one-grep index of every system, spec, crate and ID.
 !/docs/
+# Python bytecode from repo tools (tools/terrain-diffusion).
+__pycache__/
