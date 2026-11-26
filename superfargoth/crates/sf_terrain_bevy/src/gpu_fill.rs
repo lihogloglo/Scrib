@@ -155,7 +155,8 @@ pub(crate) fn prepare(
     let status = match ids.map(|id| cache.get_compute_pipeline_state(id)) {
         [CachedPipelineState::Ok(_), CachedPipelineState::Ok(_)] => "ready",
         [CachedPipelineState::Err(e), _] | [_, CachedPipelineState::Err(e)] => {
-            if !matches!(e, bevy_shader::ShaderCacheError::ShaderNotLoaded(_)) {
+            // Not loaded yet (the shader or one of its imports): the cache retries these every frame.
+            if !matches!(e, bevy_shader::ShaderCacheError::ShaderNotLoaded(_) | bevy_shader::ShaderCacheError::ShaderImportNotYetAvailable) {
                 let line = format!("terrain gpu fill: pipeline error: {e}");
                 if fill.status != line {
                     log::error!("{line}");
