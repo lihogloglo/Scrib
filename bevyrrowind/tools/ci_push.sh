@@ -3,7 +3,7 @@
 # Pushes a snapshot, HEAD plus the given paths as they are on disk, to branch ci/<name>, and touches nothing
 # else: not the working tree, not the shared index, not main. Other sessions' changes are left out.
 #
-#   bash bevyrrowind/tools/ci_push.sh <name> <path>...   # then: gh run watch, gh run view --log-failed
+#   bash bevyrrowind/tools/ci_push.sh <name> <path>...   # then: gh run watch --interval 120 <id>, gh run view --log-failed
 #   bash bevyrrowind/tools/ci_push.sh --done <name>      # delete the ci/<name> branch once merged or dropped
 #
 # From a worktree (tools/worktree.sh) you can instead commit there and push wt/<name>: CI runs on wt/** too.

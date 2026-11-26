@@ -5,7 +5,7 @@
 #
 # Agents: `bash bevyrrowind/tools/ci_push.sh <name> <paths>` (or push a wt/** worktree branch, or open a PR)
 # instead of running the full gate locally, then
-# `gh run watch` / `gh run view --log-failed`. superfargoth/docs/build-perf.md "CI".
+# `gh run watch --interval 120` (never tighter: one shared API quota) / `gh run view --log-failed`. superfargoth/docs/build-perf.md "CI".
 name: ci
 
 # Docs-only pushes skip CI (later patterns win; vendored crates embed their README in tests and docs).
