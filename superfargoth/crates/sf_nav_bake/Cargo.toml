@@ -1,6 +1,6 @@
 [package]
 name = "sf_nav_bake"
-description = "Bevy-free navmesh bake steps for superfargoth (nav.md \"Bake\"): nav.tiles, nav.links and nav.coarse on sf_bake, over the adapter's NavGeometrySource"
+description = "Bevy-free navmesh bake steps for superfargoth (nav.md \"Bake\"): nav.tiles, nav.links and nav.coarse on sf_bake, over the adapter's NavGeometrySource, and nav.routes over its RouteSource"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -16,6 +16,7 @@ serde.workspace = true
 sf_bake.workspace = true
 sf_coords.workspace = true
 sf_nav.workspace = true
+sf_tunables.workspace = true
 sf_world.workspace = true
 
 [dev-dependencies]

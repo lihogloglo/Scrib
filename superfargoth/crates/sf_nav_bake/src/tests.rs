@@ -36,10 +36,10 @@ const LARGE: AgentClassId = AgentClassId(1);
 // ---- host inputs: an in-memory file system ----
 
 #[derive(Default)]
-struct MemInputs(RwLock<BTreeMap<String, Vec<u8>>>);
+pub(crate) struct MemInputs(RwLock<BTreeMap<String, Vec<u8>>>);
 
 impl MemInputs {
-    fn put(&self, path: String, bytes: Vec<u8>) {
+    pub(crate) fn put(&self, path: String, bytes: Vec<u8>) {
         self.0.write().unwrap().insert(path, bytes);
     }
 }
@@ -386,11 +386,11 @@ impl Rig {
     }
 }
 
-fn stats(baker: &Baker, step: &str) -> StepStats {
+pub(crate) fn stats(baker: &Baker, step: &str) -> StepStats {
     baker.step_stats().get(step).copied().unwrap_or_default()
 }
 
-fn bake_ok(baker: &Baker, keys: &[ProductKey]) -> BTreeMap<ProductKey, Digest> {
+pub(crate) fn bake_ok(baker: &Baker, keys: &[ProductKey]) -> BTreeMap<ProductKey, Digest> {
     let report = baker.bake(keys);
     let failures: Vec<_> = report
         .failures()
@@ -404,7 +404,7 @@ fn bake_ok(baker: &Baker, keys: &[ProductKey]) -> BTreeMap<ProductKey, Digest> {
         .collect()
 }
 
-fn product(baker: &Baker, key: &ProductKey) -> Vec<u8> {
+pub(crate) fn product(baker: &Baker, key: &ProductKey) -> Vec<u8> {
     let d = baker.product(key).unwrap();
     baker.store().get(&d).unwrap()
 }

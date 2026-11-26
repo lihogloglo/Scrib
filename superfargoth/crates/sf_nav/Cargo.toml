@@ -10,6 +10,8 @@ license.workspace = true
 # `sf_nav_recast` (NV2) implements `NavBackend` over navmesh-rs.
 [dependencies]
 bitflags.workspace = true
+# Stable route node and edge ids (route_graph, like sf_world's LinkId).
+blake3.workspace = true
 glam = { workspace = true, features = ["serde"] }
 # The GridBackend's tile blobs.
 postcard.workspace = true

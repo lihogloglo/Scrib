@@ -30,9 +30,13 @@
 //!   point through a link, [`WorldGraph::path_distance`] (hearing: metres through opening
 //!   centres, closed doors counted) and [`WorldGraph::line_of_sight`] (through one open seamless
 //!   link, rays via the host's [`LosProvider`]).
+//! - [`route_graph`] (NV12a): [`RouteGraph`], the per-worldspace road/route graph (polyline edges
+//!   in walk metres, stable blake3 ids) made by [`RouteGraphBuilder`], with A* [`RouteGraph::route`]
+//!   to a saveable [`RoutePath`], [`RouteGraph::position_at`] and [`RouteGraph::nearest_point`].
+//!   Its leg type is `route_graph::RouteLeg` (the root `RouteLeg` is the world graph's).
 //!
 //! Later slices add to the trait: corridor and local boundary (NV7-NV8), `TileCache` obstacles
-//! (NV10), the coarse graph (NV12). The navmesh-rs
+//! (NV10). The navmesh-rs
 //! backend is `sf_nav_recast` (NV2).
 
 pub mod backend;
@@ -43,6 +47,7 @@ pub mod grid;
 pub mod portal_query;
 pub mod query;
 pub mod ring;
+pub mod route_graph;
 pub mod service;
 pub mod types;
 pub mod world_graph;
@@ -68,6 +73,12 @@ pub use query::{
 pub use ring::{
     ClassTiling, NavRing, RegionFrame, RingCounts, RingLayout, RingRadii, TileState, tile_distance,
 };
+pub use route_graph::{
+    DEFAULT_GRID_CELL_M, EdgeKind, EdgeKinds, MAX_EDGE_M, ROUTE_GRAPH_FORMAT, ROUTE_ID_POS_STEP,
+    RouteBuildRules, RouteBuildStats, RouteEdge, RouteEdgeId, RouteEnd, RouteError, RouteGraph,
+    RouteGraphBuilder, RouteKind, RouteNode, RouteNodeId, RouteNodeKind, RoutePath, RoutePoint,
+    RoutePose, TravelRules,
+};
 pub use service::{
     FullCoverage, NavCoverage, PathPriority, PathReply, QueryBudget, QueryService, QueryTotals,
     RequestId, Slice, TickBatch, TickReport,
@@ -88,6 +99,8 @@ mod corridor_tests;
 mod portal_query_tests;
 #[cfg(test)]
 mod ring_tests;
+#[cfg(test)]
+mod route_graph_tests;
 #[cfg(test)]
 mod service_tests;
 #[cfg(test)]

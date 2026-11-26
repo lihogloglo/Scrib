@@ -18,12 +18,23 @@
 //!   Botea et al. 2004), door approach nodes, and straight-line costs between nodes of one
 //!   connected set and across matching entrances. **Stub until NV12**: costs are meters, not
 //!   Detour path lengths times area costs.
+//! - **`nav.routes`**, subject worldspace ([`routes`]): the route graph
+//!   ([`sf_nav::RouteGraph`]) from the adapter's [`RouteSource`], on its own [`RouteBake`] (no
+//!   backend needed).
 //!
 //! Parallelism is `sf_bake`'s: every tile is its own product on the rayon pool.
 
 mod coarse;
+pub mod routes;
+#[cfg(test)]
+mod routes_tests;
 #[cfg(test)]
 mod tests;
+
+pub use routes::{
+    ROUTES, RouteBake, RouteDoorEnd, RouteInput, RouteInputEdge, RouteInputNode, RouteSource,
+    decode_routes, default_route_build_rules, route_build_rules,
+};
 
 use std::sync::Arc;
 

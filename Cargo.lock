@@ -8583,6 +8583,7 @@ name = "sf_nav"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.13.2",
+ "blake3",
  "glam 0.33.12",
  "postcard",
  "serde",
@@ -8605,6 +8606,7 @@ dependencies = [
  "sf_coords",
  "sf_nav",
  "sf_nav_recast",
+ "sf_tunables",
  "sf_world",
  "tempfile",
 ]

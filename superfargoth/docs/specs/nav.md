@@ -361,6 +361,17 @@ unloaded and appearing along the path ([CK Persistence](https://ck.uesp.net/wiki
 LOD-unaware schedules (ai roadmap 13). **Differ** from HPA* (Botea 2004): authored/generated graph, not tile borders
 (kept only on a measured need). **Ahead** of OpenMW/Morrowind, where actors outside the processing range freeze.
 
+**As built (NV12a, 2026-11-26):** `sf_nav::route_graph` (`mod.rs` types/ids/index, `build.rs`, `query.rs`; 14 exact tests + ignored timing). Readings: `Junction`/`End` come from the
+final degree (`add_node`'s kind is a hint); edge ids also hash `two_way`, two-way edges run from the lower node id; `add_edge` allows every class, unknown ends are dropped (counted); only
+edge-less doors auto-join (the Connector takes the split edge's classes); `position_at` finds the leg by a linear prefix scan (`RoutePath` stores no prefix), heading falls back to -Z; A* stops
+once `f ≥` the Direct cost; the index builds lazily (`set_grid_cell` rebinds it); `encode`/`decode` prefix `ROUTE_GRAPH_FORMAT`; the leg type is `route_graph::RouteLeg`. 224² grid (50k nodes):
+route 3.8 ms avg, 15 ms corner to corner (grid ties under a straight-line heuristic expand ~every node; over the 2 ms budget, recheck on real roads, NVM), `nearest_point` 3.3 µs, `position_at` 0.33 µs.
+
+**As built (NV12c1, 2026-11-26):** `sf_nav_bake::routes`: `RouteBake::new(source, rules)` (own bake, no backend) registers `nav.routes`; `RouteSource { plan(ws, PlanCx) (default none), route_input(RunCx, ws)
+-> Result<Option<RouteInput>, BakeError> }`; `RouteInput { nodes: (pos, RouteNodeKind), edges: (a, b node indices, kind, two_way, interior, cost_m), doors: (LinkId, side, pos) }` (in the bake
+crate, the builder stays the only way in); plan params = rules + format + the source's own; `None` = zero bytes, `decode_routes` reads it as `None` and errors on another format. Tunables
+`ai.nav.route.simplify_m` / `door_connect_m` declared there (`Lifetime::Bake`, `TUNABLES`, `route_build_rules(&Tunables)`); new dep `sf_tunables` (already in the closure).
+
 ## Volumes: fliers and swimmers (NV13; roadmap decision 2)
 
 Fliers and swimmers never use the navmesh (ground classes swim on its `water` polys, decision 8). Both read one
