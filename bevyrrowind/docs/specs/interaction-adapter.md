@@ -55,7 +55,7 @@ werewolf refusal is a later gate. Rows in focus order (files in `mwclass/` unles
 
 ## Defs from the census (IN32)
 
-**Furniture** (from the MG4 census, `mw_bake::census`, motion-generation.md "As built (MG4)"): `STAT`/`ACTI`/`CONT`
+**Furniture** (from the MG4 census, `mw_bake::census`, archive/motion-generation-as-built-2026-10-28.md "As built (MG4)"): `STAT`/`ACTI`/`CONT`
 whose `furn_*`/`active_*` id or model names a bed/bedroll/hammock/bunk, counter/bar, table/desk, chair/stool/bench/
 throne or shelf. Vanilla + expansions: 32 seat, 28 table, 12 counter, 46 bed, 28 shelf base records, ~10.3k
 placements, 97 % at scale 1.00. Measured bands: seat 0.14 / 0.48 / 0.54 / 0.64 m, table 0.84 / 0.98, counter 0.94, bed
