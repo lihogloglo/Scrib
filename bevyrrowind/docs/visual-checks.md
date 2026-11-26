@@ -285,4 +285,4 @@ MF-1 | confirmed 2026-11-23 (owner: works fine) | [player-ui](visual-checks/play
 FS-1 | confirmed 2026-11-23 (owner: works fine; per-feature costs not reported yet) | [rendering](visual-checks/rendering.md) | Features panel (Ctrl+F3): live feature switches, flip delta, quick A/B
 CB-6 | confirmed 2026-11-25 (owner: "roll is good") | [combat](visual-checks/combat.md) | Spammable roll: mashing chains every ~0.58 s, press during a move rolls at once, tap/hold sprint kept (scene level-sparring, 2026-11-25)
 PL-10 | confirmed 2026-11-25 (owner round 2: "slope thing is all good") | [player-ui](visual-checks/player-ui.md) | Slope lean small and only while moving, head level, arms hang forward (scene level-flat-slopes, 2026-11-25)
-ANIM-4 | awaiting owner | [anim](visual-checks/anim.md) | NPCs turn chest/neck/head to you within range, let go at the side or unseen, no flip behind (scenes census, wk-balmora)
+ANIM-4 | OK 2026-11-26 | [anim](visual-checks/anim.md) | NPCs turn chest/neck/head to you within range, let go at the side or unseen, no flip behind (view Census and Excise Office / scene anim-look, wk-balmora + F11)

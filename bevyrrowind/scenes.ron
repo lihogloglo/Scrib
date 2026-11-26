@@ -613,6 +613,15 @@
             checks: ["WK-5"],
         ),
         (
+            name: "anim-look",
+            cell: "Seyda Neen, Census and Excise Office",
+            // No camera and no --single-cell: the interior streams with its actors and the player
+            // body starts on (a fixed camera starts in free-camera mode: nobody to look at).
+            description: "NPC head tracking (AN8 look-at + AN8b): you walk in as the player; Socucius and the guards turn chest, neck and head to you (interior range 2.9 m)",
+            look_for: "walk up to an NPC from the front: chest, neck and head follow your eyes smoothly (head most), no snap on pick-up or let-go; walking past the side lets go at 90 deg, no flip-flop behind; sneaking unseen or out of range lets go (up to 0.3 s lag). Log: 'head track: player body present, N awake NPC trackers, K tracking the player'. A/B: tunable mw.anim.head_track.on",
+            checks: ["ANIM-4"],
+        ),
+        (
             name: "nc-scrib",
             cell: "-4,-3",
             camera: "-400.8,+12,346,-400.8,+0.5,334.6",

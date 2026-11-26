@@ -82,7 +82,7 @@ P-IK4 + lean fix (PL-10) and the roll chain (CB-6), both 2026-11-25.
 | AN4a | Worker: dense root paths from a speed profile (hold/ramp/steady/decel/rest, one key per frame) + `cfg_weight` per activity | scrib-motiongen | - | **done 2026-11-26** (`root = "profile:hold=,ramp=,speed=,decel=,rest=,turn="`, `cfg_weight = [text, constraint]`, Kimodo default [2,2] when absent; batch 1 plans byte-identical) |
 | AN4b | Batch 2 recipe (R19 §6): free cycles + dense-path sweep, `cfg_weight`, starts/stops/turns/pivots, side/back cycles (C2); arm-swing and jog-cadence prompt arms from AN1 | scrib-motiongen | AN1, AN4a | **done 2026-11-26** (`recipes/loco-batch2.toml`: 41 activities, 246 clips, ids `loco2.*`; steps A/B left out: run-wide `--steps` only) |
 | AN5 | Batch 2 generation + grade (≥ 6 samples per prompt) | generation | AN4b | **done 2026-11-26** (246 clips, 676 s; 26/246 gated, all skate: dense jog 3.5/4.5, jog stride prompts, sprint 5.0) |
-| AN5b | Measurement: per-take arm swing, cadence, speed, bob, skate of the loco2 cycles (AN1 harness), ranked | tests `mw_bake` | AN5, AN1b | printed table; ledger |
+| AN5b | Measurement: per-take arm swing, cadence, speed, bob, skate of the loco2 cycles (AN1 harness), ranked | tests `mw_bake` | AN5, AN1b | printed table; ledger | **done 2026-11-26** (`measure_an5b_loco2_takes`; short list in the ledger; no usable sprint) |
 | AN6 | Picks into slots, bake retime limits | `mw_graphs` data | AN5, AN10 | `player_gaits` in clamp; owner **ANIM-1** (replaces LOCO-2) |
 | A5 | Turns: body follows (offset-root spring), `OrientationWarp` for the rest | `sf_anim_graph`, `mw_graphs` | AN6 | exact; owner ANIM-2 |
 | B1 | Distance curve at cook | `sf_anim` | - | **done 2026-11-26** (`distance.rs`, `ClipRules::distance`, 10 exact tests) |
@@ -92,7 +92,7 @@ P-IK4 + lean fix (PL-10) and the roll chain (CB-6), both 2026-11-25.
 | B4 | Start/stop/pivot states, stop clip by planted foot | `mw_graphs` | B2, AN6 | exact; owner ANIM-3 |
 | AN7 | Acceleration and turn lean in `Lean` | `sf_anim_graph` | AN6 | exact: no accel, no lean |
 | AN8 | `LookAt` wired (head then eyes, limits, spring, target param) | `sf_anim_graph`, `mw_graphs` | - | **done 2026-11-26** (humanoid chest/upperChest/neck/head 8/10/30/60°, total 80°, A0; release 120°/rejoin 105° fixes the behind-the-head flip; no eye bones; GRAPH_FORMAT 13) |
-| AN8b | Look target feed: NPC head tracking at the player (port OpenMW `Actors::updateHeadTracking`, cite file + commit), player none yet | `mw_walkers_bevy` | AN8 | **done 2026-11-26** (`head_track.rs`, OpenMW b8285cc9 `actors.cpp:270-363`; GMST `fMaxHeadTrackDistance` 400 u = 5.7 m, interior x0.5; 12 exact tests); owner **ANIM-4** awaiting |
+| AN8b | Look target feed: NPC head tracking at the player (port OpenMW `Actors::updateHeadTracking`, cite file + commit), player none yet | `mw_walkers_bevy` | AN8 | **done 2026-11-26** (`head_track.rs`, OpenMW b8285cc9 `actors.cpp:270-363`; GMST `fMaxHeadTrackDistance` 400 u = 5.7 m, interior x0.5; 12 exact tests); owner **ANIM-4** OK 2026-11-26 |
 | B6 | Gaze, slope posture, downhill stride, P-IK6, P-IK3 retuned on the new cycles | `sf_anim_graph`, `mw_graphs` | AN6 | printed; owner ANIM-5 |
 
 ### Stage 2: the clip review and pick tool

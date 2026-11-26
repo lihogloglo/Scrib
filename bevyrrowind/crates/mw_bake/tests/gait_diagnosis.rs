@@ -23,6 +23,20 @@
 //! speed, cm/s), cadence (clips: 2 steps per one-stride loop; graph: stance switches with 1 cm hysteresis per s); for (c) the heaviest
 //! clip's playback rate (clip s per s) and the stride ratio left to `StrideWarp`
 //! (speed / (natural stride speed x rate), and clamped to the op's range).
+//!
+//! `AN5b` (`measure_an5b_loco2_takes`): the same (a) / (b) columns for every looping loco2 gait
+//! take (`generated/loco2/loco2.<gait>.{cycle,back,strafe}.*`, cooked with the gait's
+//! `loco.<gait>.cycle` slot rules; starts, stops, pivots and turns skipped), with its
+//! `grades.json` gates, then the takes ranked per (gait, direction) against Morrowind's native
+//! group of that direction (`Walk*` for walk, `Run*` for jog and sprint; sprint has no MW
+//! group). Here cadence = stance switches counted over the cut loop / loop s (`n` = steps in
+//! the loop), not the 2-steps-per-loop assumption. Ranking (a printed measurement, not a
+//! gate), on the retargeted (b) row, lower = closer: score = mean over both arms of
+//! (|swing min - MW min| + |swing max - MW max|) deg + 5 x |bob - MW bob| cm + 0.5 x stance
+//! skate cm/s (1 cm of bob ~ 5 deg of swing ~ 10 cm/s of skate); top 2 per group among the
+//! ungated takes the loop cut could cut (`UNCUT` = no loop found, the whole take would play), and
+//! for forward gaits also the top 2 within that gait's graph speed band (`GAITS`). Speed and
+//! cadence are printed, not scored.
 //! Run with `cargo test -p mw_bake --test gait_diagnosis -- --ignored --nocapture`; skips
 //! without a Morrowind install or the library.
 #![allow(clippy::cast_precision_loss, clippy::similar_names, clippy::too_many_lines, clippy::many_single_char_names)]
@@ -363,11 +377,16 @@ struct Lib {
 }
 
 fn lib() -> Option<Lib> {
+    lib_at("loco1")
+}
+
+/// The library's `generated/<batch>` folder (`loco1`, `loco2`, ...) with the Morrowind target.
+fn lib_at(batch: &str) -> Option<Lib> {
     let Ok((install, _)) = MorrowindInstall::detect(None) else {
         eprintln!("no Morrowind install detected; skipping");
         return None;
     };
-    let loco = AnimSources::local().dir.join("generated").join("loco1");
+    let loco = AnimSources::local().dir.join("generated").join(batch);
     if !loco.exists() {
         eprintln!("{} missing; skipping", loco.display());
         return None;
@@ -976,5 +995,250 @@ fn measure_an1b_blend_dip() {
             100.0 * pr.2
         );
         assert!(fr.iter().all(|f| f.hip_out.is_finite()), "{speed}: non-finite hips");
+    }
+}
+
+// --- AN5b: every looping loco2 take, (a) / (b) columns, ranked against Morrowind ----------
+
+/// One stage's summary: per-arm swing (min, max) deg, bob cm, stance skate cm/s, steps in the
+/// cut loop, cadence steps/s, root speed m/s, loop s.
+#[derive(Clone, Copy)]
+struct An5bStats {
+    swing: [(f32, f32); 2],
+    bob: f32,
+    skate: f32,
+    steps: usize,
+    cad: f32,
+    speed: f32,
+    loop_s: f32,
+    /// The loop cut found a loop (else the whole take plays).
+    cut: bool,
+}
+
+impl An5bStats {
+    fn of(row: &Row, body: &Body, speed: f32) -> Self {
+        let fr = &row.frames;
+        let sw = |i: usize| (min(fr.iter().map(|f| f.swing[i])), max(fr.iter().map(|f| f.swing[i])));
+        let (bob, _, skate, _) = row.legs(body);
+        // Stance switches over the loop (lower foot, 1 cm hysteresis, as `Row::legs`).
+        let w = &row.world;
+        let (l, r) = body.feet;
+        let fj = [l, r];
+        let mut stance = usize::from(w[0][r].y < w[0][l].y);
+        let mut steps = 0;
+        for p in w {
+            let other = 1 - stance;
+            if p[fj[other]].y + 0.01 < p[fj[stance]].y {
+                stance = other;
+                steps += 1;
+            }
+        }
+        let loop_s = row.dt * (w.len() - 1) as f32;
+        Self { swing: [sw(0), sw(1)], bob, skate, steps, cad: steps as f32 / loop_s.max(1e-3), speed, loop_s, cut: true }
+    }
+
+    fn cols(&self) -> String {
+        let [l, r] = self.swing;
+        format!(
+            "L {:>5.1}..{:>5.1} R {:>5.1}..{:>5.1} bob {:>4.1} skate {:>5.1} n{} cad {:>4.2} {:>4.2} m/s {:>4.2}s{}",
+            l.0,
+            l.1,
+            r.0,
+            r.1,
+            self.bob,
+            self.skate,
+            self.steps,
+            self.cad,
+            self.speed,
+            self.loop_s,
+            if self.cut { "" } else { " UNCUT" }
+        )
+    }
+
+    /// The ranking score vs a Morrowind reference row (module docs).
+    fn score(&self, mw: &Self) -> f32 {
+        let arm = |i: usize| (self.swing[i].0 - mw.swing[i].0).abs() + (self.swing[i].1 - mw.swing[i].1).abs();
+        f32::midpoint(arm(0), arm(1)) + 5.0 * (self.bob - mw.bob).abs() + 0.5 * self.skate
+    }
+}
+
+/// One measured take.
+struct An5bTake {
+    /// `loco2.<gait>.<kind>.<variant>`.
+    group: String,
+    /// Take number (`.NN` of `... .act.ground0.NN`).
+    take: String,
+    gait: &'static str,
+    dir: &'static str,
+    gates: Vec<String>,
+    grade_skate: f32,
+    stages: Result<(An5bStats, An5bStats), String>,
+}
+
+/// (gait, direction) of a looping loco2 group folder, `None` for starts / stops / pivots / turns.
+fn an5b_kind(folder: &str) -> Option<(&'static str, &'static str)> {
+    let mut it = folder.strip_prefix("loco2.")?.split('.');
+    let gait = match it.next()? {
+        "walk" => "walk",
+        "jog" => "jog",
+        "sprint" => "sprint",
+        _ => return None,
+    };
+    let dir = match (it.next()?, it.next()) {
+        ("cycle", _) => "forward",
+        ("back", _) => "back",
+        ("strafe", Some("l")) => "left",
+        _ => return None,
+    };
+    Some((gait, dir))
+}
+
+/// Morrowind's native group for a (gait, direction).
+fn an5b_mw_group(gait: &str, dir: &str) -> String {
+    let pace = if gait == "walk" { "Walk" } else { "Run" };
+    let d = match dir {
+        "forward" => "Forward",
+        "back" => "Back",
+        _ => "Left",
+    };
+    format!("{pace}{d}")
+}
+
+/// The take cooked at source and onto the target, the bake's way (`measure_gait_diagnosis`).
+fn an5b_stages(lib: &Lib, tb: &Body, path: &Path, rules: &ClipRules) -> Result<(An5bStats, An5bStats), String> {
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let (sk, map, sclip) = source_cook(path, rules);
+        let sb = Body::new(&sk, &map);
+        let (start, end) = sclip.loop_range.unwrap_or((0.0, sclip.duration));
+        let (h0, h1) = (sample(&sk, &sclip, start)[sb.hips].translation, sample(&sk, &sclip, end)[sb.hips].translation);
+        let sspeed = Vec3::from(h1 - h0).with_y(0.0).length() / (end - start);
+        let a = An5bStats { cut: sclip.loop_range.is_some(), ..An5bStats::of(&clip_row(String::new(), &sk, &sb, &sclip, None), &sb, sspeed) };
+        let (tclip, _) = cook_library_clip_report("generated", path, None, rules, &lib.target)?;
+        let (start, end) = tclip.loop_range.unwrap_or((0.0, tclip.duration));
+        let ((p0, _), (p1, _)) = (tclip.root_at(start), tclip.root_at(end));
+        let tspeed = (p1 - p0).with_y(0.0).length() / (end - start);
+        let b = An5bStats { cut: tclip.loop_range.is_some(), ..An5bStats::of(&clip_row(String::new(), &lib.target.skeleton, tb, &tclip, None), tb, tspeed) };
+        Ok((a, b))
+    }));
+    caught.unwrap_or_else(|e| Err(e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| (*s).to_owned())).unwrap_or_else(|| "panic".into())))
+}
+
+#[test]
+#[ignore = "measurement: AN5b per-take loco2 cycles (arms, bob, skate, cadence, speed) ranked vs Morrowind"]
+fn measure_an5b_loco2_takes() {
+    let Some(lib) = lib_at("loco2") else { return };
+    let tb = Body::new(&lib.target.skeleton, &lib.target.map);
+    let grades: serde_json::Value =
+        std::fs::read_to_string(lib.loco.join("grades.json")).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let mut folders: Vec<String> = std::fs::read_dir(&lib.loco)
+        .unwrap()
+        .filter_map(|e| Some(e.ok()?.file_name().to_string_lossy().into_owned()))
+        .filter(|f| an5b_kind(f).is_some())
+        .collect();
+    folders.sort();
+    println!(
+        "columns: take | (a) src, (b) tgt: upper-arm swing vs trunk min..max deg (L, R) | pelvis bob cm | stance skate cm/s | n steps in the cut loop, cadence steps/s | root speed m/s | loop s || grade: skate cm/s, gates"
+    );
+
+    // Morrowind references per (gait, direction).
+    let mut refs = std::collections::BTreeMap::new();
+    println!("\n== MW native references (target rig)");
+    for g in ["WalkForward", "WalkBack", "WalkLeft", "RunForward", "RunBack", "RunLeft"] {
+        let stats = native_clip(&lib.vfs, &lib.target, g).map(|clip| {
+            let speed = clip.meta.stride_velocity().with_y(0.0).length();
+            An5bStats::of(&clip_row(String::new(), &lib.target.skeleton, &tb, &clip, None), &tb, speed)
+        });
+        println!("{g:<12} | {}", stats.map_or_else(|| "not found".into(), |s| s.cols()));
+        refs.insert(g.to_owned(), stats);
+    }
+
+    let mut takes = Vec::new();
+    for folder in &folders {
+        let (gait, dir) = an5b_kind(folder).unwrap();
+        let slot = format!("loco.{gait}.cycle");
+        let rules = slot_rules(&slot);
+        let mut files: Vec<PathBuf> = std::fs::read_dir(lib.loco.join(folder).join("act"))
+            .unwrap()
+            .filter_map(|e| Some(e.ok()?.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "bvh"))
+            .collect();
+        files.sort();
+        println!("\n== {folder} ({gait} {dir}, {slot} rules)");
+        for path in files {
+            let id = path.file_stem().unwrap().to_string_lossy().into_owned();
+            let entry = &grades[&id];
+            let gates: Vec<String> =
+                entry["gates"].as_array().map(|a| a.iter().filter_map(|g| g.as_str().map(str::to_owned)).collect()).unwrap_or_default();
+            #[allow(clippy::cast_possible_truncation, reason = "a grade in cm/s")]
+            let grade_skate = entry["metrics"]["skate_cm_s"].as_f64().map_or(f32::NAN, |v| v as f32);
+            let stages = an5b_stages(&lib, &tb, &path, &rules);
+            let take = id.rsplit('.').next().unwrap_or("?").to_owned();
+            let grade = format!("{grade_skate:>5.1} {}", if gates.is_empty() { "-".to_owned() } else { format!("GATED {}", gates.join(",")) });
+            match &stages {
+                Ok((a, b)) => {
+                    for (i, s) in b.swing.iter().enumerate() {
+                        assert!(s.0.is_finite() && s.1.is_finite(), "{id}: arm {i} swing not finite");
+                    }
+                    println!("{take} (a) src | {} || {grade}", a.cols());
+                    println!("{take} (b) tgt | {}", b.cols());
+                }
+                Err(e) => println!("{take} cook failed: {e} || {grade}"),
+            }
+            takes.push(An5bTake { group: folder.clone(), take, gait, dir, gates, grade_skate, stages });
+        }
+    }
+
+    // Per variant: means of the (b) row over its cooked takes.
+    println!("\n== per variant, (b) tgt means: swing L/R deg (min..max) | bob | skate | cad | speed | gated/total");
+    for folder in &folders {
+        let of: Vec<&An5bTake> = takes.iter().filter(|t| &t.group == folder).collect();
+        let ok: Vec<&An5bStats> = of.iter().filter_map(|t| t.stages.as_ref().ok().map(|s| &s.1)).collect();
+        let gated = of.iter().filter(|t| !t.gates.is_empty()).count();
+        let m = |f: &dyn Fn(&An5bStats) -> f32| mean(ok.iter().map(|s| f(s)));
+        let failed = if ok.len() < of.len() { format!(" ({} cook failed)", of.len() - ok.len()) } else { String::new() };
+        println!(
+            "{folder:<28} | L {:>5.1}..{:>5.1} R {:>5.1}..{:>5.1} | bob {:>4.1} | skate {:>5.1} | cad {:>4.2} | {:>4.2} m/s | {gated}/{}{failed}",
+            m(&|s| s.swing[0].0),
+            m(&|s| s.swing[0].1),
+            m(&|s| s.swing[1].0),
+            m(&|s| s.swing[1].1),
+            m(&|s| s.bob),
+            m(&|s| s.skate),
+            m(&|s| s.cad),
+            m(&|s| s.speed),
+            of.len(),
+        );
+    }
+
+    // Ranked short list per (gait, direction): ungated, loop-cut takes, (b) row vs the MW group;
+    // forward gaits also within the graph's speed band for that gait (`GAITS`).
+    println!("\n== ranked (b) tgt vs MW, top 2 ungated + cut per (gait, direction); score = arm swing err deg + 5 x bob err cm + 0.5 x skate cm/s");
+    for gait in ["walk", "jog", "sprint"] {
+        for dir in ["forward", "back", "left"] {
+            let group = an5b_mw_group(gait, dir);
+            let Some(Some(mw)) = refs.get(&group) else { continue };
+            let mut ranked: Vec<(f32, &An5bTake, &An5bStats)> = takes
+                .iter()
+                .filter(|t| t.gait == gait && t.dir == dir && t.gates.is_empty())
+                .filter_map(|t| t.stages.as_ref().ok().filter(|s| s.1.cut).map(|s| (s.1.score(mw), t, &s.1)))
+                .collect();
+            if ranked.is_empty() {
+                continue;
+            }
+            ranked.sort_by(|a, b| a.0.total_cmp(&b.0));
+            println!("-- {gait} {dir} (vs MW {group}, {} ungated cut takes)", ranked.len());
+            let line = |(score, t, s): &(f32, &An5bTake, &An5bStats)| {
+                let name = format!("{}.{}", t.group.trim_start_matches("loco2."), t.take);
+                println!("{score:>6.1} {name:<26} | {} | grade skate {:>5.1}", s.cols(), t.grade_skate);
+            };
+            ranked.iter().take(2).for_each(line);
+            if dir == "forward"
+                && let Some((_, _, _, (lo, hi), _)) = GAITS.iter().find(|g| g.0 == gait)
+            {
+                let band: Vec<_> = ranked.iter().filter(|(_, _, s)| (*lo..=*hi).contains(&s.speed)).collect();
+                println!("   within the {gait} band {lo:.1}..{hi:.1} m/s: {} takes", band.len());
+                band.into_iter().take(2).for_each(line);
+            }
+        }
     }
 }

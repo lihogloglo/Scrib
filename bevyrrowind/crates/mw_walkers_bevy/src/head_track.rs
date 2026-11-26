@@ -48,6 +48,7 @@ use std::sync::Arc;
 use bevy_app::{App, PostUpdate};
 use bevy_ecs::entity::EntityHashSet;
 use bevy_ecs::prelude::*;
+use bevy_log::prelude::*;
 use bevy_math::Vec3;
 use bevy_time::Time;
 use bevy_transform::components::Transform;
@@ -237,6 +238,9 @@ impl Default for HeadTrackSettings {
 pub struct HeadTrackState {
     timer_s: f32,
     tracking: EntityHashSet,
+    /// The last logged (player present, awake trackers, tracking) counts: logged on change, the
+    /// owner-check proof that NPCs track (ANIM-4).
+    logged: Option<(bool, usize, usize)>,
 }
 
 /// Adds head tracking with the content's GMSTs (called by `walkers::add`).
@@ -295,13 +299,15 @@ fn track_heads(
     let target = PerceptTarget::Player(HOST_KEY);
     if refresh {
         let period = clock.as_deref().zip(perception.as_deref()).map(|(c, s)| (c.tick, s.budget.sight_period_ticks(c.tick_s)));
-        let HeadTrackState { tracking, .. } = &mut *state;
+        let HeadTrackState { tracking, logged, .. } = &mut *state;
         tracking.clear();
+        let mut awake = 0;
         if let Some(p) = player.as_ref().filter(|_| settings.on) {
             for (entity, mover, awareness, space, knocked_down, dormant) in &npcs {
                 if dormant {
                     continue;
                 }
+                awake += 1;
                 let seen = awareness
                     .zip(period)
                     .is_some_and(|(a, (tick, ticks))| seen_recently(&a.0, target, tick, ticks));
@@ -322,6 +328,15 @@ fn track_heads(
                     tracking.insert(entity);
                 }
             }
+        }
+        let counts = (player.is_some(), awake, tracking.len());
+        if settings.on && *logged != Some(counts) {
+            *logged = Some(counts);
+            info!(
+                "head track: player body {}, {awake} awake NPC trackers, {} tracking the player",
+                if counts.0 { "present" } else { "absent (free camera: F11 walks the player)" },
+                counts.2
+            );
         }
     }
     for (entity, mover, _, _, _, dormant) in &npcs {
