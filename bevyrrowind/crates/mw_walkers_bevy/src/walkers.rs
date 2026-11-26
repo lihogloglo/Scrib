@@ -501,6 +501,7 @@ pub(crate) fn attach(
         (Without<Mover>, Without<mw_game_core::player::PlayerAvatar>, Without<ActionDriven>),
     >,
     bodies: Query<&Transform>,
+    links: Query<(Option<&sf_world_bevy::StreamCell>, Option<&ChildOf>)>,
 ) {
     for (entity, character, body, transform, parent, placement) in &fresh {
         let Character::Record { id, .. } = character else {
@@ -545,6 +546,10 @@ pub(crate) fn attach(
             ActorSpace(location.worldspace.clone()),
             Dormant,
         ));
+        // AI10c3b2: the streaming cell it belongs to, for the crossing test.
+        if let Some(cell) = crate::crossing::body_cell_of(entity, &links) {
+            e.try_insert(cell);
+        }
         if let Some(p) = placement {
             // Sight (MA14): the eye on the standing height, the fitted capsule or the default
             // one times the race height.
@@ -1128,6 +1133,18 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest, p
         .init_resource::<crate::poses::ResidentActors>()
         .add_systems(Update, crate::poses::report_kept)
         .add_systems(Update, (crate::directives::seed_directives, crate::directives::retry_pending).chain().after(attach))
+        // AI10c3b2: bodies that crossed into another loaded cell become its, after the streaming
+        // drive (no stage starts between the bookkeeping and the entity command), and the proof line.
+        .init_resource::<crate::crossing::CrossingStats>()
+        .add_systems(
+            Update,
+            (
+                crate::crossing::rehome_crossers
+                    .after(processing_range)
+                    .after(sf_world_bevy::StreamingSystems::Transition),
+                crate::crossing::report_rehomed,
+            ),
+        )
         // Gameplay on the fixed tick (NV7a): the physics step first (IN11b: characters ride the
         // bases it moved), then the player (its tick state is what the NPCs avoid), then the NPC
         // intents and their mover.

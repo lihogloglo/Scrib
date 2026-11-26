@@ -117,3 +117,15 @@ Log: `ai: N wanderers on navmesh, M on pathgrid fallback (since start: X navmesh
   neighbouring cell may be missing until that cell reloads)
 - Status: Q3 PASS (owner 2026-11-26, exe 1c699df9: "nobody seems missing"). Q1-Q2 NOT TESTED: no `actors: N poses
   kept at unload` line, the village never unloaded in a 2.5 min run. Stays on the to-check list (run ~300 m away first).
+
+### AI-16: an NPC that walks across a cell border stays (AI10c3b2, 2026-11-27)
+- Kind: game, dev build. `owner_launch.sh view "Seyda Neen" --hour 12` (exterior, noon), F11 drops the player.
+- Proof log line: `actors: N re-homed` with N > 0 once an NPC has crossed a cell border (one line a second at
+  most; `, M without a held placement` after it = M bodies the fix cannot move yet, report M).
+- Q1: follow an NPC that walks along the road out of the village until it has gone ~50 m, then run on past it
+  ~150 m so the village behind unloads while the NPC stays in view: is it still there? (expected yes)
+- Q2: while you follow it, does it keep walking smoothly, with no jump or one-frame flicker anywhere along the
+  road? (expected yes)
+- Q3: go back to where that NPC started: is there no second copy of it standing there? (expected yes)
+- Status: awaiting owner. Headless tests cover the swap on a hand-built cell tree; the test against the real
+  streaming runtime (AI10c3b3) is not written yet.

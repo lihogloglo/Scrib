@@ -23,10 +23,9 @@
 //!   into a copy of the overlay as its deactivation would, without removing anything.
 //! - **Proof line**: `actors: N poses kept at unload`, at most once a second.
 //!
-//! **Gap (named, `AI10c3b`):** a body that walked into a neighbouring cell is still its home
-//! cell's child: when the home cell drops out while the neighbour stays loaded, the body despawns
-//! and reappears only when the neighbour reloads (before `AI10c3a` it popped back to its baked
-//! placement instead). `AI10c3b` re-homes bodies at the crossing.
+//! **Crossings (`AI10c3b2`):** a body that walks into a neighbouring loaded cell becomes that
+//! cell's ([`crate::crossing`]), with a pose write here ([`write_crossing`]), so its home cell's
+//! unload no longer despawns it and no cell lists it twice.
 
 use std::collections::HashMap;
 use std::f32::consts::TAU;
@@ -68,6 +67,17 @@ impl ResidentActors {
 
     pub fn is_empty(&self) -> bool {
         self.placements.is_empty()
+    }
+
+    /// The indexed placement an Active cell listed for `id` (`AI10c3b2`: what a crossing writes).
+    pub(crate) fn placement(&self, id: PlacementId) -> Option<&Placement> {
+        self.placements.get(&id).map(|(_, p)| p)
+    }
+
+    /// Drops `id` when no Active list holds it any more (`AI10c3b2`: a re-home into a Near-only
+    /// cell, whose activation lists it again from the overlay).
+    pub(crate) fn forget(&mut self, id: PlacementId) {
+        self.placements.remove(&id);
     }
 }
 
@@ -151,9 +161,33 @@ pub(crate) fn report_kept(time: Res<Time>, mut resident: ResMut<ResidentActors>,
     *last = Some(now_s);
 }
 
+/// The placement a crossing body is written from (`AI10c3b2`): its Active cell's listed one
+/// ([`ResidentActors`]), else the overlay's (a body spawned from a moved placement by a cell that
+/// was never Active). `None`: nothing holds it, so a crossing must not re-home it (no overlay
+/// write, and the home cell's reload would spawn a twin).
+pub(crate) fn held_placement(resident: &ResidentActors, overlay: &WorldOverlay, id: PlacementId) -> Option<Placement> {
+    resident.placement(id).cloned().or_else(|| {
+        let overlay = overlay.0.read().unwrap_or_else(PoisonError::into_inner);
+        overlay.placed(id).map(|(_, p)| p.clone())
+    })
+}
+
+/// A crossing's overlay write (`AI10c3b2`, on a successful re-home only): the body's pose, as
+/// [`ActorPoseHook::deactivate`] writes it but unconditionally, so the next fetch of the cell it
+/// now stands in lists it there and its home cell's no longer does.
+pub(crate) fn write_crossing(overlay: &WorldOverlay, placement: &Placement, mover: &Mover, space: &ActorSpace, turn: Quat) {
+    let (to, yaw) = pose(mover, space);
+    overlay.0.write().unwrap_or_else(PoisonError::into_inner).move_to(placement, &to, placement_rotation(yaw, turn));
+}
+
 /// The content's placement turn (identity without a character plugin).
 fn turn(world: &World) -> Quat {
-    world.get_resource::<Characters>().map_or(Quat::IDENTITY, |c| c.content().placement_rotation())
+    content_turn(world.get_resource::<Characters>())
+}
+
+/// The placement turn of `characters`' content (identity without one).
+pub(crate) fn content_turn(characters: Option<&Characters>) -> Quat {
+    characters.map_or(Quat::IDENTITY, |c| c.content().placement_rotation())
 }
 
 /// Where a body stands and the yaw it faces.

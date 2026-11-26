@@ -79,13 +79,20 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   placement in another worldspace puts the state back (AI10c3 moves bodies). A marked body stays rendered where it
   stood: `drive` stands it first (`walkers.rs:809`), `drive_directives` skips it (`directive_drive.rs:318`); script
   pushes and late packages `wake` it. Proof line `tier0: N logical, Q queued, P placed (X other-space)` (≤ 1/s).
-  **Bodies keep their pose across a cell unload** (AI10c3a, `mw_walkers_bevy/src/poses.rs:95` `ActorPoseHook`,
+  **Bodies keep their pose across a cell unload** (AI10c3a, `mw_walkers_bevy/src/poses.rs:86` `ActorPoseHook`,
   installed on the actor class at `directives.rs:273`): when an actor placement leaves R0 (not a discard), a body
   that moved more than 1e-3 m on the ground plane or 1e-3 rad of yaw is `PlacementOverlay::move_to` its
   `ActorSpace`, feet and yaw (spawn turn taken off), so it reloads with the cell it stands in and `attach` respawns it
-  there; tier 0 re-marks it (Enter). `persist_actor_poses` (`:117`) is the save path (MA22, not wired). Gap: a body
-  that crossed into a neighbour cell despawns with its home cell (AI10c3b re-homes it). Proof line
+  there; tier 0 re-marks it (Enter). `persist_actor_poses` (`:127`) is the save path (MA22, not wired). Proof line
   `actors: N poses kept at unload` (≤ 1/s).
+  **A body that walks into another loaded cell becomes that cell's** (AI10c3b2, `mw_walkers_bevy/src/crossing.rs`):
+  `attach` gives each body a `BodyCell` (`:54`) from its ancestor `StreamCell`; `rehome_crossers` (`:178`, `Update`,
+  after the streaming drive) compares it with the cell under the body's feet and asks `Streaming::rehome`
+  (streaming.md "Re-homing a placement"). On success it writes the pose to the overlay (`poses.rs:178`
+  `write_crossing`), then one entity command sets `ChildOf`, the local translation, `Mover.frame_origin` and
+  `BodyCell` together, so the drawn position does not move; a refusal changes nothing and is asked again next
+  frame. `Held` bodies wait for their release. Gap: a body whose placement no Active list and no overlay entry
+  holds is not re-homed. Proof line `actors: N re-homed` (`, M without a held placement` when some wait; ≤ 1/s).
   Tier 0 core (AI10a, `sf_ai/src/logical.rs`): `LogicalState::step` jumps event to event
   (route arrival, `DirectiveStack::next_deadline`, `LogicalEnv::next_window_edge` hook), each served kind taken up
   through `LogicalTransitions::transition` (StayNear waits in place or walks home, GoTo/Escort walk and end
