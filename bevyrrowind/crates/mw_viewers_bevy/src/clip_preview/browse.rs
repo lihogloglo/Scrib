@@ -66,11 +66,13 @@ pub struct BrowseList {
 pub const UNDO_CAPACITY: usize = 256;
 
 /// One verdict action Z can take back (a memento): the clip's previous `verdicts.toml` entry
-/// (any value, a note or a table too) and the view to put back.
+/// (any value, a note or a table too), its previous reason tags and the view to put back.
 #[derive(Clone, Debug, PartialEq)]
 struct UndoEntry {
     id: String,
     before: Option<toml::Value>,
+    /// The clip's entry in the `[_reasons]` table ([`REASONS_KEY`]) as it was.
+    reasons: Option<toml::Value>,
     /// The cursor (activity, clip) and group review's stage when the action was made.
     cursor: (usize, usize),
     group: Option<GroupStage>,
@@ -466,11 +468,29 @@ impl BrowseList {
 
     /// The memento of an action on `id` about to be made: its entry now, the cursor and the stage.
     fn undo_entry(&self, id: &str, verdicts: &Verdicts) -> UndoEntry {
-        UndoEntry { id: id.to_owned(), before: verdicts.value(id).cloned(), cursor: (self.activity, self.clip), group: self.group.clone() }
+        UndoEntry {
+            id: id.to_owned(),
+            before: verdicts.value(id).cloned(),
+            reasons: verdicts.reasons_value(id).cloned(),
+            cursor: (self.activity, self.clip),
+            group: self.group.clone(),
+        }
     }
 
-    /// Z: take back the newest verdict action (rate, rate a take, clear): the clip's previous entry
-    /// comes back (or goes), the cursor returns to it, and the save follows. The review mode stays:
+    /// Toggle `reason` on the cursor's clip (in group review the selected take) and save; `Ok(true)`
+    /// if it is now on. The cursor and the stage stay; Z takes it back.
+    ///
+    /// # Errors
+    /// `verdicts.toml` couldn't be written (the tag stays toggled in memory).
+    pub fn toggle_reason(&mut self, verdicts: &mut Verdicts, reason: Reason) -> Result<bool, String> {
+        let id = self.current().id.clone();
+        self.undo.push(self.undo_entry(&id, verdicts));
+        let on = verdicts.toggle_reason(&id, reason);
+        verdicts.save().map(|()| on)
+    }
+
+    /// Z: take back the newest verdict action (rate, rate a take, clear, a reason tag): the clip's
+    /// previous entry and tags come back (or go), the cursor returns to it, and the save follows. The review mode stays:
     /// in group review the action's stage comes back (an action from single review opens the
     /// clip's group), in single review the clip is shown on its own. `Ok(None)` if nothing is left
     /// to undo.
@@ -480,6 +500,7 @@ impl BrowseList {
     pub fn undo(&mut self, verdicts: &mut Verdicts) -> Result<Option<String>, String> {
         let Some(entry) = self.undo.entries.pop_back() else { return Ok(None) };
         verdicts.put(&entry.id, entry.before);
+        verdicts.put_reasons(&entry.id, entry.reasons);
         (self.activity, self.clip) = entry.cursor;
         match (self.group.is_some(), entry.group) {
             (true, Some(stage)) => self.group = Some(stage),
@@ -743,7 +764,7 @@ impl BrowseList {
             Some(_) => "  ok".to_owned(),
             None => String::new(),
         };
-        let verdict = verdicts.and_then(|v| v.get(&clip.id)).map(|v| format!("  [{v}]")).unwrap_or_default();
+        let verdict = verdicts.and_then(|v| v.label(&clip.id)).map(|v| format!("  [{v}]")).unwrap_or_default();
         format!("take {}{grade}{verdict}", take_number(clip))
     }
 }
@@ -751,6 +772,9 @@ impl BrowseList {
 /// The key that shows / hides the overlay's details page. H was taken: the actors' cloth
 /// A/B toggle (`mw_actors_bevy::actors::toggle_cloth`) runs in the browser too.
 pub const HELP_KEY: &str = "Tab";
+
+/// The reason-tag keys as the overlay and the details page list them ([`REASONS`] order).
+const TAG_KEYS: &str = "5 skate  6 slide  7 pop  8 pose";
 
 /// A rating as the overlay says it.
 pub fn rating_word(rating: Option<Rating>) -> &'static str {
@@ -830,18 +854,21 @@ impl BrowseList {
         let (line1, line2, line3) = if let Some(s) = &self.group {
             let (i, n) = self.group_position(&s.name);
             let line2 = match verdicts {
-                Ok(v) => format!("take {} selected: {}   {}", s.selected + 1, rating_word(v.rating(&s.selected_take().clip.id)), saved(v)),
+                Ok(v) => {
+                    let id = &s.selected_take().clip.id;
+                    format!("take {} selected: {}{}   {}", s.selected + 1, rating_word(v.rating(id)), v.tags_suffix(id), saved(v))
+                }
                 Err(e) => verdicts_off_line(e),
             };
             let keys = if s.final_round() { "Y keep   M maybe   N reject" } else { "N reject   1-4 select" };
-            (format!("{}   group {i} / {n}{transport}", s.name), line2, format!("{keys}   Z undo   Down next group   {HELP_KEY} more"))
+            (format!("{}   group {i} / {n}{transport}", s.name), line2, format!("{keys}   {TAG_KEYS}   Z undo   Down next group   {HELP_KEY} more"))
         } else {
             let clip = self.current();
             let line2 = match verdicts {
-                Ok(v) => format!("{}   {}", rating_word(v.rating(&clip.id)), saved(v)),
+                Ok(v) => format!("{}{}   {}", rating_word(v.rating(&clip.id)), v.tags_suffix(&clip.id), saved(v)),
                 Err(e) => verdicts_off_line(e),
             };
-            (format!("{}   clip {} / {}{transport}", clip.id, self.clip_position(), self.len()), line2, format!("Y keep   N reject   M maybe   Z undo   G groups   {HELP_KEY} more"))
+            (format!("{}   clip {} / {}{transport}", clip.id, self.clip_position(), self.len()), line2, format!("Y keep   N reject   M maybe   {TAG_KEYS}   Z undo   G groups   {HELP_KEY} more"))
         };
         format!("{line1}\n{line2}\n{line3}")
     }
@@ -853,7 +880,7 @@ impl BrowseList {
         let activity = self.current_activity();
         let grade = self.grade_line(clip).map(|g| format!("{g}\n")).unwrap_or_default();
         let (verdict, tally, all) = match verdicts {
-            Ok(v) => (v.get(&clip.id).unwrap_or("unrated").to_owned(), tally_text(v.tally(&activity.clips)), tally_text(v.tally(self.activities.iter().flat_map(|a| &a.clips)))),
+            Ok(v) => (v.label(&clip.id).unwrap_or_else(|| "unrated".to_owned()), tally_text(v.tally(&activity.clips)), tally_text(v.tally(self.activities.iter().flat_map(|a| &a.clips)))),
             Err(_) => ("(verdicts off)".to_owned(), String::new(), String::new()),
         };
         let cut = if d.cut.is_empty() { String::new() } else { format!("{}\n", d.cut) };
@@ -872,6 +899,7 @@ impl BrowseList {
         format!(
             "{group}{} ({}/{})   clip {}/{} of {} in all   {}{transport}\n{}   band: {}   {}\n{cut}prompt: {}\n{grade}verdict: {verdict}   activity: {tally}   all: {all}   {}\n\
              keys: Y keep  N reject  M maybe  Backspace clear  U next unrated  Z undo   G group review / single clips\n\
+             {TAG_KEYS} (toggle a reason tag, before the verdict)\n\
              Left/Right clip (group: take)  1-4 take  Up/Down activity (group: group)   Space pause  . frame  -/= speed\n\
              C candidates only  V view  {l}   drag orbit  wheel zoom   {HELP_KEY} back",
             activity.name,
@@ -936,6 +964,12 @@ impl Notice {
     /// Backspace's result (`had`: the clip had a verdict).
     pub fn cleared(tail: &str, had: bool) -> Self {
         if had { Self { kind: NoticeKind::Saved, text: format!("SAVED  {tail} = cleared") } } else { Self::not_saved("no verdict to clear") }
+    }
+
+    /// A reason-tag key's result: the clip's tags now (`reasons` as stored), saved.
+    pub fn tagged(tail: &str, reasons: &[String]) -> Self {
+        let tags = if reasons.is_empty() { "none".to_owned() } else { reasons.join(", ") };
+        Self { kind: NoticeKind::Saved, text: format!("SAVED  {tail} tags: {tags}") }
     }
 
     /// Z's result: the undone clip's tail, or `None` if nothing was left to undo.
@@ -1119,6 +1153,39 @@ impl Verdict {
     }
 }
 
+/// Why a take is bad, a tag kept beside its verdict (keys 5-8): the auto-grader's gates are
+/// later calibrated on them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reason {
+    /// A planted foot moves over the ground.
+    Skate,
+    /// The whole body drifts or slides.
+    Slide,
+    /// A sudden jump in the pose (a pop or a snap).
+    Pop,
+    /// A wrong or broken pose.
+    Pose,
+}
+
+impl Reason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Skate => "skate",
+            Self::Slide => "slide",
+            Self::Pop => "pop",
+            Self::Pose => "pose",
+        }
+    }
+}
+
+/// The reasons in their canonical (stored and key) order: keys 5, 6, 7, 8.
+// tunables: const (file-format list, the tag names `verdicts.toml` stores)
+pub const REASONS: [Reason; 4] = [Reason::Skate, Reason::Slide, Reason::Pop, Reason::Pose];
+
+/// The reserved `verdicts.toml` table of reason tags: `"<clip id>" = ["skate", "pop"]` (the `_`
+/// prefix as `grades.json` `_groups`; scanned clip names never start with `_`).
+pub const REASONS_KEY: &str = "_reasons";
+
 /// How the overlay reads one `verdicts.toml` value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Rating {
@@ -1143,6 +1210,7 @@ pub struct Tally {
 pub const VERDICTS_FILE: &str = "verdicts.toml";
 
 const VERDICTS_HEADER: &str = "# Clip verdicts (motion-generation.md): id = \"keep\" | \"maybe\" | \"reject\" | \"note: ...\".\n\
+# Reason tags in [_reasons]: id = [\"skate\", \"slide\", \"pop\", \"pose\"] (keys 5 6 7 8 toggle them).\n\
 # Written by `clip-preview --browse` (Y keep, N reject, M maybe, Backspace clear); keys sorted, comments not kept.\n";
 
 /// `verdicts.toml`: clip id -> value. Every entry already in the file is kept on save (sorted;
@@ -1205,9 +1273,83 @@ impl Verdicts {
         self.entries.insert(id.to_owned(), toml::Value::String(verdict.as_str().to_owned()));
     }
 
-    /// Remove `id`'s entry; `false` if it had none.
+    /// Remove `id`'s entry and its reason tags; `false` if it had neither.
     pub fn clear(&mut self, id: &str) -> bool {
-        self.entries.remove(id).is_some()
+        let tagged = self.reasons_value(id).is_some();
+        if tagged {
+            self.put_reasons(id, None);
+        }
+        self.entries.remove(id).is_some() || tagged
+    }
+
+    /// `id`'s reason tags as stored, in stored order (empty if none, or not a list of strings).
+    pub fn reasons(&self, id: &str) -> Vec<String> {
+        self.reasons_value(id).and_then(toml::Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default()
+    }
+
+    /// Toggle `reason` on `id`; `true` if it is now on. The list is then in canonical order:
+    /// known reasons in [`REASONS`] order, then any other string already there (written by
+    /// hand), as it was. The verdict entry is never touched.
+    pub fn toggle_reason(&mut self, id: &str, reason: Reason) -> bool {
+        let mut have = self.reasons(id);
+        let on = !have.iter().any(|r| r == reason.as_str());
+        if on {
+            have.push(reason.as_str().to_owned());
+        } else {
+            have.retain(|r| r != reason.as_str());
+        }
+        let mut list: Vec<String> = REASONS.iter().map(|r| r.as_str()).filter(|r| have.iter().any(|h| h == r)).map(str::to_owned).collect();
+        list.extend(have.into_iter().filter(|h| REASONS.iter().all(|r| r.as_str() != h)));
+        let value = (!list.is_empty()).then(|| toml::Value::Array(list.into_iter().map(toml::Value::String).collect()));
+        self.put_reasons(id, value);
+        on
+    }
+
+    /// What a label says of `id`: `reject: skate, pop`, `skate` (tags, no verdict), `keep`, or
+    /// `None` (neither).
+    pub fn label(&self, id: &str) -> Option<String> {
+        let tags = self.reasons(id).join(", ");
+        match (self.get(id), tags.is_empty()) {
+            (Some(v), true) => Some(v.to_owned()),
+            (Some(v), false) => Some(format!("{v}: {tags}")),
+            (None, false) => Some(tags),
+            (None, true) => None,
+        }
+    }
+
+    /// ` [skate, pop]` for a tagged `id` (line 2 of the overlay), empty without tags.
+    fn tags_suffix(&self, id: &str) -> String {
+        let tags = self.reasons(id);
+        if tags.is_empty() { String::new() } else { format!(" [{}]", tags.join(", ")) }
+    }
+
+    /// `id`'s entry in [`REASONS_KEY`] as stored (any TOML value).
+    fn reasons_value(&self, id: &str) -> Option<&toml::Value> {
+        self.entries.get(REASONS_KEY)?.as_table()?.get(id)
+    }
+
+    /// Put `id`'s reason tags back exactly (`None` removes them); an emptied table leaves the
+    /// file. A [`REASONS_KEY`] entry that isn't a table is replaced only when tags are put.
+    fn put_reasons(&mut self, id: &str, value: Option<toml::Value>) {
+        let mut table = match self.entries.remove(REASONS_KEY) {
+            Some(toml::Value::Table(t)) => t,
+            Some(other) if value.is_none() => {
+                self.entries.insert(REASONS_KEY.to_owned(), other);
+                return;
+            }
+            _ => toml::Table::new(),
+        };
+        match value {
+            Some(v) => {
+                table.insert(id.to_owned(), v);
+            }
+            None => {
+                table.remove(id);
+            }
+        }
+        if !table.is_empty() {
+            self.entries.insert(REASONS_KEY.to_owned(), toml::Value::Table(table));
+        }
     }
 
     /// `id`'s entry as stored (any TOML value).
@@ -1836,7 +1978,7 @@ mod tests {
         // The log keeps the newest UNDO_CAPACITY actions.
         let mut log = UndoLog::default();
         for n in 0..=UNDO_CAPACITY {
-            log.push(UndoEntry { id: n.to_string(), before: None, cursor: (0, 0), group: None });
+            log.push(UndoEntry { id: n.to_string(), before: None, reasons: None, cursor: (0, 0), group: None });
         }
         assert_eq!((log.len(), log.entries[0].id.as_str()), (UNDO_CAPACITY, "1"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -2015,7 +2157,7 @@ mod tests {
         let (mut l, v) = reviewed_group();
         assert!(l.select_take(1));
         let text = l.overlay_lines(Ok(&v), "");
-        assert_eq!(text, "walk.act.g0   group 2 / 3\ntake 2 selected: unrated   saved 5 of 10\nN reject   1-4 select   Z undo   Down next group   Tab more");
+        assert_eq!(text, "walk.act.g0   group 2 / 3\ntake 2 selected: unrated   saved 5 of 10\nN reject   1-4 select   5 skate  6 slide  7 pop  8 pose   Z undo   Down next group   Tab more");
         assert!(!text.contains("Y keep"));
     }
 
@@ -2025,7 +2167,7 @@ mod tests {
         l.group.as_mut().unwrap().takes.truncate(2);
         v.set("walk.act.g0.00", Verdict::Keep);
         let text = l.overlay_lines(Ok(&v), "");
-        assert_eq!(text, "walk.act.g0   group 2 / 3\ntake 1 selected: keep   saved 6 of 10\nY keep   M maybe   N reject   Z undo   Down next group   Tab more");
+        assert_eq!(text, "walk.act.g0   group 2 / 3\ntake 1 selected: keep   saved 6 of 10\nY keep   M maybe   N reject   5 skate  6 slide  7 pop  8 pose   Z undo   Down next group   Tab more");
     }
 
     #[test]
@@ -2033,10 +2175,10 @@ mod tests {
         let dir = temp("overlay-single");
         let mut l = reviewed();
         let mut v = Verdicts::load(&dir).unwrap();
-        assert_eq!(l.overlay_lines(Ok(&v), ""), "run.act.g0.00   clip 1 / 10\nunrated   saved 0 of 10\nY keep   N reject   M maybe   Z undo   G groups   Tab more");
+        assert_eq!(l.overlay_lines(Ok(&v), ""), "run.act.g0.00   clip 1 / 10\nunrated   saved 0 of 10\nY keep   N reject   M maybe   5 skate  6 slide  7 pop  8 pose   Z undo   G groups   Tab more");
         l.rate(&mut v, Verdict::Keep).unwrap();
         l.step_clip(-1);
-        assert_eq!(l.overlay_lines(Ok(&v), ""), "run.act.g0.00   clip 1 / 10\nkeep   saved 1 of 10\nY keep   N reject   M maybe   Z undo   G groups   Tab more");
+        assert_eq!(l.overlay_lines(Ok(&v), ""), "run.act.g0.00   clip 1 / 10\nkeep   saved 1 of 10\nY keep   N reject   M maybe   5 skate  6 slide  7 pop  8 pose   Z undo   G groups   Tab more");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2097,9 +2239,16 @@ mod tests {
         let paths: Vec<String> = (0..4).map(|t| format!("act/{name}.0{t}.bvh")).chain([format!("act/{name}.bvh")]).collect();
         let mut l = BrowseList::from_paths(root, paths.iter().map(|p| root.join(p))).unwrap();
         let v = Verdicts::default();
+        // Every clip unrated with all four tags: line 2's longest form.
+        let mut tagged = Verdicts::default();
+        for (_, clip) in l.cursors() {
+            for reason in REASONS {
+                tagged.toggle_reason(&clip.id, reason);
+            }
+        }
         let long_error = "x".repeat(300);
         let check = |l: &BrowseList| {
-            for verdicts in [Ok(&v), Err(long_error.as_str())] {
+            for verdicts in [Ok(&v), Ok(&tagged), Err(long_error.as_str())] {
                 for transport in ["", "paused", "x0.25"] {
                     let text = l.overlay_lines(verdicts, transport);
                     assert_eq!(text.lines().count(), 3, "{text}");
@@ -2132,5 +2281,150 @@ mod tests {
             assert!(!default.contains(part), "{part} in {default}");
         }
         assert!(!default.contains("prompt"));
+    }
+
+    /// The file's lines that aren't the header comment.
+    fn body(v: &Verdicts) -> Vec<String> {
+        v.to_toml().unwrap().lines().filter(|l| !l.starts_with('#')).map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn reason_tags_toggle_in_canonical_order_and_an_empty_list_leaves_the_file() {
+        let mut v = Verdicts::default();
+        assert!(v.toggle_reason("top", Reason::Pop));
+        assert!(v.toggle_reason("top", Reason::Skate));
+        assert_eq!(v.reasons("top"), ["skate", "pop"]);
+        assert!(!v.toggle_reason("top", Reason::Pop));
+        assert_eq!(v.reasons("top"), ["skate"]);
+        assert!(!v.toggle_reason("top", Reason::Skate));
+        assert!(v.reasons("top").is_empty());
+        assert!(!v.entries.contains_key(REASONS_KEY));
+        assert!(body(&v).iter().all(|l| !l.contains("_reasons")), "{:?}", body(&v));
+    }
+
+    #[test]
+    fn a_reason_tag_is_not_a_verdict() {
+        let (l, mut v) = reviewed_group();
+        let all = |l: &BrowseList, v: &Verdicts| v.tally(l.activities.iter().flat_map(|a| &a.clips));
+        let before = all(&l, &v);
+        v.toggle_reason("walk.act.g0.00", Reason::Pose);
+        assert_eq!(v.rating("walk.act.g0.00"), None);
+        v.toggle_reason("run.act.g0.00", Reason::Skate);
+        assert_eq!((v.get("run.act.g0.00"), v.rating("run.act.g0.00")), (Some("reject"), Some(Rating::Reject)));
+        assert_eq!(all(&l, &v), before);
+        assert_eq!(before, Tally { keep: 0, maybe: 0, reject: 5, note: 0, unrated: 5 });
+        assert_eq!(l.overlay_lines(Ok(&v), "").lines().nth(1).unwrap(), "take 1 selected: unrated [pose]   saved 5 of 10");
+    }
+
+    #[test]
+    fn reason_tags_round_trip_through_the_file_and_keep_hand_written_ones() {
+        let dir = temp("reasons-file");
+        let mut l = list();
+        let mut v = Verdicts::load(&dir).unwrap();
+        assert_eq!(l.toggle_reason(&mut v, Reason::Pop), Ok(true));
+        assert_eq!(l.toggle_reason(&mut v, Reason::Skate), Ok(true));
+        l.rate(&mut v, Verdict::Reject).unwrap();
+        let back = Verdicts::load(&dir).unwrap();
+        assert_eq!(back, v);
+        assert_eq!((back.get("top"), back.reasons("top")), (Some("reject"), vec!["skate".to_owned(), "pop".to_owned()]));
+        assert_eq!(body(&v), [r#"top = "reject""#, "", "[_reasons]", r#"top = ["skate", "pop"]"#]);
+        // A tag written by hand stays, after the known ones.
+        std::fs::write(dir.join(VERDICTS_FILE), "c = \"reject\"\n\n[_reasons]\nc = [\"hands\", \"pop\"]\n").unwrap();
+        let mut v = Verdicts::load(&dir).unwrap();
+        assert!(v.toggle_reason("c", Reason::Skate));
+        assert_eq!(v.reasons("c"), ["skate", "pop", "hands"]);
+        v.save().unwrap();
+        let back = Verdicts::load(&dir).unwrap();
+        assert_eq!((back.get("c"), back.reasons("c")), (Some("reject"), vec!["skate".to_owned(), "pop".to_owned(), "hands".to_owned()]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_takes_back_a_reason_tag_and_a_verdict_one_at_a_time() {
+        let dir = temp("reasons-undo");
+        let mut l = list();
+        let mut v = Verdicts::load(&dir).unwrap();
+        assert_eq!(l.toggle_reason(&mut v, Reason::Slide), Ok(true));
+        assert_eq!(l.current().id, "top");
+        assert_eq!(l.undo(&mut v), Ok(Some("top".to_owned())));
+        assert_eq!((v.reasons("top").len(), l.current().id.as_str()), (0, "top"));
+        // Tag, then reject (which advances): Z takes the verdict back first, then the tag.
+        l.toggle_reason(&mut v, Reason::Pop).unwrap();
+        l.rate(&mut v, Verdict::Reject).unwrap();
+        assert_eq!(l.current().id, "c");
+        assert_eq!(l.undo(&mut v), Ok(Some("top".to_owned())));
+        assert_eq!((v.get("top"), v.reasons("top"), l.current().id.as_str()), (None, vec!["pop".to_owned()], "top"));
+        assert_eq!(l.undo(&mut v), Ok(Some("top".to_owned())));
+        assert!(v.reasons("top").is_empty());
+        assert_eq!(Verdicts::load(&dir).unwrap(), v);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clear_removes_the_verdict_and_the_tags_and_undo_brings_both_back() {
+        let dir = temp("reasons-clear");
+        let mut l = list();
+        let mut v = Verdicts::load(&dir).unwrap();
+        l.toggle_reason(&mut v, Reason::Skate).unwrap();
+        l.rate(&mut v, Verdict::Keep).unwrap();
+        l.step_activity(-1);
+        assert_eq!(l.current().id, "top");
+        assert_eq!(l.clear_rating(&mut v), Ok(true));
+        assert_eq!((v.get("top"), v.reasons("top").len()), (None, 0));
+        assert_eq!(l.undo(&mut v), Ok(Some("top".to_owned())));
+        assert_eq!((v.get("top"), v.reasons("top")), (Some("keep"), vec!["skate".to_owned()]));
+        // Tags only also clear.
+        l.advance();
+        assert_eq!(l.current().id, "c");
+        l.toggle_reason(&mut v, Reason::Pose).unwrap();
+        assert_eq!(l.clear_rating(&mut v), Ok(true));
+        assert!(v.reasons("c").is_empty());
+        assert_eq!(l.clear_rating(&mut v), Ok(false));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn group_review_tags_the_selected_take_and_the_stage_stays() {
+        let dir = temp("reasons-group");
+        let (mut l, mut v) = reviewed_group();
+        v.path = dir.join(VERDICTS_FILE);
+        assert!(l.select_take(1));
+        let (stage, id) = (l.group.clone(), selected(&l).to_owned());
+        assert_eq!(id, "walk.act.g0.01");
+        assert_eq!(l.toggle_reason(&mut v, Reason::Pop), Ok(true));
+        assert_eq!((v.reasons(&id), v.get(&id)), (vec!["pop".to_owned()], None));
+        assert_eq!((&l.group, l.current().id.as_str()), (&stage, id.as_str()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reason_tags_show_in_labels_line_two_and_the_notice() {
+        let mut v = Verdicts::default();
+        v.set("a", Verdict::Reject);
+        v.toggle_reason("a", Reason::Pop);
+        v.toggle_reason("a", Reason::Skate);
+        v.toggle_reason("b", Reason::Skate);
+        v.set("c", Verdict::Keep);
+        assert_eq!([v.label("a"), v.label("b"), v.label("c"), v.label("d")], [Some("reject: skate, pop".to_owned()), Some("skate".to_owned()), Some("keep".to_owned()), None]);
+        // Group review: a take's label, then line 2 for the selected tagged take.
+        let (mut l, mut g) = reviewed_group();
+        g.toggle_reason("walk.act.g0.01", Reason::Pop);
+        g.toggle_reason("walk.act.g0.01", Reason::Skate);
+        assert!(l.select_take(1));
+        assert_eq!(l.overlay_lines(Ok(&g), "").lines().nth(1).unwrap(), "take 2 selected: unrated [skate, pop]   saved 5 of 10");
+        g.set("walk.act.g0.02", Verdict::Reject);
+        g.toggle_reason("walk.act.g0.02", Reason::Skate);
+        g.toggle_reason("walk.act.g0.02", Reason::Pop);
+        assert_eq!(l.take_label(&find(&l, "walk.act.g0.02"), Some(&g)), "take 02  [reject: skate, pop]");
+        // Single review.
+        let s = reviewed();
+        let mut v = Verdicts::default();
+        v.set("run.act.g0.00", Verdict::Reject);
+        v.toggle_reason("run.act.g0.00", Reason::Skate);
+        assert_eq!(s.overlay_lines(Ok(&v), "").lines().nth(1).unwrap(), "reject [skate]   saved 1 of 10");
+        let saved = |text: &str| Notice { kind: NoticeKind::Saved, text: text.to_owned() };
+        assert_eq!(Notice::tagged("take 03", &["skate".to_owned(), "pop".to_owned()]), saved("SAVED  take 03 tags: skate, pop"));
+        assert_eq!(Notice::tagged("take 03", &[]), saved("SAVED  take 03 tags: none"));
+        assert_eq!(Notice::tagged("run.act.g0.00", &["pose".to_owned()]), saved("SAVED  run.act.g0.00 tags: pose"));
     }
 }

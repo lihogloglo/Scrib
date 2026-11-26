@@ -34,7 +34,7 @@ use sf_anim_graph::slot::LOOP_FOREVER;
 use sf_character::Readiness;
 use sf_character_bevy::{Character, CharacterReadiness};
 
-use super::browse::{BrowseClip, BrowseList, Details, GROUP_MAX, GroupClock, GroupRated, Grades, Notice, NoticeKind, Prov, Transport, Verdict, Verdicts, row_x};
+use super::browse::{BrowseClip, BrowseList, Details, GROUP_MAX, GroupClock, GroupRated, Grades, Notice, NoticeKind, Prov, REASONS, Transport, Verdict, Verdicts, row_x};
 use super::cook::{self, ClipJob};
 use super::{ActorQuery, Phase, Preview, play_full};
 
@@ -216,6 +216,33 @@ impl Browse {
         true
     }
 
+    /// 5 / 6 / 7 / 8 toggle a reason tag on the cursor's clip (in group review the selected take),
+    /// in both review modes; `true` if the overlay needs a refresh. Never replays nor resumes:
+    /// the owner tags while paused on the bad frame.
+    fn tag_keys(&mut self, keys: &ButtonInput<KeyCode>) -> bool {
+        let Some(reason) = [KeyCode::Digit5, KeyCode::Digit6, KeyCode::Digit7, KeyCode::Digit8].into_iter().zip(REASONS).find(|(k, _)| keys.just_pressed(*k)).map(|(_, r)| r) else {
+            return false;
+        };
+        let verdicts = match self.verdicts.as_mut() {
+            Ok(v) => v,
+            Err(e) => {
+                self.message = format!("verdicts off: {e}");
+                self.notice = Some(Notice::not_saved(&self.message));
+                return true;
+            }
+        };
+        let id = self.list.current().id.clone();
+        let tail = self.list.notice_tail(&id);
+        let result = self.list.toggle_reason(verdicts, reason).map(|_| {
+            let reasons = verdicts.reasons(&id);
+            let text = if reasons.is_empty() { "none".to_owned() } else { reasons.join(", ") };
+            (format!("{id}: reasons {text}"), Some(Notice::tagged(&tail, &reasons)))
+        });
+        self.take_result(result);
+        println!("browse verdict: {}", self.message);
+        true
+    }
+
     /// A verdict action's message and notice; an error is shown as not saved.
     fn take_result(&mut self, result: Result<(String, Option<Notice>), String>) {
         match result {
@@ -314,7 +341,7 @@ pub(super) struct NoticeLine;
 type Notices<'w, 's> = Query<'w, 's, (&'static mut Text, &'static mut TextColor, &'static mut Node), (With<NoticeLine>, Without<Overlay>)>;
 
 /// Whether the browser (or content it runs, or the window's own handling) uses `key`; digits 1-4
-/// only in group review. Modifiers, Escape and F1-F12 never count as unbound.
+/// only in group review, 5-8 (reason tags) in both. Modifiers, Escape and F1-F12 never count as unbound.
 fn bound(key: KeyCode, group: bool) -> bool {
     use KeyCode as K;
     let browser = matches!(
@@ -328,7 +355,8 @@ fn bound(key: KeyCode, group: bool) -> bool {
         K::ShiftLeft | K::ShiftRight | K::ControlLeft | K::ControlRight | K::AltLeft | K::AltRight | K::SuperLeft | K::SuperRight | K::Escape | K::F1 | K::F2 | K::F3 | K::F4 | K::F5 | K::F6 | K::F7 | K::F8 | K::F9 | K::F10 | K::F11 | K::F12
     );
     let take = group && matches!(key, K::Digit1 | K::Digit2 | K::Digit3 | K::Digit4);
-    browser || content || skipped || take
+    let tag = matches!(key, K::Digit5 | K::Digit6 | K::Digit7 | K::Digit8);
+    browser || content || skipped || take || tag
 }
 
 /// The label over a group seat's actor ([`seat_labels`]).
@@ -484,6 +512,8 @@ impl Browse {
             }
             changed = true;
         }
+        // A tag before the verdict (N advances); it keeps the stage and a pause.
+        changed |= self.tag_keys(keys);
         let rated = self.group_verdict_keys(keys);
         changed |= rated;
         // A take new on stage (another group, or the same group's next takes) needs its cook.
@@ -738,7 +768,8 @@ pub(super) fn browse_step(
         b.pending = true;
         b.message = format!("loop cut {}", if b.loop_cut { "on" } else { "off: raw takes" });
     }
-    let refresh = b.filter_keys(&keys) | b.verdict_keys(&keys);
+    // A tag before the verdict (N advances); it sets no `pending`, so a pause holds.
+    let refresh = b.filter_keys(&keys) | b.tag_keys(&keys) | b.verdict_keys(&keys);
     // A clip change (navigation, L, a rating, undo, back from group review): play resumes, the speed stays.
     if b.pending {
         b.transport.resume();

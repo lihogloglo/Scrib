@@ -151,6 +151,7 @@ the `from` pose to the `to` pose; the body keeps model + correction. Ends 0/0, w
   first: the entry's exact previous value and the view come back; `BrowseList::undo`, AN46a); sorted keys, existing entries kept, atomic save.
   On screen (AN46e): three lines (where, the selected take's verdict and `saved <rated> of <total>`, the keys that work now), a
   large green `SAVED` / `UNDONE` or red `NOT SAVED: <why>` line for 2 s after every verdict action, Tab = details page.
+  Reason tags (AN46c): keys 5-8, stored beside the verdicts in `[_reasons]` (`"<id>" = ["skate", "pop"]`), never in the verdict value.
 
 #### Browse review: diagnosis (AN9, 2026-11-26)
 
@@ -186,7 +187,14 @@ Nothing reads `grades.json` (gates `skate`/`jerk`/`turn_mag`, `mirror_candidate`
 7. **A clip is seen on one body, free-standing.** Skate or foot trouble that only shows at slot speed or on another
    rig is missed until in game. Fix: **AN11.**
 8. **Notes need a text editor.** `note: ...` verdicts cannot be entered in the tool. Fix: a number key tags a reason
-   (skate, slide, pop, pose) into the note. **New** (small); these tags feed AG3 calibration.
+   (skate, slide, pop, pose) into the note. These tags feed AG3 calibration. **Built 2026-11-26** (AN46c: keys 5 6 7 8
+   toggle skate / slide / pop / pose on the clip or the selected take, also while paused; not into the note: the
+   verdict value stays exactly `keep` / `maybe` / `reject`, which `motiongen grade` and `mw_bake/tests/loop_cut.rs`
+   match, and the tags go in a reserved `[_reasons]` table of `verdicts.toml`, `"<id>" = ["skate", "pop"]`, known
+   reasons in that order, hand-written ones kept after them; a tag is not a verdict (the clip stays unrated);
+   Backspace clears verdict and tags, Z takes back one tag or one verdict; shown as `reject [skate]` on line 2 and
+   `[reject: skate, pop]` over a take, confirmed by `SAVED  take 03 tags: skate, pop`). Industry form: status and
+   reasons are separate fields (ShotGrid status + note, Lightroom flag + keywords).
 9. **The overlay hid what happened** (owner 2026-11-26, ANIM-6b: "wall of text", "no idea if my changes were validated";
    in that session no verdict key reached the tool and nothing said so). **Built 2026-11-26** (AN46e: Bevy-free text
    builders in `browse.rs`, `BrowseList::overlay_lines` = exactly 3 lines of at most 100 characters, the old overlay

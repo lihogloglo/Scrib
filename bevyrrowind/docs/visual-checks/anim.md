@@ -31,8 +31,8 @@ and the walk->jog blend were never on screen ("the walk doesn't work because we 
 walk, but it's alright"); stays open until the player can walk. In passing: "the animations (jog and sprint) are
 still wonky, we'll have to find better ones (or generate them)". Run 1 (questions 1-3): NOT ANSWERED at the same
 sitting: the review tool's UI was rejected (ANIM-6b). Overlay redone (AN46e): ask run 1 again after ANIM-6b (single
-review reads `<clip id>   clip i / n` / `unrated   saved r of n` / `Y keep   N reject   M maybe   Z undo   G groups
-Tab more`; proof line `browse overlay: ...`).
+review reads `<clip id>   clip i / n` / `unrated   saved r of n` / `Y keep   N reject   M maybe   5 skate  6 slide  7 pop
+8 pose   Z undo   G groups   Tab more`; proof line `browse overlay: ...`).
 
 ## ANIM-9: sit/stand batch 1 candidates (AN26a)
 
@@ -46,7 +46,8 @@ C = candidates, G on a group (groups = `seat.<family>[.old].<piece>.<band>`; ver
 Proof log: `browse grades: <n> clips graded, 0 gated` (136 clips in the folder) in last.log. Keeps = the hub sources and picks for AN26b.
 Status: awaiting owner (AN26a). Skipped at the 2026-11-26 sitting: same tool, UI rejected (ANIM-6b). Overlay redone
 (AN46e): ask after ANIM-6b. In group review the screen reads `<group>   group i / n` / `take k selected: unrated
-saved r of 136` / `N reject   1-4 select   Z undo   Down next group   Tab more` (Y / M once 2 takes are left); each
+saved r of 136` / `N reject   1-4 select   5 skate  6 slide  7 pop  8 pose   Z undo   Down next group   Tab more` (Y / M
+once 2 takes are left; 5-8 tag why a take is bad, before its verdict key); each
 verdict key answers with a large SAVED or NOT SAVED line. Second proof line: `browse overlay: ...`.
 
 ## ANIM-6b: side-by-side group review in clip-preview (AN10), readable overlay (AN46e)
@@ -54,8 +55,9 @@ verdict key answers with a large SAVED or NOT SAVED line. Second proof line: `br
 Built: the browser's overlay is three short lines, a large SAVED / NOT SAVED line answers every verdict key, Tab
 shows the details. Run: `owner_launch.sh clip-preview --browse "D:/Gamedev/Bevyrrowind/animation packs/generated/loco2"`
 (absolute folder). It opens on one clip: `<clip id>   clip 1 / n` / `unrated   saved 0 of n` /
-`Y keep   N reject   M maybe   Z undo   G groups   Tab more`. Press G: 2-4 takes side by side, line 3 becomes
-`N reject   1-4 select   Z undo   Down next group   Tab more`. Questions:
+`Y keep   N reject   M maybe   5 skate  6 slide  7 pop  8 pose   Z undo   G groups   Tab more`. Press G: 2-4 takes
+side by side, line 3 becomes `N reject   1-4 select   5 skate  6 slide  7 pop  8 pose   Z undo   Down next group   Tab
+more`. Keys 5-8 tag why a take is bad (AN46c): line 2 then reads `unrated [skate]`. Questions:
 (1) top of the screen: three short lines only, and you can tell which take is selected? yes/no
 (2) press 2 then N: a large green `SAVED  take .. = reject` for 2 s, the take leaves, the rest close up in step? yes/no
 (3) press Y while more than 2 takes stand: a large red `NOT SAVED: reject takes with N until 2 are left`? yes/no
