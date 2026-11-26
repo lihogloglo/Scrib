@@ -34,7 +34,7 @@ env:
 jobs:
   test:
     runs-on: windows-latest
-    timeout-minutes: 150
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v7
       # LFS clips (tests read them) come from the Actions cache: the free LFS bandwidth is ~1 GB/month.
@@ -57,7 +57,13 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           # A red test or lint run still compiled everything: keep the cache, or main stays cold while red.
           cache-on-failure: true
-      - name: cargo test --workspace
+      # Build and run are separate steps: the log shows each one's time, and a hung test fails only the run step
+      # (its own timeout) so the cache is still saved after it; a job timeout would save nothing.
+      - name: build tests (cargo test --workspace --no-run)
+        shell: bash
+        run: cargo test --workspace --no-run
+      - name: run tests (cargo test --workspace)
+        timeout-minutes: 45
         shell: bash
         run: cargo test --workspace --no-fail-fast
       - name: Disk left
