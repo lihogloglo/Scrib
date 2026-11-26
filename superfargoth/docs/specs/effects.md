@@ -143,7 +143,9 @@ active set mirrors it (OpenMW re-syncs every frame in `ActiveSpells::update`; we
 
 ```rust
 pub enum EffectOp {
-    Inflict { source: SourceRef, caster: Option<ActorRef>, entries: EffectList, flags: InstanceFlags, rolls: RollSeed },
+    Inflict { source: SourceRef, class: SourceClass, caster: Option<ActorRef>, entries: EffectList, flags: InstanceFlags, rolls: RollSeed },
+    // E5 adds `scale: Option<f32>` (None = rolled magnitude, the default; Some(s) multiplies each entry's magnitude,
+    // e.g. area falloff when content asks for it; combat-delivery.md "Area" keeps it off, as OpenMW)
     Cast { source: RecordId, target: Option<ActorRef>, rolls: RollSeed },  // book check, cost, chance, then Inflict
     UseItem { item: ItemKey, source: RecordId, kind: ItemCastKind, target: Option<ActorRef>, charge: f32, rolls: RollSeed },
     Equip { item: ItemKey, source: RecordId }, Unequip { item: ItemKey },
@@ -232,9 +234,11 @@ pub trait ItemModel: Send + Sync {
 and cost). `CastModel::plan` → refusal (`CastFailed { reason }`, no cost) or `{ cost, chance, cooldown }`; the host
 spends `cost` with `PoolAdjust` on the caster's `Mana` role; roll `rolls[0] < chance` else `CastFailed { Fizzle }`
 (cost spent); powers record `power_used = time`; then delivery: self entries `Inflict` on the
-caster now; touch entries on `target` (the caller's contact: a melee-range ray or combat hit volume); target entries
-are handed to the projectile owner (`EffectRequest::Launch { source, entries, caster }`) which later calls `Inflict`
-on impact. **Area**: on landing at a point, the caller passes the candidates within the largest area sorted by stable
+caster now; touch entries go out as `EffectRequest::Touch { target, delivery }` for the caller's contact (a
+melee-range ray or combat hit volume); target entries are handed to the projectile owner as
+`EffectRequest::Launch(Delivery { source, class, caster, entries, rolls })` (`sf_effects/src/op.rs`), which flies
+them (combat-delivery.md) and on impact runs `Delivery::inflict()` once per target it lands on (same rolls: the
+same cast lands the same values). **Area**: on landing at a point, the caller passes the candidates within the largest area sorted by stable
 id; each entry lands on those within its own radius. The cast animation and its release frame are the action layer's
 (action.md); this op runs at the release tick.
 
@@ -248,7 +252,9 @@ event); the caller consumes `Once` items; `OnStrike` follows a landed combat hit
 `Absorbed`, `Ended { target, instance, effect, reason: Expired | Dispelled | Cured | SourceRemoved | Unequipped |
 CasterGone | Invalid | Cleared }`, `CastSucceeded { caster, source, tick }`, `CastFailed { caster, source, reason }`,
 `CastRefused`, `PowerUsed`, `BookChanged { owner, source, added }`, `ChargeChanged { item, charge }`.
-`EffectRequest { kind: TagId, phase: Start | Tick | End | Launch, target, caster, instance, magnitude, arg }`.
+`EffectRequest`: `Effect { kind, phase: Start | End, target, caster, instance, index, effect, magnitude, arg,
+tick }` (a `Request` effect started or ended), `Touch { target, delivery }`, `Launch(Delivery)` (as built,
+`sf_effects/src/op.rs`).
 Presentation (VFX, sounds, HUD icons, messages) reads events and the active set, never writes them.
 
 ## Per-tick pipeline (fixed tick, 60 Hz)
@@ -326,7 +332,7 @@ One deliverable plus its test per slice; E1-E3 are Bevy-free.
 | **E2** rules (written) | `EffectRules` traits, `StandardEffectRules`, `sf.effects.*` rule declarations | exact formula tests; rule In/Out round trip |
 | **E3** book + casting (written) | `SpellBook`, `Learn`/`Forget`/`Cast`/`Cure`, powers on game time, cooldowns, `Request` archetype | book sync, cast refused/fizzle/success, recharge |
 | **E4** Bevy + saves (built) | `sf_effects_bevy` (component, sets, commands, events); `sf.character` v4, NPC blob v1, re-registration order (stats S8) | headless app; save round trip with a fortify and a drain active; old goldens load |
-| **E5** items + delivery | `UseItem`, `Equip`/`Unequip`, `ItemModel`, touch and area landing, `Launch` request; on-strike from combat outcomes | charge spent; area radius filter; constant effect follows the loadout |
+| **E5** items + delivery | `UseItem`, `Equip`/`Unequip`, `ItemModel`, touch and area landing, `Launch(Delivery)` request (flight: combat-delivery.md); optional `Inflict.scale`; on-strike from combat outcomes | charge spent; area radius filter; constant effect follows the loadout |
 
 Content slices (first effect set, consumables, abilities, script functions, enchantments, afflictions): adapter spec.
 
