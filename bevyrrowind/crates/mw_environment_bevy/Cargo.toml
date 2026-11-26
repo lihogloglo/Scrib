@@ -44,6 +44,8 @@ mw_weather.workspace = true
 mw_world.workspace = true
 schemars = { version = "1.2", optional = true }
 serde = { workspace = true, optional = true }
+# Action bodies (the player's) the water makes swim and carries (`swim`); already in the app's graph.
+sf_action_bevy.workspace = true
 sf_atmos_bevy.workspace = true
 sf_audio.workspace = true
 sf_character_bevy.workspace = true

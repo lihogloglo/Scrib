@@ -162,7 +162,9 @@ inlet/outlet zones; constants, an overlap rule). Bed carving under the ribbon st
   (pure: enter at `swim.enter_fraction`, leave below `swim.exit_fraction`, current = horizontal sample velocity × gain,
   × `wade_gain × fraction` when wading, clamped) and the game system `mw_environment_bevy/src/swim.rs` in `FixedUpdate`,
   `ControllerSystems::Drive`: for every awake `Mover` (capsule from `MoverParams::radius/height`), `immersion()` →
-  `Ground` ↔ `Swim { surface }` and `loco.current`; movers in `Fly` (creature scaffold) are left alone. The adapter maps
+  `Ground` ↔ `Swim { surface }` and `loco.current`; movers in `Fly` (creature scaffold) are left alone. Since the WA-16
+  failure (2026-11-26, worldgen-9: the player's body is an `sf_action_bevy::ActionBody`, not a `Mover`, and never swam) a
+  second system `swim_bodies` runs the same rule on every `ActionBody` before `ActionSystems::Move`. The adapter maps
   `fSwimHeightScale` to `enter_fraction` with the nav bake's rule (`mw_bake/src/nav.rs:17-20`). Applies to every body in
   the query, one rule: the player swims wherever `WaterQuery` has water, the classic sea and interior pools included
   (meta 2026-11-26 from vanilla behaviour and the industry standard, owner informed; DECISIONS). Dive, breath,

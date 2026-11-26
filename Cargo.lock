@@ -5437,6 +5437,7 @@ dependencies = [
  "mw_world",
  "schemars",
  "serde",
+ "sf_action_bevy",
  "sf_atmos_bevy",
  "sf_audio",
  "sf_character_bevy",

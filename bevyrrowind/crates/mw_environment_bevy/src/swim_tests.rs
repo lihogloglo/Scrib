@@ -12,7 +12,8 @@ use bevy_app::{App, FixedUpdate};
 use bevy_ecs::prelude::*;
 use bevy_time::{Fixed, Time, TimePlugin, TimeUpdateStrategy};
 use glam::{DVec3, Vec3};
-use sf_controller_bevy::{LocomotionIntent, MoveIntent, Mover, MoverMode, MoverParams, SfControllerPlugin};
+use sf_action_bevy::ActionBody;
+use sf_controller_bevy::{Locomotion, LocomotionIntent, MoveIntent, Mover, MoverMode, MoverParams, SfControllerPlugin};
 use sf_coords::WorldPos;
 use sf_physics_bevy::Physics;
 use sf_tunables_bevy::TunablesPlugin;
@@ -103,6 +104,30 @@ fn river_carries_a_swimmer() {
     assert!(speed > 0.0);
     assert!((-moved.z - speed).abs() <= 0.02, "along the flow {} m in 1 s at {speed} m/s", -moved.z);
     assert!(moved.x.abs() <= 0.01, "across the flow {} m", moved.x);
+}
+
+/// The player's body is an `ActionBody`, not a `Mover` (WA-16: the rule never reached it): in the
+/// river it swims with the river's current after one tick; a dry one and a flying one are left alone.
+#[test]
+fn river_reaches_an_action_body() {
+    let mut app = app(None);
+    let body = |at: WorldPos, mode: MoverMode| {
+        let mut body = ActionBody::new(Locomotion::new(at, 0.0), MoverParams::default(), WorldPos::ORIGIN);
+        body.loco.mode = mode;
+        body
+    };
+    let wet = app.world_mut().spawn(body(ground(0.0, 100.0), MoverMode::Ground)).id();
+    let dry = app.world_mut().spawn(body(ground(100.0, 100.0), MoverMode::Ground)).id();
+    let fly = app.world_mut().spawn(body(ground(0.0, 100.0), MoverMode::Fly { hover: None })).id();
+    run_ticks(&mut app, 1);
+    let loco = |e: Entity| app.world().get::<ActionBody>(e).expect("the body").loco.clone();
+    let (wet, dry, fly) = (loco(wet), loco(dry), loco(fly));
+    assert!(matches!(wet.mode, MoverMode::Swim { surface } if (surface - 3.0).abs() <= 1e-3), "{:?}", wet.mode);
+    let speed = river_speed();
+    assert!(speed > 0.0);
+    assert!((wet.current - Vec3::new(0.0, 0.0, -speed)).length() <= 1e-3, "{:?} at {speed} m/s", wet.current);
+    assert_eq!((dry.mode, dry.current), (MoverMode::Ground, Vec3::ZERO));
+    assert_eq!((fly.mode, fly.current), (MoverMode::Fly { hover: None }, Vec3::ZERO));
 }
 
 #[test]
