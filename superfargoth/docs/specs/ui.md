@@ -374,6 +374,9 @@ stable ids (cap 256): `Line` (`TextRun`s from `TopicLinker`, `LinkState` `New`/`
 does nothing), `GoodbyeOnly`, `Ended`. Focus has two regions: the topic list and a **link cursor** over
 links in reading order (spans aren't layout nodes, so directional navigation can't reach them). No geometry
 in the view: `take_scroll_request()`, `version()`.
+**Presenters (DQ-26):** this window is the `Classic` presenter behind `DialoguePresenter`; `Cinematic` (subtitles,
+choice panel) and `Barks` read the same view and emit the same `DialogueRequest`s
+([dialogue-presentation.md](dialogue-presentation.md)).
 
 **Action buttons** (2026-11-08; written without compiling: UNTESTED, owner test pass 2026-11-10). The host
 supplies `set_actions(Vec<DialogueAction>)` (none by default): `id: ActionId`, localised `label`, `enabled`,

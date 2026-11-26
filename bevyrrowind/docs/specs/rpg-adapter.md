@@ -254,11 +254,28 @@ speaker, and `VoiceDirector` stays the one-line gate behind `sf_rpg::barks`.
 Classic keeps OpenMW's triggers and gates (`barks.*` Classic values: no dedupe, cap or gaps; no pre-empt). Modern adds
 dedupe, caps and rule packs as data; compiled Voice rules are the same in both.
 
+## Presentation (DQ-26)
+
+Framework: `superfargoth/docs/specs/dialogue-presentation.md`. **Presets:** Classic = `Classic` presenter (today's
+window, camera on the player, talk from voice loudness); Modern Morrowind = `Cinematic`. **Topics** are the choice
+panel (services, then known topics in name order, Goodbye); a result script's `Choice` replaces them, as in the
+window. Keywords stay clickable in subtitles (same `TopicLinker`, OpenMW rules below). **Voiced vs text:** INFOs with a
+sound file (`SNAM`) are voiced: the Voice DIAL lines and a few story lines (DQ-32b's log counts them by DIAL type);
+all other topic, greeting and persuasion lines are text-only and get procedural talk. **Talk rig** (`TalkRig`):
+`open` -> `Talking(f32)` on the head's `Talk` morph segment (`mw_actors_bevy/src/faces.rs`); visemes map to an
+openness table (A, X closed ... D widest; look tunables). The DQ-32b bake decodes Morrowind's MP3 voices to WAV for
+Rhubarb (it reads WAV/Ogg only). Gestures: the `talk.gesture.*` slots map to Morrowind idle variants if the anim lane
+adopts them; none: head only.
+
 ## Co-op
 
-Filters read the context player (`ctx.player`): `Item`, PC functions, player faction. Quest,
-journal, topics and dispositions are world state; inventories per character. One conversation
-per NPC (`Conversations` claim).
+Filters read the context player (`ctx.player`): `Item`, PC functions, player faction. Quest, journal, topics and
+dispositions are world state; inventories per character. One conversation per NPC: the `Conversations` claim, wired
+at open by DQ-31c. The claimant drives; other players within `dialogue.listen_range_m` see its lines as subtitles
+(Barks presenter), no panel. **Interrupts** (DQ-31c, host): combat involving the speaker or the driver, a hit on
+either, an offence the speaker witnesses (crime-adapter witnesses) end the session with a `talk.interrupted` line
+(Modern rule pack; Classic content has none, so Classic ends silently). Talking again keeps topics, heard lines and
+journal (world state) and shows the last lines greyed within `dialogue.resume.window_s`.
 
 ## OpenMW findings (checked 2026-10-21, OpenMW master)
 

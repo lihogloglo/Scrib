@@ -255,6 +255,12 @@ non-alphanumeric char), then **leftmost-longest without overlap**. Built once pe
 learns what it finds and the UI styles spans). Non-ASCII case folding is not applied (content
 topics are ASCII; revisit for localised packs).
 
+### Presentation
+
+How a session is shown (`DialoguePresenter`: Classic window, Cinematic shots + subtitles + choice panel, Barks),
+the shot solver, pacing, gaze and talk, `Interrupt { reason }` with resume, timed choices (`Deadline` on `Choosing`)
+and the viseme bake: [dialogue-presentation.md](dialogue-presentation.md) (DQ-26). The session stays presentation-free.
+
 ## Adapter hooks (summary)
 
 | Hook | Supplies |
@@ -274,7 +280,8 @@ host-applied requests only. 3: plain serde data, no presentation. 6: `PlayerId` 
 no singleton player. 7: `ActorKey`, `StackId`, `RecordId`, never `Entity`. 8: `RpgEvent` is data.
 `PlayerId` lives in the serde-only `sf_ids` crate (2026-10-21); `sf_rpg` and `sf_action` re-export
 it, and `sf_net` (N2) will re-export it rather than own it. Quests (quests.md "Co-op and saves"): progress, objectives and aliases are shared world
-state; the tracked quest and `JournalSeen` are per player and never feed gameplay.
+state; the tracked quest and `JournalSeen` are per player and never feed gameplay. Conversations: the claimant
+drives, nearby players receive its lines as listeners (dialogue-presentation.md "Co-op, saves, accessibility").
 
 ## Tests
 
