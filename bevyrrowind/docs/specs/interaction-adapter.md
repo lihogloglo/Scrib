@@ -287,6 +287,18 @@ deleted: the shell owns the open state. Travel doors keep `door_sounds`. `sf_int
 (`pub use sf_interaction;`, as `sf_physics_bevy` does) so a crate that reads or writes its messages needs no
 dependency of its own on the core.
 
+### As built (IN33d, 2026-11-26)
+
+A container is a door without a leaf: `mw_rpg_bevy::container_door` (registered from `inventory_ui::add`) writes one
+`DoorChanged { placement, open: true, user: Some(UserKey::Player(HOST_KEY)), tick }` when a container window opens
+and one with `open: false` when it closes. Nothing moves, nothing registers with the door shell, no `door.open` tag.
+The source is the window root's `OpenContainer` (observers on its `Add` and `Remove`, a despawn included), not
+`ContainerOpened` as first planned: an approved open that shows no window (another menu is open) sends nothing, so
+open and close always pair. `tick` is `InteractionTick` when the interaction plugin runs. Every container window
+sends it, a searched corpse included: readers (IN14 `Opened` / `Closed`, nav, scripts) filter by the placement's
+class; `save_rest` and `swing_door_sounds` already skip a placement that is not a swing door. This is the host
+player's window; a co-op host will send the same message from its own record of who has which container open.
+
 ## World rules mapping (IN41, IN38, IN19)
 
 **Material rows** (`sf.interact.material` + a pattern table in `mw_interaction`, checked against the install at cook,

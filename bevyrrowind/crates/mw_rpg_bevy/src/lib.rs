@@ -1,8 +1,10 @@
 //! The RPG layer in the streamed view: dialogue and journal glue (`Rpg`), item pickup and containers,
-//! the inventory screen (app-split.md slice 9) and
+//! the inventory screen (app-split.md slice 9), a container window's open and close as a
+//! `DoorChanged` (`container_door`) and
 //! item use (potions).
 
 pub mod cast;
+pub mod container_door;
 pub mod dialogue;
 pub mod effects;
 pub mod inventory;

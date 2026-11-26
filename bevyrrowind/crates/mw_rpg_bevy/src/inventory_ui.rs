@@ -119,6 +119,7 @@ pub fn add(app: &mut App, open_at_start: bool) {
     );
     crate::dialogue::trade_screen::add(app);
     crate::item_use::add(app);
+    crate::container_door::add(app);
 }
 
 pub(crate) fn screens() -> UiRegistry {
