@@ -159,12 +159,13 @@ Each family: recipe against slot contact points and MG4 height bands, generation
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
 | AN32 | Measurement: weapon groups' text keys, durations, root travel; `Hit1-5`, `KnockDown`, `Shield`; missing moves | tests `mw_bake` | - | printed; ledger | **done 2026-11-26** (a humanoid sets, b creature `Attack1-3`: `mw_bake/tests/attack_clips_survey.rs`; ledger animation: hit at 0.47-0.80 s, one of three follow windows by strength, no attack lunges, no held guard; creatures: 6 of 234 moves travel >= 1.0 m to the hit, none >= 1.5 m)
-| AN33 | Text keys -> sheet windows at cook (anticipation, active, recovery) | `mw_combat` | AN32 | exact vs keys |
-| AN34 | Per-phase rate + additive anticipation/overshoot op | `sf_anim_graph`, `mw_combat` | AN33 | exact; owner ANIM-12 (level-sparring) |
-| C4 | Attack clip pass: sword sheet on Morrowind chop/slash/thrust by direction, step-in `Warp`, `ik.feet` (B5) | `mw_combat`, `mw_player_bevy` | AN34, B5, Q2 | owner CB-1 re-check |
-| AN35 | Reaction map: `Hit1-5`/`KnockDown` to tiers, `HitReact` additive for light hits | `mw_combat` data | AN32 | exact rows |
+| AN33 | Text keys -> sheet moves, cooked (times only; `mv`, `tier`, `poise` stay sheet rows; combat-adapter.md "Morrowind attack clips"): reference forms `<G>@<s>.strike` and `.large/.medium/.small` cut from the keys; windows `Hit(0)`, `Accept`, three `Cancel`s, `Turn`/`NoTurn` from the keys (clip time); Light = `.small`, Heavy = `.medium`, Charged = `.large` (C3b picks at release); `root_scale` 0 | `mw_combat` (new `windows` module), `mw_graphs` (`source` reference forms) | AN32 | exact vs the keys of the real install, headless (12 melee sections; slots span the keys, root at the joins < 1 cm), synthetic keys for a missing `Min Hit` / size |
+| AN33b | Set key alignment: `ClipRules.retime` (piecewise retime of a clip from its own keys onto reference keys; identity when they match); beast and first-person sets cooked onto the male keys | `sf_anim` (cook), `mw_graphs` | AN33 | exact: aligned keys on the male keys; identity except beast HandToHand, 1st-person 2H chop |
+| AN34 | Per-phase rate: `TimeWarp` (monotone piecewise-linear move <-> clip time) replaces the scalar rate in `Owner::Clip` and `MoveSpec`, `MoveDef.phases`; windows converted from clip time at sheet load; anticipation / overshoot accents = two one-frame additive key-pose clips per section + `Float` params on the graph's `Additive` node | `sf_action`, `sf_combat`, `mw_graphs`, `mw_combat` | AN33 | exact (round trip within one `ClockTime` unit, one segment = today's path, default hit times 0.589 / 0.378 / 0.567 / 0.333 s); accents sanity; owner ANIM-12 (level-sparring) |
+| C4 | Attack clip pass: sword sheet on Morrowind chop/slash/thrust by direction (Morrowind first in `sources.ron`; UAL attack clips out, decision 9), step-in `Warp` over `Min Attack`..`Hit`, `ik.feet` (B5) | `mw_combat`, `mw_player_bevy`, `mw_graphs` data | AN34, B5, Q2 | owner CB-1 re-check |
+| AN35 | Reaction map: sheet reaction entries become `(slot, rate, free_s)` with `Cancel(Move, Dodge, Guard, Light, Heavy)` at the free point; Small Hit1-4 by side at 1.6 (free 0.4 s; `HitReact` gives the side), Medium / Large Hit5 at 1.2 / 0.75 (free 0.7 s / end), Knockdown / Death to the takeover; Morrowind first in `sources.ron` `react.*`; `Shield@block` = `guard_hit` from `Block Hit` at `.block.rate`, left-arm mask (and `guard.sword_1h.idle` stops looping it) | `sf_combat` (reaction entry), `mw_combat` data, `mw_graphs` data | AN32 | exact rows (slot, rate, free tick per tier and side); owner ANIM-12 |
 | AN36 | `PoseSeq` asset: key poses, eases, root arc cooked to a clip | `sf_anim` | - | exact at keys |
-| AN37 | Missing moves as `PoseSeq` from Morrowind poses: backstep, 2H guard, parry, riposte, kick (Q1) | `mw_combat` data | AN36 | owner ANIM-13 |
+| AN37 | Missing moves as `PoseSeq` (Morrowind poses first, Kimodo too, Q1): backstep, parry, riposte, kick, weapon guard 1H / 2H, shield guard (the `Shield@block` pose at `Block Hit`, left arm), `parried` (attacker; `Hit5` until then), jumping attack (C3c) | `mw_combat` data | AN36 | owner ANIM-13 |
 | C2 | Locked-on strafe on the new gait set + `OrientationWarp` (C1c-2b) | `mw_graphs` | AN6, A5 | exact sync; CB-2 re-check |
 
 ### Stage 6: physics tint on Delirium
@@ -188,7 +189,7 @@ Each family: recipe against slot contact points and MG4 height bands, generation
 
 - AN12: new `animation-style.md` (pointer in `animation.md` "Motion style"); `animation-sources.md` "Gait classes" (fill, `loco.<style>.*`, Classic).
 - AN9: `motion-generation.md` "Review renderer" rewrite; AN25 its "Interaction families"; AN39 `animation.md` "Physics tint".
-- Before AN33: `combat-adapter.md` "Morrowind attack clips" (windows, per-phase rate, reaction map).
+- Before AN33: `combat-adapter.md` "Morrowind attack clips" (windows, per-phase rate, reaction map). **Done 2026-11-26** (specs-7, dc00069e).
 - Cleanup: drop 100STYLE from `animation-sources.md` and ROADMAP 3.4c ("look for a free sprint clip (100STYLE)"). **Done 2026-11-26** (070b6f75).
 
 ## 6. Dependencies on other lanes

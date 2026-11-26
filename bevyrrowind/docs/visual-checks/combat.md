@@ -11,6 +11,14 @@ refills at 0); a second dummy 10 m to the left; a 1 m ledge. Cameras `behind`, `
 
 
 
+### CB-1 re-check: sword attacks on Morrowind clips by direction, step-in (anim C4)
+- `owner_launch.sh scene level-arena` (synthetic greybox; F11 player, F to draw). Not built yet: launch only after anim C4 is committed.
+- Questions (yes/no): (1) Does each direction play its own Morrowind swing (stick forward or back: thrust; sideways: slash; still or
+  diagonal: chop; OpenMW `getMovementBasedAttackType`, `character.cpp` 2927-2935 @ `4e718b5`)? (2) Does the step-in close the gap to the
+  dummy without sliding feet or overshooting it? (3) Does the dummy react as the blade arrives (no early or late hit)? (4) Is LMB x3 still
+  a fluent chain on the Morrowind clips (no stall between swings)?
+- Proof log: `training dummy: hit N <tier> from the <side>` in last.log. Status: planned (after anim C4).
+
 ### CB-6: Spammable roll: press during a move rolls at once, mashing chains (roll-chain, 2026-11-25)
 - Bake first (`bevyrrowind bake`: roll rate changed). `cargo dev scene level-sparring` (cameras `behind`, `side`), F11, F to draw.
 - Feel for: mash Shift: rolls chain every ~0.58 s with no dead time (was ~0.9-1.3 s, presses dropped); Shift pressed during an

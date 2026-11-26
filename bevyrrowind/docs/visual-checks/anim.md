@@ -60,3 +60,23 @@ ANIM-9 ones: judge the wiring (starts, lands, holds, leaves), not the takes. Que
 Proof log: `player clips: N of M slot clips baked` in last.log, N and M both 48 higher than before (the 48 seat slots; N lower means the seat
 bake is missing: `bevyrrowind bake`).
 Status: awaiting owner (AN26c2 508a628a, 2026-11-26). Replaces IN-32 question (4) "E leaves you standing".
+
+## ANIM-12: attacks and hit reactions on Morrowind clips (AN34 + AN35)
+`owner_launch.sh scene level-sparring` (synthetic greybox, muted; F11 player, F to draw). Not built yet: launch only after AN34 and AN35 are
+committed. Look at the player's light attacks (LMB, each stick direction) and at the sparring dummy's swings landing on you. Questions:
+(1) LMB: does the wind-up read before the strike (a visible pull-back) without looking slow? yes/no
+(2) Does the strike snap (faster than the wind-up), the blade carrying a little past the hit (overshoot)? yes/no
+(3) Does the recovery play out with no pop between the strike and the follow-through? yes/no
+(4) Let the dummy hit you: is the reaction a short flinch that frees you quickly (~0.4 s), its side readable from the body kick? yes/no
+Tune live if "no": `mw.combat.clips.rate.*`, `.accent.*`, `.react.*`. Proof log: `sparring: the player: hit N <tier> from the <side>` in last.log
+(reactions fire); the attack-clip proof line is named when AN34 lands.
+Status: planned (after AN34 + AN35; spec combat-adapter.md "Morrowind attack clips").
+
+## ANIM-13: missing moves as key-pose clips (AN37)
+`owner_launch.sh scene level-sparring` (synthetic greybox, muted; F11 player, F to draw). Not built yet: launch only after AN37 is committed;
+keys for backstep, kick and parry are named in this entry at build time. Questions:
+(1) Backstep: does it read as a quick hop back with the roll's weight? yes/no
+(2) Hold guard with a shield, then with a 2H weapon: a braced guard, not a frozen frame? yes/no
+(3) Kick: does it read as a kick (weight shift, foot out, back)? yes/no
+(4) Parry then riposte (only if C2d is built): one deflect, then one stab? yes/no
+Status: planned (after AN36 + AN37).
