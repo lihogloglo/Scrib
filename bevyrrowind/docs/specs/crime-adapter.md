@@ -288,7 +288,7 @@ Strings (`sNotifyMessage*`, `sKeyUsed`, `sLock*`, `sTrap*`, `sUnlocked`, `sTrapp
 |---|---|---|
 | `detection` | Meter + one sneak eye (MA5, decision 6) | one seeded roll per sight check (MA5) |
 | `reporters` | witnesses who saw or heard, `alarm >= 100` | any reportable actor in radius, `alarm >= 100` |
-| `report_cancel` | dead, downed, bribed, threatened, timeout | dead, downed (open questions 1, 2) |
+| `report_cancel` | dead, downed, bribed, threatened, timeout | dead, downed (decided, open questions 1, 2) |
 | `recognition` | `Unknown`/`Description`/`Identified` with `Disguise` (owner Q2 pending) | always `Identified` |
 | `jurisdictions` | one island-wide (owner Q3 pending, recommended) | one island-wide |
 | `law` | framework ladder, decay, murder floor, heat | `iCrimeThreshold` ladder, no decay |
@@ -358,9 +358,9 @@ One deliverable per slice; rows, order and checks: [crime roadmap](../../../docs
 Framework and preset questions (minigame feel, headgear, one bounty, jail skill loss in Modern, stolen cool-down) are
 crime roadmap §7 and crime.md "Open questions"; this spec follows their recommendations.
 
-1. **Can a Classic witness be bribed or threatened out of reporting?** Recommended: no. Bribe and Threat are Modern;
+1. **Can a Classic witness be bribed or threatened out of reporting?** **Decided (meta, 2026-11-26): no.** Bribe and Threat are Modern;
    Morrowind has no such dialogue, so Classic keeps its outcome.
-2. **A crime far from any guard (tombs, camps, the wilds)?** Recommended: the witness walks to the nearest guard by
+2. **A crime far from any guard (tombs, camps, the wilds)?** **Decided (meta, 2026-11-26), as written:** the witness walks to the nearest guard by
    nav distance. Past `crime.report.timeout_s`, Classic delivers anyway (Morrowind's bounty lands, later); Modern
    cancels (RDR2, KCD2: an unreported crime in the wilds stays unreported).
 
