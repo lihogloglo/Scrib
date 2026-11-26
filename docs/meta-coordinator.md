@@ -74,6 +74,12 @@ The working rules are still `CONTRIBUTING.md`; this page only says how the coord
   scene (e.g. `walkers: N movers` with N > 0). Meta launches with `bash bevyrrowind/tools/owner_launch.sh ...`, then
   checks `last.log` in the newest `%TEMP%\bw-owner-*` folder for that line before telling the owner what to look at.
   2026-11-26: a render-only scene with no NPCs was sent for a head-tracking check.
+- **The brief is the last text of the turn (owner 2026-11-26).** What was built, what to do and the 2-4 yes/no
+  questions come after every tool call of the turn: the owner does not see text written before a tool call.
+- **Launch only on the owner's "next", one script at a time.** A rejected tool call does not stop `owner_launch.sh`:
+  it stays waiting and opens its scene later, so never start a second one beside it.
+- **A look comparison is one scene with a live toggle,** at a fixed weather and hour, never two launches.
+- Closing finished windows by `taskkill` can be refused by the permission classifier: then the owner closes them.
 - Relay each verdict to the lane, which records it in its `visual-checks/<system>.md` entry.
 - A bug the owner reports in passing: log it in the ROADMAP with the evidence (log path, scene, exe commit), offer
   a lane for it, don't guess its cause in the docs.

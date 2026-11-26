@@ -10,7 +10,8 @@ made by the vendored Magna Urbis (MU) land-use module through its own data, read
   `mu-packs/landuse.json`.
 - **Research:** the MU source at rev 21e2217 (`vendor/magna-urbis/VENDOR.md:8-9`); capability row 11 and plan C-9 of
   `scrib-worldgen/docs/research/magna-urbis-capabilities-2026-11-24.md:65`, `:182-183` (verified below, not copied).
-- **Status:** specced 2026-11-26 (WG-LU0). Framework stage 10 of `worldgen.md` (pointer in the rows file).
+- **Status:** specced 2026-11-26 (WG-LU0); owner questions answered the same day ("Owner answers"). Framework stage
+  10 of `worldgen.md` (pointer in the rows file).
 
 Paths: `L/` = `vendor/magna-urbis/rust/crates/core/src/landuse/`, `S/` = `.../core/src/settlements/`, `U/` =
 `.../core/src/urban/`. V = read in source, U = unverified.
@@ -216,6 +217,7 @@ group key per parish). `worldgen-town` turns it into a native mod, one `sf.place
   against the guide palette like `geology.rs:85`; unknown = error); groundcover crop rows (saltrice on wet fields,
   wickwheat, ash yam on the Ashlands fringe, marshmerrow on the Bitter Coast: names checked against the pack's records
   at bake); orchard species; kit style per boundary material (`worldgen-kit` on plantation fences, Imperial walls).
+  Boundary kits take only pieces the player can jump over (owner answer 3): the pieces collide, the gates are the way through.
 
 ## Slices
 
@@ -280,20 +282,25 @@ WG-LU-look (entry text in the rows file): one generated hamlet with farms on the
 one kept town. Questions are yes/no on fields reading as worked land, strips and closes, walls with gates, crops, and
 woods kept out of fields. No automated look check.
 
-## Open questions (owner)
+## Owner answers (2026-11-26, via meta-7: "yeah to all recommended")
 
-1. **Are field crops harvestable?** Recommended: not in v1 (look only, groundcover); later a share of crop plants
-   near farms becomes harvestable like vanilla flora, with ownership (taking them is theft).
-2. **May generated fields reach right up to kept towns and plantations?** Recommended: yes, beyond the anchor band,
-   so kept places sit in farmland rather than in a ring of wild land.
-3. **Do field walls and fences block the player?** Recommended: yes, they collide, but stay low enough to jump
-   (kit choice), with a gate at every way.
+No question is open. The design above already follows each answer.
+
+1. **Field crops are not harvestable in v1** (look only, groundcover). Later a share of crop plants near farms
+   becomes harvestable like vanilla flora, with ownership (taking them is theft).
+2. **Generated fields may reach right up to kept towns and plantations**, outside the kept area (beyond the anchor
+   band), so kept places sit in farmland rather than in a ring of wild land.
+3. **Field walls and fences block the player**: they collide, stay low enough to jump (kit choice, "Adapter data"),
+   and have a gate at every field way.
+4. **MU's own land-use farms stay off for now** (`plan.farmsteads: false`, `plan.demandFarms: false`); turning them
+   on later is a data switch ("Later").
 
 ## Later
 
 - MU's own land-use farms (`plan.farmsteads`, `plan.demandFarms` on: farms along roads and on good land no farmer
   reaches, with drives from `farm_access.rs`): more of MU, but each such farm must then pass site validation and get a
-  pad (`sites.md`), so it needs a second pass. Decided after WG-LU-look; both switches are data.
+  pad (`sites.md`), so it needs a second pass. Off for now (owner 2026-11-26); both switches are data.
+- Harvestable field crops: a share of crop plants near farms, owned (owner answer 1).
 - Feed scatter's canopy suitability as `naturalForest`, if the owner wants dense woods to win over fields.
 - Field size and shape per culture (today MU code in `fields.rs`): a generic data patch only after an owner look.
 - Map colouring of land use (map.md), seasonal crop looks, Underdark fungal beds (MU `cultivation: fungal`).

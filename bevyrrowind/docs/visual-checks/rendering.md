@@ -255,7 +255,9 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Check (awaiting owner): `scene ghostfence-far`, fly up past 384 m and back down past 128 m, then along the coast ~1 km.
   Q1: anything (rocks, trees, structures) hanging in the sky after a climb or a descent? Q2: any shape that is the wrong mesh
   for its place (a rock where a tree stood) where cells streamed out? Proof: log has `origin shift` lines while climbing.
-- Status: fix awaiting owner (2026-11-19 cause); 2026-11-11 precombine sighting open.
+- 2026-11-26 owner verdict (`scene ghostfence-far`, exe 1c699df9): PASS, "all good". Seen in the same run, logged as
+  ROADMAP 1.31: no fog at distance on the Ghostfence.
+- Status: confirmed by owner 2026-11-26 (2026-11-19 cause); the 2026-11-11 precombine sighting was not seen again, reopen if it shows.
 
 ### RO-24: Exterior statics drawn inside interiors (ROADMAP 1.29, owner report 2026-11-26)
 - Cause: static-scene batches on render layer 0 (every camera), so the exterior scene drew indoors; fixed by per-worldspace
@@ -265,7 +267,10 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   Q3 (lamp shadows, F1a side effect; `scene hi-balmora-night`): do lamps now cast shadows from scene statics (walls, rocks), and
   does it look right? (ms not measured yet: a `perf suite` arm on balmora_walk_night if the look is kept.)
   Proof: log line `worldspace look: interior balmora, karlirah's house` then `parked @exterior`.
-- Status: awaiting owner (2026-11-26).
+- 2026-11-26 owner verdict (exe 1c699df9): Q1 PASS ("yes no more rocks indoor"). Q2 no regression seen ("hard to tell, I
+  don't know all the rocks"). Q3 lamp shadows present, look unchanged ("yes they do, just like they did before").
+  Left: the ms of lamp shadows from scene statics is not measured.
+- Status: confirmed by owner 2026-11-26; cost unmeasured.
 
 ### RO-19: Very short shadow flickers here and there (owner report 2026-11-11)
 - Balmora 14:00, same in sc-scene and sc-noscene: brief, subtle flickers, the owner thinks shadows (maybe fog).
