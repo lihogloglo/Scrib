@@ -8,14 +8,19 @@
 //!
 //! Frame: metres, x and z on the ground plane, y up. This crate names no game format.
 
+mod bands;
 mod hash;
 mod instance;
 mod source;
 mod tile;
+pub mod tunables;
 
+pub use bands::{BandSettings, Bands, SpeciesDims, TierFades, ViewScale};
 pub use instance::{Instance, PackedInstance, PackedTile, TileHeader};
 pub use source::{InstanceSource, SyntheticForest};
 pub use tile::TileKey;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_bands;
