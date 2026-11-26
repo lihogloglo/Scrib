@@ -145,7 +145,8 @@ inlet/outlet zones; constants, an overlap rule). Bed carving under the ribbon st
   body costs a 1490-segment scan per sample; chunks keep the BVH tight and a sample ≤ 2 µs), kind River, `FLAT` waves,
   ids `guide:lake:<id>`, `guide:river:<id>:<k>`. `water.rs:262-264` appends them before `WorldspaceWater::new`; speeds
   from the same `river_speeds` as the mesh bake (identical inputs, identical values).
-- **FL-5b**: `Locomotion::current: Vec3` (m/s, world, host-written each tick, serde default 0): the step adds
+- **FL-5b** (built 2026-11-26, worldgen-3): `Locomotion::current: Vec3` (m/s, world, host-written each tick, `#[serde(skip)]`
+  like `inherited`: zero on load, save shape unchanged): the step adds
   `current.xz · dt` to the horizontal displacement before the sweep in every mode (walls and banks stop the drift); the
   intent stays relative to the water.
 - **FL-5c**: `sf_water::swim::medium(&Immersion, swimming: bool, &SwimParams) -> Medium { swim, surface, current }`

@@ -329,6 +329,11 @@ pub struct Locomotion {
     /// Runtime only.
     #[serde(skip)]
     pub crush: Crush,
+    /// Velocity of the medium carrying the character (a river's current), m/s, world; the host
+    /// writes it every tick (zero outside water). Runtime only: the host recomputes it from the
+    /// water query, so the save shape stays as it is.
+    #[serde(skip)]
+    pub current: Vec3,
 }
 
 impl Locomotion {
@@ -352,6 +357,7 @@ impl Locomotion {
             inherited: Vec3::ZERO,
             squeeze: None,
             crush: Crush::Free,
+            current: Vec3::ZERO,
         }
     }
 
@@ -733,6 +739,8 @@ fn begin(it: &mut MoveInput<'_>, dt: f32) -> Pending {
         // left the body with (zero on the ground).
         d += (loco.slide + loco.inherited) * dt;
     }
+    // The medium's drift (a river's current), in every mode: the intent stays relative to the water.
+    d += horizontal(loco.current) * dt;
     let dy = d.y;
     d.y = 0.0;
     Pending { frame, start: loco.position, d, dy, vy0, free, v_goal, yaw_goal, gait: it.intent.gait, probe: None, deflected: false, pushed: false, squeeze: None }
