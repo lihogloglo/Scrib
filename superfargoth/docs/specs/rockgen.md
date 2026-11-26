@@ -259,7 +259,8 @@ unions need no new SDF primitive.
 **Industry comparison.** Per biome a rock kit in size tiers, a shared base material with biome variants, and
 placement rules per ecotope picking from the kit: Horizon Zero Dawn ecotopes (U), Ghost of Tsushima base rock
 material + biome variants (U), Megascans packs sold per biome (U), Morrowind one `terrain_rock_<region>` set per
-region (V, `classify.rs:118-131`) (T§6). Cover by world up-normal is UE's World Aligned Blend material function (U,
+region (V: `classify.rs:118-131` keys on the `terrain_rock` prefix; the model names carry the region,
+`terrain_rock_ma/ac/ai/rm/gl/bc/wg`, read from the source's master file 2026-11-27) (T§6). Cover by world up-normal is UE's World Aligned Blend material function (U,
 general knowledge). Here: kit = classes + pack models per `[rock_units]` context (`worldgen-scatter.md` Rocks), tiers
 = the scatter's size law, ecotope = unit x regime, biome variant = one material variant per (rock layer, regime).
 Gap: no scanned rock quality (as above).
@@ -277,6 +278,11 @@ rainforest, rainforest). Regime effects, the adapter's choice of entries and cov
 | temperate | rounded variants (`block`, `cobble`) | as the unit | moss on tops and in shade, lichen in the open |
 | wet | rounded corestones, few fresh blocks | `field_stone_per_ha` down (rock buried) | heavy moss, darker |
 
+**Cover assets** (checked 2026-11-27 in Bevyrrowind's three mounted packs and the source game's master file): moss has
+a tiling layer (`tx_bc_moss*`, a landscape texture record there); the lichen files are inventory icons, not tiling
+layers, and no pack has varnish or dust. So a cover is a mask (RG-9i) with a colour and an **optional** texture layer:
+moss textured; lichen, varnish and dust tint-only until a pack brings layers. No row waits on an asset.
+
 **Classes per unit** (generic class names; unit names are the adapter's, here Bevyrrowind's six units of
 `bevyrrowind/worldgen/geology.toml`, T§2; `outcrop = false` units have no outcrop context, V):
 
@@ -291,7 +297,7 @@ rainforest, rainforest). Regime effects, the adapter's choice of entries and cov
 
 **New classes as data (RG-9b)**, starting numbers `Guess` over today's presets (the owner's look loop tunes them):
 `frost_block` (= `talus`, chips 14, `joint_jitter_deg` 25), `bomb` (= `cobble`, aspect [0.45, 0.4], light pits),
-`column_segment` (= `columnar`, 1-3 columns, long aspect), `beach_column` (= `column_segment`, rounding and
+`column_segment` (= `columnar`, `columns` 2: the hex lattice gives 1-3 in the footprint, long aspect), `beach_column` (= `column_segment`, rounding and
 `weather_amp` up), `soft_block` (= `block`, rounding 0.12, 2 chips, light pits), `ventifact` (= `block`, 3 deep chips,
 low weathering; approximate: chips are not biased to one side), `river_cobble` (= `cobble`, aspect [0.75, 0.4];
 imbrication is a pose rule, later), `crust_plate` (= `slab`, `weather_amp` up, tint 0.8). Parameter classes once their
@@ -313,10 +319,11 @@ RG-4 adds 14: `edge_snap` (bool, default off since 2026-11-22: the owner prefers
 `resolution_ref_m` 2, `resolution_size_exp` 0.5, `resolution_max` 128, `lod0_error_max_m` 0.015; `chips` range 0-64.
 RG-9 adds (all `Guess`, `Net::Gameplay` except the cover): `pit_side_bias` 0 (0-1), `pit_top_cos` 0.5 (0-1, cosine
 of the normal to +Z above which a face counts as a top), `pit_size_spread` 0.6 (0.1-1, ratio: smallest pit radius
-over the largest, today's const `PIT_MIN_FRACTION`, `sdf.rs:30`), `beds` 0 (0-12), `bed_recess` 0.04 (0-0.15, ratio of size), `bed_blend` 0.3 (0-1,
-ratio of a bed), `column_bend_deg` 0 (0-30), `blobs` 0 (0 = joint block, 3-8), `blob_flatten` 0.6 (0.2-1, ratio);
-material (`rockgen.cover.*`, `Net::Presentation`): `amount` 0 (0-1), `up_sharpness` 4 (1-16), `cavity_weight` 0.5
-(-1-1: negative = cover in cavities, moss; positive = on exposed tops, dust). Every new boulder parameter's default
+over the largest, today's const `PIT_MIN_FRACTION`, `sdf.rs:30`), `beds` 0 (0-12), `bed_recess` 0.04 (0-0.15, ratio
+of size), `column_fans` 1 (1-6), `column_fan_tilt_deg` 0 (0-40), `blobs` 0 (0 = joint block, 3-8), `blob_flatten` 0.6
+(0.2-1, ratio); material (`rockgen.cover.*`, `Net::Presentation`): `amount` 0 (0-1), `up_sharpness` 4 (1-16),
+`cavity_weight` 0.5 (-1-1: negative = cover in cavities, moss; positive = on exposed tops, dust), cover colour (linear
+RGB, per regime in adapter data). Every new boulder parameter's default
 leaves today's meshes bitwise unchanged (the rows' tests).
 
 ## Build plan
@@ -358,44 +365,62 @@ rock placement: scree fans below faces instead of rocks in lines along them); cl
 **Typology rows (RG-9, "(e) Typology"; specced 2026-11-27, none built).** Order: data first (9a, 9b), then the
 scatter key and the adapter (9j, 9k), then parameters and recipes (9c-9g), then the cover (9h, 9i). Each new boulder
 parameter joins `library_key` (exhaustive destructuring, `library.rs:169-171`) and `TUNABLES`; its default must leave
-every existing class's `RockLods.hash` unchanged (fixture: today's 9 class hashes at seed 1-4, recorded in 9a).
+every existing class's `RockLods.hash` unchanged (fixture: today's 9 class hashes at seed 1-4, recorded in 9a; only
+RG-9h re-records it, see there). Reviewed 2026-11-27 against the source (fixes: 9b, 9c, 9d, 9e, 9f, 9h, 9i, covers).
 
 - **RG-9a: class presets as data** (`sf_rockgen::classes`). `classes.toml` (built in, `include_str!`) holds today's 9
   presets as `[[class]]` rows (`name`, `family`, `analogue`, `source`, `tint`, then any `BoulderParams` field by name);
-  `ClassTable::parse_toml` + `with_adapter(file)` (adds rows, overrides by name); `CLASSES` becomes the table; the bake
-  (`mw_boot_bevy/src/bake.rs:285-290`) and the rock lab read it. Test: the 9 parsed classes give the recorded
+  `ClassTable::parse_toml` + `with_adapter(file)` (adds rows, overrides by name); the `CLASSES` const slice (fn
+  overrides) becomes `ClassTable::builtin()`, and its readers take the table: the bake (`mw_boot_bevy/src/bake.rs:285-290`,
+  `LibraryStep::from_classes`), the rock lab and `sf_rockgen/src/tests.rs` `classes()`. Test: the 9 parsed classes give the recorded
   `RockLods` hashes bitwise; unknown field, value outside its tunable's range, repeated name rejected; an adapter row
   adds one class and overrides one.
 - **RG-9b: eight new classes** as `classes.toml` rows ("(e)": `frost_block`, `bomb`, `column_segment`,
-  `beach_column`, `soft_block`, `ventifact`, `river_cobble`, `crust_plate`). Test: per class, 8 seeds closed, no NaN,
-  bounds within size, LOD0 triangles within the class budget test of RG-4b. Visual check RG-9b (rock lab column per
+  `beach_column`, `soft_block`, `ventifact`, `river_cobble`, `crust_plate`). Test: the existing per-class tests (`tests.rs` `classes()`: same seed same mesh, closed
+  LODs, bounds within size) cover the 8 new rows over 8 seeds, no NaN; LOD0 triangles per class are printed by
+  `measure_boulders` (a measurement, no pass/fail budget exists: RG-4b reported counts). Visual check RG-9b (rock lab column per
   class, awaiting owner).
-- **RG-9c: tafoni pits** (`sdf.rs` `with_pits`). A face's keep chance is `density x (1 - pit_side_bias)` where the
-  solid's normal at the pit centre has `n_z >= pit_top_cos`, `density` elsewhere; radius range from
-  `pit_size_spread`; draws per cell unchanged. Class `tafoni` (= `soft_block`, bias 0.9, larger spread). Test: bias 0
+- **RG-9c: tafoni pits** (`sdf.rs` `with_pits`, `sdf.rs:235-285`). A cell's keep threshold is `density x (1 -
+  pit_side_bias)` where the union's gradient at the pit centre (centres already sit within `PIT_OPEN_FRACTION x r` of
+  the surface) has `n_z >= pit_top_cos`, `density` elsewhere; radius uniform in [`pit_size_spread`, 1] x `max_radius`;
+  the five draws per cell unchanged. Class `tafoni` (= `soft_block`, bias 0.9, `pit_size_spread` 0.25: a wide range
+  of cavity sizes; pits on the sides and under overhangs). Test: bias 0
   and spread 0.6 give the recorded hashes; bias 1: no kept pit with `n_z >= pit_top_cos` (exact); closed over 16 seeds.
-- **RG-9d: bed bands** on a joint block. `beds` bands along the shortest axis (the bedding family), each with a seed
-  hardness in [0, 1]; side slabs move in by `bed_recess x size x (1 - hardness)`, blended over `bed_blend` of a bed;
-  the Lipschitz bound (`sdf.rs:195`) grows by the band slope. Class `bedded`. Test: `beds` 0 gives the recorded hashes;
-  on the raw field, a soft band's side face sits `bed_recess x size x (1 - h)` inside the block's within one voxel;
-  closed over 16 seeds.
-- **RG-9e: column bend** (`columns.rs`). Each column's axis turns by up to `column_bend_deg` over the cluster height
-  (lattice points offset by a per-column quadratic in z, entablature). Class `entablature`. Test: 0 gives the recorded
-  hashes; a 1-column fixture's cross-section centroid moves `h tan(bend) / 2` top vs bottom within 10 %; closed.
-- **RG-9f: clump recipe.** `blobs` 3-8 replace the joint block with a union of flattened ellipsoid `Piece`s (axes
-  `blob_flatten` on z, overlap as `formations.rs` `OVERLAP`), chips and pits as usual. Class `spatter`. Test: `blobs`
+- **RG-9d: bed bands** on a joint block, the `formations.rs` `Stack` band pattern on a block: `beds` > 0 splits the
+  block along its shortest axis (the bedding family) into `beds` band `Piece`s that share their bed planes as `hard`
+  planes (never rounded, `sdf.rs:69-71`), each band with a seed hardness in [0, 1] and its side planes moved in by
+  `bed_recess x size x (1 - hardness)` (a ledge per hard bed; weathering noise softens it). All faces stay planes, so
+  the Lipschitz bound and the snap's Hermite data are unchanged. Chips cut the union once (`with_cap`, as a column
+  cluster's). Class `bedded`. Test: `beds` 0 gives the recorded hashes; on the raw field, a band's side plane sits
+  `bed_recess x size x (1 - h)` inside the unsplit block's (exact, planes); closed over 16 seeds.
+- **RG-9e: column fans** (`columns.rs`): entablature as `column_fans` sub-clusters, each `column_cluster` in its own
+  frame tilted by `column_fan_tilt_deg` toward azimuth `i x 360 / column_fans` (plus the shared seed phase), unioned;
+  a tilted frame keeps every column face a plane (a per-column curved axis would not: Voronoi bisectors of
+  z-dependent seeds are not planes, and `Piece` is planes). Thin columns = a high `columns`. Class `entablature`.
+  Test: `column_fans` 1 or tilt 0 gives the recorded hashes; on a 2-fan fixture every side plane of a fan's columns
+  is parallel to that fan's axis (|n . axis| < 1e-5) and the two axes are `column_fan_tilt_deg` from +Z within 1e-4
+  rad; closed over 16 seeds.
+- **RG-9f: clump recipe.** `blobs` 3-8 replace the joint block with a union of flattened ellipsoid `Piece`s (no
+  planes, `ellipsoid` only; axes `blob_flatten` on z, overlap as `formations.rs` `OVERLAP`); chips cut the union once
+  (`with_cap`, as a column cluster's), pits as usual. Class `spatter`. Test: `blobs`
   0 gives the recorded hashes; every blob centre is inside the solid; bounds within size; closed over 16 seeds.
 - **RG-9g: tor formation** (`formations.rs`): `Shape::Tor`, a `Stack` whose bands are rounded joint blocks offset
   and yawed per band (stacked corestones). Preset `tor`. Test: closed over 8 seeds, each band's piece overlaps the
   one below by at least `OVERLAP`, bounds within size.
 - **RG-9h: vertex cavity** (the unbuilt "Materials" extra). `RockMesh` gains `cavity: Vec<f32>` from the SDF along
-  the normal (5-tap SDF ambient occlusion, Evans SIGGRAPH 2006, U); LODs keep it (meshopt indices reuse the source
-  vertices); joins the mesh hash; `sf_rockgen_bevy` writes `ATTRIBUTE_COLOR`. Test: values in [0, 1]; on a block with
-  one pit, pit-floor vertices > flat-face vertices; every LOD's cavity equals its source vertex's.
-- **RG-9i: cover layer** (`rock.wesl`, `RockMaterial`): a second triplanar layer (pack texture id) blended by
-  `smoothstep` of world up-normal^`up_sharpness` x `amount`, shifted by cavity x `cavity_weight`; one material
-  variant per (rock layer, regime). Test: `shader_tests.rs` links and validates with and without the cover def;
-  `amount` 0 skips the branch. Visual check RG-9i: rock lab, fixed hour and weather, live key toggling cover on/off,
+  the normal (5-tap SDF ambient occlusion, Evans SIGGRAPH 2006, U), computed per net vertex before the LOD chain; it
+  rides in the mesher's `Vertex` (`mesher.rs:129-155`) through `optimize_vertex_fetch` and `split_creases` (every LOD
+  vertex is a net vertex or a copy of one); `sf_rockgen_bevy` writes `ATTRIBUTE_COLOR`. Hash: `content_hash` gains the
+  cavity, so this row re-records the 9a fixture, with a test that positions, normals and indices hash as before.
+  Test: values in [0, 1]; on a block with one pit, pit-floor vertices > flat-face vertices; every LOD vertex's cavity
+  equals its net vertex's.
+- **RG-9i: cover layer** (`rock.wesl`, `RockExt` of `RockMaterial = ExtendedMaterial<StandardMaterial, RockExt>`):
+  a cover mask `smoothstep` of world up-normal^`up_sharpness` x `amount`, shifted by cavity x `cavity_weight`, mixing
+  in the cover colour and, if the regime has one, a second triplanar layer (pack texture id); one material variant
+  per (rock layer, regime). Switched by flag bits as today's options (`material.rs` `FLAG_*`, `rock.wesl:39-46`):
+  `FLAG_COVER`, `FLAG_COVER_TEXTURE`; `amount` 0 clears `FLAG_COVER`. Test: `shader_tests.rs` links and validates,
+  the uniform layout and the new bits match Rust; a CPU test of the material builder: `amount` 0 or no cover gives
+  today's `RockParams` exactly. Visual check RG-9i: rock lab, fixed hour and weather, live key toggling cover on/off,
   one line naming the live arm (awaiting owner).
 - **RG-9j: regime key in the scatter** (`sf_worldgen::scatter_species`, `scatter_rocks`). `[rock_regimes]` maps
   climate class names to regime names (framework default for its `climate_classes.toml`, "(e)"); `[rock_units.
@@ -404,7 +429,8 @@ every existing class's `RockLods.hash` unchanged (fixture: today's 9 class hashe
   rejected; on a two-class `GridFields` fixture every rock in the frost half draws only frost entries (exact); no
   `[rock_regimes]` gives today's placements bitwise (tile-alone hash).
 - **RG-9k: adapter data** (`bevyrrowind/worldgen/scatter_species.toml`, after WG-E3f creates it): the "(e)" unit table
-  per context and regime, cover texture per regime from the mounted packs. Test: the shipped file parses; every class
+  per context and regime, cover colour per regime and a texture layer only where a pack has one (moss today, "Cover
+  assets"). Test: the shipped file parses; every class
   name resolves in the class table; every unit of `geology.toml` has a row. Needs WG-E1c3 (climate rasters) for
   regimes to vary in the world; until then every point is the adapter's default regime.
 
