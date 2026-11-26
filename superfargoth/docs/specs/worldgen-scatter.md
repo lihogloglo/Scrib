@@ -225,6 +225,14 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
 | WG-E3f | adapter rock rows, pack-model entries from the learned rock models, field-stone prior | Scrib `mw_worldgen` (`flora.rs`), `scatter_species.toml` | E3e, E2i, RG-2b | `tests_flora` tile alone; prior exact; every learned rock model is an entry with axis and scale range | `test -p mw_worldgen` |
 | WG-E3m | measurement: rocks/ha, size slope, share, seconds | `mw_worldgen` (test only) | E3f, E2j | `#[ignore = "measurement: rocks"]` | ledger line |
 
+## As built
+
+- **WG-E2a** (2026-11-26, `scatter_species.rs`): `SpeciesFile::parse_toml` / `to_toml` (exact round trip); `[params]`
+  = 12 declared `scatter.` values (a name left out keeps its default; stand thresholds strictly ordered, whole round
+  count), `[columns]` = 14 numeric columns (range inside the declared one, `species_declared`) + 6 `hat_*` columns,
+  `[classes."<name>"] stems_per_ha` over the 12 shipped class defaults, `[[species]]` rows (a value only in a declared
+  column; a left-out value takes the declared default, checked against the file's column range). 6 tests.
+
 ## Tunables
 
 Prefix `scatter.`; source Guess unless noted. Species columns go in the file's `[columns]` table.
