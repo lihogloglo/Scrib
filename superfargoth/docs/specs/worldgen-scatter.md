@@ -268,6 +268,11 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
   `u / max(size mark, 0.1)^p`, ties by key (`select_nth`), all when `budget >= n`. v1 is kept until E2i: deleting it
   breaks `mw_worldgen::flora` (it calls `Scatter`, `Learner`, `budget_keep`), which only E2i may rewrite. 4 tests
   (v1's tile-alone, order and threads, slope, region and sea tests ported to four halo tiles; nest, shares, order).
+- **WG-E3a** (2026-11-27, `scatter_species.rs`): `[rocks.talus|outcrop|field]` rows (`size_min_m`, `size_max_m`
+  required, in the species columns; `sink_small`, `sink_large`, `align`) and `[rock_units."<unit>"]` (`field_stone_per_ha`,
+  `rockfall`; per context a list of `RockEntry`: `kind = "class"` (library class by name, resolved at E3e) or `"model"`
+  (`axis_m`, `scale_min..scale_max`); weight finite > 0, no repeat). Four rock columns in `rock_declared`. The scatter-wide
+  `rock.*` values are declared by the rows that use them (E3b-E3e). 2 tests (round trip; 23 refusals).
 
 ## Tunables
 

@@ -1,6 +1,6 @@
 //! Scatter v2 species file (spec `worldgen-scatter.md` "Adapter data" and "Tunables"; slice WG-E2a).
 //!
-//! A TOML file with four parts:
+//! A TOML file with six parts:
 //!
 //! - `[params]`: the scatter-wide v2 values (stand mosaic, edge band, competition, light, caps), each a
 //!   `{ v, unit, min, max, source }` entry of a name declared in [`declared`]; a name left out keeps its declared
@@ -16,6 +16,15 @@
 //!   its range; a numeric value left out takes the column's declared default, which must then lie in the file's
 //!   range when the column is declared. A hat left out is open (no constraint on that driver).
 //!
+//! - `[rocks.<context>]` (`talus`, `outcrop`, `field`; slice WG-E3a): the row of one rock context: `size_min_m`
+//!   and `size_max_m` (longest axis, required, checked in the species columns of those names), optional
+//!   `sink_small`, `sink_large`, `align` (resolved as species values are).
+//! - `[rock_units."<unit>"]`: one rock unit (a geology unit name of the adapter): optional `field_stone_per_ha`,
+//!   `rockfall`, and per context (`talus`, `outcrop`, `field`) a list of weighted entries,
+//!   `{ kind = "class", class, weight }` (a library class by name) or
+//!   `{ kind = "model", model, axis_m, scale_min, scale_max, weight }` (a pack model with its longest axis and
+//!   allowed scale range). Weights are finite and positive; an entry is not repeated within its context.
+//!
 //! [`SpeciesFile::to_toml`] writes every value explicitly, so a written file parses back to the same
 //! [`SpeciesFile`]. Nothing here names a game: species, models and classes are the adapter's data.
 
@@ -30,7 +39,8 @@ use crate::{Error, Result};
 #[path = "tests_scatter_species.rs"]
 mod tests;
 
-/// The species columns a file may declare, with their fixed units (numeric columns, then the six hats).
+/// The columns a file may declare, with their fixed units (species numeric columns, rock row and rock unit
+/// columns, then the six hats).
 // tunables: const (format: the column names and units of the species rows)
 pub const SPECIES_COLUMNS: &[(&str, &str)] = &[
     ("parent_per_ha", "1/ha"),
@@ -48,6 +58,10 @@ pub const SPECIES_COLUMNS: &[(&str, &str)] = &[
     ("align", "ratio"),
     ("tilt_jitter_deg", "deg"),
     ("offset_m", "m"),
+    ("sink_small", "ratio"),
+    ("sink_large", "ratio"),
+    ("field_stone_per_ha", "1/ha"),
+    ("rockfall", "ratio"),
     ("hat_temperature_c", "C"),
     ("hat_precipitation_mm", "mm/yr"),
     ("hat_moisture", "ratio"),
@@ -111,6 +125,21 @@ pub fn species_declared() -> Vec<Declared> {
         d("align", 0.0, "ratio", 0.0, 1.0, "Guess", "up axis blended toward the ground normal (0 upright)"),
         d("tilt_jitter_deg", 0.0, "deg", 0.0, 30.0, "Guess", "random tilt of the up axis"),
         d("offset_m", 0.0, "m", -5.0, 5.0, "Guess", "height above the ground per unit scale"),
+    ]
+}
+
+/// The declared defaults of the rock columns: sinks of a rock row, then a rock unit's values (spec "Tunables").
+/// A rock row's `size_min_m` and `size_max_m` use the species columns of those names and are required.
+#[must_use]
+pub fn rock_declared() -> Vec<Declared> {
+    let d = |name, v, unit, min, max, source: &str, help| Declared { name, v, unit, min, max, source: source.into(), help };
+    vec![
+        d("sink_small", 0.35, "ratio", 0.0, 0.6, "Guess",
+          "share of the short axis sunk into the ground for the smallest rock of the row"),
+        d("sink_large", 0.15, "ratio", 0.0, 0.6, "Guess",
+          "share of the short axis sunk into the ground for the largest rock of the row"),
+        d("field_stone_per_ha", 20.0, "1/ha", 0.0, 500.0, "Guess", "field stones per hectare of a rock unit"),
+        d("rockfall", 1.0, "ratio", 0.0, 4.0, "Guess", "talus parent intensity factor of a rock unit"),
     ]
 }
 
@@ -311,6 +340,73 @@ impl Default for ScatterValues {
     }
 }
 
+/// A rock context: one candidate stream of the rock layer (spec "Rocks (WG-E3)", three contexts).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RockContext {
+    /// Blocks fallen from a scarp.
+    Talus,
+    /// A parent block and its debris.
+    Outcrop,
+    /// Small clumped stones on open ground.
+    Field,
+}
+
+/// The row of one rock context: its size range (longest axis), sink and up blend, every value resolved.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RockRow {
+    pub size_min_m: f64,
+    pub size_max_m: f64,
+    pub sink_small: f64,
+    pub sink_large: f64,
+    pub align: f64,
+}
+
+/// One weighted mesh entry of a rock unit's context (spec "Mesh pick").
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RockEntry {
+    /// A generated library class, by name (it fits any size).
+    Class { class: String, weight: f64 },
+    /// A pack's own model: eligible only when the size lies in `axis_m x [scale_min, scale_max]`.
+    Model { model: String, axis_m: f64, scale_min: f64, scale_max: f64, weight: f64 },
+}
+
+impl RockEntry {
+    /// The entry's weight.
+    #[must_use]
+    pub fn weight(&self) -> f64 {
+        match self {
+            Self::Class { weight, .. } | Self::Model { weight, .. } => *weight,
+        }
+    }
+
+    /// The entry's kind and name.
+    fn name(&self) -> (&'static str, &str) {
+        match self {
+            Self::Class { class, .. } => ("class", class),
+            Self::Model { model, .. } => ("model", model),
+        }
+    }
+}
+
+/// One rock unit (a geology unit of the adapter): its values and the mesh entries of each context.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RockUnit {
+    pub field_stone_per_ha: f64,
+    pub rockfall: f64,
+    /// Entries per context; a context with none is left out.
+    pub entries: BTreeMap<RockContext, Vec<RockEntry>>,
+}
+
+impl RockUnit {
+    /// The entries of one context (empty when none are given).
+    #[must_use]
+    pub fn entries(&self, context: RockContext) -> &[RockEntry] {
+        self.entries.get(&context).map_or(&[], Vec::as_slice)
+    }
+}
+
 /// A parsed species file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpeciesFile {
@@ -323,6 +419,10 @@ pub struct SpeciesFile {
     pub classes: BTreeMap<String, Entry>,
     /// In file order; names unique.
     pub species: Vec<Species>,
+    /// The `[rocks.<context>]` rows given (a context without a row has no rocks).
+    pub rocks: BTreeMap<RockContext, RockRow>,
+    /// The `[rock_units."<unit>"]` tables, by unit name.
+    pub rock_units: BTreeMap<String, RockUnit>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -336,6 +436,63 @@ struct RawFile {
     classes: BTreeMap<String, RawClass>,
     #[serde(default)]
     species: Vec<RawSpecies>,
+    #[serde(default, skip_serializing_if = "RawRocks::is_empty")]
+    rocks: RawRocks,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    rock_units: BTreeMap<String, RawRockUnit>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRocks {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    talus: Option<RawRockRow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    outcrop: Option<RawRockRow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    field: Option<RawRockRow>,
+}
+
+impl RawRocks {
+    fn is_empty(&self) -> bool {
+        self.talus.is_none() && self.outcrop.is_none() && self.field.is_none()
+    }
+
+    fn rows(&self) -> [(RockContext, Option<&RawRockRow>); 3] {
+        [
+            (RockContext::Talus, self.talus.as_ref()),
+            (RockContext::Outcrop, self.outcrop.as_ref()),
+            (RockContext::Field, self.field.as_ref()),
+        ]
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRockRow {
+    size_min_m: f64,
+    size_max_m: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sink_small: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sink_large: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    align: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRockUnit {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    field_stone_per_ha: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rockfall: Option<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    talus: Vec<RockEntry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    outcrop: Vec<RockEntry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    field: Vec<RockEntry>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -434,7 +591,8 @@ impl RawSpecies {
 /// Checks the `[columns]` table: known names, fixed units, valid sources, finite ordered ranges, and a numeric
 /// column's range inside its declared one.
 fn check_columns(columns: &BTreeMap<String, ColumnDecl>) -> Result<()> {
-    let declared = species_declared();
+    let mut declared = species_declared();
+    declared.extend(rock_declared());
     for (name, c) in columns {
         let unit = SPECIES_COLUMNS
             .iter()
@@ -552,6 +710,110 @@ fn species_row(raw: &RawSpecies, columns: &BTreeMap<String, ColumnDecl>) -> Resu
     })
 }
 
+/// One numeric value of a rock row or unit: given only in a declared column, else the declared default; in the
+/// file's column range when the column is declared.
+fn rock_value(
+    owner: &str,
+    col: &str,
+    given: Option<f64>,
+    columns: &BTreeMap<String, ColumnDecl>,
+    declared: &[Declared],
+) -> Result<f64> {
+    let column = columns.get(col);
+    if given.is_some() && column.is_none() {
+        return Err(Error::Invalid(format!("scatter species: {owner} gives {col}, not declared in [columns]")));
+    }
+    let v = match given {
+        Some(v) => v,
+        None => declared.iter().find(|d| d.name == col).expect("every rock column is declared").v,
+    };
+    if let Some(c) = column {
+        crate::recipe::check_range(&format!("scatter species: {owner} {col}"), v, c.min, c.max)?;
+    }
+    Ok(v)
+}
+
+/// Resolves one rock row: sizes required, positive and ordered; every value in its column.
+fn rock_row(context: RockContext, raw: &RawRockRow, columns: &BTreeMap<String, ColumnDecl>) -> Result<RockRow> {
+    let owner = format!("rock row {context:?}");
+    let mut declared = species_declared();
+    declared.extend(rock_declared());
+    let size_min_m = rock_value(&owner, "size_min_m", Some(raw.size_min_m), columns, &declared)?;
+    let size_max_m = rock_value(&owner, "size_max_m", Some(raw.size_max_m), columns, &declared)?;
+    if !(size_min_m > 0.0 && size_min_m <= size_max_m) {
+        return Err(Error::Invalid(format!(
+            "scatter species: {owner} sizes [{size_min_m}, {size_max_m}] are not positive and ordered"
+        )));
+    }
+    Ok(RockRow {
+        size_min_m,
+        size_max_m,
+        sink_small: rock_value(&owner, "sink_small", raw.sink_small, columns, &declared)?,
+        sink_large: rock_value(&owner, "sink_large", raw.sink_large, columns, &declared)?,
+        align: rock_value(&owner, "align", raw.align, columns, &declared)?,
+    })
+}
+
+/// Checks one entry: a non-empty name, a finite positive weight, and for a pack model a finite positive axis
+/// and a finite, positive, ordered scale range.
+fn check_entry(owner: &str, e: &RockEntry) -> Result<()> {
+    let (kind, name) = e.name();
+    if name.is_empty() {
+        return Err(Error::Invalid(format!("scatter species: {owner} has a {kind} entry with an empty name")));
+    }
+    let w = e.weight();
+    if !(w.is_finite() && w > 0.0) {
+        return Err(Error::Invalid(format!(
+            "scatter species: {owner} {kind} {name:?} weight {w} is not finite and positive"
+        )));
+    }
+    if let RockEntry::Model { axis_m, scale_min, scale_max, .. } = e {
+        if !(axis_m.is_finite() && *axis_m > 0.0) {
+            return Err(Error::Invalid(format!(
+                "scatter species: {owner} model {name:?} axis_m {axis_m} is not finite and positive"
+            )));
+        }
+        if !(scale_min.is_finite() && scale_max.is_finite() && *scale_min > 0.0 && scale_min <= scale_max) {
+            return Err(Error::Invalid(format!(
+                "scatter species: {owner} model {name:?} scale [{scale_min}, {scale_max}] is not positive and ordered"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Resolves one rock unit: a non-empty name, its values in their columns, entries valid and not repeated.
+fn rock_unit(name: &str, raw: &RawRockUnit, columns: &BTreeMap<String, ColumnDecl>) -> Result<RockUnit> {
+    if name.is_empty() {
+        return Err(Error::Invalid("scatter species: empty rock unit name".into()));
+    }
+    let owner = format!("rock unit {name:?}");
+    let declared = rock_declared();
+    let mut entries = BTreeMap::new();
+    for (context, list) in [
+        (RockContext::Talus, &raw.talus),
+        (RockContext::Outcrop, &raw.outcrop),
+        (RockContext::Field, &raw.field),
+    ] {
+        let owner = format!("{owner} {context:?}");
+        for (i, e) in list.iter().enumerate() {
+            check_entry(&owner, e)?;
+            if list[..i].iter().any(|p| p.name() == e.name()) {
+                let (kind, n) = e.name();
+                return Err(Error::Invalid(format!("scatter species: {owner} {kind} {n:?} repeated")));
+            }
+        }
+        if !list.is_empty() {
+            entries.insert(context, list.clone());
+        }
+    }
+    Ok(RockUnit {
+        field_stone_per_ha: rock_value(&owner, "field_stone_per_ha", raw.field_stone_per_ha, columns, &declared)?,
+        rockfall: rock_value(&owner, "rockfall", raw.rockfall, columns, &declared)?,
+        entries,
+    })
+}
+
 /// Checks one class entry: non-empty name, unit 1/ha, valid source, range inside the declared one, value in range.
 fn check_class(name: &str, e: &Entry) -> Result<()> {
     let d = class_declared(0.0);
@@ -584,6 +846,8 @@ impl SpeciesFile {
             columns: BTreeMap::new(),
             classes: class_defaults().into_iter().map(|(n, v)| (n.to_owned(), class_declared(v))).collect(),
             species: Vec::new(),
+            rocks: BTreeMap::new(),
+            rock_units: BTreeMap::new(),
         }
     }
 
@@ -632,7 +896,17 @@ impl SpeciesFile {
             }
             species.push(species_row(raw, &file.columns)?);
         }
-        Ok(Self { values, declared, columns: file.columns, classes, species })
+        let mut rocks = BTreeMap::new();
+        for (context, raw) in file.rocks.rows() {
+            if let Some(raw) = raw {
+                rocks.insert(context, rock_row(context, raw, &file.columns)?);
+            }
+        }
+        let mut rock_units = BTreeMap::new();
+        for (name, raw) in &file.rock_units {
+            rock_units.insert(name.clone(), rock_unit(name, raw, &file.columns)?);
+        }
+        Ok(Self { values, declared, columns: file.columns, classes, species, rocks, rock_units })
     }
 
     /// Writes the file with every value explicit (params, columns, classes, each species' numeric values in its
@@ -692,7 +966,35 @@ impl SpeciesFile {
                 hat_water_distance_m: s.hats.water_distance_m.map(Hat::to_array),
             })
             .collect();
-        let raw = RawFile { params, columns: self.columns.clone(), classes, species };
+        let row = |c: RockContext| {
+            self.rocks.get(&c).map(|r| RawRockRow {
+                size_min_m: r.size_min_m,
+                size_max_m: r.size_max_m,
+                sink_small: opt("sink_small", r.sink_small),
+                sink_large: opt("sink_large", r.sink_large),
+                align: opt("align", r.align),
+            })
+        };
+        let rocks = RawRocks {
+            talus: row(RockContext::Talus),
+            outcrop: row(RockContext::Outcrop),
+            field: row(RockContext::Field),
+        };
+        let rock_units = self
+            .rock_units
+            .iter()
+            .map(|(n, u)| {
+                let raw = RawRockUnit {
+                    field_stone_per_ha: opt("field_stone_per_ha", u.field_stone_per_ha),
+                    rockfall: opt("rockfall", u.rockfall),
+                    talus: u.entries(RockContext::Talus).to_vec(),
+                    outcrop: u.entries(RockContext::Outcrop).to_vec(),
+                    field: u.entries(RockContext::Field).to_vec(),
+                };
+                (n.clone(), raw)
+            })
+            .collect();
+        let raw = RawFile { params, columns: self.columns.clone(), classes, species, rocks, rock_units };
         toml::to_string(&raw).map_err(|e| Error::Invalid(e.to_string()))
     }
 }

@@ -167,3 +167,105 @@ fn stand_thresholds_must_be_ordered() {
     let err = parse(&text).unwrap_err().to_string();
     assert!(err.contains("clearing 0.35 < sparse 0.8 < inner 0.7 do not hold"), "{err}");
 }
+
+/// WG-E3a: two rock rows, two units (one on defaults), both entry kinds.
+const ROCKS: &str = r#"
+[columns]
+size_min_m = { unit = "m", min = 0.2, max = 40, source = "Guess" }
+size_max_m = { unit = "m", min = 0.2, max = 40, source = "Guess" }
+sink_small = { unit = "ratio", min = 0, max = 0.6, source = "Guess" }
+rockfall = { unit = "ratio", min = 0, max = 4, source = "Guess" }
+align = { unit = "ratio", min = 0, max = 1, source = "Measured(learned rock up axes)" }
+
+[rocks.talus]
+size_min_m = 0.4
+size_max_m = 12
+sink_small = 0.4
+align = 0.7
+
+[rocks.field]
+size_min_m = 0.3
+size_max_m = 2
+
+[rock_units.lava]
+rockfall = 2
+talus = [
+  { kind = "class", class = "block", weight = 1 },
+  { kind = "model", model = "rocks/scree_a", axis_m = 3.2, scale_min = 0.8, scale_max = 1.5, weight = 2.5 },
+]
+field = [{ kind = "class", class = "cobble", weight = 1 }]
+
+[rock_units.ash]
+"#;
+
+#[test]
+#[allow(clippy::float_cmp)]
+fn rock_rows_units_and_entries_parse_and_round_trip() {
+    let f = parse(ROCKS).unwrap();
+    let talus = f.rocks[&RockContext::Talus];
+    assert_eq!((talus.size_min_m, talus.size_max_m, talus.sink_small, talus.align), (0.4, 12.0, 0.4, 0.7));
+    let d = rock_declared();
+    let default = |n: &str| d.iter().find(|d| d.name == n).unwrap().v;
+    assert_eq!(talus.sink_large, default("sink_large"), "a value left out takes its declared default");
+    assert!(!f.rocks.contains_key(&RockContext::Outcrop), "a context without a row has none");
+    let lava = &f.rock_units["lava"];
+    assert_eq!((lava.rockfall, lava.field_stone_per_ha), (2.0, default("field_stone_per_ha")));
+    assert_eq!(lava.entries(RockContext::Talus).len(), 2);
+    assert_eq!(
+        lava.entries(RockContext::Talus)[1],
+        RockEntry::Model { model: "rocks/scree_a".into(), axis_m: 3.2, scale_min: 0.8, scale_max: 1.5, weight: 2.5 }
+    );
+    assert_eq!(lava.entries(RockContext::Field), [RockEntry::Class { class: "cobble".into(), weight: 1.0 }]);
+    assert!(lava.entries(RockContext::Outcrop).is_empty());
+    let ash = &f.rock_units["ash"];
+    assert_eq!((ash.rockfall, ash.field_stone_per_ha), (default("rockfall"), default("field_stone_per_ha")));
+    assert!(ash.entries.is_empty());
+    let text = f.to_toml().unwrap();
+    let g = parse(&text).unwrap();
+    assert_eq!(f, g);
+    assert_eq!(text, g.to_toml().unwrap(), "writing is stable");
+    for d in rock_declared() {
+        crate::recipe::check_range(d.name, d.v, d.min, d.max).unwrap();
+        crate::recipe::check_source(d.name, &d.source).unwrap();
+        assert!(!d.help.is_empty(), "{} has no help", d.name);
+        assert!(SPECIES_COLUMNS.iter().any(|(n, u)| *n == d.name && *u == d.unit), "{} not a column", d.name);
+    }
+}
+
+/// Each case edits the rock fixture and must be refused with a message containing `want`.
+fn rock_refused(from: &str, to: &str, want: &str) {
+    assert!(ROCKS.contains(from), "rock fixture lacks {from:?}");
+    let text = ROCKS.replacen(from, to, 1);
+    let err = parse(&text).expect_err(&format!("accepted: {from:?} -> {to:?}")).to_string();
+    assert!(err.contains(want), "{from:?} -> {to:?}: {err:?} lacks {want:?}");
+}
+
+#[test]
+fn bad_rock_weights_kinds_and_values_are_refused() {
+    let w = "weight = 2.5";
+    rock_refused(w, "weight = 0", "\"rocks/scree_a\" weight 0 is not finite and positive");
+    rock_refused(w, "weight = -1", "weight -1 is not finite and positive");
+    rock_refused(w, "weight = nan", "weight NaN is not finite and positive");
+    rock_refused(w, "weight = inf", "weight inf is not finite and positive");
+    rock_refused("class = \"block\", weight = 1", "class = \"block\"", "missing field `weight`");
+    rock_refused("kind = \"class\", class = \"block\"", "kind = \"stamp\", class = \"block\"", "unknown variant `stamp`");
+    rock_refused("kind = \"class\", class = \"block\"", "class = \"block\"", "missing field `kind`");
+    rock_refused("kind = \"class\", class = \"block\"", "kind = \"model\", class = \"block\"", "unknown field `class`");
+    rock_refused("weight = 1 },\n", "weight = 1, axis_m = 2 },\n", "unknown field `axis_m`");
+    rock_refused("class = \"block\"", "class = \"\"", "has a class entry with an empty name");
+    rock_refused("{ kind = \"class\", class = \"block\", weight = 1 },",
+        "{ kind = \"model\", model = \"rocks/scree_a\", axis_m = 1, scale_min = 1, scale_max = 1, weight = 1 },",
+        "Talus model \"rocks/scree_a\" repeated");
+    rock_refused("axis_m = 3.2", "axis_m = 0", "axis_m 0 is not finite and positive");
+    rock_refused("scale_min = 0.8", "scale_min = 1.8", "scale [1.8, 1.5] is not positive and ordered");
+    rock_refused("scale_min = 0.8", "scale_min = 0", "scale [0, 1.5] is not positive and ordered");
+    rock_refused("[rocks.field]", "[rocks.scree]", "unknown field `scree`");
+    rock_refused("field = [{", "scree = [{", "unknown field `scree`");
+    rock_refused("rockfall = 2", "rockfall = 5", "rock unit \"lava\" rockfall = 5 outside");
+    rock_refused("rockfall = 2", "field_stone_per_ha = 5", "gives field_stone_per_ha, not declared");
+    rock_refused("sink_small = 0.4", "sink_small = 0.7", "rock row Talus sink_small = 0.7 outside");
+    rock_refused("size_max_m = 12", "size_max_m = 0.3", "sizes [0.4, 0.3] are not positive and ordered");
+    rock_refused("size_min_m = 0.3\n", "", "missing field `size_min_m`");
+    rock_refused("size_min_m = 0.3\n", "size_min_m = 0.1\n", "size_min_m = 0.1 outside");
+    rock_refused("[rock_units.ash]", "[rock_units.\"\"]", "empty rock unit name");
+}
