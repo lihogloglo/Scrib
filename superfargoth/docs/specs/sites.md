@@ -263,7 +263,8 @@ census"]`): per row placed, re-seated, dropped, travel-time p50/p95 on `x10s`. N
 mod, camera at three sites from the census (a crag ruin, an ash-plain camp, a roadside shrine), noon, clear weather.
 Questions: (1) Do sites sit on ground that suits them (ruins on crags and islets, camps on open plains)? (2) Is
 anything floating, buried or cut by a pad edge? (3) Is there enough to find between two towns on foot? (4) Do the
-clearings read as natural, not as stamped discs? Each "no" goes to a tunable or a row.
+clearings read as natural, not as stamped discs? (5) Should these sites get contents (creatures, a container) as the
+next slice? Each "no" to 1-4 goes to a tunable or a row.
 
 ## Open questions (owner)
 
@@ -272,8 +273,9 @@ clearings read as natural, not as stamped discs? Each "no" goes to a tunable or 
 2. (Answered, owner via meta-6, 2026-11-26: yes, for remote rows: "many places won't have a road of course".)
    May some remote sites have no path at all (MU access `none`: reached across rough ground or by swimming, never by
    a track)? Recommend yes, for remote rows only.
-3. Do sites hold gameplay from the first look (levelled creatures, a container), or start as scenery? Recommend
-   scenery for WG-P-look, contents as the next slice (gameplay priority 2026-11-25).
+3. (Not answered, owner via meta-6, 2026-11-26: cannot say before seeing sites.) Sites start as scenery for
+   WG-P-look (the recommendation stands; it blocks nothing) and the owner decides on contents (levelled creatures, a
+   container) at that first look, as its question 5. Not to be asked again before it.
 
 ## Later
 

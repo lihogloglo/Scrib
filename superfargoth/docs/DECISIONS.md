@@ -2091,3 +2091,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (meta-6, from AN38e): the physics-tint provider steps each tint and takeover agent as its own task on
   the task pool (one agent inline) instead of Delirium's `step_group` (serial to 5 agents, 2.15 / 3.75 ms at 5; fan-out
   flat ~0.8 ms at 2-5). Cap stays 4; 5 only after AN40b's count test on the real pool (`physics-tint.md` "Performance").
+- 2026-11-26 (owner via meta-6): harvestable plants follow the scatter's ecology and water plants return once
+  generated water exists (worldgen-scatter.md q1, q2). The source game's rock models stay in the scatter next to the
+  rockgen library (q3: "Let's keep them for now"), mixed by pack data. sites.md q3 is decided at the WG-P-look check.

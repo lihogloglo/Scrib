@@ -176,9 +176,14 @@ own group and `t_g` (pass 10; WG-R §9.3), debris cut first; share by the v1 rul
 (D); offspring come from the parent's stream, scarp cells and units are pure functions of guide position. Bake
 seconds: measured by E3m; runtime 0 ms from the stage (same product file).
 
-**Mesh pick (recipe data).** Per rock unit and context, weighted rockgen classes (`sf_rockgen` `classes.rs:44-157`,
-9 classes). Class by `hash(instance, 1)`, variant `hash(instance, 2) mod N` (`rockgen.md:119-120`), scale `s / class
-size` (`rockgen.md:364`). No stretch: `aspect_spread` varies shape, hulls stay exact (`sf_physics` statics).
+**Mesh pick (recipe data).** Per rock unit and context, weighted entries of two kinds: a pack's own rock models stay
+in the scatter next to the library (owner 2026-11-26, question 3). A **library class** (`sf_rockgen`
+`classes.rs:44-157`, 9 classes) fits any `s`: variant `hash(instance, 2) mod N` (`rockgen.md:119-120`), scale `s /
+class size` (`rockgen.md:364`). A **pack model** (a model the adapter supplies with its longest axis and allowed
+scale range) is eligible only when `s` lies in `axis x [scale_min, scale_max]`, drawn at scale `s / axis`, with its
+own collision. Entry by `hash(instance, 1)` over the eligible weights, pack models x `rock.pack_model_share` and
+classes x its complement (0 = library only, 1 = a pack model wherever one fits: the A/B arms). No stretch:
+`aspect_spread` varies shape, hulls stay exact (`sf_physics` statics). One size law and one pose rule for both kinds.
 
 **Pose.** Uniform yaw; up = v1 `align` blend + up to `tilt_jitter_deg`. Sink = `lerp(sink_small, sink_large, t)` of
 the short axis, `t = ln(s / s_min) / ln(s_max / s_min)` (WG-R 10-40 %, `rockgen.md:156` 20-40 %): small stones sit
@@ -187,7 +192,10 @@ deep, big blocks high. Loose rocks above `loose_slope_max_deg` drop; outcrop par
 **Adapter data (Bevyrrowind).** Rock rows and `[rock_units]` in `scatter_species.toml` for the six units of
 `worldgen/geology.toml`. **Learned** from the 33,017 rock references (`flora.rs:86-113`): a field-stone region prior,
 pose `align`, `offset_m`. **Authored:** classes per unit and context (basalt_flow: block, columnar, talus; tephra:
-scoria; capped_sediment: platy, slab), `rockfall`, size ranges. Source rock models leave the scatter (open question 3).
+scoria; capped_sediment: platy, slab), `rockfall`, size ranges. **The source's rock models stay** (owner 2026-11-26):
+each learned model (`terrain_rock*`, rocks and menhirs of 14 m or more, `classify.rs:118-131`) is a pack-model entry
+with its bounds axis, learned scale range and learned count per region as weight; the library fills the sizes they
+do not cover. The mix is looked at again once the owner has seen generated rocks (WG-E3 check).
 
 ## Slices
 
@@ -209,12 +217,12 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
 | WG-E2i | adapter: species TOML, learned priors, four groups, product `Fields` | Scrib `mw_worldgen` (`flora.rs`), `bevyrrowind/worldgen/scatter_species.toml` | E2h, WG-E1c3, WG-V1b | `tests_flora` tile alone; region prior exact | `test -p mw_worldgen` |
 | WG-E2j | hash-cached product in the guide folder, read at load | Scrib `sf_worldgen` (`scatter_product.rs`), `mw_worldgen` | E2i | same hash twice; seed change rebuilds; read == computed | same |
 | WG-E2m | measurement: stems/ha and cover per class, counts, seconds | Scrib `mw_worldgen` (test only) | E2j | `#[ignore = "measurement: scatter v2 counts and seconds"]` | ledger line |
-| WG-E3a | rock columns, `[rock_units]` table | Scrib `sf_worldgen` (`scatter_species.rs`) | E2a | round trip; bad weight rejected | `test -p sf_worldgen` |
+| WG-E3a | rock columns, `[rock_units]` table (entries: library class or pack model) | Scrib `sf_worldgen` (`scatter_species.rs`) | E2a | round trip; bad weight or unknown entry kind rejected | `test -p sf_worldgen` |
 | WG-E3b | talus candidates, Pareto sizes | Scrib `sf_worldgen` (`scatter_rocks.rs`) | E2e, E3a | size slope within 10 % of D; size-distance Spearman > 0.3 (beta 0.4), ~0 (beta 0); none above the shadow line; tile alone | same |
 | WG-E3c | outcrop clusters, field stones | same file | E3b | children <= ratio x parent; g(r) > 1.5 at sigma; tile alone | same |
 | WG-E3d | rock layer first in the passes | Scrib `sf_worldgen` (`scatter.rs`) | E3c | no pair under `R_ij`; none on water, roads, footprints; no tree in a rock | same |
-| WG-E3e | mesh pick and pose | `scatter_rocks.rs` | E3d | class shares within 3 sigma; sink exact | same + clippy dependents |
-| WG-E3f | adapter rock rows, field-stone prior | Scrib `mw_worldgen` (`flora.rs`), `scatter_species.toml` | E3e, E2i, RG-2b | `tests_flora` tile alone; prior exact | `test -p mw_worldgen` |
+| WG-E3e | mesh pick (both entry kinds) and pose | `scatter_rocks.rs` | E3d | entry shares within 3 sigma; no pack model outside its scale range; share 0 = library only; sink exact | same + clippy dependents |
+| WG-E3f | adapter rock rows, pack-model entries from the learned rock models, field-stone prior | Scrib `mw_worldgen` (`flora.rs`), `scatter_species.toml` | E3e, E2i, RG-2b | `tests_flora` tile alone; prior exact; every learned rock model is an entry with axis and scale range | `test -p mw_worldgen` |
 | WG-E3m | measurement: rocks/ha, size slope, share, seconds | `mw_worldgen` (test only) | E3f, E2j | `#[ignore = "measurement: rocks"]` | ledger line |
 
 ## Tunables
@@ -247,6 +255,7 @@ Prefix `scatter.`; source Guess unless noted. Species columns go in the file's `
 | `rock.talus_parent_per_ha` / `talus_spread_deg` | 1/ha / deg | 0-500 / 0-60 | 40 / 20 | Guess |
 | `rock.outcrop_parent_per_ha`, `_parent_min_m`, `cluster_sigma_m`, `child_mean`, `child_size_ratio` | | 0-50, 1-40, 2-30, 0-40, 0.05-1 | 2, 4, 6, 8, 0.4 | Guess (WG-R sigma 3-15) |
 | `rock.rock_k` / `tilt_jitter_deg` | ratio / deg | 0.5-1.2 / 0-30 | 0.9 / 15 | WG-R (U) |
+| `rock.pack_model_share` | ratio | 0-1 | 0.5 | Guess; owner check WG-E3 (0 and 1 are the A/B arms) |
 | row `size_min_m`, `size_max_m`; `sink_small`, `sink_large` | m; ratio | 0.2-40; 0-0.6 | talus 0.4-12, outcrop 1-20, field 0.3-2; 0.35, 0.15 | Guess |
 | unit `field_stone_per_ha` / `rockfall` | 1/ha / ratio | 0-500 / 0-4 | 20 / 1 | Guess |
 
@@ -269,7 +278,8 @@ Rocks: a fixture with one straight 60 m scarp of one unit; size slopes fitted on
 
 **WG-E2** after E2j on x10s (entry in the rows file): snug stands, clearings at roads and sites, big trees in the core,
 understorey in gaps, open classes open. Yes/no only; amounts are live tunables.
-**WG-E3** after E3f on x10s at placed scarps (rows file): size spread, big blocks at the toe, debris round blocks.
+**WG-E3** after E3f on x10s at placed scarps (rows file): size spread, big blocks at the toe, debris round blocks,
+and whether the pack's rock models and the library's sit together (`rock.pack_model_share` live).
 
 ## Unverified dependences
 
@@ -283,12 +293,14 @@ near 55 % (cover after 3 rounds: measured by E2m). (8) Luby 1986 round structure
 
 ## Open questions (owner)
 
-1. Do harvestable plants follow the same ecology, so gathering means finding the habitat (clumps in their biome, at
-   edges)? Recommended: yes.
-2. Do water plants (kelp, lily pads: 38,572 source references) come back once generated water exists (WG-W1)?
-   Recommended: yes, in a later slice, not E2.
-3. Do generated rocks use only the rockgen library, with the source's rock models (`terrain_rock*`, menhirs) kept
-   out of the scatter? Recommended: yes (RG-4 look approved; one size law across classes).
+None open.
+1. (Answered, owner via meta-6, 2026-11-26: yes.) Harvestable plants follow the same ecology: gathering means finding
+   the habitat (clumps in their biome, at edges).
+2. (Answered, owner via meta-6, 2026-11-26: yes.) Water plants (kelp, lily pads: 38,572 source references) come back
+   once generated water exists (WG-W1), in a later slice, not E2.
+3. (Answered, owner via meta-6, 2026-11-26: no, "Let's keep them for now".) The source's rock models (`terrain_rock*`,
+   menhirs) stay in the scatter next to the rockgen library, as pack data ("Mesh pick"); the recommendation was
+   library only. Looked at again at the WG-E3 check.
 
 ## Later
 
