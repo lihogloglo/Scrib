@@ -26,7 +26,10 @@ re-read the ground body's point velocity after the step; capsules target the fee
 `TickView` written after the movers; `CharacterFellOut`, safety net). Crush (IN11c2c2): a squeeze past `move.crush.depth_m` gives one `CharacterCrushed` per episode (movers automatic; action-body hosts call `sf_physics_bevy::crushed`); the static world never overlaps the character, the deck may. Lifts into ceilings (IN11c2c1): the ride's vertical part and the snap onto a moving base are swept up (`headroom`, `sf_controller/src/mover.rs:755`), stopping at the skin. Riding (IN11c2b): `refresh_base_motion` (`character.rs:126`) turns the base's pose change since the ground cast (`GroundHit::base_pose`) into the tick's twist, so a dropped physics step rides nothing and a doubled one rides both. Moving contacts (IN11c2a): `PhysicsProbe::contacts`
 (`sf_physics/src/probe.rs:272`) finds awake kinematic bodies near each capsule (broad phase grown by this step's reach),
 relative shape cast from `c + v·dt` back along -v for the entry face and separation; dynamic bodies never push (the
-solver and `PhysicsEvent::Hit` own them). Proxies: `proxies.rs`. Carry: `carry.rs`.
+solver and `PhysicsEvent::Hit` own them). Overlap (IN33b1a): `body_overlaps_at(id, pose, layers)`
+(`probe.rs:46`) asks whether a body placed at another pose would overlap a body in `layers` (shape intersection per
+collider; a mesh tests its triangles, not its volume): the swing door's "is the next pose free" test; a Kinematic +
+Mesh body pushes capsules through `contacts` like a box. Proxies: `proxies.rs`. Carry: `carry.rs`.
 
 **Collision from NIF** (`mw_bake/src/collision.rs:1-30`, `collision.cook`): OpenMW `bulletnifloader.cpp` rules (commit
 4e718b50): skinned models none; `NC` markers; non-empty `RootCollisionNode` subtree; models `mesh.cook` skips and

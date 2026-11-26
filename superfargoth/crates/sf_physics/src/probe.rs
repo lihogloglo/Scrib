@@ -11,6 +11,7 @@ use rapier3d::geometry::{Collider, ColliderHandle};
 use rapier3d::math::Pose;
 use rapier3d::pipeline::{QueryFilter, QueryFilterFlags};
 use sf_controller::{GroundHit, GroundProbe, ProbeQuery, SurfaceId};
+use sf_coords::WorldTransform;
 
 use crate::body::BodyId;
 use crate::layer::Layer;
@@ -30,6 +31,31 @@ impl PhysicsWorld {
     /// [`PhysicsWorld::refresh_queries`] after inserts made since the last step.
     pub fn probe(&self, layers: Layer) -> PhysicsProbe<'_> {
         PhysicsProbe { world: self, layers, exclude: None }
+    }
+
+    /// Whether body `id`, placed at `pose` instead of where it is, would overlap a collider of
+    /// another body whose layer is in `layers` (slice `IN33b1a`: a swinging door asks whether
+    /// its leaf's next pose is free). `false` for an unknown body.
+    ///
+    /// Each of the body's colliders is tested at `pose` composed with its pose relative to the
+    /// body, with rapier's shape intersection query (strict overlap: touching is free). The
+    /// body itself is excluded. `pose.scale` is ignored: the colliders already hold the scaled
+    /// shapes. Sensors count (rapier's default filter keeps them). Reads the broad-phase BVH:
+    /// call [`PhysicsWorld::refresh_queries`] after inserts made since the last step; other
+    /// bodies' kinematic targets are seen after the next step.
+    pub fn body_overlaps_at(&self, id: BodyId, pose: WorldTransform, layers: Layer) -> bool {
+        let Some(handle) = self.live(id).map(|l| l.handle) else {
+            return false;
+        };
+        let Some(rb) = self.engine.bodies.get(handle) else {
+            return false;
+        };
+        let body_pose = Pose::from_parts(self.to_local(pose.pos), pose.rotation);
+        let filter = QueryFilter { groups: Some(layers.query_groups()), exclude_rigid_body: Some(handle), ..QueryFilter::default() };
+        rb.colliders().iter().filter_map(|&h| self.engine.colliders.get(h)).filter(|co| co.is_enabled()).any(|co| {
+            let at = co.position_wrt_parent().map_or(body_pose, |rel| body_pose * *rel);
+            self.engine.intersect_shape(at, co.shape(), filter).next().is_some()
+        })
     }
 }
 

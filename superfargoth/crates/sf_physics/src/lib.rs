@@ -59,3 +59,5 @@ mod contact_tests;
 mod ground_velocity_tests;
 #[cfg(test)]
 mod probe_contacts_tests;
+#[cfg(test)]
+mod overlap_tests;
