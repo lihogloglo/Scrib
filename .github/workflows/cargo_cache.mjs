@@ -9,7 +9,8 @@
 //           changed and its dependents.
 //   prune:  before saving, drop every deps/.fingerprint/build/examples entry whose unit this run's cargo JSON did not
 //           list (built or fresh), and stamp the commit. The cache never grows, and everything it keeps was valid
-//           at that commit. Pruning too much only costs a rebuild, never a wrong result.
+//           at that commit. Pruning too much only costs a rebuild, never a wrong result. Sets the step output
+//           `compiled` (units not fresh): at 0 the restored entry is still exact and ci.yml saves no new one.
 //
 //   node .github/workflows/cargo_cache.mjs mtimes
 //   node .github/workflows/cargo_cache.mjs prune <profile dir> <cargo json log>...   (stamps target/.ci-cache-sha)
@@ -102,6 +103,8 @@ if (cmd === 'mtimes') {
     }
   }
   fs.writeFileSync(STAMP, `${git('rev-parse', 'HEAD').trim()}\n`);
+  // ci.yml saves a new cache entry only when something compiled: otherwise the restored one is still exact.
+  if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `compiled=${units - fresh}\n`);
   console.log(`cargo_cache: ${units} units (${fresh} fresh, ${units - fresh} compiled); pruned ${removed} stale entries from ${profile}`);
 } else {
   console.error('usage: cargo_cache.mjs mtimes | prune <profile dir> <cargo json log>...');

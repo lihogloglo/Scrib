@@ -1,7 +1,8 @@
 # The pre-PR gate (CONTRIBUTING.md "Building") off the owner's laptop (build-speed BS3, 2026-11-26).
 # Windows runners: same OS, linker (rust-lld, .cargo/config.toml) and paths as the dev machine, so green here
-# means what a green local gate means. Jobs run in parallel; caches are saved from main only (branches restore
-# them; cargo_cache.mjs prunes each to its run's units), which keeps the repo under GitHub's 10 GB cache limit.
+# means what a green local gate means. Jobs run in parallel (tests in three shards); caches are saved from main
+# only (branches restore them; cargo_cache.mjs prunes each to its run's units), which keeps the repo under GitHub's
+# 10 GB cache limit.
 #
 # Agents: `bash bevyrrowind/tools/ci_push.sh <name> <paths>` (or push a wt/** worktree branch, or open a PR)
 # instead of running the full gate locally, then
@@ -40,9 +41,18 @@ env:
   RUST_BACKTRACE: "1"
 
 jobs:
+  # Three shards by crate group, each on its own runner with its own cache (test_groups.mjs: crates ordered by how
+  # many workspace libs they need, cut where the slowest shard is shortest; every crate in exactly one shard, with
+  # the features the whole workspace gives it). After a change low in the graph (sf_ids) the slowest shard built in
+  # 13 min where one job took 23 (2026-11-26, docs/ledger/build.md). The floor is the shard that holds the app: it
+  # compiles every lib.
   test:
     runs-on: windows-latest
     timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
     steps:
       - uses: actions/checkout@v7
       # LFS clips (tests read them) come from the Actions cache: the free LFS bandwidth is ~1 GB/month.
@@ -59,9 +69,10 @@ jobs:
       - name: Toolchain (rust-toolchain.toml)
         shell: bash
         run: rustup toolchain install || rustup show
-      # Whole-target cache, one entry per main commit (cargo_cache.mjs says why not Swatinem/rust-cache). Saved from
-      # main only; every branch restores the newest main entry. Why each unit rebuilt, when a run is slower than its
-      # change explains: set CARGO_LOG=cargo::core::compiler::fingerprint=info on the build step.
+      # Whole-target cache per shard (cargo_cache.mjs says why not Swatinem/rust-cache). Saved from main only, and
+      # only by a run that compiled something; every branch restores the newest main entry of its shard. Why each
+      # unit rebuilt, when a run is slower than its change explains: set
+      # CARGO_LOG=cargo::core::compiler::fingerprint=info on the build step.
       - uses: actions/cache/restore@v6
         with:
           path: |
@@ -69,21 +80,27 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: test-v1-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml') }}-${{ github.sha }}
-          restore-keys: test-v1-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml') }}-
+          key: test-v2-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml') }}-s${{ matrix.shard }}of3-${{ github.sha }}
+          restore-keys: test-v2-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml') }}-s${{ matrix.shard }}of3-
       - name: Unchanged sources get an old mtime (cargo freshness)
         shell: bash
         run: node .github/workflows/cargo_cache.mjs mtimes
+      # After the cache: cargo metadata reads the registry crates the cache brings back.
+      - name: Crates of this shard
+        shell: bash
+        run: |
+          node .github/workflows/test_groups.mjs 3
+          echo "SHARD=$(node .github/workflows/test_groups.mjs 3 ${{ matrix.shard }})" >> "$GITHUB_ENV"
       # Build and run are separate steps: the log shows each one's time, and a hung test fails only the run step
       # (its own timeout) so the cache is still saved after it; a job timeout would save nothing.
-      - name: build tests (cargo test --workspace --no-run)
+      - name: build tests (cargo test -p <shard> --no-run)
         id: build
         shell: bash
-        run: '{ cargo test --workspace --no-run --message-format=json-render-diagnostics > "$RUNNER_TEMP/test.jsonl"; } 2>&1 | tee "$RUNNER_TEMP/build.log"'
-      - name: run tests (cargo test --workspace)
+        run: '{ cargo test $SHARD --no-run --message-format=json-render-diagnostics > "$RUNNER_TEMP/test.jsonl"; } 2>&1 | tee "$RUNNER_TEMP/build.log"'
+      - name: run tests (cargo test -p <shard>)
         timeout-minutes: 45
         shell: bash
-        run: cargo test --workspace --no-fail-fast 2>&1 | tee "$RUNNER_TEMP/run.log"
+        run: cargo test $SHARD --no-fail-fast 2>&1 | tee "$RUNNER_TEMP/run.log"
       # A red step names its crates (annotations in `gh run view`, table in the job summary).
       - name: Name the failing crates
         if: failure()
@@ -97,18 +114,21 @@ jobs:
       # A red test run still compiled everything: keep the cache, or main stays cold while red. A failed build is
       # not saved (its prune would drop every unit it never reached).
       - name: Prune the cache to this build's units
+        id: prune
         if: always() && steps.build.outcome == 'success'
         shell: bash
         run: node .github/workflows/cargo_cache.mjs prune target/debug "$RUNNER_TEMP/test.jsonl" && du -sh target
+      # Nothing compiled = the restored entry is still exact: no new 2 GB entry (10 GB cache budget for the repo;
+      # three shards + clippy are ~6.9 GB when all four save).
       - uses: actions/cache/save@v6
-        if: always() && steps.build.outcome == 'success' && github.ref == 'refs/heads/main'
+        if: always() && steps.build.outcome == 'success' && github.ref == 'refs/heads/main' && steps.prune.outputs.compiled != '0'
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: test-v1-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml') }}-${{ github.sha }}
+          key: test-v2-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml') }}-s${{ matrix.shard }}of3-${{ github.sha }}
       - name: Disk left
         if: always()
         shell: bash
@@ -153,11 +173,12 @@ jobs:
           node .github/workflows/ci_report.mjs "clippy (dev)" "$RUNNER_TEMP/clippy-dev.log"
       # Saved when the first pass compiled; units a failing pass never reached are pruned, not kept stale.
       - name: Prune the cache to this run's units
+        id: prune
         if: always() && steps.clippy.outcome == 'success'
         shell: bash
         run: node .github/workflows/cargo_cache.mjs prune target/debug "$RUNNER_TEMP/clippy.jsonl" "$RUNNER_TEMP/clippy-dev.jsonl" && du -sh target
       - uses: actions/cache/save@v6
-        if: always() && steps.clippy.outcome == 'success' && github.ref == 'refs/heads/main'
+        if: always() && steps.clippy.outcome == 'success' && github.ref == 'refs/heads/main' && steps.prune.outputs.compiled != '0'
         with:
           path: |
             ~/.cargo/registry/index

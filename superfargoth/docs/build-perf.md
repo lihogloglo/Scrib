@@ -139,8 +139,8 @@ one `test --workspace` with nothing to compile still ran 290 s. Three changes, r
   the previous run and a red one lists its suspects (a run per commit was tried on 2026-11-26: 21 runs in progress
   or queued within 40 min, at GitHub's 20-job limit). Windows runners for parity with the dev machine; LFS clips from the Actions cache
   (free LFS bandwidth ~1 GB/month). `tools/ci_push.sh` pushes HEAD + given paths (with gh's credential).
-- **CI cache** (ci-2, `.github/workflows/cargo_cache.mjs`): the whole `target` + registry, one entry per main commit,
-  restored by every branch (newest main entry). `Swatinem/rust-cache` was dropped: it keeps only packages outside the
+- **CI cache** (ci-2, `.github/workflows/cargo_cache.mjs`): the whole `target` + registry, one entry per job and
+  main commit, restored by every branch (newest main entry). `Swatinem/rust-cache` was dropped: it keeps only packages outside the
   repo root, so our 146 crates and the 9 vendored ones (wgpu-core, bevy_render...) rebuilt on every run. Two helpers
   make the cached path crates usable: `mtimes` gives every file unchanged since the cached commit (git diff) back the
   exact mtime that build saw (recorded in the cache; equality matters for build scripts without rerun-if-changed),
@@ -148,6 +148,14 @@ one `test --workspace` with nothing to compile still ran 290 s. Three changes, r
   by their fingerprint file) and stamps the commit. Measured: cold 54 min, no-change floor 2.9 min build (`clippy`
   42 s); a change low in the graph (sf_ids) still rebuilds every local crate (~45 min). A red step names its crates and,
   on main, the suspect commits since the last green ancestor (`ci_report.mjs`, `gh run view <id>`).
+- **CI test shards** (ci-3, `.github/workflows/test_groups.mjs`): the test job runs as three jobs, each
+  `cargo test -p <its crates>` with its own cache (`test-v2-...-s<i>of3-<sha>`). Crates are ordered by how many
+  workspace libs they need and cut where the slowest shard is shortest (weights = source bytes, no list to keep);
+  each shard passes the features the whole workspace resolves for its crates, because nine framework crates get
+  features only from game crates and would otherwise be tested bare. Measured after a change low in the graph
+  (sf_ids): one job 23 min of build, slowest shard 13. The floor is the shard holding the app (every lib, ~15 min
+  when all of them rebuild), so more runners stop paying after three or four. A job saves a cache entry only when
+  it compiled something (three shards + clippy are ~6.9 GB of GitHub's 10 GB when all save).
 - **Worktrees** (`tools/worktree.sh`): own target per checkout, `C:\cargo-target\scrib-wt\<name>` via junctions.
   A shared target is unsafe: cargo hashes a path crate by its path relative to the workspace root and checks
   freshness by mtime, so two checkouts would reuse each other's artifacts. Not adopted yet: sccache to share the
