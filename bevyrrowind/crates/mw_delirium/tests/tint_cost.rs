@@ -5,6 +5,7 @@
 //!
 //! Each `Sim` owns its own floor world and agent, so N agents are N independent sims (they do not collide).
 //! States are a table (`STATES`): a name, a setup run once and an optional per-tick drive run before each step.
+//! `tint_group_cost` instead puts N agents in one floor world and steps them together (`Agent::step_group`).
 
 #![allow(clippy::cast_precision_loss)]
 
@@ -13,8 +14,11 @@ use std::time::Instant;
 
 use delirium::prelude::*;
 use mw_delirium::delirium;
+use mw_delirium::delirium::collision::Collision;
 use mw_delirium::delirium::msg::Value;
-use mw_delirium::sim::{DT, Sim, SpawnPose, Spawned, spawn};
+use mw_delirium::delirium::nm::Agent;
+use mw_delirium::delirium::ragdoll::{Build, Capsule, Group, Obstacle, Ragdoll};
+use mw_delirium::sim::{DT, Sim, SpawnPose, Spawned, floor_world, spawn};
 use mw_delirium::{Options, character_from_skeleton};
 use mw_install::MorrowindInstall;
 use sf_vfs::{Vfs, VfsPath};
@@ -30,6 +34,12 @@ const FALLEN_AT: usize = 120;
 /// The disturbance D and E react to, as `real_install.rs` `parts_round_trip` uses: the chest (part 10), forward.
 const PUSH_PART: usize = 10;
 const PUSH_NS: f32 = 45.0;
+
+/// `tint_group_cost`: spacing of the agents along +x, metres, so they never touch; states it measures; repetitions
+/// of the start and drop timing.
+const GROUP_SPACING: f32 = 2.0;
+const GROUP_STATES: [&str; 3] = ["A ", "C ", "G "];
+const START_REPS: usize = 50;
 
 /// Ticks after setup at which `tint_pose_error` samples (0.5, 1 and 2 s at 60 Hz: a tint lives 0.5-2 s).
 const POSE_SAMPLES: [usize; 3] = [30, 60, 120];
@@ -238,5 +248,113 @@ fn tint_pose_error() {
                 );
             }
         }
+    }
+}
+
+/// `spawned`'s frames moved by `offset` (the ragdoll's origin is its first frame, `Ragdoll::new`).
+fn shifted(spawned: &Spawned, offset: Vec3) -> Vec<Transform> {
+    spawned.frames.iter().map(|f| Transform { translation: f.translation + offset, ..*f }).collect()
+}
+
+/// A `Sim` whose agent stands at `frames` (as `Sim::new` with `set_zero` false, placed anywhere). Its own floor world
+/// is used only by `send`; the grouped step uses one shared floor world.
+fn sim_at(spawned: &Spawned, frames: &[Transform], seed: f32) -> Sim {
+    let doll = Ragdoll::new(&spawned.build, frames, Vec3::ZERO);
+    let agent = Agent::new(&spawned.build, doll, Quat::IDENTITY, seed);
+    Sim { build: spawned.build.clone(), world: floor_world(), agent }
+}
+
+/// One member of `Agent::step_group`: the agent, its id in the group, its build, its obstacles, the other capsules.
+type GroupEntry<'a> = (&'a mut Agent, usize, &'a Build, &'a [Obstacle], &'a [Capsule]);
+
+/// One grouped tick: each agent gets the state's drive with its own (shifted) target, then all step together.
+fn tick_group(sims: &mut [Sim], targets: &[Vec<Transform>], state: &State, world: &Collision, group: &mut Group) {
+    if let Some(t) = state.tick {
+        for (s, target) in sims.iter_mut().zip(targets) {
+            t(s, target);
+        }
+    }
+    let none_ob: &[Obstacle] = &[];
+    let none_cap: &[Capsule] = &[];
+    let mut agents: Vec<GroupEntry> =
+        sims.iter_mut().enumerate().map(|(i, Sim { agent, build, .. })| (agent, i, &*build, none_ob, none_cap)).collect();
+    Agent::step_group(&mut agents, world, DT, group, &mut |_, _, _| {});
+}
+
+fn median_max_us(t: &[f64]) -> (f64, f64) {
+    let t = sorted(t);
+    (t[t.len() / 2], t[t.len() - 1])
+}
+
+#[test]
+#[ignore = "measurement: ms per tick of N Delirium agents stepped together (Agent::step_group), and start/drop cost"]
+fn tint_group_cost() {
+    let Some(spawned) = fixture() else { return };
+    let pelvis0 = f64::from(spawned.frames[0].translation.z);
+    println!(
+        "tint cost group: one floor world, agents {GROUP_SPACING} m apart along +x (shifted frames), Agent::step_group, {WARM_UP} warm-up + {TIMED} timed ticks; available parallelism {}",
+        std::thread::available_parallelism().map_or(1, std::num::NonZero::get)
+    );
+    let world = floor_world();
+    for prefix in GROUP_STATES {
+        let state = STATES.iter().find(|s| s.name.starts_with(prefix)).expect("state in STATES");
+        for n in [1usize, 2, 4, 8] {
+            let targets: Vec<Vec<Transform>> = (0..n).map(|i| shifted(spawned, Vec3::X * GROUP_SPACING * i as f32)).collect();
+            let mut sims: Vec<Sim> = targets.iter().enumerate().map(|(i, f)| sim_at(spawned, f, 0.3 + 0.1 * i as f32)).collect();
+            for s in &mut sims {
+                (state.setup)(s);
+            }
+            let mut group = Group::default();
+            let mut all: Vec<f64> = Vec::with_capacity(WARM_UP + TIMED);
+            let mut fallen = None;
+            for done in 1..=WARM_UP + TIMED {
+                let t0 = Instant::now();
+                tick_group(&mut sims, &targets, state, &world, &mut group);
+                all.push(t0.elapsed().as_secs_f64() * 1000.0);
+                if done == FALLEN_AT {
+                    fallen = Some(sims.iter().filter(|s| s.agent.fallen).count());
+                }
+            }
+            assert!(sims.iter().all(Sim::finite), "group {} N={n}: non-finite frames", state.name);
+            let t = sorted(&all[WARM_UP..]);
+            let first = sorted(&all[..FALLEN_AT]);
+            let mean = t.iter().sum::<f64>() / t.len() as f64;
+            let median = t[t.len() / 2];
+            let pelvis = sims.iter().map(|s| f64::from(s.pelvis_z())).sum::<f64>() / n as f64 / pelvis0 * 100.0;
+            println!(
+                "tint cost group {} N={n}: {mean:.3} ms/tick mean, {:.3} min, {median:.3} median, {:.3} p99, {:.3} max, {:.3} ms/body; fallen {}/{n} at 2 s; pelvis {pelvis:.0} %; first 2 s {:.3} median, {:.3} p99 ms/tick",
+                state.name,
+                t[0],
+                t[t.len() * 99 / 100],
+                t[t.len() - 1],
+                median / n as f64,
+                fallen.unwrap_or(0),
+                first[first.len() / 2],
+                first[first.len() * 99 / 100],
+            );
+        }
+    }
+    // Start and drop: one agent, alone (`Sim::new` + setup, its first plain `step`, then `drop`).
+    for prefix in GROUP_STATES {
+        let state = STATES.iter().find(|s| s.name.starts_with(prefix)).expect("state in STATES");
+        let (mut construct, mut first, mut dropped) = (Vec::new(), Vec::new(), Vec::new());
+        for _ in 0..START_REPS {
+            let t0 = Instant::now();
+            let mut sim = Sim::new(spawned, 0.3, false);
+            (state.setup)(&mut sim);
+            construct.push(t0.elapsed().as_secs_f64() * 1e6);
+            let t0 = Instant::now();
+            tick_all(std::slice::from_mut(&mut sim), state, &spawned.frames);
+            first.push(t0.elapsed().as_secs_f64() * 1e6);
+            assert!(sim.finite(), "start {}: non-finite frames", state.name);
+            let t0 = Instant::now();
+            drop(sim);
+            dropped.push(t0.elapsed().as_secs_f64() * 1e6);
+        }
+        let ((cm, cx), (fm, fx), (dm, dx)) = (median_max_us(&construct), median_max_us(&first), median_max_us(&dropped));
+        println!(
+            "tint cost start {}: construct {cm:.0} us median {cx:.0} us max; first tick {fm:.0} us median {fx:.0} us max; drop {dm:.0} us median {dx:.0} us max ({START_REPS} reps)",
+            state.name
+        );
     }
 }
