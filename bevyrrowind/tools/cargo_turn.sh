@@ -17,6 +17,9 @@
 # long cargo ran, its exit code, and how many units cargo compiled (Compiling/Checking lines on stderr), of which
 # Bevy crates. Set SCRIB_SESSION=<name> to tag your lines. Passive: it measures the real workday, no benchmarks.
 root="$(cd "$(dirname "$0")/../.." && pwd)"
+# From a git worktree (tools/worktree.sh) the queue, freeze and log stay the main checkout's: one machine, one queue.
+common="$(git -C "$root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+[ -n "$common" ] && [ -d "$(dirname "$common")/.sessions" ] && root="$(dirname "$common")"
 queue="$root/.sessions/build-queue"
 freeze="$root/.sessions/BUILD-FREEZE"
 log="$root/.sessions/build-log.tsv"
@@ -69,14 +72,16 @@ busy() {
         powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='bevyrrowind.exe'\" | ForEach-Object { \$_.CommandLine }" 2>/dev/null \
             | tr -d '\r' | grep -qE '[[:space:]](bake|info|mods|census|clip-preview --export|--bench)([[:space:]]|$)' && return 0
     fi
-    tasklist 2>/dev/null | grep -qiE '^rustc\.exe' && return 0
+    # rustdoc.exe compiles and links doctests; a test run that has to recompile shows up as rustc.exe.
+    tasklist 2>/dev/null | grep -qiE '^(rustc|rustdoc)\.exe' && return 0
     tasklist 2>/dev/null | grep -qiE '^cargo\.exe' || return 1
-    # Each cargo.exe's subcommand: the first word after the exe path that isn't a flag or +toolchain.
+    # Each cargo.exe's subcommand: the first word after the exe path that isn't a flag or +toolchain. `test-run` is
+    # this script's second phase of a `cargo test` (its binaries running, already built; see the end of the file).
     powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='cargo.exe'\" | ForEach-Object { \$_.CommandLine }" 2>/dev/null \
         | tr -d '\r' \
         | sed -E 's/^("[^"]*"|[^ ]*)//' \
         | awk '{ sub_ = ""; for (i = 1; i <= NF; i++) if ($i !~ /^[-+]/) { sub_ = $i; break } print sub_ }' \
-        | grep -qvxE 'run|dev'
+        | grep -qvxE 'run|dev|test-run'
 }
 
 # Drop tickets whose shell is gone (killed sessions), then print the live ones oldest first.
@@ -208,13 +213,50 @@ fi
 # unit counts (it still reaches the caller unchanged; colour kept when the caller is a terminal).
 [ -t 2 ] && [ -z "${CARGO_TERM_COLOR:-}" ] && export CARGO_TERM_COLOR=always
 errlog="$(mktemp 2>/dev/null)" || errlog=""
-t_run=$(ms)
-if [ -n "$errlog" ]; then
-    nice -n 10 cargo "$@" 2> >(tee "$errlog" >&2)
-    rc=$?
-    wait $! 2>/dev/null
-else
-    nice -n 10 cargo "$@"
-    rc=$?
+run_cargo() {
+    if [ -n "$errlog" ]; then
+        nice -n 10 cargo "$@" 2> >(tee "$errlog" >&2)
+        rc=$?
+        wait $! 2>/dev/null
+    else
+        nice -n 10 cargo "$@"
+        rc=$?
+    fi
+}
+
+# `cargo test` in two phases (build-speed BS2, 2026-11-26): the ticket covers only the build (`--no-run`); the
+# binaries then run outside the queue as `cargo test-run` (an alias of `test` set through CARGO_ALIAS_TEST_RUN, so it
+# works for any project, and busy() can tell it apart), and the next in line builds meanwhile. Running took 290 s of a no-compile `test --workspace`.
+# The second cargo only checks freshness (a file changed in between recompiles, and its rustc holds the others
+# through busy()). Not split: `--no-run` itself, `--doc` (cargo refuses `--doc --no-run`), SCRIB_TEST_ONE_PHASE=1.
+two_phase=0
+if [ "$sub" = test ] && [ -z "${SCRIB_TEST_ONE_PHASE:-}" ]; then
+    two_phase=1
+    for a in "$@"; do case "$a" in --) break ;; --no-run|--doc) two_phase=0 ;; esac; done
 fi
+if [ $two_phase = 0 ]; then
+    t_run=$(ms)
+    run_cargo "$@"
+    exit $rc
+fi
+
+build_args=(); run_args=(); seen_sub=0; dd=0
+for a in "$@"; do
+    if [ $dd = 0 ] && [ "$a" = -- ]; then dd=1; build_args+=(--no-run); fi
+    if [ $dd = 0 ]; then build_args+=("$a"); fi
+    if [ $seen_sub = 0 ] && [ "$a" = test ]; then seen_sub=1; run_args+=(test-run); else run_args+=("$a"); fi
+done
+[ $dd = 0 ] && build_args+=(--no-run)
+
+t_run=$(ms)
+run_cargo "${build_args[@]}"
+[ $rc = 0 ] || exit $rc
+# Build done: log it as `test`, give up the ticket, and log the run as its own `test-run` line.
+rm -f "$ticket"
+write_log 0 2>/dev/null
+[ -n "$errlog" ] && : > "$errlog"
+sub=test-run; queued_at="$(date '+%F %T')"; all_args="${run_args[*]}"
+t_q=$(ms); last=$t_q; reason=""; w_queue=0; w_busy=0; w_freeze=0
+t_run=$t_q
+CARGO_ALIAS_TEST_RUN=test run_cargo "${run_args[@]}"
 exit $rc

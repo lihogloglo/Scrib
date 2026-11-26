@@ -128,6 +128,8 @@ anywhere in Bevy's dependency closure (`superfargoth/docs/build-perf.md` "Featur
   (`--queue` lists it; `--stats` sums its log of waits and build times), waits for any build from any project, and runs at BelowNormal priority. While
   `.sessions/BUILD-FREEZE` exists, only commands run with `SCRIB_BUILD_FREEZE_OK=1` go through (someone is
   fixing manifests). `cargo tree`, `cargo deny` and `cargo hakari` don't compile and skip the queue.
+  `cargo test` holds the queue only while it builds: its binaries then run outside it (`test-run` in `--stats`),
+  so a long test run no longer holds everyone (`--doc` and `--no-run` stay one phase).
 - **These share one Bevy:** `test -p <any crate>`, `test --workspace`, `build -p bevyrrowind` (and the same with
   `--release`, one Bevy per profile). `cargo dev` (the `dev` feature) is a second Bevy by design, and clippy
   keeps a check-mode one per feature set. Each is cached once; switching between them rebuilds nothing.
@@ -138,7 +140,13 @@ anywhere in Bevy's dependency closure (`superfargoth/docs/build-perf.md` "Featur
 - **During a slice:** `test -p <your crates>` and `clippy -p <your crates> --all-targets -- -D warnings`
   (pedantic is on in `[workspace.lints]`); filter output to errors and warnings
   (`2>&1 | grep -E "^(error|warning)" -A6`). Spec-only sessions shouldn't build at all.
-- **Before a PR** (from the root, compiling ones through `cargo_turn.sh`):
+- **Before a PR, CI runs the gate (owner 2026-11-26):** `bash bevyrrowind/tools/ci_push.sh <name> <your paths>`
+  pushes HEAD plus your paths to branch `ci/<name>` (no commit on main, shared index untouched; a worktree pushes its
+  `wt/<name>` branch, a PR runs it too) and GitHub Actions (`.github/workflows/ci.yml`, Windows runners, jobs in
+  parallel) runs everything below off the laptop; follow it with `gh run watch`, read failures with
+  `gh run view --log-failed`, and `ci_push.sh --done <name>` after. Push it before an owner launch, so the owner checks
+  while CI runs. The laptop runs only your slice's `-p` checks; run the full list locally (from the root, compiling
+  ones through `cargo_turn.sh`) only when CI is down:
 
   ```sh
   cargo test --workspace
@@ -167,6 +175,11 @@ Several sessions may work **in the same working tree** at once.
    the same turn (old handoffs, not live sessions). A file untouched for 24 h may be archived by anyone; a
    handoff stays readable there by path.
 2. **One build at a time,** through `cargo_turn.sh` ("Building"). Keep the build/test cycle short.
+   **Worktrees for long or risky slices** (manifests, cross-crate refactors, anything that stays broken for a while):
+   `bash bevyrrowind/tools/worktree.sh new <name>` gives a checkout on branch `wt/<name>` with its own build folder
+   (never share one target between checkouts: cargo would reuse the other's build of a crate). Its first build is a
+   full Bevy, so short slices stay in the main tree. An Agent-tool worktree (`isolation: "worktree"`) needs
+   `worktree.sh init <dir>` before it builds, or its target lands on D:. `worktree.sh rm <name>` when merged.
 3. **Shared files.** ROADMAP: edit only your task's lines. `DECISIONS.md`: append only. Root `Cargo.toml` /
    `Cargo.lock`: change only when your scope needs a new crate or dependency, and note it in your session file.
 4. **Never commit unless asked.** If asked, `git add` your new files, then `git commit -- <paths>` (commits only

@@ -20,6 +20,8 @@
 !/deny.toml
 !/superfargoth/
 !/bevyrrowind/
+# CI: the pre-PR gate on GitHub Actions (CONTRIBUTING.md "Building").
+!/.github/
 # Repo-wide scripts (doccheck.sh: no-loss check for doc cleanup slices).
 !/tools/
 # History hidden from default searches (CONTRIBUTING.md "Find your way").

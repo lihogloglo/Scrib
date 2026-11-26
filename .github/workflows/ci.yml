@@ -1,0 +1,99 @@
+# The pre-PR gate (CONTRIBUTING.md "Building") off the owner's laptop (build-speed BS3, 2026-11-26).
+# Windows runners: same OS, linker (rust-lld, .cargo/config.toml) and paths as the dev machine, so green here
+# means what a green local gate means. Jobs run in parallel; caches are saved from main only (branches restore
+# them), which keeps the repo under GitHub's 10 GB cache limit.
+#
+# Agents: `bash bevyrrowind/tools/ci_push.sh <name> <paths>` (or push a wt/** worktree branch, or open a PR)
+# instead of running the full gate locally, then
+# `gh run watch` / `gh run view --log-failed`. superfargoth/docs/build-perf.md "CI".
+name: ci
+
+on:
+  push:
+    branches: [main, "ci/**", "wt/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # No debug info for our crates either: smaller target, faster links. Backtraces still name functions.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      # LFS clips (tests read them) come from the Actions cache: the free LFS bandwidth is ~1 GB/month.
+      - name: LFS object ids
+        shell: bash
+        run: git lfs ls-files -l | cut -d' ' -f1 | sort > .lfs-ids
+      - uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-ids') }}
+      - name: LFS pull
+        shell: bash
+        run: git lfs pull
+      - name: Toolchain (rust-toolchain.toml)
+        shell: bash
+        run: rustup toolchain install || rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: cargo test --workspace
+        shell: bash
+        run: cargo test --workspace --no-fail-fast
+      - name: Disk left
+        if: always()
+        shell: bash
+        run: df -h . || true
+
+  clippy:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain (rust-toolchain.toml)
+        shell: bash
+        run: rustup toolchain install || rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: clippy
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: clippy --workspace
+        shell: bash
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: clippy --workspace, dev-only code
+        if: always()
+        shell: bash
+        run: cargo clippy --workspace --all-targets --features bevyrrowind/dev -- -D warnings
+
+  # No compiling: licences/advisories, the workspace-hack, the tunables census.
+  policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-hakari
+      - name: cargo deny check
+        run: cargo deny check
+      - name: workspace-hack is current
+        if: always()
+        run: cargo hakari generate --diff && cargo hakari manage-deps --dry-run
+      # Red since before CI existed (2026-11-26: new candidate consts in sf_worldgen, sf_water, ...); reported,
+      # not blocking, until the census passes again (ROADMAP 1.14 line). Then drop continue-on-error.
+      - name: tunables census
+        if: always()
+        continue-on-error: true
+        run: node tools/tunables-census.mjs --check

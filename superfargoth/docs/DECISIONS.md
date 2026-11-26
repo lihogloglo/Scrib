@@ -1995,3 +1995,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (owner, gameplay-roadmaps-6): NV11 (NPC portal crossing) and the AI slices that need it (AI10 tier 0, AI12
   doors, AI8c3) are unparked: build them headless now, ahead of seamless portals (M9a/M9b); in-game checks wait for
   portals. AI hub runs whole stages (Stage 1 rest: MA2 packages, MA4 Hello/Fight/Flee/Alarm; Stage 2 from AI9).
+- 2026-11-26 (owner, build-speed): the pre-PR gate runs in GitHub Actions (Windows runners, `ci.yml`), not on the laptop;
+  sessions push a `ci/<name>` snapshot (`tools/ci_push.sh`) or a `wt/<name>` worktree branch. Worktrees always get their
+  own target folder (cargo would reuse another checkout's builds). `cargo test` holds the queue only while compiling.

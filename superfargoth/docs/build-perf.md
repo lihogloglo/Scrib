@@ -123,6 +123,25 @@ Incremental time is cargo's freshness check (~0.8 s) + ~0.5-1 s per crate betwee
 the app + the app crate (~2 s rustc, 0.73 s link). It grows with chain depth, not crate size: keep
 rule 3 (wide and shallow) and rule 5 (split by change frequency) in mind for `sf_model`.
 
+### Queue, CI and worktrees (build-speed BS2/BS3, 2026-11-26)
+
+The build log (7 days to 2026-11-26) gave 1022 min of cargo and 578 min waiting, 495 of them behind other tickets;
+one `test --workspace` with nothing to compile still ran 290 s. Three changes, results in `docs/ledger/build.md`:
+
+- **Tests run outside the queue.** `cargo_turn.sh` splits `cargo test` into `test --no-run` (holds the ticket) and
+  `cargo test-run` (an alias set through `CARGO_ALIAS_TEST_RUN`, which `busy()` ignores; a `--config` alias doesn't
+  work, cargo ignores aliases from it). Cargo releases its target lock before running the binaries (checked: a build
+  finished in 3 s while a 20 s test ran). rustdoc.exe now counts as busy: doctests compile in the run phase.
+- **CI** (`.github/workflows/ci.yml`): test, both clippy runs, and a no-compile policy job (deny, hakari, tunables
+  census; the census is non-blocking until it passes again) on push to `main`, `ci/**`, `wt/**` and PRs.
+  Windows runners for parity with the dev machine; `Swatinem/rust-cache` saved from `main` only (10 GB repo limit);
+  LFS clips from the Actions cache (free LFS bandwidth ~1 GB/month). `tools/ci_push.sh` pushes HEAD + given paths.
+- **Worktrees** (`tools/worktree.sh`): own target per checkout, `C:\cargo-target\scrib-wt\<name>` via junctions.
+  A shared target is unsafe: cargo hashes a path crate by its path relative to the workspace root and checks
+  freshness by mtime, so two checkouts would reuse each other's artifacts. Not adopted yet: sccache to share the
+  registry crates between targets (the vendored Bevy patches are path crates, built incrementally, so uncacheable).
+  Not adopted: cargo-nextest (process per test; several suites share one loaded fixture through statics).
+
 ### Machine setup (Windows)
 
 - **Exclude the `target/` folders (and `~/.cargo`) from Windows Defender
