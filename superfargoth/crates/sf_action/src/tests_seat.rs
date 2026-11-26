@@ -9,11 +9,11 @@ use sf_anim::{RootPath, RootPose};
 
 use super::*;
 
-const ENTER: &str = "interact.sit.enter";
-const LOOP: &str = "interact.sit.loop";
+pub(crate) const ENTER: &str = "interact.sit.enter";
+pub(crate) const LOOP: &str = "interact.sit.loop";
 const EXIT: &str = "interact.sit.exit";
-const SEAT: TargetId = TargetId(42);
-const SLOT: u8 = 1;
+pub(crate) const SEAT: TargetId = TargetId(42);
+pub(crate) const SLOT: u8 = 1;
 const ENTER_SECS: f32 = 1.0;
 const EXIT_SECS: f32 = 0.8;
 
@@ -47,9 +47,9 @@ impl RootPath for StandUp {
 
 /// A slot in world space (the run converts it to the feet-relative sense each tick).
 #[derive(Clone, Copy)]
-struct WorldSeat {
-    enter: RootPose,
-    exit: RootPose,
+pub(crate) struct WorldSeat {
+    pub(crate) enter: RootPose,
+    pub(crate) exit: RootPose,
 }
 
 /// The default seat: its frame 0.6 m ahead, facing back at the user; its exit 0.55 m in front of it.
@@ -58,13 +58,13 @@ fn chair() -> WorldSeat {
     WorldSeat { enter: RootPose::new(Vec3::new(0.1, 0.0, 0.6), pi), exit: RootPose::new(Vec3::new(0.1, 0.0, 0.05), pi) }
 }
 
-fn rules() -> RuleSet {
+pub(crate) fn rules() -> RuleSet {
     let mut b = RuleSetBuilder::new();
     b.add_ron(&Origin::Framework, BASE_RULES).add_ron(&Origin::Framework, SEAT_RULES);
     b.build().expect("base and seat rules load")
 }
 
-fn slots() -> SlotTable {
+pub(crate) fn slots() -> SlotTable {
     SlotTable::new()
         .with("loco.move", SlotInfo::looping())
         .with("air.fall", SlotInfo::looping())
@@ -78,28 +78,28 @@ fn slots() -> SlotTable {
         .with_root(EXIT, Arc::new(StandUp))
 }
 
-struct Run {
-    rules: RuleSet,
-    slots: SlotTable,
-    params: CharacterParams,
-    state: ActionState,
-    out: ActionOutput,
-    tick: Tick,
+pub(crate) struct Run {
+    pub(crate) rules: RuleSet,
+    pub(crate) slots: SlotTable,
+    pub(crate) params: CharacterParams,
+    pub(crate) state: ActionState,
+    pub(crate) out: ActionOutput,
+    pub(crate) tick: Tick,
     /// Feet and yaw, world.
-    feet: Vec3,
-    yaw: f32,
-    anchor: Vec3,
-    seat: Option<WorldSeat>,
+    pub(crate) feet: Vec3,
+    pub(crate) yaw: f32,
+    pub(crate) anchor: Vec3,
+    pub(crate) seat: Option<WorldSeat>,
     /// The sensed seat's slot index.
-    slot: u8,
-    grounded: bool,
-    focus: Option<Focus>,
+    pub(crate) slot: u8,
+    pub(crate) grounded: bool,
+    pub(crate) focus: Option<Focus>,
     /// Every event so far.
-    log: Vec<ActionEvent>,
+    pub(crate) log: Vec<ActionEvent>,
 }
 
 impl Run {
-    fn new(seat: Option<WorldSeat>) -> Self {
+    pub(crate) fn new(seat: Option<WorldSeat>) -> Self {
         Self {
             rules: rules(),
             slots: slots(),
@@ -119,7 +119,7 @@ impl Run {
     }
 
     /// One tick; the body follows the warp output (a stand-in for the shell), else stays put.
-    fn step(&mut self, mut cmd: Command) {
+    pub(crate) fn step(&mut self, mut cmd: Command) {
         self.tick = self.tick.next();
         cmd.tick = self.tick;
         let ctx = StepCtx { rules: &self.rules, slots: &self.slots, params: &self.params, source: CharacterId(3) };
@@ -139,7 +139,7 @@ impl Run {
     }
 
     /// Steps `cmd` until the move is `id` (at most `max` ticks); panics if it never gets there.
-    fn until(&mut self, id: &str, cmd: Command, max: usize) {
+    pub(crate) fn until(&mut self, id: &str, cmd: Command, max: usize) {
         for _ in 0..max {
             if self.state.mov == RuleKey::of(id) {
                 return;
@@ -149,11 +149,11 @@ impl Run {
         assert_eq!(self.state.mov, RuleKey::of(id), "never reached {id}: events {:?}", self.log);
     }
 
-    fn count(&self, kind: EventKind) -> usize {
+    pub(crate) fn count(&self, kind: EventKind) -> usize {
         self.log.iter().filter(|e| e.kind == kind).count()
     }
 
-    fn refused(&self, id: &str) -> Option<Refused> {
+    pub(crate) fn refused(&self, id: &str) -> Option<Refused> {
         self.out.refusals.iter().find(|r| r.rule == RuleKey::of(id)).map(|r| r.reason)
     }
 
@@ -168,19 +168,19 @@ impl Run {
     }
 }
 
-fn press(c: ActionClass) -> Command {
+pub(crate) fn press(c: ActionClass) -> Command {
     let mut cmd = Command::default();
     cmd.buttons.pressed.insert(c);
     cmd.buttons.held.insert(c);
     cmd
 }
 
-fn stick(y: f32) -> Command {
+pub(crate) fn stick(y: f32) -> Command {
     Command { stick: Vec2::new(0.0, y), ..Command::default() }
 }
 
 /// Angle difference wrapped to (-pi, pi].
-fn yaw_diff(a: f32, b: f32) -> f32 {
+pub(crate) fn yaw_diff(a: f32, b: f32) -> f32 {
     (a - b + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
 
@@ -189,7 +189,7 @@ fn assert_on(r: &Run, pose: RootPose) {
     assert!(yaw_diff(r.yaw, pose.yaw).abs() < 1e-4, "yaw {}, want {}", r.yaw, pose.yaw);
 }
 
-fn starts(r: &Run, id: &str) -> usize {
+pub(crate) fn starts(r: &Run, id: &str) -> usize {
     r.log.iter().filter(|e| e.kind == EventKind::MoveStart(RuleKey::of(id))).count()
 }
 
@@ -332,7 +332,7 @@ fn interact_without_a_seat_goes_to_interact_use() {
 /// never retries while the same seat stays sensed.
 #[test]
 fn a_refused_offer_sends_seat_refused_once() {
-    let far = WorldSeat { enter: RootPose::new(Vec3::new(0.0, 0.0, 3.0), std::f32::consts::PI), ..chair() };
+    let far = WorldSeat { enter: RootPose::new(Vec3::new(0.0, 0.0, 4.0), std::f32::consts::PI), ..chair() };
     let mut r = Run::new(Some(far));
     r.step(Command::default());
     assert_eq!(r.refused(ENTER), Some(Refused::MaxCorrection), "{:?}", r.out.refusals);

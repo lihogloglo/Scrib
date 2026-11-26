@@ -581,6 +581,15 @@ under `interact.sit.enter`: the enter is tried first (already in place: no appro
 Slices: IN2c4 the rule in `sf_action`; IN2c5 shell (`SeatStep` for the approach, the `Release` of open point (w));
 IN2c6 the repro's stances A-E assert `Entered`.
 
+**As built (IN2c4, 2026-11-27).** `sf_action/src/approach.rs` (pure functions; `step.rs` only calls them):
+`Owner::Approach { arrive_m, arrive_rad, timeout_s, max_m }`, `ExitOn::Arrived`, rule `interact.sit.approach` at rank
+95 showing the `loco.move` slot; the enter's `from` gains the approach. The held slot is `ActionState::approach`
+(`#[serde(skip)]`: a load mid-approach ends it as lost and the shell re-offers). Start gate: `Slot` (no seat sensed),
+`NoRootPath`, `ApproachTooFar`. Order of ends on a tick: claim lost, stick or Jump, arrived, timeout. A forced move
+(hit reaction) also answers `ApproachCancelled`; the enter refusing on arrival answers with the enter's own reason
+under the approach's rule key. A load check refuses an `Approach` owner without a slot or an `Arrived` exit to a
+rule, and `Arrived` on any other owner. 8 tests (`tests_approach.rs`) with a stand-in mover; the real mover is IN2c6.
+
 ## As built (IN33a, 2026-11-26)
 
 `sf_interaction/src/door.rs` (+ `tests_door.rs`, 8 exact tests): the design of "Slot kinds" Door as pure functions.

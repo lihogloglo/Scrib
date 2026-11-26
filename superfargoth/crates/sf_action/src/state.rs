@@ -104,6 +104,11 @@ pub struct ActionState {
     /// sees the held claim as a new offer and answers it again.
     #[serde(skip)]
     pub seat_sensed: Option<(TargetId, u8)>,
+    /// The slot an [`crate::Owner::Approach`] move walks to (`IN2c4`), set when it starts, cleared
+    /// when any other move starts. Not serialized, as [`ActionState::seat`]: a save mid-approach
+    /// loads with none and the approach ends at once as lost (the shell re-offers the claim).
+    #[serde(skip)]
+    pub approach: Option<crate::approach::ApproachState>,
 }
 
 /// The slot a character sits in ([`ActionState::seat`]).
@@ -155,6 +160,7 @@ impl ActionState {
             lock: None,
             seat: None,
             seat_sensed: None,
+            approach: None,
         }
     }
 }

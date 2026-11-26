@@ -51,6 +51,11 @@ the camera follows the drawn body at frame rate and never feeds gameplay.
   (`sf_combat_bevy/src/lib.rs:1-25`); lock-on in `lock.rs`, soft aim `sf_combat/src/aim.rs:61`; Morrowind sheets
   `bevyrrowind/crates/mw_combat/data/movesets/sword_1h.ron`, player glue `mw_player_bevy/src/combat.rs`.
 
+- **The approach before a sit** (IN2c4): an offered seat whose enter warp would refuse (correction over half the
+  clip's travel) starts `interact.sit.approach` (`sf_action/src/approach.rs`, `Owner::Approach`): the action layer
+  walks the body to the enter clip's start pose (slot frame minus the clip's whole root travel), turns it in place,
+  then `ExitOn::Arrived` chains into `interact.sit.enter`. Stick, Jump, 3 s or a target past 2.5 m end it with one
+  `SeatRefused` (`ApproachCancelled | ApproachTimeout | ApproachTooFar`); numbers are rule data in `seat_rules.ron`.
 - **Slot aliases and seats** (AN26c): a rule names fixed slots (`interact.sit.enter|loop|exit`, `SEAT_RULES`); a character's
   `ActionAliases` (`sf_action_bevy/src/lib.rs:136`, `sf_action::SlotAliases` in `sf_action/src/alias.rs`) maps a rule slot to the clip
   slot to time and warp with (`Aliased` source in `step_actions`); `ActionOutput::slot` stays the rule's. The seat binder

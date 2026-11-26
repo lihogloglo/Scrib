@@ -9,6 +9,7 @@ use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use sf_controller::{Gait, LocomotionIntent};
 
+use crate::approach;
 use crate::command::{ActionClass, ClassSet, Command};
 use crate::grip::{LEFT, LedgeGrip, RIGHT, hold_target};
 use sf_anim::{RootChain, RootPath, RootPose, WarpPlan};
@@ -167,6 +168,13 @@ pub enum Refused {
     Lock,
     /// A [`WarpTarget::Slot`] move with no interaction slot sensed ([`Sense::seat`]).
     Slot,
+    /// An [`Owner::Approach`] move was cut short: the stick past the deadzone, a Jump, another move
+    /// forced in, or its exit rule refusing on arrival with no reason of its own.
+    ApproachCancelled,
+    /// An [`Owner::Approach`] move ran its `timeout_s` without arriving.
+    ApproachTimeout,
+    /// An [`Owner::Approach`] move's target is further than its `max_m` at the start.
+    ApproachTooFar,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -385,6 +393,7 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
     let seated = cur.is_some_and(|i| rules.at(i).rule.owner == Owner::Seated);
     let stand = seated
         && (stick_active || cmd.buttons.pressed.contains(ActionClass::Jump) || cmd.buttons.pressed.contains(ActionClass::Interact) || seat_lost(state.seat.as_ref(), sense.seat.as_ref()));
+    let approach = approach::running(ctx, state, cur, cmd, sense, stick_active);
     let gates_of = |cur: Option<usize>, state: &ActionState| {
         cur.map_or(Gates { ended: true, ..Gates::OPEN }, |i| {
             let r = rules.at(i);
@@ -431,6 +440,7 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
     // 4-8. Candidates, pick, start; settle while the new move ends or exits at once. A forced
     // reaction goes first, whatever the windows say.
     let mut started = [usize::MAX; MAX_SETTLE + 2];
+    let mut exit_refused = None;
     if let Some(i) = state.forced.take().and_then(|f| rules.index_of(f.rule)) {
         if let Some(old) = cur {
             out.events.push(event(None, EventKind::MoveEnd(rules.at(old).key)));
@@ -450,10 +460,12 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
                     ExitOn::Touchdown => landed && !fresh,
                     ExitOn::Airborne => !sense.grounded && !fresh,
                     ExitOn::Stand => stand && !fresh,
+                    ExitOn::Arrived => approach.is_some_and(|a| a.arrived(i)) && !fresh,
                 });
                 // An automatic move lasts while its entry holds; a hold move while its class is held.
                 let released = r.holds() && !fresh && cmd.buttons.held.intersection(r.classes).is_empty();
-                let lapsed = released || (automatic(r) && !fresh && facts.entry(r).is_err());
+                let quit = approach.is_some_and(|a| a.quits(i)) && !fresh;
+                let lapsed = released || quit || (automatic(r) && !fresh && facts.entry(r).is_err());
                 (exit.copied(), g.ended || exit.is_some() || lapsed)
             }
             None => (None, true),
@@ -488,6 +500,7 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
                 .entry(r)
                 .and(if prev_ok(r, cur_rule) { Ok(()) } else { Err(Refused::Prev) })
                 .and(if gated { Err(Refused::Gate) } else { Ok(()) })
+                .and_then(|()| approach::check(ctx, r, sense))
                 .and_then(|()| plan_warp(ctx, r, sense, state.seat.as_ref()));
             match checked {
                 Ok(plan) => {
@@ -495,6 +508,7 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
                     break;
                 }
                 Err(reason) if requested => out.refusals.push(Refusal { rule: r.key, reason }),
+                Err(reason) if exit_target == Some(i) => exit_refused = Some(reason),
                 Err(_) => {}
             }
         }
@@ -519,6 +533,10 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
     {
         out.events.push(event(Some(target), EventKind::SeatRefused(slot)));
     }
+    if let Some((a, refusal)) = approach::answer(approach, &started, exit_refused) {
+        out.events.push(event(Some(a.target), EventKind::SeatRefused(a.slot)));
+        out.refusals.push(refusal);
+    }
 
     // 9. Move (Sim owner): the mover's intent, slowed with the clock under hit-stop. Locked on,
     // the body faces the target, standing still too.
@@ -528,6 +546,9 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
         (false, true) => rest(facts.mode, lock),
         (_, false) => rest(facts.mode, None),
     };
+    if let Some(walk) = approach::intent(ctx, state, cur, sense, facts.mode) {
+        out.intent = walk;
+    }
     if state.clock.rate < RATE_ONE {
         out.intent.desired_velocity *= f32::from(state.clock.rate) / f32::from(RATE_ONE);
     }
@@ -658,7 +679,7 @@ fn stood(r: &CompiledRule, t: ClockTime) -> bool {
 
 /// Runs `f` on the rule's slot chain root path (one slot: its path; several: a [`RootChain`]),
 /// cut at a Warp rule's `stand` time. `None` if a slot has no root path.
-fn with_root_path<R>(r: &CompiledRule, slots: &dyn SlotSource, f: impl FnOnce(&dyn RootPath) -> R) -> Option<R> {
+pub(crate) fn with_root_path<R>(r: &CompiledRule, slots: &dyn SlotSource, f: impl FnOnce(&dyn RootPath) -> R) -> Option<R> {
     let stand = match r.rule.owner {
         Owner::Warp { stand, .. } => stand,
         _ => None,
@@ -942,6 +963,7 @@ fn start(
     if r.rule.redo_ticks > 0 {
         state.timers.redo.push((r.key, Tick(tick.0.wrapping_add(u32::from(r.rule.redo_ticks)))));
     }
+    state.approach = approach::on_start(r, sense);
     if let Some(left) = seat_chain(r, state, sense) {
         out.events.push(event(Some(left.target), EventKind::SeatExited(left.slot)));
     }

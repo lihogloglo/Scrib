@@ -7,16 +7,31 @@
 [
     (
         // Sit: the shell offers a newly claimed slot (no press). The enter clip's end is warped
-        // onto the slot frame; too large a correction refuses (the shell's approach brings the
-        // user close first) and the shell hears `SeatRefused`.
+        // onto the slot frame; too large a correction refuses it and the approach below walks the
+        // user onto the clip's start pose first.
         id: "interact.sit.enter",
         kind: Interaction,
         category: Interact,
         rank: 100,
         slots: ["interact.sit.enter"],
         owner: Warp(target: Slot, profile: Linear, refuse_ratio: 0.5, steer: false),
-        entry: (offered: true, states: [Grounded], from: [Loco]),
+        entry: (offered: true, states: [Grounded], from: [Loco, Rule("interact.sit.approach")]),
         exits: [(on: End, to: Rule("interact.sit.loop"))],
+        steer: false,
+    ),
+    (
+        // The approach (IN2c4): an offered seat the enter can't start from here yet. Walks the
+        // body onto the enter clip's start pose (the one its warp needs no correction from), turns
+        // it, then the enter. The stick, Jump, the timeout or a target past max_m refuse the offer
+        // (`SeatRefused`). It plays the locomotion loop: the mover's walk shows.
+        id: "interact.sit.approach",
+        kind: Interaction,
+        category: Interact,
+        rank: 95,
+        slots: ["loco.move"],
+        owner: Approach(arrive_m: 0.05, arrive_rad: 0.09, timeout_s: 3.0, max_m: 2.5),
+        entry: (offered: true, states: [Grounded], from: [Loco]),
+        exits: [(on: Arrived, to: Rule("interact.sit.enter"))],
         steer: false,
     ),
     (

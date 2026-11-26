@@ -96,6 +96,13 @@ pub enum Owner {
     /// sense going away ([`crate::Sense::seat`]) forces it; both fire its [`ExitOn::Stand`] exit.
     /// The chain's slot is the loop.
     Seated,
+    /// Walks the body onto the pose its [`ExitOn::Arrived`] exit's Warp rule starts from with no
+    /// correction (`IN2c4`, interaction.md "The approach before the enter"): the action layer's walk
+    /// intent, then a turn in place; the stick never steers it. Arrived within `arrive_m` (planar)
+    /// and `arrive_rad`, it exits; the stick, a Jump or `timeout_s` cancel it, a target further than
+    /// `max_m` refuses it at the start ([`crate::Refused::ApproachTooFar`]); it holds its slot in
+    /// [`crate::ApproachState`]. Its slot is the locomotion loop.
+    Approach { arrive_m: f32, arrive_rad: f32, timeout_s: f32, max_m: f32 },
 }
 
 fn one() -> f32 {
@@ -278,6 +285,8 @@ pub enum ExitOn {
     /// A [`Owner::Seated`] move's exit: the stick past the deadzone, a Jump or Interact press, or its
     /// slot no longer sensed ([`crate::Sense::seat`] gone or another slot). Not on its first tick.
     Stand,
+    /// An [`Owner::Approach`] move reached its target pose. Not on its first tick.
+    Arrived,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -526,6 +535,9 @@ impl RuleSetBuilder {
             }
             if r.owner != Owner::Seated && r.exits.iter().any(|e| e.on == ExitOn::Stand) {
                 errors.push(err(origin, r, "exit on Stand needs a Seated owner".into()));
+            }
+            if let Some(m) = crate::approach::validate(r) {
+                errors.push(err(origin, r, m.into()));
             }
             if let Owner::Clip { root_scale, rate, .. } = r.owner
                 && !(root_scale.is_finite() && root_scale >= 0.0 && rate.is_finite() && rate > 0.0)
