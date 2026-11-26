@@ -3,11 +3,17 @@
 use std::f32::consts::{FRAC_PI_2, PI};
 
 use glam::{Quat, Vec3};
-use sf_interaction::{InteractableDef, Side, SlotDef, SlotKind, TagId};
+use sf_interaction::{
+    ClipFamily, DOOR_OPEN, DoorDef, Frame, IkTargets, InteractableDef, Occupancy, Side, SlotDef, SlotKind, SlotRef,
+    TagFilter, TagId, VERB_CLOSE, VERB_OPEN, VerbDef, VerbTarget, rank_verbs,
+};
 use sf_records::RecordId;
+use smallvec::{SmallVec, smallvec};
 
-use crate::activation::RecordClass;
-use crate::defs::{Basis, CLASS_VERB_PRIORITY, Facing, Measured, POSE_VERB_PRIORITY, class_verb, def_for};
+use crate::activation::{RecordClass, verb};
+use crate::defs::{
+    Basis, CLASS_VERB_PRIORITY, Facing, Measured, POSE_VERB_PRIORITY, USER_NPC, class_verb, def_for, door_def,
+};
 use crate::furniture::Kind;
 use crate::tunables::FurnitureParams;
 
@@ -388,4 +394,92 @@ fn containers_and_activators_keep_their_primary_verb_above_the_pose_verbs() {
     assert_eq!(class_verb(RecordClass::Furniture(Kind::Seat)), None);
     assert_eq!(class_verb(RecordClass::Creature), None);
     assert!(def(Kind::Table, &measured([1.2, 0.8], 0.84, Facing::PosZ)).verbs.is_empty(), "def_for adds no class verb");
+}
+
+/// A placement id for `rank_verbs` (the crate has no `sf_world` dependency to name the type: its
+/// text form, a hex `u128`, read back through serde).
+fn placement<P: serde::de::DeserializeOwned>() -> P {
+    use serde::de::IntoDeserializer as _;
+    let hex: serde::de::value::StrDeserializer<'_, serde::de::value::Error> = "2a".into_deserializer();
+    P::deserialize(hex).expect("a hex placement id")
+}
+
+/// `IN33c1`: the swing door's def, field by field.
+#[test]
+fn door_def_is_one_npc_doorway_and_the_toggle_verbs() {
+    let id = RecordId::new("Door_Test");
+    let doorway = Vec3::new(0.6, 1.1, 0.05);
+    let d = door_def(&id, doorway);
+    let want = InteractableDef {
+        id: id.clone(),
+        slots: vec![SlotDef {
+            kind: SlotKind::Door(DoorDef {
+                hinge: Vec3::ZERO,
+                axis: Vec3::Y,
+                open_deg: 90.0,
+                both_ways: false,
+                close_behind: true,
+            }),
+            local: Frame { translation: doorway, rotation: Quat::IDENTITY },
+            band: 0.0,
+            verb: VerbDef { verb: TagId::of(verb::PASS), priority: POSE_VERB_PRIORITY, requires: TagFilter::default() },
+            entrances: SmallVec::new(),
+            clips: ClipFamily(String::new()),
+            ik: IkTargets::default(),
+            reach: 0.0,
+            occupancy: Occupancy::Pose,
+            control: None,
+            users: TagFilter { all: smallvec![TagId::of(USER_NPC)], any: SmallVec::new(), none: SmallVec::new() },
+            group: None,
+            queue: None,
+        }],
+        verbs: smallvec![
+            VerbDef {
+                verb: VERB_OPEN,
+                priority: CLASS_VERB_PRIORITY,
+                requires: TagFilter { all: SmallVec::new(), any: SmallVec::new(), none: smallvec![DOOR_OPEN] },
+            },
+            VerbDef {
+                verb: VERB_CLOSE,
+                priority: CLASS_VERB_PRIORITY,
+                requires: TagFilter { all: smallvec![DOOR_OPEN], any: SmallVec::new(), none: SmallVec::new() },
+            },
+        ],
+        destructible: None,
+        carry: None,
+        adverts: Vec::new(),
+    };
+    assert_eq!(d, want);
+    let (i, slot, _) = d.door().expect("a door slot");
+    assert_eq!(i, 0);
+    assert_eq!(slot.local.translation, doorway);
+    assert!(slot.queues_by_default());
+}
+
+/// `IN33c1`: the player (refused the slot by its `users` filter) gets exactly the toggle verb of the
+/// door's state; an NPC gets `open` first, then `pass` on the doorway slot.
+#[test]
+fn door_def_verbs_for_the_player_and_an_npc() {
+    let d = door_def(&RecordId::new("Door_Test"), Vec3::new(0.6, 1.1, 0.0));
+    let p = placement();
+    let verbs = |tags: &[TagId], claim: bool| -> Vec<(TagId, VerbTarget)> {
+        rank_verbs(&d, p, tags, |_| claim).iter().map(|c| (c.verb, c.target)).collect()
+    };
+    assert_eq!(verbs(&[], false), [(VERB_OPEN, VerbTarget::Slotless { placement: p, verb: 0 })]);
+    assert_eq!(verbs(&[DOOR_OPEN], false), [(VERB_CLOSE, VerbTarget::Slotless { placement: p, verb: 1 })]);
+    assert_eq!(
+        verbs(&[], true),
+        [
+            (VERB_OPEN, VerbTarget::Slotless { placement: p, verb: 0 }),
+            (TagId::of(verb::PASS), VerbTarget::Slot(SlotRef { placement: p, slot: 0 })),
+        ]
+    );
+}
+
+/// `IN33c1`: the door class's own verb is unchanged by the swing rows (the travel row's `open`).
+#[test]
+fn door_class_verb_is_still_open() {
+    let open = class_verb(RecordClass::Door).expect("a door opens");
+    assert_eq!((open.verb, open.priority), (TagId::of(verb::OPEN), CLASS_VERB_PRIORITY));
+    assert!(open.requires.matches(&[]));
 }

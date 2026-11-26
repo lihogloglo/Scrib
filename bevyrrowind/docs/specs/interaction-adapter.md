@@ -189,6 +189,19 @@ verb on a def'd chest or activator never opens it. `mw_player_bevy::activatable`
 unchanged. A script's `Activate` (`ScriptActivate`) now runs these defaults too (the contract; nothing writes it
 yet). **IN32c2b:** `mw_audio_bevy`'s `door_sounds` and `swing_door_sounds` play on `UseApproved` with `runs_default(TravelDoor, verb)`, `.after(ActivationSystems::Default)`. Only `mw_scripts_bevy`'s dev `report` still reads `ActivationOutcome`.
 
+### As built (IN33c1, 2026-11-26)
+
+`mw_interaction::door_def(base, doorway)` is the def of a swing door (a `DOOR` reference without a destination), built
+per placement, not baked: `doorway` is the closed leaf's centre in the object's frame (the model bounds' centre, from
+the hook). One `Door` slot at the doorway: hinge at the origin, axis +Y, 90 degrees, one way, `close_behind` (OpenMW
+`apps/openmw/mwworld/worldimp.cpp:1427-1440` is the behaviour source); its verb `pass` takes users tagged `npc`
+(`USER_NPC`; AI14 gives NPC users the tag), so the player, whose user has no tags, never claims a doorway. The player
+toggles through two slotless verbs at `CLASS_VERB_PRIORITY`: `open` (not `door.open`) and `close` (`door.open`). The
+angle is a content convention (`// tunables: const`), not a tunable. The two `SwingDoor` rows of the activation table
+are Offered; without conditions the door's primary row is still the travel row, so `class_verb(Door)` and the def-less
+prompt stay "Open". `runs_default(_, open)` is true for both door actions: `mw_doors_bevy` acts only on a door in
+`DoorLinks`, the framework's door default only on one registered in `Doors`.
+
 ## World rules mapping (IN41, IN38, IN19)
 
 **Material rows** (`sf.interact.material` + a pattern table in `mw_interaction`, checked against the install at cook,

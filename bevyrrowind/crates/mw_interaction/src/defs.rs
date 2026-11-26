@@ -42,12 +42,15 @@
 //! above every pose verb ([`CLASS_VERB_PRIORITY`] over [`POSE_VERB_PRIORITY`]), so its best verb is
 //! the class's and the pose verbs follow (the hold list). The bake adds it ([`def_for`] knows only
 //! the census kind).
+//!
+//! **Swing door** ([`door_def`]): one `pass` doorway slot for NPC users ([`USER_NPC`]) plus the
+//! slotless `open` / `close` the player toggles it with (`IN33c1`).
 
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use sf_interaction::{
-    ClipFamily, Entrance, Frame, IkTargets, InteractableDef, Occupancy, Side, SlotDef, SlotKind, TagFilter, TagId,
-    VerbDef,
+    ClipFamily, DOOR_OPEN, DoorDef, Entrance, Frame, IkTargets, InteractableDef, Occupancy, Side, SlotDef, SlotKind,
+    TagFilter, TagId, VERB_CLOSE, VERB_OPEN, VerbDef,
 };
 use sf_records::RecordId;
 use smallvec::{SmallVec, smallvec};
@@ -70,6 +73,13 @@ pub const POSE_VERB_PRIORITY: i16 = 0;
 /// Focus order of a record class's own primary verb ([`class_verb`]): above every pose verb.
 // tunables: const (ordering: the class's own use ranks first, interaction-adapter.md)
 pub const CLASS_VERB_PRIORITY: i16 = POSE_VERB_PRIORITY + 1;
+
+/// The user tag of every NPC user of a slot (`SlotDef::users`); the player has none.
+pub const USER_NPC: &str = "npc";
+
+/// A vanilla swing door's open angle, degrees (`OpenMW` `worldimp.cpp:1427-1440`).
+// tunables: const (content convention: the record format's door turns 90 degrees, not a feel value)
+const DOOR_OPEN_DEG: f32 = 90.0;
 
 /// A horizontal direction in the object's frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -255,6 +265,59 @@ pub fn class_verb(class: RecordClass) -> Option<VerbDef> {
         priority: CLASS_VERB_PRIORITY,
         requires: TagFilter::default(),
     })
+}
+
+/// The def of a Morrowind swing door (a `DOOR` without a destination); `doorway` is the closed
+/// leaf's centre in the object's frame (the model bounds' centre).
+///
+/// Vanilla door meshes pivot at their origin and `OpenMW` turns the reference 90 degrees about its
+/// vertical axis, one way (behaviour source: `apps/openmw/mwworld/worldimp.cpp:1427-1440`; no code
+/// copied): hinge at the origin, axis +Y, one-way, closing behind a user that found it closed. The
+/// player never claims the doorway: it toggles the door through the slotless `open` (closed) and
+/// `close` (open, [`DOOR_OPEN`]); NPC users ([`USER_NPC`]) claim and queue on the `pass` slot.
+#[must_use]
+pub fn door_def(base: &RecordId, doorway: Vec3) -> InteractableDef {
+    let pass = SlotDef {
+        kind: SlotKind::Door(DoorDef {
+            hinge: Vec3::ZERO,
+            axis: Vec3::Y,
+            open_deg: DOOR_OPEN_DEG,
+            both_ways: false,
+            close_behind: true,
+        }),
+        local: Frame { translation: doorway, rotation: Quat::IDENTITY },
+        band: 0.0,
+        verb: VerbDef { verb: TagId::of(verb::PASS), priority: POSE_VERB_PRIORITY, requires: TagFilter::default() },
+        entrances: SmallVec::new(),
+        clips: ClipFamily::default(),
+        ik: IkTargets::default(),
+        reach: 0.0,
+        occupancy: Occupancy::Pose,
+        control: None,
+        users: TagFilter { all: smallvec![TagId::of(USER_NPC)], ..TagFilter::default() },
+        group: None,
+        // A door slot queues by default (`SlotDef::queues_by_default`).
+        queue: None,
+    };
+    InteractableDef {
+        id: base.clone(),
+        slots: vec![pass],
+        verbs: smallvec![
+            VerbDef {
+                verb: VERB_OPEN,
+                priority: CLASS_VERB_PRIORITY,
+                requires: TagFilter { none: smallvec![DOOR_OPEN], ..TagFilter::default() },
+            },
+            VerbDef {
+                verb: VERB_CLOSE,
+                priority: CLASS_VERB_PRIORITY,
+                requires: TagFilter { all: smallvec![DOOR_OPEN], ..TagFilter::default() },
+            },
+        ],
+        destructible: None,
+        carry: None,
+        adverts: Vec::new(),
+    }
 }
 
 /// A seat's clip family (module docs, "Seat").

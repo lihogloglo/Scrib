@@ -33,6 +33,8 @@ pub mod verb {
     pub const SLEEP: &str = "sleep";
     pub const BASH: &str = "bash";
     pub const BROWSE: &str = "browse";
+    /// An NPC walking through a swing door's doorway slot (`crate::defs::door_def`).
+    pub const PASS: &str = "pass";
 }
 
 /// A Morrowind record class as activation sees it; furniture is the census kind of a
@@ -230,10 +232,11 @@ pub const ROWS: &[Row] = {
         // CONT (container.cpp:140-200).
         row(R::Container, C::Always, verb::OPEN, "Open", A::OpenContainer),
         row(R::Container, C::Locked, verb::BASH, "Bash", A::Bash).modern(Switch::Bash, Classic::Off).not_yet("IN37"),
-        // DOOR (door.cpp:118-229): the swing wins for doors without a destination once IN33 builds
-        // it; until then every door opens as today (travel, or nothing).
-        row(R::Door, C::NoDestination, verb::OPEN, "Open", A::SwingDoor).not_yet("IN33"),
-        row(R::Door, C::NoDestination, verb::CLOSE, "Close", A::SwingDoor).not_yet("IN33"),
+        // DOOR (door.cpp:118-229): the swing rows hold for a door without a destination (IN33,
+        // `defs::door_def`); the travel row is every door's unconditional row, so a caller that never
+        // evaluates `NoDestination` prompts it ("Open").
+        row(R::Door, C::NoDestination, verb::OPEN, "Open", A::SwingDoor),
+        row(R::Door, C::NoDestination, verb::CLOSE, "Close", A::SwingDoor),
         row(R::Door, C::Always, verb::OPEN, "Open", A::TravelDoor),
         row(R::Door, C::Locked, verb::BASH, "Bash", A::Bash).modern(Switch::Bash, Classic::Off).not_yet("IN37"),
         // BOOK (book.cpp:55-62): read; the default takes it until the reader exists (UI lane).
@@ -301,7 +304,8 @@ pub fn primary(
 
 /// Whether the default handler of `action` runs an approved use (`sf_interaction_bevy::UseApproved`)
 /// of `verb`: `None` (the target's primary use: a target with no def) or the tag of an offered row
-/// with that action (`open` for a container or a travel door, `talk`, `take`, `read`). A pose verb
+/// with that action (`open` for a container or a travel door, `open` and `close` for a swing door,
+/// `talk`, `take`, `read`). A pose verb
 /// (`sit`, `lie`, `lean`) on a def'd container or activator is the seat default's, so its class's
 /// default never runs on it (`IN32c2`). The one check every default handler makes.
 #[must_use]

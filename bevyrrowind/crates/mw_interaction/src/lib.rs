@@ -3,7 +3,7 @@
 //!
 //! - [`furniture`]: census furniture kinds ([`Kind`], [`classify`]) from record ids and model names.
 //! - [`defs`]: [`def_for`], a census kind plus its [`Measured`] shape to an `InteractableDef`
-//!   (seats, benches, beds, tables, counters).
+//!   (seats, benches, beds, tables, counters); [`door_def`], a swing door's def.
 //! - [`measure`](mod@measure): [`measure()`], a census model's triangles and top to its [`Measured`]
 //!   shape (seat front from the backrest, bed head from the boards; the bake calls it, `IN32b2`).
 //! - [`activation`]: the per-record-class activation table ([`ROWS`]): verb, default action and
@@ -26,7 +26,9 @@ pub use activation::{
     Availability, Classic, Condition, DefaultAction, ROWS, RecordClass, Row, Switch, offered, primary, rows,
     runs_default,
 };
-pub use defs::{Basis, CLASS_VERB_PRIORITY, Facing, Measured, POSE_VERB_PRIORITY, class_verb, def_for};
+pub use defs::{
+    Basis, CLASS_VERB_PRIORITY, Facing, Measured, POSE_VERB_PRIORITY, USER_NPC, class_verb, def_for, door_def,
+};
 pub use furniture::{Kind, classify};
 pub use measure::measure;
 /// The def types [`def_for`] fills (re-exported so the bake needs no `sf_interaction` dependency).

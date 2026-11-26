@@ -52,14 +52,15 @@ fn unbuilt_states_keep_todays_verb() {
     let all = |_: Condition| true;
     assert_eq!(prompt(R::Npc, all), Some("Talk"));
     assert_eq!(prompt(R::Creature, all), None);
+    // A door's swing rows are built (IN33): with every state holding, the swing's "Open" leads.
     assert_eq!(prompt(R::Door, all), Some("Open"));
-    assert_eq!(primary(R::Door, all, |_| true).map(|r| r.action), Some(DefaultAction::TravelDoor));
+    assert_eq!(primary(R::Door, all, |_| true).map(|r| r.action), Some(DefaultAction::SwingDoor));
     assert_eq!(prompt(R::Container, all), Some("Open"));
     // A carryable lit light: take only (no snuff until IN19).
     let lit: Vec<_> = offered(R::Light, all, |_| true).map(|r| r.verb).collect();
     assert_eq!(lit, [verb::TAKE]);
-    // Hold lists: one verb per class today.
-    for &(class, _) in TODAY {
+    // Hold lists: one verb per class today, but a door (its swing rows: `swing_door_rows_hold_...`).
+    for &(class, _) in TODAY.iter().filter(|(c, _)| *c != R::Door) {
         assert!(offered(class, all, |_| true).count() <= 1, "{class:?}");
     }
 }
@@ -102,6 +103,7 @@ fn unbuilt_actions_are_not_offered() {
         DefaultAction::Dialogue,
         DefaultAction::OpenContainer,
         DefaultAction::TravelDoor,
+        DefaultAction::SwingDoor,
         DefaultAction::Take,
         DefaultAction::Script,
         DefaultAction::Pose,
@@ -117,7 +119,6 @@ fn unbuilt_actions_are_not_offered() {
     };
     assert!(not_yet(R::Light, verb::SNUFF));
     assert!(not_yet(R::Light, verb::RELIGHT));
-    assert!(not_yet(R::Door, verb::CLOSE));
     assert!(not_yet(R::Door, verb::BASH));
     assert!(not_yet(R::Container, verb::BASH));
     assert!(not_yet(R::Furniture(Kind::Bed), verb::SLEEP));
@@ -184,7 +185,37 @@ fn default_handlers_run_on_their_own_verbs_only() {
     }
     // The pose verbs are the seat default's; unbuilt actions run on nothing.
     assert_eq!(runs_on(DefaultAction::Pose), [verb::SIT, verb::LIE, verb::LEAN]);
-    for action in [DefaultAction::SwingDoor, DefaultAction::Bash, DefaultAction::ToggleLit, DefaultAction::Rest, DefaultAction::Loot] {
+    for action in [DefaultAction::Bash, DefaultAction::ToggleLit, DefaultAction::Rest, DefaultAction::Loot] {
         assert!(runs_on(action).is_empty(), "{action:?}");
     }
+}
+
+/// `IN33c1`: a door without a destination offers the swing's `open` and `close` ahead of the travel
+/// row; a caller that never evaluates `NoDestination` still gets the travel row.
+#[test]
+fn swing_door_rows_hold_without_a_destination() {
+    let no_dest = |c: Condition| c == Condition::NoDestination;
+    let rows: Vec<_> = offered(R::Door, no_dest, |_| true).map(|r| (r.verb, r.action)).collect();
+    assert_eq!(
+        rows,
+        [
+            (verb::OPEN, DefaultAction::SwingDoor),
+            (verb::CLOSE, DefaultAction::SwingDoor),
+            (verb::OPEN, DefaultAction::TravelDoor),
+        ]
+    );
+    assert_eq!(primary(R::Door, |_| false, |_| true).map(|r| r.action), Some(DefaultAction::TravelDoor));
+    assert_eq!(offered(R::Door, |_| false, |_| true).count(), 1);
+}
+
+/// `IN33c1`: the swing default runs on the primary use, `open` and `close`; the travel default never
+/// on `close`.
+#[test]
+fn swing_default_runs_on_open_and_close() {
+    assert_eq!(runs_on(DefaultAction::SwingDoor), [verb::OPEN, verb::CLOSE]);
+    assert!(runs_default(DefaultAction::SwingDoor, None));
+    assert!(runs_default(DefaultAction::SwingDoor, Some(TagId::of(verb::OPEN))));
+    assert!(runs_default(DefaultAction::SwingDoor, Some(TagId::of(verb::CLOSE))));
+    assert!(!runs_default(DefaultAction::TravelDoor, Some(TagId::of(verb::CLOSE))));
+    assert!(!runs_default(DefaultAction::SwingDoor, Some(TagId::of(verb::PASS))));
 }
