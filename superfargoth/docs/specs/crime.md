@@ -129,7 +129,8 @@ pub struct Jurisdiction {             // a record, kind "crime.jurisdiction"
     pub id: JurisdictionId,
     pub bounty_stat: StatKey,         // Counter: `bounty` for the default, `bounty.<id>` otherwise (stats.md)
     pub ladder: Vec<LadderStep>,      // LadderStep { from: i32, stance: Stance }, ascending by `from`
-    pub kill_on_sight: Option<i32>,   // murder on record and bounty >= this: Attack, no arrest offered
+    pub kill_on_sight: Option<i32>,   // bounty >= this: Attack, no arrest offered
+    pub kill_needs_murder: bool,      // true: Attack also needs a murder on record (Modern, owner); Classic false
     pub decay_per_day: i32,           // 0 = no decay (Classic)
     pub murder_floor: i32,            // decay stops here while a murder is on record
     pub options: Vec<RecordId>,       // ArrestOption records offered here
@@ -152,7 +153,8 @@ SeenWanted }`); AI29 cools it while the guards have lost the player and ends the
 Losing the guards never lowers the bounty.
 
 **The ladder** (`LawRules::stance(&LawCtx { bounty, murder_on_record, jurisdiction }) -> Stance`, pure): the highest
-step with `from <= bounty`, else `Ignore`; `Attack` only for murder on record with `bounty >= kill_on_sight` (owner).
+step with `from <= bounty`, else `Ignore`; `Attack` at `bounty >= kill_on_sight`, and only with a murder on record while `kill_needs_murder` (Modern, owner);
+Classic clears it: Morrowind attacks at `iCrimeThreshold` x `iCrimeThresholdMultiplier` (crime-adapter).
 `Warn` gives `crime.law.warn_window_s` to comply, then `Arrest`; at `Pursue` guards chase on sight. Fleeing and
 resisting raise heat, never the stance.
 
@@ -197,7 +199,8 @@ pub enum CancelCause { Dead, Downed, Bribed, Threatened, Timeout }
 pub enum Recognition { Unknown, Description, Identified }
 ```
 
-The host owns reports on the fixed tick. `Pending` becomes `Walking(guard)` when AI22's `Report` directive starts;
+The host owns reports on the fixed tick. A guard who witnesses is its own target: it delivers on the next tick.
+`Pending` becomes `Walking(guard)` when AI22's `Report` directive starts;
 arrival sends `ReportDelivered { report, guard }`. Cancelled when the reporter dies, is `Downed` (combat), takes a
 bribe or yields to a threat (`ReportRequest::Stop { report, by: Bribe { gold } | Threat }`, from dialogue or an
 interaction verb, settled by `ReportRules::stop`, pure, seeded), or misses `crime.report.timeout_s`. A cancelled report

@@ -301,12 +301,13 @@ initialised from the NPC/creature AIDT. As built (MA4a, 2026-11-26): `mw_stats` 
     50, `sight_slope` 0.5, `hearing_slope` 0.3, `willpower_slope` 0.5, `int_slope` 0.4, `mul_min` / `mul_max` 0.5 / 2,
     `refill_step` 0.1 (fraction of the term), `injured_below` 0.5, `drunk_s` 300.
 
-## Crime, witnesses, guards (`mw_rpg::crime`)
+## Crime, witnesses, guards (`mw_crime`; this section is the AI side only, the law is crime-adapter's)
 
 - `commitCrime` → `reportCrime` (`mechanicsmanagerimp.cpp` 1137-1450): offence kinds (trespass, pickpocket, theft,
   assault, murder, werewolf); witnesses = the framework's event-time witness query over every simulated actor within
   `fAlarmRadius` with LOS + awareness, through open seamless doors via `portal_query` (no per-package hacks).
-- Bounty from the GMSTs listed in stats-adapter ("Factions, reputation, bounty"); Fight raised by
+- Bounty is added when the witness's report is delivered to a guard (crime-adapter `reportCrime` "At delivery"), never
+  at sight; GMSTs in stats-adapter ("Factions, reputation, bounty"); Fight raised by
   `iFightTrespass/Pickpocket/Attack/Killing`; Alarm decides who reports; **guards** (`Alarm ≥ 100` and class Guard)
   get a *Pursue* directive (OpenMW `AiPursue`), across doors; arrest dialogue on contact (pay, jail, resist);
   `iCrimeThreshold`, faction expulsion.
@@ -388,7 +389,7 @@ filters through a new function family; named enemies remembering and returning a
 | **MA3** wander methods (**built 2026-11-18**) | Morrowind wander/idle method set on `sf_ai`; `PathWalkScaffold` removed | headless: wanderers stay within radius; idle chances exact (`roll_idle_with` vs OpenMW `getRandomIdle` at b8285cc; `drive_tests.rs` runs the real Bevy `drive`) | AI6 |
 | **MA4** settings | Hello/Fight/Flee stats + considerations | exact ratings vs OpenMW formulas | AI7 |
 | **MA5** awareness | `awarenessCheck` port as `DetectionModel` Classic; Meter profile split (AI0g) | exact vs formula cases; Classic ignores profile sight fields | AI8 |
-| **MA6** crime | glue to `mw_crime` (crime-adapter; no `sf_ai` dep there): guards' *Pursue* | scripted theft: witnesses, bounty, guard pursues | MA5 |
+| **MA6** crime | glue only: a guard's crime `Stance` (crime.md ladder) -> directives (`Warn` approach, `Arrest` talk, `Pursue`, `Attack`); witnesses, reports and bounty are `mw_crime`'s (crime lane decision 14) | scripted stance changes give the expected directive | MA5 |
 | **MA7** fast-forward | `fastForward` rules | exact placement for wanderers and travellers | AI10 |
 | **MA8** schedules | data pack (three patterns, guards unscheduled), anchors, validator, `ai.schedules` setting | validator report per pattern on a real install; classic = vanilla stacks; unresolved anchors keep vanilla | AI10, AI11, AI12 |
 | **MA9** doors | escort/follow/pursue through doors, follower fallback | headless: follower through the Census door, guard pursues out | AI12 |
