@@ -148,10 +148,13 @@ engine ready for ambient lines.
 
 | ID | Deliverable | Crates | Depends | Verify |
 |---|---|---|---|---|
-| DQ-22 | Spec: rpg.md "Dialogue" rewrite (facts, criteria, specificity, priority, once/cooldown, writes) | docs | – | doc review |
-| DQ-23 | Rule DB + `Facts` trait + selection, indexed by concept | `sf_rpg` | DQ-22 | exact unit; seeded tie-break |
-| DQ-24 | INFO filters compiled to rules with OpenMW-order priority | `mw_rpg` | DQ-23 | equivalence test: same INFO as `accepts()` across sampled contexts on the real install |
-| DQ-25 | Bark presenter + triggers from AI/combat/crime events, Morrowind Voice DIAL | `sf_rpg`, `mw_rpg_bevy` | DQ-23, DQ-14 | headless trigger tests; owner DJ-7 |
+| DQ-22 | Spec: rpg.md "Dialogue" rewrite (facts, criteria, specificity, priority, once/cooldown, writes) | docs | – | **done 2026-11-26** (new `superfargoth/docs/specs/dialogue-rules.md`; rpg.md "Database"/"Adapter hook" pointers + session contract; rpg-adapter.md "Rule compilation (DQ-24) and Voice barks (DQ-25)"; ai/world-reactions/crime `BarkCue` pointers) |
+| DQ-23a | Rule DB + `Facts` trait + selection, indexed by concept (dialogue-rules.md "Facts", "Rules", "Selection") | `sf_rpg` | DQ-22 | exact unit; seeded tie-break |
+| DQ-23b | `DialogueMemory` (once, cooldown, recency, `memory.*` writes), `RuleFired`, save section `sf/dialogue` v1 | `sf_rpg`, `sf_save_bevy` | DQ-23a | exact unit; round trip + age rebase |
+| DQ-24a | INFO filters compiled to rules with OpenMW-order priority (rpg-adapter "Rule compilation") | `mw_rpg` | DQ-23a | equivalence test: same INFO as `accepts()` across sampled contexts on the real install; µs per query printed |
+| DQ-24b | Session, topic list, Info/Service Refusal on the rule DB (rpg.md "Adapter hook"); `accepts` kept only as the test oracle | `sf_rpg`, `mw_rpg`, `mw_rpg_bevy` | DQ-24a | DQ-24a test still exact; DQ-3 unchanged |
+| DQ-25a | `sf_rpg::barks`: `BarkCue` queue, dedupe, gates, budget, `BarkLine` out (dialogue-rules.md "Barks") | `sf_rpg` | DQ-23b | headless exact (storm of 20 cues) |
+| DQ-25b | Morrowind Voice DIAL on rules (`voice.rs` `select`, choice 0, result script), triggers from AI/combat/crime events, Barks presenter | `mw_audio`, `mw_rpg_bevy` | DQ-25a, DQ-24a, DQ-14 | headless trigger tests; owner DJ-7 |
 | DQ-39 | Quick replies (owner 2026-11-25, replaces GTA's greet/antagonise button): when an NPC addresses the player (guard warning, "can I help you?", beggar, hawker), 2-3 short timed replies on screen without the dialogue window (defuse/apologise, pay, retort, ignore); the outcome by temperament (AI49) and rule DB | `sf_rpg`, `sf_rpg_ui`, `mw_rpg_bevy` | DQ-23, DQ-25, AI50 | headless: each reply's outcome, timeout = ignore; owner DJ-8 |
 
 ### Stage 5: cinematic conversations
