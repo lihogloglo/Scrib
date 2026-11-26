@@ -1,12 +1,15 @@
 //! Slot-path ceiling bench (BW-2): what does the vendored `GpuBatchedMesh3d` slot path cost for N instance slots
 //! filled once on the CPU? A flat synthetic forest at 400 trees/ha, the N trees nearest the origin drawn as one
-//! batch of full tree meshes or of upright cards, under a shadowed sun, from a fixed camera. One launch steps
-//! through a list of arms (`bench.rs`), measures each, prints `bw2 ceiling |` lines and exits by itself.
+//! batch of full tree meshes or of upright cards, under a shadowed sun, from a fixed camera. The `stand` arm is the
+//! renderer's cost-model worst case instead: a tree batch (4,096 slots) of every tree inside the mesh tier and a card
+//! batch (250,000 slots) of every tree inside the impostor tier within the shadow range or in the frustum, active slots
+//! first, the rest zeroed (`fill.rs`). One launch steps through a list of arms (`bench.rs`), measures each, prints
+//! `bw2 ceiling |` lines and exits by itself.
 //!
 //! ```text
 //! cargo run -p sf_bigworld_bevy --example forest_ceiling -- [options]
-//!   --arms <a,b,..>      arms in order: empty, tree:<n> or card:<n> (default
-//!                        empty,card:100000,card:300000,tree:100000,tree:300000,card:1000000,tree:1000000)
+//!   --arms <a,b,..>      arms in order: empty, stand, tree:<n> or card:<n> (default
+//!                        empty,card:100000,card:300000,tree:100000,tree:300000,stand,card:1000000,tree:1000000)
 //!   --arm <spec>         one arm (same as --arms <spec>)
 //!   --warm-s <s>         warm-up per arm, at least 30 frames (default 4)
 //!   --measure-s <s>      measured time per arm, at least --min-frames frames (default 12)
@@ -18,6 +21,7 @@
 //!
 //! No controls, no UI. Lines (stdout, `key=value`): one header (adapter, limits, settings), per arm `start`,
 //! `result` and one `pass=` line per GPU span, `warn=limit` before a batch over a binding limit, and `done` last.
+//! `start` and `result` give `slots=` (capacity) and `active=`; `start` adds `dropped=` when a tier overflowed.
 #![allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 
 mod bench;
@@ -37,14 +41,14 @@ use bevy::render::occlusion_culling::OcclusionCulling;
 use bevy::window::{PresentMode, WindowResolution};
 
 use bench::{Bench, BenchConfig, advance, count_focus, parse_arms, print_header, sample_frame};
-use fill::{Arm, MeshKind};
+use fill::{Arm, MeshKind, StandView};
 use sf_diag_bevy::{DiagCounters, FramePhasePlugin};
 use upload::{CeilingUploadPlugin, CeilingUploads, CeilingWrite};
 
 /// Fixture: window size in physical pixels (1440p over a 1.5 laptop scale).
 const WINDOW_PX: (u32, u32) = (1707, 960);
 /// Fixture: the arms run when `--arms` and `--arm` are absent (baseline first; the arms over a binding limit last).
-const DEFAULT_ARMS: &str = "empty,card:100000,card:300000,tree:100000,tree:300000,card:1000000,tree:1000000";
+const DEFAULT_ARMS: &str = "empty,card:100000,card:300000,tree:100000,tree:300000,stand,card:1000000,tree:1000000";
 /// Fixture: default warm-up per arm, seconds.
 const DEFAULT_WARM_S: f64 = 4.0;
 /// Fixture: default measured time per arm, seconds.
@@ -138,6 +142,16 @@ struct CeilingAssets {
 #[derive(Resource)]
 struct Eye(f32);
 
+/// The bench camera as the `stand` arm's frustum test sees it (the camera `setup_scene` spawns).
+fn stand_view(eye: &Eye) -> StandView {
+    StandView {
+        eye_m: eye.0,
+        pitch_rad: CAMERA_PITCH_DEG.to_radians(),
+        fov_y_rad: FOV_Y_DEG.to_radians(),
+        aspect: WINDOW_PX.0 as f32 / WINDOW_PX.1 as f32,
+    }
+}
+
 fn main() {
     let args = match parse_args() {
         Ok(a) => a,
@@ -147,6 +161,7 @@ fn main() {
         }
     };
 
+    let eye = Eye(args.eye_m);
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
@@ -167,8 +182,8 @@ fn main() {
     app.add_plugins(CeilingUploadPlugin)
         .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP_PX })
         .insert_resource(GlobalAmbientLight { color: Color::WHITE, brightness: AMBIENT_BRIGHTNESS, ..default() })
-        .insert_resource(Bench::new(args.cfg, args.max_total_s, args.arms))
-        .insert_resource(Eye(args.eye_m))
+        .insert_resource(Bench::new(args.cfg, args.max_total_s, args.arms, stand_view(&eye)))
+        .insert_resource(eye)
         .add_systems(Startup, (setup_scene, print_header))
         .add_systems(Update, (sample_frame, count_focus, advance).chain())
         .run();

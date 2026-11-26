@@ -22,7 +22,7 @@ use sf_diag_bevy::DiagCounters;
 use sf_diag_bevy::sf_diag::PassTiming;
 use sf_diag_bevy::sf_diag::pacing::{MAIN_BUSY, RENDER_BUSY};
 
-use crate::fill::{parse_arm, parse_spec};
+use crate::fill::{StandView, parse_arm, parse_spec};
 use crate::stats::Series;
 use crate::upload::CeilingUploads;
 use crate::{CeilingAssets, CeilingBatch, spawn_arm};
@@ -147,6 +147,7 @@ struct PassRun {
 struct ArmRun {
     name: String,
     slots: u64,
+    active: u64,
     frame_ms: Series,
     main_ms: Series,
     render_ms: Series,
@@ -158,10 +159,11 @@ struct ArmRun {
 }
 
 impl ArmRun {
-    fn new(name: String, slots: u64) -> Self {
+    fn new(name: String, slots: u64, active: u64) -> Self {
         Self {
             name,
             slots,
+            active,
             frame_ms: Series::default(),
             main_ms: Series::default(),
             render_ms: Series::default(),
@@ -176,9 +178,11 @@ impl ArmRun {
     fn print(&self, capped: bool, extra: &str) {
         let name = &self.name;
         println!(
-            "{PREFIX} arm={name} result slots={} frames={} measured_s={:.3} frame_median_ms={:.3} frame_p99_ms={:.3} \
-             main_ms={:.3} render_ms={:.3} render_thread_ms={:.3} gpu_ms={:.3} focus_lost_frames={} capped={capped}{extra}",
+            "{PREFIX} arm={name} result slots={} active={} frames={} measured_s={:.3} frame_median_ms={:.3} \
+             frame_p99_ms={:.3} main_ms={:.3} render_ms={:.3} render_thread_ms={:.3} gpu_ms={:.3} focus_lost_frames={} \
+             capped={capped}{extra}",
             self.slots,
+            self.active,
             self.frame_ms.count(),
             self.measured_s,
             self.frame_ms.median(),
@@ -208,6 +212,8 @@ pub struct Bench {
     cfg: BenchConfig,
     max_total_s: f64,
     arms: Vec<String>,
+    /// The camera, for the `stand` arm's frustum test.
+    view: StandView,
     next: usize,
     phase: Phase,
     phase_start_s: f64,
@@ -224,11 +230,12 @@ pub struct Bench {
 }
 
 impl Bench {
-    pub fn new(cfg: BenchConfig, max_total_s: f64, arms: Vec<String>) -> Self {
+    pub fn new(cfg: BenchConfig, max_total_s: f64, arms: Vec<String>, view: StandView) -> Self {
         Self {
             cfg,
             max_total_s,
             arms,
+            view,
             next: 0,
             phase: Phase::Settle,
             phase_start_s: 0.0,
@@ -382,7 +389,7 @@ pub fn advance(
             let spec = bench.arms[bench.next].clone();
             bench.next += 1;
             let built = Instant::now();
-            let arm = parse_arm(&spec).expect("validated by parse_arms");
+            let arm = parse_arm(&spec, &bench.view).expect("validated by parse_arms");
             let build_ms = built.elapsed().as_secs_f64() * 1000.0;
             if let Some(limits) = bench.limits {
                 for batch in &arm.batches {
@@ -394,10 +401,14 @@ pub fn advance(
                     }
                 }
             }
-            let (name, slots, count) = (arm.name.clone(), arm.total_slots(), arm.batches.len());
+            let (name, slots, active, count) = (arm.name.clone(), arm.total_slots(), arm.total_active(), arm.batches.len());
+            let dropped = match arm.total_dropped() {
+                0 => String::new(),
+                n => format!(" dropped={n}"),
+            };
             spawn_arm(&mut commands, &assets, &mut uploads, arm);
-            println!("{PREFIX} arm={name} start slots={slots} batches={count} build_ms={build_ms:.3}");
-            bench.arm = Some(ArmRun::new(name, slots));
+            println!("{PREFIX} arm={name} start slots={slots} active={active}{dropped} batches={count} build_ms={build_ms:.3}");
+            bench.arm = Some(ArmRun::new(name, slots, active));
             bench.enter(Phase::Warm, now);
         }
         Step::ArmDone { capped } => {
