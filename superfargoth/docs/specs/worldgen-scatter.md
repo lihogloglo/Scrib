@@ -236,6 +236,11 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
   `NeutralFields` (one sample) and `GridFields` (f32 rasters in the guide frame, row 0 north, `check()`; bilinear, the
   class by nearest sample, the aspect blended as a unit vector across north). `hat` (NaN -> 0, step hats exact);
   `Suitability::new(species, class_names)` = minimum of the hats, 0 outside the class list. 6 tests.
+- **WG-E2c** (2026-11-27, `scatter_stand.rs`): `StandRules` (`density` = value noise mapped to [0, 1] x the best
+  canopy suitability, 0 with none; `class_of` by the three thresholds) and `StandMap::build(rules, fields, excluded,
+  rect)`: clearing nodes (mosaic or forced) on a world-aligned `field_step_m` grid grown by the band + one step,
+  `measure::distance_transform`, capped at `edge_band_m`, bilinear; `at` -> `StandPoint` (D, class, forced, distance,
+  edge band). 3 tests (partition on 1 km2; disc band: nodes exact vs brute force, width within one step on 64 rays; tile alone bitwise).
 
 ## Tunables
 

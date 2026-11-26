@@ -83,6 +83,7 @@ pub mod run;
 pub mod scatter;
 pub mod scatter_fields;
 pub mod scatter_species;
+pub mod scatter_stand;
 pub mod shade;
 pub mod stamps;
 pub mod stratovolcano;
