@@ -19,7 +19,7 @@
 //! evapotranspiration `PET = pet_mm_per_c * biotemperature`, mapped to `AI / (1 + AI)`, then raised towards 1 by the
 //! log of the drainage area between two declared areas ([`moisture`]).
 //!
-//! The seventeen values are tunables declared with unit,
+//! The eighteen values are tunables declared with unit,
 //! range and source ([`declared_defaults`]); a params file gives them as a `[params]` table of
 //! `{ v, unit, min, max, source }` entries, as the height-curve params do. The file may also carry per-region
 //! overrides ([`ClimateFile`]): an `[override_columns]` table declaring unit, range and source of each column used
@@ -60,6 +60,7 @@ pub const PARAM_NAMES: &[&str] = &[
     "drain_area_max_m2",
     "drain_weight",
     "override_blend_m",
+    "drain_flow_exponent",
 ];
 
 /// The override columns a params file may declare, with their fixed units.
@@ -247,6 +248,15 @@ pub fn declared_defaults() -> Vec<Declared> {
             "Guess",
             "width of the box that blends a region's override across its border",
         ),
+        d(
+            "drain_flow_exponent",
+            1.1,
+            "ratio",
+            0.5,
+            10.0,
+            "Industry(Freeman 1991 p 1.1)",
+            "MFD slope exponent of the drainage area the climate product computes on the guide heights",
+        ),
     ]
 }
 
@@ -270,6 +280,7 @@ pub struct Climate {
     pub drain_area_max_m2: f64,
     pub drain_weight: f64,
     pub override_blend_m: f64,
+    pub drain_flow_exponent: f64,
 }
 
 impl Default for Climate {
@@ -325,7 +336,7 @@ pub struct NamedOverride {
 #[derive(Debug, Clone)]
 pub struct ClimateFile {
     pub climate: Climate,
-    /// The 17 declared values with the file's v, min, max and source (for a product's provenance).
+    /// The 18 declared values with the file's v, min, max and source (for a product's provenance).
     pub declared: Vec<Declared>,
     /// Sorted by region name.
     pub overrides: Vec<NamedOverride>,
@@ -502,6 +513,7 @@ impl Climate {
             drain_area_max_m2: a1,
             drain_weight: get("drain_weight")?,
             override_blend_m: get("override_blend_m")?,
+            drain_flow_exponent: get("drain_flow_exponent")?,
         })
     }
 

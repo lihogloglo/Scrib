@@ -271,6 +271,7 @@ drain_area_min_m2 = { v = 1e4, unit = "m2", min = 1e3, max = 1e7, source = "Gues
 drain_area_max_m2 = { v = 1e8, unit = "m2", min = 1e7, max = 1e11, source = "Guess" }
 drain_weight = { v = 0.4, unit = "ratio", min = 0, max = 1, source = "Guess" }
 override_blend_m = { v = 1500, unit = "m", min = 0, max = 20000, source = "Guess" }
+drain_flow_exponent = { v = 1.5, unit = "ratio", min = 0.5, max = 10, source = "Guess" }
 "#;
 
 const OVERRIDES: &str = r#"
@@ -308,7 +309,8 @@ fn parses_region_overrides() {
     assert_eq!(f.overrides[1].rain.pin, Some(900.0));
     assert_eq!(f.overrides[1].temperature, Adjust::default());
     assert_eq!(f.climate.override_blend_m, 1500.0);
-    assert_eq!(f.declared.len(), 17);
+    assert_eq!(f.declared.len(), 18);
+    assert_eq!(f.climate.drain_flow_exponent, 1.5);
     let sea = f.declared.iter().find(|d| d.name == "sea_temperature_c").unwrap();
     assert_eq!(sea.v, 22.0);
 }
@@ -365,7 +367,8 @@ fn a_file_without_overrides_has_none() {
     let f = ClimateFile::parse_toml(FILE).unwrap();
     assert!(f.overrides.is_empty());
     let d = ClimateFile::defaults();
-    assert_eq!(d.declared.len(), 17);
+    assert_eq!(d.declared.len(), 18);
+    assert_eq!(d.climate.drain_flow_exponent, 1.1);
     assert!(d.overrides.is_empty());
     assert_eq!(d.climate, Climate::default());
     assert_eq!(Climate::parse_toml(FILE).unwrap(), f.climate);
@@ -386,6 +389,8 @@ fn parses_and_rejects_params_files() {
     assert!(Climate::parse_toml(&missing).is_err());
     assert_eq!(c.override_blend_m, 1500.0);
     let missing = FILE.replace("override_blend_m =", "# override_blend_m =");
+    assert!(Climate::parse_toml(&missing).is_err());
+    let missing = FILE.replace("drain_flow_exponent =", "# drain_flow_exponent =");
     assert!(Climate::parse_toml(&missing).is_err());
     let inverted = FILE.replace("v = 1e8,", "v = 1e7,").replace("v = 1e4,", "v = 1e7,");
     assert!(Climate::parse_toml(&inverted).is_err());
