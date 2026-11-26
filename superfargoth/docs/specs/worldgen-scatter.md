@@ -246,6 +246,11 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
   = D, 0 in a clearing; lower layers 1 until E2f), Poisson offspring by inversion, Box-Muller offsets cut at 3 sigma,
   background share `b` (suitability squared); `size_mark` (reverse J of rate `size_shape / range`; Weibull of scale
   the range, truncated), canopy edge quantile x `edge_size_ratio`; `tile_rect` = tile + `(2k-1) R_max`, `halo_m`. 4 tests.
+- **WG-E2e** (2026-11-27, `scatter.rs` v2 competition): `compete(file, cands, rounds)` per layer; conflict when
+  `dist < R_ij = k_i r_i + k_j r_j` (`crown_k (r_i + r_j)` for one species, never past `R_max`); priority size, hash,
+  key; each round a rayon map (eligible and no higher eligible conflict wins; a winner's neighbours are out); CSR
+  bucket grid of cell `max(R_max, sqrt(area / n))`. `CandidateRules::tile_winners` = candidates over `tile_rect`,
+  compete, membership. 4 tests (grid == brute force; no pair under `R_ij`; rounds only add; g(<0.8 R) = 0; tile alone; threads).
 
 ## Tunables
 

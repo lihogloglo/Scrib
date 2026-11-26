@@ -45,6 +45,10 @@ mod tests;
 #[path = "tests_scatter_candidates.rs"]
 mod tests_candidates;
 
+#[cfg(test)]
+#[path = "tests_scatter_competition.rs"]
+mod tests_competition;
+
 /// One-degree slope bins of the area census (0..90°).
 // tunables: const (layout: one bin per degree of slope, the census resolution of the slope cut)
 pub const SLOPE_BINS: usize = 90;
@@ -918,5 +922,146 @@ impl CandidateRules<'_> {
                 }
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Scatter v2 competition (spec `worldgen-scatter.md` "Design" 6 and "Determinism across tiles"; slice WG-E2e).
+//
+// Inside a layer, two candidates conflict when `dist < R_ij = k_i r_i + k_j r_j` (`crown_k` x crown radius per
+// species; `crown_k (r_i + r_j)` for one species, and never past `R_max`). Priority: the larger size mark, then the
+// larger tie-break hash, then the smaller key (a total order). A fixed-priority parallel maximal independent set,
+// bounded at `scatter.competition_rounds` rounds (Luby 1986, U): every candidate starts eligible; in a round an
+// eligible candidate with no higher-priority eligible conflict wins; an eligible candidate that conflicts with a
+// winner is out. Round 1 is Matern II; later rounds re-admit the losers no winner blocks. Winners never conflict
+// (two eligible conflicting candidates never both win; a later winner was eligible, so free of earlier ones). It
+// never runs "until converged": the state after round r depends only on candidates within `(2r - 1) R_max`, so a
+// tile's winners are exact when its candidates cover the tile grown by `(2k - 1) R_max`
+// ([`CandidateRules::tile_rect`]).
+//
+// Neighbours come from a bucket grid of cell `max(R_max of the layer, sqrt(area / n))` (so the grid never has more
+// cells than candidates; a 3 x 3 block holds every conflict). Each round is a pure map over the candidates (rayon,
+// collected in order), so the result is the same on any thread count.
+
+/// The competition priority: `Greater` when `a` outranks `b`.
+fn priority(a: &Candidate, b: &Candidate) -> std::cmp::Ordering {
+    a.size_m.total_cmp(&b.size_m).then(a.tiebreak.cmp(&b.tiebreak)).then(b.key.cmp(&a.key))
+}
+
+/// The conflicting neighbours of every candidate of one layer (indices into `cands`), by a bucket grid.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)] // cell indices
+fn conflicts(file: &SpeciesFile, cands: &[Candidate]) -> Vec<Vec<u32>> {
+    let k = |c: &Candidate| file.species[c.key.species as usize].crown_k;
+    let r_max = cands.iter().map(|c| 2.0 * k(c) * c.crown_m).fold(0.0, f64::max);
+    let n = cands.len();
+    if n < 2 || r_max <= 0.0 {
+        return vec![Vec::new(); n];
+    }
+    let (mut x0, mut y0, mut x1, mut y1) = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for c in cands {
+        (x0, y0, x1, y1) = (x0.min(c.pos[0]), y0.min(c.pos[1]), x1.max(c.pos[0]), y1.max(c.pos[1]));
+    }
+    let cell = r_max.max(((x1 - x0) * (y1 - y0) / n as f64).sqrt());
+    let nx = ((x1 - x0) / cell).floor() as usize + 1;
+    let ny = ((y1 - y0) / cell).floor() as usize + 1;
+    let cell_of = |c: &Candidate| {
+        let cx = (((c.pos[0] - x0) / cell).floor() as usize).min(nx - 1);
+        let cy = (((c.pos[1] - y0) / cell).floor() as usize).min(ny - 1);
+        (cx, cy)
+    };
+    // Counting sort into cells (CSR).
+    let mut start = vec![0u32; nx * ny + 1];
+    for c in cands {
+        let (cx, cy) = cell_of(c);
+        start[cy * nx + cx + 1] += 1;
+    }
+    for i in 0..nx * ny {
+        start[i + 1] += start[i];
+    }
+    let mut next = start.clone();
+    let mut items = vec![0u32; n];
+    for (i, c) in cands.iter().enumerate() {
+        let (cx, cy) = cell_of(c);
+        let slot = &mut next[cy * nx + cx];
+        items[*slot as usize] = i as u32;
+        *slot += 1;
+    }
+    (0..n)
+        .into_par_iter()
+        .map(|i| {
+            let a = &cands[i];
+            let (cx, cy) = cell_of(a);
+            let mut out = Vec::new();
+            for gy in cy.saturating_sub(1)..=(cy + 1).min(ny - 1) {
+                for gx in cx.saturating_sub(1)..=(cx + 1).min(nx - 1) {
+                    let g = gy * nx + gx;
+                    for &j in &items[start[g] as usize..start[g + 1] as usize] {
+                        let b = &cands[j as usize];
+                        if j as usize != i
+                            && (a.pos[0] - b.pos[0]).hypot(a.pos[1] - b.pos[1]) < k(a) * a.crown_m + k(b) * b.crown_m
+                        {
+                            out.push(j);
+                        }
+                    }
+                }
+            }
+            out.sort_unstable();
+            out
+        })
+        .collect()
+}
+
+/// The winners of `rounds` competition rounds among the candidates of one layer: one flag per candidate.
+fn compete_layer(file: &SpeciesFile, cands: &[Candidate], rounds: u32) -> Vec<bool> {
+    let nbr = conflicts(file, cands);
+    let n = cands.len();
+    let mut won = vec![false; n];
+    let mut eligible = vec![true; n];
+    for _ in 0..rounds {
+        let wins: Vec<bool> = (0..n)
+            .into_par_iter()
+            .map(|i| {
+                eligible[i]
+                    && !nbr[i].iter().any(|&j| {
+                        let j = j as usize;
+                        eligible[j] && priority(&cands[j], &cands[i]).is_gt()
+                    })
+            })
+            .collect();
+        for (w, &new) in won.iter_mut().zip(&wins) {
+            *w |= new;
+        }
+        eligible = (0..n).into_par_iter().map(|i| eligible[i] && !won[i] && !nbr[i].iter().any(|&j| won[j as usize])).collect();
+    }
+    won
+}
+
+/// The winners of the competition (spec "Design" 6) among `cands` sorted by key ([`CandidateRules::candidates`]):
+/// one flag per candidate. Layers compete apart; `rounds` is `scatter.competition_rounds`.
+#[must_use]
+pub fn compete(file: &SpeciesFile, cands: &[Candidate], rounds: u32) -> Vec<bool> {
+    let mut won = Vec::with_capacity(cands.len());
+    for layer in cands.chunk_by(|a, b| a.key.layer == b.key.layer) {
+        won.extend(compete_layer(file, layer, rounds));
+    }
+    won
+}
+
+impl CandidateRules<'_> {
+    /// The competition winners inside tile `(tx, ty)`'s square (half open), sorted by key: candidates over
+    /// [`Self::tile_rect`], [`compete`] at `scatter.competition_rounds`, kept by membership. `stand` must cover the
+    /// tile rect. Bitwise the same as the winners of any larger build, cut to the square.
+    #[must_use]
+    pub fn tile_winners(&self, fields: &dyn Fields, stand: &StandMap, (tx, ty): (i32, i32)) -> Vec<Candidate> {
+        let cands = self.candidates(fields, stand, self.tile_rect((tx, ty)));
+        let won = compete(self.file, &cands, self.file.values.competition_rounds);
+        let t = self.tile_m;
+        let (x0, y0) = (f64::from(tx) * t, f64::from(ty) * t);
+        cands
+            .into_iter()
+            .zip(won)
+            .filter(|(c, w)| *w && c.pos[0] >= x0 && c.pos[0] < x0 + t && c.pos[1] >= y0 && c.pos[1] < y0 + t)
+            .map(|(c, _)| c)
+            .collect()
     }
 }
