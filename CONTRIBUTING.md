@@ -139,11 +139,15 @@ anywhere in Bevy's dependency closure (`superfargoth/docs/build-perf.md` "Featur
   `trace`, `tracy`), a Bevy nobody else shares, and links GPL-3.0-only Delirium code. Use an opt-in only when your
   task needs it (each is its own Bevy). No dev-dependency asks for an opt-in Bevy feature; pass it on the command
   line instead (`--features bevy/file_watcher`).
-- **During a slice:** `test -p <your crates>` only. Lint runs on CI, not the laptop (owner 2026-11-26): every
-  `ci_push.sh` runs `clippy --workspace --all-targets -- -D warnings` (pedantic is on in `[workspace.lints]`) in
-  ~7 min; fix what it reports and push again. Filter output to errors and warnings
-  (`2>&1 | grep -E "^(error|warning)" -A6`). Spec-only sessions shouldn't build at all.
-- **Before a PR, CI runs the gate (owner 2026-11-26):** `bash bevyrrowind/tools/ci_push.sh <name> <your paths>`
+- **During a slice (owner 2026-11-26: agents never idle on CI):** `test -p <your crates>` and
+  `clippy -p <your crates and the crates that depend on them> --all-targets -- -D warnings` locally (pedantic is on in
+  `[workspace.lints]`; warm clippy takes ~5-10 s; `cargo tree -i <crate> -e normal --depth 1` lists dependents). If a
+  manifest changed, also `cargo deny check` and `cargo hakari generate --diff` (no compile, no queue). Then commit and
+  push: CI runs the full gate afterwards as a backstop, and nobody waits for it. A red main is fixed before anything
+  else. Filter output to errors and warnings (`2>&1 | grep -E "^(error|warning)" -A6`). Spec-only sessions shouldn't
+  build at all.
+- **CI is the backstop (owner 2026-11-26):** every push to main runs the full gate below. For a risky slice
+  (manifests, cross-crate refactors) push it first with `bash bevyrrowind/tools/ci_push.sh <name> <your paths>`, which
   pushes HEAD plus your paths to branch `ci/<name>` (no commit on main, shared index untouched; a worktree pushes its
   `wt/<name>` branch, a PR runs it too) and GitHub Actions (`.github/workflows/ci.yml`, Windows runners, jobs in
   parallel) runs everything below off the laptop; follow it with `gh run watch --interval 120` (never a tighter loop: all

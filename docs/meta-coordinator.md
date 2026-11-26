@@ -33,7 +33,9 @@ The working rules are still `CONTRIBUTING.md`; this page only says how the coord
    - The queue (slice IDs from the lane roadmap), the crates it must stay out of, owner answers it needs.
    - Commit rule (below), "stage only your own hunks in shared files", hand off at ~200k context.
 2. Launch it (PowerShell):
-   `Start-Process cmd.exe -ArgumentList '/k','title <name> && claude --permission-mode auto "Read .sessions/_prompts/<name>.md and follow it exactly."' -WorkingDirectory D:\Gamedev\Bevyrrowind`
+   `Start-Process cmd.exe -ArgumentList '/k','set NO_COLOR=&& title <name> && claude --permission-mode auto "Read .sessions/_prompts/<name>.md and follow it exactly."' -WorkingDirectory D:\Gamedev\Bevyrrowind`
+   (`set NO_COLOR=&&` first, with no space before `&&`, or cmd keeps the space as the value): Claude Code exports `NO_COLOR=1` to its shell tools, and a window launched from one inherits it
+   and shows no colours.)
 3. Sessions you launch may not show in `ListAgents`. Their first message carries a `from="uds:..."` address:
    SendMessage to that address works.
 
@@ -51,10 +53,10 @@ The working rules are still `CONTRIBUTING.md`; this page only says how the coord
 
 ## Commits and CI
 
-- Lanes may commit and push their own paths once their crate tests and clippy pass locally (`-p`) and the CI jobs
-  clippy and policy (deny/hakari) are green (`ci_push.sh <lane-slice> <paths>`).
-- Until the CI test job is warm and proven on main, don't wait for it; read it afterwards and fix in a follow-up.
-  Once the CI session reports a green main test job, switch lanes to waiting for it.
+- Lanes commit and push their own paths as soon as their local `test -p` and `clippy -p` (own crates + direct
+  dependents) pass, plus `cargo deny` / `hakari --diff` when a manifest changed (owner 2026-11-26: no idle wait on CI).
+  CI on main is the backstop: read it afterwards (`gh run watch --interval 120`); a red main is fixed before anything
+  else, by the lane whose commit broke it. `ci_push.sh` first only for risky slices (manifests, cross-crate refactors).
 
 ## Owner checks
 
