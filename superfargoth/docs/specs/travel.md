@@ -4,8 +4,8 @@ Status: **spec (TV0, 2026-11-25)**, nothing built. Lane roadmap: `docs/roadmaps/
 stages 1, 4-7). Related: [services.md](services.md) (the dialogue-side offer and its `ServiceEffect`s),
 [clock.md](clock.md) (`GameClock::skip(ms)`), [nav.md](nav.md) (NV12 coarse graph, `WorldGraph`),
 [interaction.md](interaction.md) "(c) Mounts and vehicles" (seats, decks, passenger state; TV0b), a later `map.md`
-(MAP0: reveal, pins), [tunables.md](tunables.md). Game side: `bevyrrowind/docs/specs/services-adapter.md` "Travel"
-(TV0c) maps the adapter contract below to Morrowind data.
+(MAP0: reveal, pins), [tunables.md](tunables.md). Game side: `bevyrrowind/docs/specs/travel-adapter.md` (TV0c)
+maps the adapter contract below to Morrowind data.
 
 > **Agent summary.** Travel is data: a `TravelNetwork` of `Stop`s joined by `TravelRoute`s, each with a mode
 > (teleport or vehicle), a path, a speed, a price rule and a schedule. An operator is an ordinary actor bound to a
@@ -108,6 +108,7 @@ pub struct TravelRoute {
     pub directed: bool,                    // provider lists need not be symmetric
     pub mode: RouteMode,                   // Teleport (no vehicle, e.g. a guild guide) | Vehicle(RecordId vehicle profile)
     pub path: PathRef,
+    pub arrive: Option<Pose>,              // None = the destination stop's `arrive`; Some = this route's own landing pose
     pub speed_mps: Option<f32>,            // None = the profile's, else `travel.route.speed_mps`
     pub price_rule: RecordId,              // adapter pure rule (below)
     pub time_rule: Option<RecordId>,       // None = route time (length / speed); Some = adapter rule (e.g. classic hours)
@@ -159,7 +160,7 @@ fixed tick; all maths are pure and integer.
 4. **Plan.** `plan_instant(quote, followers) -> TravelPlan { ride: RideState, effects }`. `RideState` is created
    `Boarding` at `now`, then skipped to `Arrived`: `s_m = length`, arrival instant = `now + cost.game_ms`.
 5. **Effects, in order:** `Pay { amount }` (always first), presentation cue `FadeOut` (`travel.fade.out_s`, real
-   time, presentation only), `Teleport { to: stop.arrive, with_followers: true }`, then the clock skip of
+   time, presentation only), `Teleport { to: route.arrive or stop.arrive, with_followers: true }`, then the clock skip of
    `cost.game_ms` (sleeping, so wake-ups and rest rules apply as for rest), presentation `FadeIn`, `TravelEvent::Arrived`.
    Gameplay never waits on the fade; the fade is drawn over the same tick's state change.
 6. **Followers.** The adapter's follower query returns actors following the buyer within `travel.follow.radius_m`;
@@ -216,7 +217,8 @@ in the rules the adapter registers (classic fare and hours formula vs route time
 - **Nearest tagged place.** `nearest_place(from: Location, tag) -> Option<Pose>`: places carry tags (opaque, adapter
   data; e.g. a shrine marker). From an exterior: the nearest tagged place in that worldspace by the adapter's metric
   (`Euclid2d` default, or `CellRing` = Chebyshev distance over grid cells, then Euclid); ties by `RecordId` order.
-  From an interior: walk door links breadth-first (via `sf_nav::WorldGraph`, passed in as a trait
+  From an interior: tagged places in that interior win; else walk door links breadth-first, checking each visited
+  interior's tagged places first (OpenMW `worldimp.cpp` 3191-3245), (via `sf_nav::WorldGraph`, passed in as a trait
   `ExteriorResolver`) to the first exterior, at most `travel.place.max_door_hops`, then as exterior. None = refuse.
 - **`TravelCost` and gates (TV10).** One rule for services, rides, teleport effects and the opt-in map travel:
   `check(ctx) -> Result<TravelCost, Refusal>`, gates evaluated in this order, first failure returned:
@@ -307,7 +309,7 @@ The `sf_travel` rows of `docs/roadmaps/travel.md` (IDs unchanged; full table the
 Game-side rows using this spec: TV5 (networks from records), A4 (instant travel presenter), TV15 (effects on TV14 +
 TV10), TV3, TV13, TV11.
 
-## Adapter contract (mapped in services-adapter "Travel", TV0c)
+## Adapter contract (mapped in bevyrrowind travel-adapter.md, TV0c)
 
 The adapter supplies, as data and pure rules, never as framework code:
 

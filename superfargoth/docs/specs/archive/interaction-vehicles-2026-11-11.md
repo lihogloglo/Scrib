@@ -3,8 +3,8 @@
 Superseded 2026-11-26 by [interaction-vehicles.md](../interaction-vehicles.md) (TV0b). Kept as design history.
 
 
-Status: design 2026-11-11 (unchanged by IN27; moved out of [interaction.md](interaction.md) for size on 2026-11-25).
-Slice TV0b rewrites it from [travel](../../../docs/roadmaps/travel.md) decisions 3-6. The shared core, "Budgets" and
+Status: design 2026-11-11 (unchanged by IN27; moved out of [interaction.md](../interaction.md) for size on 2026-11-25).
+Slice TV0b rewrites it from [travel](../../../../docs/roadmaps/travel.md) decisions 3-6. The shared core, "Budgets" and
 "Build slices" stay in interaction.md.
 
 ## (c) Mounts and vehicles (seats, attach, control hand-off)

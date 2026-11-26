@@ -225,6 +225,10 @@ A first purse starts at `base` with `last_restock = now` (OpenMW starts at base 
 
 ### Travel (`mw.travel`, `mwgui/travelwindow.cpp` 50-235)
 
+Networks, stops, operators and their replacement, followers, gates, rides and the teleport effects:
+[travel-adapter.md](travel-adapter.md) (TV0c). This section keeps the fare and hours rule `mw.services.travel`, which
+travel-adapter registers as `mw.travel.price` (every preset) and `mw.travel.time.classic` (Classic hours).
+
 - **Destinations**: `DODT` position + `DNAM` cell; empty `DNAM` = exterior cell at that position, named by the
   exterior cell's name; an unknown interior cell is skipped with an error (153-167).
 - **Rule `mw.services.travel`**: `In { terms, provider_interior: bool, dist_3d: f32, dist_2d: f32, followers: u32,
@@ -294,6 +298,7 @@ A first purse starts at `base` with `last_restock = now` (OpenMW starts at base 
 | Haggle stepper shown | off (offered price only) | on | framework `TradeConfig::haggle` |
 | 75% barter cap | on (OpenMW's exploit fix) | on (vanilla has none: off is "pure vanilla") | `tradewindow.cpp` 612-640 |
 | Travel follower pricing | OpenMW `1 + followers` | vanilla `max(1, followers)` | `travelwindow.cpp` 76-80 |
+| Travel time | route time | `mw.services.travel` hours | travel-adapter.md "Options" (also gates, replacement, ambushes) |
 | Trainers use base skill | on (no fortify exploit) | off | OpenMW setting |
 | Prevent merchant equipping | on | off | OpenMW setting |
 | Barter disposition permanent | off | off | OpenMW setting |
@@ -371,7 +376,7 @@ Detail: [archive/services-adapter-history.md](archive/services-adapter-history.m
 | **A1** | `mw_rpg::services` rules: `BarterTerms`, `barter_offer`, the six rules with exact tests, GMST loading |
 | **A2** | Barter: flags → offers, buys/sells filters, stock sources, restocking attr, pool, refusal topic, `ServiceRules` trade path; Mercantile `UseSkill` and disposition effects; wired in `mw_rpg_bevy` dialogue |
 | **A3** | Training (entries, effects, 2 h time pass) |
-| **A4** | Travel (destinations, teleport with followers, time pass, `GetPCTraveling`) |
+| **A4** | Travel (destinations from TV5 networks, [travel-adapter](travel-adapter.md); teleport with followers, time pass, `GetPCTraveling`) |
 | **A5** | Spell purchase (needs the player spell list) |
 | **A6** | Merchant repair (needs item condition attrs) |
 | A7 | Stolen-goods veto, once the crime port's stolen-items map exists |

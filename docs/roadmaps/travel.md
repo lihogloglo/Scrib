@@ -79,18 +79,18 @@ formula), no ambushes, exploration-only reveal; operators are replaced here too 
 | TV-R2 | Quadruped gaits (Morrowind creature clips, N-leg IK, crates), mount practice, deck-local nav | docs | - | **parked** (owner 2026-11-25: no mount research for now) |
 | TV0 | New spec `travel.md`: decisions 1-2, 7-10, saves, budgets, reuse check, industry comparison | docs | - | **done 2026-11-25** (8ec94f32; travel.md 27.6 KB) |
 | TV0b | `interaction.md` (c) rewrite: decisions 3-6, passenger state; rows IN7, IN10, IN11, IN20-IN26 | docs | TV0 (TV-R2 parked: mounts design-only) | **done 2026-11-26** (`interaction-vehicles.md` 26.7 KB; IN11c3 split into IN11c3a/b) |
-| TV0c | `services-adapter.md` "Travel": networks (strider star, boats, guides, gondolas), operator templates, options | docs | TV-R1, TV0 | doccheck |
+| TV0c | New `bevyrrowind/docs/specs/travel-adapter.md` (services-adapter "Travel" keeps the price rule): networks per provider kind, stop keys, operator templates, gates, places, options | docs | TV-R1, TV0 | **done 2026-11-26** (travel-adapter.md 22.8 KB) |
 
 ### Stage 1: instant travel on every network (player-usable)
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| TV1 | `sf_travel` core: networks, stops, operators, `RideState`, ETA, skip math (instant = skip at boarding), saves | `sf_travel` | TV0 | exact: arrival tick, skip ms, round trip |
-| TV5 | Networks from records, every provider kind (widened 2026-11-25, was striders); operators registered with TV26 | `mw_rpg` | TV1, TV0c | exact synthetic; log counts per kind |
+| TV1 | `sf_travel` core: networks, stops, operators, `RideState`, `TravelRoute.arrive` (per-route landing pose), ETA, skip math (instant = skip at boarding), saves | `sf_travel` | TV0 | exact: arrival tick, skip ms, round trip |
+| TV5 | Networks from records, every provider kind (travel-adapter.md: `mw.travel.kinds` table, stop keys, synthesized operator templates, real-install count test) (widened 2026-11-25, was striders); operators registered with TV26 | `mw_rpg` | TV1, TV0c | exact synthetic; log counts per kind |
 | A4 | Instant travel, every preset: price, hours (Classic formula, Modern route time), fade, followers, `GetPCTraveling` | `mw_rpg(_bevy)` | A1, A3, TV5 | exact; owner PUI-SV5 + TV-1 (a trip per kind) |
-| TV10 | `TravelCost` rule + gates for services and teleport effects | `sf_travel`, `sf_rpg` | TV1 | exact per gate |
+| TV10 | `TravelCost` rule + gates for services and teleport effects (travel while hunted: owner Q, travel-adapter.md open questions) | `sf_travel`, `sf_rpg` | TV1 | exact per gate |
 | TV26 | Operator replacement: vacancy, out-of-view spawn after the delay, orphan-stop check | `sf_travel`, `mw_rpg` | TV5 | exact; log 0 orphan stops on game data |
-| TV14 | `RecallAnchor` (saved) + nearest-tagged-place query | `sf_travel` | TV1 | exact; round trip |
+| TV14 | `RecallAnchor` (saved) + nearest-tagged-place query (interior tagged places checked before doors) | `sf_travel` | TV1 | exact; round trip |
 | TV15 | Mark, Recall, Divine/Almsivi Intervention on TV14 + TV10 | effects adapter | TV14, E-slices | exact per effect |
 
 ### Stage 2: maps (no dependency on rides)
