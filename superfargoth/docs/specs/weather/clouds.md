@@ -116,7 +116,8 @@ Perlin-Worley reference (licence unread: we write our own). Ours stays ours (com
    S1's depth-window semantics. Ships on High only if `perf ab` keeps clouds + far fog ≤ 0.9 ms.
 7. *Decks below the peaks (CL-7).* Fixed-altitude layers, no terrain anchoring (CLOUD-RESEARCH): one volumetric deck
    per climate (WE4b local base/thickness from the map); a low deck is a low base and thickness in that weather's
-   preset, so summits poke through or stand in it. Genus presets gain the profiles; cumulus 2-4 km (the game's
+   preset, so summits poke through or stand in it. Genus presets gain the profiles; cumulus 2-4 km in game metres (Cloudy ~2 km, cumulus ~3.5 km; meta-4 2026-11-26: a look value
+   the owner scales live in WE-20 through the per-weather `mw.cloud.<weather>.thickness_m` tunables, never asked; the game's
    thickness cap becomes `mw.cloud.max_thickness_m`); per-weather Morrowind values in `weather-adapter.md` "Cloud
    decks". A second simultaneous layer (stratus under cumulus) is not planned.
 8. *Camera inside or above a deck (CL-8).* As built already: `shell_segment` (`cloud_common.wesl:267-293`) starts

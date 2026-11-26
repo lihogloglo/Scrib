@@ -437,7 +437,9 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
 - Look for: separate heaps 2-4 km tall with flat bases, cauliflower billows and curl wisps at the tops, no squashed
   or stretched puffs; darker, higher-contrast bases and crevices that still read (floor), towns still lit; distant
   clouds smooth, not mushy or shimmering.
-- A/B: `--off cloudnoise2` (old noise), `--off cloudambient` (flat ambient), `--off cloudlod`. Status: planned (after CL-7).
+- A/B: `--off cloudnoise2` (old noise), `--off cloudambient` (flat ambient), `--off cloudlod`.
+- Answer: tower height right (yes/no)? If no, scale it live: `set mw.cloud.cloudy.thickness_m <m>` (default 2 000) and
+  `--clouds cumulus` `set mw.cloud.cumulus.thickness_m <m>` (default 3 500). Status: planned (after CL-7).
 
 ### WE-21: Silver lining A/B (CL-5)
 - Scene: `view "Balmora" --day 173 --hour 18.5 --weather cloudy`, clock paused (P), face the setting sun with cumulus

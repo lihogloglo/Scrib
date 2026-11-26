@@ -242,8 +242,9 @@ Vanilla heights above sea level: Red Mountain 271 m (p95 242), Ashlands max 198 
 | Thunderstorm | storm | 300 (450) | 4 000 (1 600) | towers; summit under or in the base |
 | Ashstorm, Blight | stratocumulus | 150 (450) | 250 (325) | summit (eye ~300 m) inside, Ashlands ridges in the ragged base |
 
-Cumulus by name (`--clouds cumulus`, mods): 600 / 3 500. Values are `Guess` against the LAND heights, signed off in
-WE-18..WE-20. Tunables: `mw.cloud.max_thickness_m` 4 000 (1 600-6 000 m; Owner 2026-11-26, replaces
+Cumulus by name (`--clouds cumulus`, mods): 600 / 3 500. Heights are game metres (meta-4 2026-11-26: a look value, not an
+owner question). Each row is live tunables `mw.cloud.<weather>.base_m` / `.thickness_m` (m, 0-6 000, `Guess` against the
+LAND heights), scaled by the owner in the live panel during WE-18..WE-20. Tunables: `mw.cloud.max_thickness_m` 4 000 (1 600-6 000 m; Owner 2026-11-26, replaces
 `MAX_CLOUD_THICKNESS_M`), `mw.cloud.world_scale` 0.5 (0.25-1 ratio; Reference: compressed island, replaces
 `CLOUD_WORLD_SCALE`) for genus defaults, `mw.cloud.deck_scale` 1 (1-10 ratio; Reference: worldgen x10 summit 2.7 km)
 multiplying the low-deck rows (Foggy to Blizzard, ash) in a vertically scaled world. `--off clouddecks` = today's
