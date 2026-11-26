@@ -88,6 +88,10 @@ The working rules are still `CONTRIBUTING.md`; this page only says how the coord
   handing-off lane writes its successor's prompt itself, `.sessions/_prompts/<lane>-<n+1>.md` from the template in
   "Opening a lane session" (continue from the archived handoff, same communication and commit rules), so meta only
   launches it: a finished session is always replaced while its lane has a queue, with no gap waiting on meta.
+- **Meta closes finished windows (owner 2026-11-26):** once a lane has reported its handoff and its session file is in
+  `.sessions/_archive/`, meta closes that window itself (memory: every open session holds several hundred MB). Find it
+  with `Get-CimInstance Win32_Process -Filter "Name='cmd.exe'"` (the command line names its prompt file), then
+  `taskkill /PID <pid> /T /F`. Never a window whose lane has not reported its handoff, and never the owner's game.
 - Meta's own successor: update the "Current meta:" line in `.sessions/meta.md`, open the new meta window, and the new
   meta announces its name to every lane. Lanes always address the meta named on that line.
 

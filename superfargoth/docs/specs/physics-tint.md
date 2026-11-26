@@ -310,7 +310,7 @@ tracking hold, `Sway` may use the balanced lower body (provider data); if not, e
 ## Open questions
 
 1. Should Large hits get a tint too? Recommended: no for now (decision 10 names medium hits; the Large clip carries it).
-2. Should the player be tinted (third person)? Recommended: not before AN42: control feel first, and the provider refuses
-   action characters today.
+2. (Answered, owner via meta-5, 2026-11-26: no.) The player's own body gets no tint in third person before AN42 has
+   measured cost and control feel; the provider refuses action characters today.
 3. Creatures and beast races: fallback only, or a Rapier provider on `sf_ragdoll::powered` later? Recommended: fallback
    only until the owner asks.

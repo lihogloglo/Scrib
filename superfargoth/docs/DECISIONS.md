@@ -2043,3 +2043,10 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (specs-6, AN38a): physics tint cap 4 (Guess) -> 2, Low 1: a tinted body costs 0.86 ms per tick (pose
   follow, linear in N) against 2.0 ms median / 2.7 ms p99 per tick; provisional until AN38b times the pinned path. The
   pelvis pin (or a balancer) is required: pose follow alone collapses in 2 s (physics-tint.md "Performance").
+- 2026-11-26 (owner via meta-5, DQ-26): conversations: a first-person player stays in the eyes by default, third-person
+  shots are a setting; long lines are paged two-line subtitles; no walking away mid-conversation for now (controls stay
+  paused, revisit with walk-and-talk) (dialogue-presentation.md "Open questions").
+- 2026-11-26 (owner via meta-5, AN12): no ambient tavern drunks at launch (a later data rule after AN22); the female
+  neutral walk becomes every woman's base class once it passes clip review (animation-style.md "Open questions").
+- 2026-11-26 (owner via meta-5, AN39): the player's own body gets no physics tint in third person before AN42 has
+  measured cost and control feel (physics-tint.md "Open questions"); Large hits and creatures stay open.

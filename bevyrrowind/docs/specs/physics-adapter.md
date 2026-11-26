@@ -132,8 +132,8 @@ action characters (the player, the dummy) get none, so they play the fallback.
   every tinted mask, `setStiffness` per mask = `delirium.tint.stiffness` x `ActiveTint.sample.strength`, the pelvis held
   on the target by `hardConstraint` (AN38 variant G; required: AN38a showed pose follow alone sinks to the floor in 2 s,
   and `agent.fallen` stays false there, so `Failed` uses the provider's own pelvis-error and floor check). Copy-back: parts
-  to a local pose under the live root, `PhysicsPose` with per-joint weights. Done: the agent is dropped; no `DeliriumHandedBack`, no root move. Masks: SPINE `us`, NECK `un`,
-  ARM_L/R `ul`/`ur`, LEG_L/R `ll`/`lr`.
+  to a local pose under the live root, `PhysicsPose` with per-joint weights. Done: the agent is dropped; no
+  `DeliriumHandedBack`, no root move. Masks: SPINE `us`, NECK `un`, ARM_L/R `ul`/`ur`, LEG_L/R `ll`/`lr`.
 - **Per kind:** Stagger: `applyImpulse` on the struck part x `impulse_gain`. Stumble: `injury` on the hurt leg's mask at
   the intensity. Sway: `leanInDirection` along `direction`; with `bodyBalance` on the legs and `armsOutOnPushTimeout` only
   if AN40b step 1 passes. Sag: `bodyRelax` on `ub`, its dip values seeded from `staggerFall`'s wind-down (arms/spine 12 to

@@ -327,7 +327,9 @@ ray per `recheck_s`. Pager, gaze, talk: a few hundred float ops for 2-4 characte
 
 ## Open questions (what the player sees or can do)
 
-1. **First person:** eyes (Cyberpunk, Starfield) or third-person shots (KCD2)? Recommended: eyes, shots as a setting
-   (camera.md:79-80).
-2. **Long Morrowind lines:** paged two-line subtitles or a taller box beside the NPC? Recommended: pages (standard).
-3. **Walking away** mid-conversation (Cyberpunk)? Recommended: not now (controls stay paused); revisit with walk-and-talk.
+None open. Answered (owner via meta-5, 2026-11-26), each as recommended:
+
+1. **First person:** a first-person player stays in the eyes by default (Cyberpunk, Starfield); third-person shots
+   (KCD2) are a setting (camera.md:79-80).
+2. **Long Morrowind lines:** paged two-line subtitles (standard), not a taller box beside the NPC.
+3. **Walking away** mid-conversation (Cyberpunk): not now, controls stay paused; revisit with walk-and-talk.

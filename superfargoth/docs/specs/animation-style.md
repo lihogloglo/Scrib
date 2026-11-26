@@ -339,9 +339,9 @@ per tier (High, 4060 laptop) into `docs/ledger/perf.md`.
 
 ## Open questions (taste and scope; each with a recommendation)
 
-1. **Ambient drunks:** the first game's NPCs never drink, so drunks come only from the player or a script. Should
-   some tavern patrons be drunk in the evening? Recommended: not at launch; a later data rule after AN22.
-2. **Female neutral** (AN18 batch) as every woman's identity class once it passes review? Recommended: yes; old,
-   heavy and state classes stay shared until female variants pass.
+1. **Ambient drunks** (answered, owner via meta-5, 2026-11-26): not at launch. The first game's NPCs never drink, so
+   drunks come only from the player or a script; tavern patrons drunk in the evening are a later data rule after AN22.
+2. **Female neutral** (answered, owner via meta-5, 2026-11-26): yes, the AN18 batch is every woman's identity class
+   once it passes clip review; old, heavy and state classes stay shared until female variants pass.
 3. (Decided, owner 2026-11-25: nobody is "very old" except chosen NPCs by override; how age shows is low priority.)
    So only overridden NPCs reach age ≥ 0.85 (`old`); the rest stay below the hunch start at launch.
