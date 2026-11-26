@@ -2,6 +2,8 @@
 
 Status: spec (2026-10-27); built: C1b, C1c, C4, C2a (sparring dummy, below). Framework design: `../../../superfargoth/docs/specs/combat.md` (feel layer, sheets,
 `CombatRules` seam, build plan C1-C7). Classic requirements: `../research/combat-classic-openmw.md`. ROADMAP 3.5.
+C0d (2026-11-26): Morrowind data onto the C0a-C0c fields (classes, poise, damage packet, ranged, skill, creatures, spells,
+allies, sneak, props); numbers `Guess` until their slices; sheet windows wait for the anim lane (AN32 measures, AN33 cooks).
 
 ## Crates
 
@@ -12,22 +14,33 @@ Status: spec (2026-10-27); built: C1b, C1c, C4, C2a (sparring dummy, below). Fra
   `mw_graphs/data/animation/sources.ron`, bindings in `mw_controls_bevy`.
 - **`mw_rules`** (C5, not before): the classic `CombatRules`, ported from OpenMW (cite file + commit), behind the same seam.
 
-## Weapon records to moveset sheets
+## Weapon classes as data (C3d)
 
-The equipped weapon (`mw_actors::held` loadout: weapon type, two-handed) picks `ModeState::moveset`:
+The equipped weapon's record type picks `ModeState::moveset` through `mw_combat/data/weapon_classes.ron` (type → sheet,
+directions). One sheet per Morrowind animation group, because the clips decide the moves (roadmap decision 6); a pack
+whose clips add OpenMW's extra groups (`shortbladeonehand`, `bluntonehand`, `blunttwohand`) maps those types to its own
+sheets there, no code. Groups: OpenMW `apps/openmw/mwworld/store.cpp` 887-922 (`Store<ESM::WeaponType>::setUp`) @ `4e718b5`.
 
-| Morrowind weapon type | Sheet | When |
-|---|---|---|
-| short blade, long blade 1H, blunt 1H, axe 1H | `sword_1h` | C1 |
-| none (hand-to-hand) | `fist` (UAL1 `Punch_Jab`, `Punch_Cross`, `Kick`) | C3 |
-| long blade 2H, blunt 2H, axe 2H | `greatsword_2h` | C3 (clips missing, combat.md open question 2) |
-| spear, staff (two-wide) | `spear_2h` | C3+ |
-| bow, crossbow, thrown | ranged, out of scope | later |
+| WEAP type | Group (`WEAPON_SECTIONS`) | Sheet | Directions |
+|---|---|---|---|
+| short blade, long blade 1H, blunt 1H, axe 1H | `WeaponOneHand` | `sword_1h` (live) | chop, slash, thrust |
+| long blade 2H, blunt 2H close, axe 2H | `WeaponTwoHand` | `greatsword_2h` | chop, slash, thrust |
+| spear, blunt 2H wide (staff) | `WeaponTwoWide` | `spear_2h` | by record (below) |
+| none | `HandToHand` | `fist` | chop, slash, thrust |
+| bow, crossbow, thrown | `BowAndArrow`, `Crossbow`, `ThrowWeapon` | `bow`, `crossbow`, `thrown` | `shoot` ("Ranged weapons") |
 
-Per-weapon numbers go into the `Fighter`, not the sheet: `offense.attack` = the record's max damage for the hit row's
-`kind` (`chop`, `slash`, `thrust` tags map to the record's three ranges) x condition / max condition; weapon `reach` scales the
-sheet's blade segment (C1: sheet default; later the mesh length along the weapon bone). Creatures get per-rig sheets with
-their `Attack1-3` clips (C6).
+- **Directions** (decision 7: the stick picks chop/slash/thrust): a direction is offered when its record max ≥
+  `mw.combat.dir_min_frac` × the record's best max (×, 0-1, Guess 0.5); a refused one plays the best (OpenMW's "always
+  use best attack" option, as a rule). A spear with small chop and slash ranges offers thrust only: per record, not per class.
+- **Per-weapon numbers** live in the rules' stats table (keyed by `CharacterId`, combat.md "The rules seam"), never in the
+  sheet: damage per direction (C13), poise by weight ("Poise"), stamina by weight (`cost` = `base × (.stamina.weight_base
+  + .stamina.per_weight × weight)`, `mw.combat.stamina.*`, ×, 0-2, Guess 0.8; per unit, 0-0.05, 0.01; the shape of OpenMW
+  `applyFatigueLoss`, `combat.cpp` 532-554); `reach` scales the sheet's blade segment. `offense.attack` holds the slash
+  value for code that reads one number.
+- **Record `speed`**: modern plays every weapon of a sheet at the sheet's timing (one timing per class, ER; AN34 retimes
+  per phase); classic (C5) plays at the record speed, as OpenMW.
+- **Windows**: AN33 cooks them from text keys ("Morrowind clips as the fallback layer"), AN32 measures; no window
+  numbers here. Missing moves (backstep, 2H guard, parry, riposte, kick) are AN37's key-pose clips.
 
 ## Morrowind clips as the fallback layer
 
@@ -53,6 +66,162 @@ Every combat slot ends with a Morrowind clip fallback (`ClipFallback::Clip`) unl
 - **Classic**: fatigue is the Morrowind pool, never gates a start; the fatigue term scales hit chance, block and damage
   inside `mw_rules`.
 
+## Poise (modern)
+
+combat.md "Poise" leaves the pool max, row poise and armour windows to content: `mw_combat::poise` computes them at stat
+refresh (equip, attribute change) for the rules wrapper. Keys `mw.combat.poise.*`, net `Gameplay`, all `Guess`.
+- **Pool max** (player and NPCs alike): `.base + Σ share[slot] × class[piece] + .per_attr × (Strength + Endurance) / 2`.
+  Shares are Morrowind's armour-rating weights (cuirass 0.3; shield, helmet, greaves, boots, pauldrons 0.1; gauntlets
+  or bracers 0.05; sum 1; OpenMW `mwclass/npc.cpp` 1069-1079 @ `4e718b5`). Weight class as `Armor::getEquipmentSkill`
+  (`mwclass/armor.cpp` 114-185): weight ≤ `i<Slot>Weight` × `fLightMaxMod` light, ≤ × `fMedMaxMod` medium, else heavy.
+  `.base` (poise, 0-200, 40), `.light` / `.medium` / `.heavy` (poise for a full set, 0-200, 15 / 35 / 60), `.per_attr`
+  (poise per point, 0-1, 0.2). Unarmoured average 50, full heavy at 100 Strength/Endurance 120: Veloren's 100-pool
+  scale (C-R1, `docs/research/gameplay-2026-11-25/combat-veloren.md` §4), heavy armour about twice a bare body (owner Q2).
+- **Hit poise**: rows carry `poise` on that scale; Bevyrrowind sets `combat.poise.per_mv` 20 (`Mod` layer) so a 1H light
+  ≈ 20 (a bare body breaks on the third light, full heavy on the sixth). The rules multiply by weapon weight
+  `(weight / .ref_weight)^.weight_exp` (`.ref_weight` 20 weight units, a longsword; `.weight_exp` 0-1, 0.5: dagger ≈
+  0.45, warhammer ≈ 1.7), direction `.chop` / `.slash` / `.thrust` (×, 0.5-2, 1.2 / 1.0 / 0.8), blunt `.blunt_mult` (×,
+  1-2, 1.25; Veloren `Crushing`) and charge `lerp(1, .charged_mult, strength)` on Heavy rows (×, 1-3, 2.0); heavy rows are
+  authored at `.heavy_mult` × their light (×, 1-3, 1.5).
+- **Framework values** (`Mod` layer, from Veloren's ladder): `combat.poise.regen_delay_s` 1.0 (its 1 s re-stun buffer),
+  `.regen_per_s` 0.1 (its 10/s cap on a 100 pool, flat where Veloren ramps), `.broken_s` 1.5 (its `Dazed` stun, the
+  deepest standing one and its crit window), `.knockdown_overflow` 0.5. Its thresholds (50/30/15/5 of 100) are not
+  modelled (our pool breaks once and escalates by row tier); its stuns 0.4 / 0.7 / 1.5 / 3.0 s are the target lengths of
+  the Small / Medium / Large / Knockdown reactions handed to AN35 (reaction map), not tunables here.
+- **Creatures** (by size): `.base × (h / h_human)^.size_exp + .per_attr × (Strength + Endurance) / 2`; `h` = the
+  skeleton's `Bounding Box` height × record scale (the box the mover capsule uses), `h_human` the same for
+  `base_anim.nif`; `.size_exp` (0-3, 2). At `h / h_human ≥ .stance_size` (×, 1-5, 2) `break_tier: Knockdown` (ER stance
+  break). Not level (late small creatures would shrug off any blade) nor soul (magic power). Overrides: `poise_mult`.
+- **Cast armour**: the cast windup's `Armor(.cast_armor_small)` (scale, 0-1, 1: none) for small spells and
+  `Armor(.cast_armor_big)` (0-1, 0.5) for big ones ("Spells"); a break inside it cancels the cast (combat-delivery.md).
+- **Classic**: no pool (`poise: None`); knockdowns stay `applyStagger` (C5).
+
+## Damage types, armour and resistances (C13)
+
+- **Types** (`DamageType` ids): `mw.physical`, the default (weapons, fists, creature attacks, thrown bodies); `mw.fire`,
+  `mw.frost`, `mw.shock`, `mw.poison`, `mw.magicka` for typed hazards (lava, traps, IN28) and creature rows a pack types.
+  No physical subtypes: Morrowind armour has one rating and nothing resists by blade kind; the direction stays the row's
+  `kind`. Spell and enchantment damage is never a packet: it lands as effects (effects-adapter.md).
+- **Physical packet** (modern `mw_combat::ModernRules`, wrapping `StandardRules`): `max[kind] × condition / max condition
+  × str_term × skill_term × mv × strength`. `max[kind]`: the WEAP chop/slash/thrust max; creatures `Attack[n]` max for
+  `attack1..3`; fist: Hand To Hand × `fMaxHandToHandMult` (OpenMW `getHandToHandDamage`, `combat.cpp` 478-485).
+  `str_term` = `fDamageStrengthBase + Strength × fDamageStrengthMult × 0.1` (`adjustWeaponDamage`, `combat.cpp`
+  452-476; 1 at 50); `skill_term` in "Skill mapping". The max, not a roll: modern has no hit roll; charge is `mv` and
+  `strength`.
+- **Armour → `defense.absorb`**: `.absorb_max × AR / (AR + .ar_half)`, `mw.combat.armor.absorb_max` (0-1, 0.8;
+  Reference Skyrim's 80 % cap), `.ar_half` (AR, 10-200, 60; Reference Veloren `p/(60+p)`), on `mw.physical` only. AR is
+  Morrowind's skill-adjusted, condition-weighted sum (`Npc::getArmorRating`, `npc.cpp` 1025-1080: piece armour × skill /
+  `iBaseArmorSkill`, bare slots `fUnarmoredBase1/2`, plus Shield); creatures: Shield + species `armor` (OpenMW gives them
+  Shield only, `creature.cpp` 565-569). Not Morrowind's `damage / (damage + AR)` (`omw/combat/common.lua` 167-171): it cuts
+  small hits by up to 75 % and big ones little, so armour's worth depends on the hit; ER negation and Skyrim take a fixed
+  share, and heavy armour's job against light hits is poise. Classic keeps OpenMW's.
+- **Resistances** (`1 − clamp(resist − weakness, −100, 100) / 100`, effects' modern resist, no roll): Resist/Weakness to
+  Normal Weapons on `mw.physical` from a normal weapon (not Silver, Magical or enchanted: `isNormalWeapon`,
+  `resistNormalWeapon`, `combat.cpp` 180-207); Resist/Weakness Fire, Frost, Shock, Poison, Magicka on typed entries.
+  Silver on werewolves: `fWereWolfSilverWeaponDamageMult` (`combat.cpp` 209-222), both rule sets.
+- **On-strike enchantments** (`ItemCast::OnStrike`, instant, owner Q6): at a contact with `Outcome.deliver`, the weapon's
+  or ammo's WhenStrikes entries go to `sf_effects` as `Inflict`: Touch and Target entries on the struck target, Self on
+  the attacker (on the target for projectiles); never a bolt (OpenMW `spellcasting.cpp` 299-310 with
+  `launchProjectile` false, `applyOnStrikeEnchantment` `combat.cpp` 49-69). Elemental shields (`applyElementalShields`,
+  `combat.cpp` 352) hit melee attackers the same way. Poisons later, on this path; `Outcome.buildup` stays empty.
+
+## Ranged weapons (C8b data)
+
+- **Draw** (`MoveSpec.draw`, cooked by AN33 from the `shoot` keys, numbers from AN32): `min_s` = `shoot min attack` −
+  `shoot start`, `full_s` = `shoot max attack` − `shoot start`, release at `shoot release`. Crossbow: `full_s = min_s`
+  (full strength once loaded, ER and Skyrim crossbows). `move_scale` = `combat.delivery.draw.walk_scale`.
+- **Ammo**: a bow needs an equipped arrow, a crossbow a bolt (`store.cpp` 914-918); `can_start` refuses without;
+  `Released` spends one. Thrown weapons spend the stack itself.
+- **Damage**: launcher chop range + ammo chop range, each `min + (max − min) × strength` (`combat.cpp` 253-261); a thrown
+  item counts twice, as in OpenMW (projectile = weapon; vanilla thrown records are balanced on it); C13 terms after.
+- **Speed** (`ProjectileSpec` per launcher): `fProjectileMinSpeed + (fProjectileMaxSpeed − fProjectileMinSpeed) ×
+  strength`, thrown `fThrownWeaponMinSpeed..MaxSpeed` (`mwrender/weaponanimation.cpp` 133-163), units/s ×
+  `mw_world::convert::UNIT_METERS_F64` (400-3000 u/s = 5.7-43 m/s). Gravity and drag `Guess` on the spec until C8a.
+- **Recovery**: a non-enchanted arrow that hits an actor lands in its inventory at `fProjectileThrownStoreChance` %
+  (`combat.cpp` 297-310); one stuck in the world is a pickup while in the `StuckSet` (modern). Enchanted ammo is spent.
+
+## Skill mapping
+
+- **NPCs and creatures → `skill`** (combat-npc.md "Skill reactions"): `clamp((W + 0.2 Agility + 0.1 Luck − .skill_lo) /
+  (.skill_hi − .skill_lo), 0, 1)`, W = the equipped weapon's skill (Marksman for ranged; creatures: the record's Combat
+  skill), the attack term of OpenMW `getHitChance` (`combat.cpp` 316-350); `mw.combat.skill_lo` / `.skill_hi` (points,
+  0-200, Guess 20 / 115: 115 = skill 100, Agility 50, Luck 50). Refreshed with stats, × `DifficultyRow.skill_scale`.
+- **Player** (modern feel, existing seams only): weapon skill → `skill_term` = `.skill_dmg_base + .skill_dmg_per × W`
+  (Guess 0.75, 0.005: 1 at 50, 1.25 at 100); Block → `defense.guard_stability` = `.block_base + .block_per × Block` (Guess
+  0.6, 0.008); armour skills through AR, Strength through `str_term`, Strength and Endurance through poise. Agility, Speed
+  and Luck get no combat term (no new framework seams).
+
+## Creatures (C6f)
+
+- **Sheet per rig**: one move per `Attack1-3` group the skeleton has (`kind` `attack1..3`, windows by AN33); damage from
+  the record's `Attack[n]` (C13). Tactics in `mw_combat/data/creatures/<skeleton>.ron` (record `CreatureCombat {
+  tactics: Tactics, armor, poise_mult, overrides }`): records on one rig share it. Missing file: a generated default, each
+  move a `Melee` row of weight 1, and a move whose baked `MoveReach.travel_m` ≥ `mw.combat.creature.lunge_m` (m, 0.5-5,
+  Guess 1.5) becomes `Charged` with `whiff: WallStagger`.
+- **Overrides** by record id: `skill`, `poise_mult`, `armor`, `tactics` (another file), `phases` (boss phases per
+  combat-npc.md, `HealthBelow` / `PoiseBreaks`); content adds them per id, this spec lists no bosses.
+
+Example (kagouti; which attack lunges follows AN32's measured travel):
+
+```ron
+Tactics(
+  sheet: "kagouti", skill: 0.4,
+  react: (guard: (0.0, 0.0), dodge: (0.05, 0.2), parry: (0.0, 0.0), counter: (0.1, 0.3)),
+  rows: [
+    (move: "attack1", token: Melee, weight: 2.0, bias: [(TargetPhase(Recovery), 2.0)]),
+    (move: "attack2", token: Melee, weight: 1.0, cooldown_s: 2.0),
+    (move: "attack3", token: Charged, weight: 1.0, band: (2.0, 6.0), cooldown_s: 5.0, whiff: WallStagger),
+  ],
+  phases: [],
+)
+```
+
+## Spells (C8d data)
+
+- **Slots**: `SpellCast@self|touch|target` as `cast.<sheet>.<move>`, release at `<range> release` (OpenMW
+  `character.cpp` 1164).
+- **Big (rooted) or small (slowed)**: big when a Touch or Target entry has area ≥ `mw.combat.cast.big_area` (record area,
+  0-50, Guess 10) or the spell's cost (`mw.effects.cost`) ≥ `mw.combat.cast.big_cost` (magicka, 0-500, Guess 60). Area and
+  cost are the record's own size of a spell (a fireball against a fire bite); Skyrim roots master-level casts, ER slows
+  big incantations. Big: `move_scale` 0 and `Armor(cast_armor_big)`; small: `combat.delivery.cast.small_walk_scale`. A
+  `#[ignore = "measurement"]` test prints the vanilla split at C8d.
+- **`launch_spec(&Delivery)`**: Target entries make a `ProjectileSpec`, speed `fTargetSpellMaxSpeed` × the mean MGEF
+  `speed` of the entries (OpenMW `mwworld/projectilemanager.cpp` 67-79, 145-170) × `UNIT_METERS_F64` (1000 u/s ≈ 14.3
+  m/s); per effect, not per school (MGEF carries it); race weight scaling off (OpenMW's normalised race speed option).
+  An entry with area adds `AreaSpec { placement: AtImpact, falloff: None, los: true }` at the largest entry radius (unit
+  conversion as effects.md "Area"); entries land at their own radii. No beams in vanilla.
+
+## Allies, friendly fire, crime (C16)
+
+- **`allied(a, b)`**: either sides with the other, OpenMW `Actors::getActorsSidingWith` (`actors.cpp` 2149-2240 @
+  `4e718b5`): a current Follow or Escort package (or one behind only Wander packages) on the other, transitively through
+  followers; companions side with the player. A shared faction is not an alliance (vanilla). Melee spares allies in both
+  rule sets; arrows, spells and areas hit them (combat-delivery.md "Friendly fire").
+- Followers forgive the player's first three hits outside combat (OpenMW `friendlyHit`, `combat.cpp` 783-803; C16).
+- **C16**: `HitLanded` with credit on a non-hostile → crime's `actorAttacked` (Assault), `Died { killer }` → `actorKilled`
+  (Murder) (crime-adapter.md "`reportCrime` (A2; MM 1227-1507)"); push credit counts as the attacker.
+
+## Unaware and sneak attacks
+
+- **Feed**: MA5 ports `awarenessCheck` (`mechanicsmanagerimp.cpp` 1603) as `DetectionModel` Classic (ai-adapter.md);
+  AI15's glue writes `UnawareOf` from its bands (combat-npc.md). Morrowind's sneak critical needs the victim out of combat
+  and failing `awarenessCheck` (`npc.cpp` 643-649): the `Unaware` / `Curious` bands of a victim not engaged.
+- **Multiplier**: a player's `Backstab` on an unaware victim uses `fCombatCriticalStrikeMult` (default 4,
+  `apps/opencs/model/world/defaultgmsts.cpp` 1654; read from the GMST) through `Contact.critical`; Morrowind gives it to
+  player melee only (`npc.cpp` 636-649; `projectileHit` has none). NPC and back-cone backstabs keep
+  `combat.crit.backstab_mult`.
+
+## Prop targets (C14)
+
+The table is `mw_interaction`'s `DestructionRules` (interaction-adapter.md "Breakables (IN38; bash IN37)"), keyed
+`(material, DamageType, hit class)`; combat supplies the type and a hit class from the record (blunt, blade, arrow,
+thrown, fist). Example: `(material: "clay", damage: "mw.physical", hit: Blunt, mult: 1.0)`.
+
+## Difficulty (decision 16)
+
+Modern: `DifficultyRow`s in `mw_combat/data/difficulty.ron` (tokens, skill, telegraph, damage; Guess, Doom shape).
+Classic: OpenMW `scaleDamage` (`difficultyscaling.cpp` 10-37, `fDifficultyMult`) on damage to and from the player.
+
 ## Classic resolution (C5, `mw_rules`)
 
 `ClassicCombat: CombatRules`, ported from OpenMW `4e718b5` (research note §1): `begin_swing` = hit chance at swing prep
@@ -71,45 +240,8 @@ frame). Death: the same hook (kind `Death`): Delirium's terminal mode for humans
 limp ragdoll (`DEATH_HANDOFF`). Hand-back ends the forced move in `sf_action`. Cosmetic `HitReact` springs
 stay on every landing (Additive tier).
 
-As built (2026-11-05, hits on walkers; `sf_action`'s `PhysicsTakeover` for action characters is not built). Owner
-verdict on the first cut (every impact >= 15 N·s forced `catchFall`: "limp instantly"): hits must push along their
-direction. Canonical technique: Euphoria / RDR2 hit reactions (the impulse on the struck part, the balancer recovers
-with steps, the fall is the balance failing; a scripted fall only when the game decides). The walkers' `knockdown()`
-asks the adapter hook `RagdollTakeover` (resource, `mw_walkers_bevy::physics`) first for every impact >=
-`HIT_REACT_IMPULSE` (1 N·s) with `PhysicsTakeover { root, skeleton, mover, held, point, impulse, kind: Hit }`, `Held`
-bodies included (not `KnockedDown`: the powered ragdoll takes its impacts); a claim inserts its own request and owns the
-character (`Held`, get-up, the root's move) until its hand-back. A decline (or no hook, a `--no-default-features` app):
-`HitReact` under `KNOCKDOWN_IMPULSE`, the powered ragdoll above; a held body gets nothing. The host (`mw_exterior_bevy`,
-feature `delirium`) maps `Hit` to `mw_delirium_bevy::hit_reaction` with `HitRules` (human skeleton on a mover only):
-push = impact x `gain` (1: our props have no restitution, the body takes their incoming momentum; a bouncing source
-would bring `1 + e`); a takeover from `takeover` = 10 N·s (where the push first reads past the takeover's own settle
-sway); a knockdown after the push from `certain_fall` = 100 N·s (Delirium's balancer stays up to 120 N·s on its own,
-1.5 m/s on 80 kg, beyond a person's step recovery); `held` -> `live_only` (a further push on Delirium's own takeover,
-dropped otherwise: frozen corpses, limp ragdolls). The takeover (`mw_delirium::Takeover::hit(part, at, impulse,
-Outcome)`, the entry point combat's hits use later with weapon mass x speed) pushes the part nearest the point with
-`bodyBalance` on; `Outcome::KnockDown` (also kind `Knockdown`, game-decided: `knockdown_reaction`) keeps the balancer
-`Rules::knock_down_after` = 0.3 s then `catchFall` (0.5 s left a still body standing). Measured (`mw_delirium`
-`hit_reactions_vs_impulse`, chest, pelvis travel along the hit at 1 s): 36 N·s (a `V` ball head-on) 0.31-0.45 m, 45 N·s
-0.44-0.62, 80 N·s 0.59-0.98, never down under 120; knockdowns fall at 0.5-0.85 s, 36 N·s 0.28-0.91 m along. Walkers
-resume their AI when the hand-back removes `Held`/`Dormant`. Tests: `mw_walkers_bevy` `physics::tests`,
-`mw_delirium_bevy` `physics_hits_become_pushes`, `mw_delirium` `hits_push_along_their_direction`,
-`a_held_body_takes_a_second_hit`, `knockdown_impulses_hand_back` (real install). Visual check PH-15.
-
-As built (2026-11-05, deaths of walkers): `physics::kill()` asks the same hook with `kind: Death` (the blow as
-`point`/`impulse`, zero for none) unless the character is a powered-ragdoll knockdown (`KnockedDown`: it dies in its
-ragdoll); a claim inserts `Dead` (requires `Held`) and no `Ragdoll`. A character a layer already holds (`Held` without
-`KnockedDown`) is killable: the hook turns it terminal; a decline leaves it alive. The host maps `Death` to
-`mw_delirium_bevy::death_reaction` (`DeliriumReaction { kill: true }`): with a blow, `Takeover::kill_by_hit` pushes and
-keeps a weakened balancer for the dying window (`Rules::dying` = 0.6 s at `bodyStiffness` 4, Euphoria's `shot` +
-`shotRelax`; falls at ~1.1 s, 36 N·s carries the pelvis 0.37 m along the hit in 1 s); without (console `kill`)
-`Takeover::kill` collapses at once; either way `catchFall`, then near-limp `bodyRelax` once down (`Rules::dead_relax`),
-no get-up, never a hand-back; at rest
-(`Rules::corpse_secs`) it is `settled`, the host drops the takeover and the body keeps its last `PhysicsPose` (frozen),
-root `Held` + `DeliriumCorpse` (later requests refused). A kill on a live takeover turns it terminal (a down body relaxes
-at once). A claimed death Delirium then can't take (no rig) falls back to `Ragdoll { Death }`. The dev `I` key is gone:
-console `kill` (`physics::kill_in_view`, walkers only). Gaps: corpse drag (Delirium parts aren't Rapier bodies) and
-save/streaming persistence of the corpse pose. Tests: `physics::tests` (death routing), `mw_delirium_bevy`
-`deaths_of_human_walkers_become_terminal_takeovers`, `mw_delirium` `killed_takeover_falls_and_settles`. Visual check PH-16.
+As built 2026-11-05 (hits and deaths of walkers: the `RagdollTakeover` hook, Delirium `HitRules`, measured pushes, corpses;
+PH-15, PH-16): [archive/combat-adapter-history.md](archive/combat-adapter-history.md#ragdoll-routing-as-built-2026-11-05).
 
 ## Character shapes (Morrowind)
 
@@ -136,71 +268,44 @@ made for it and the `live_only` routing above never runs. The same hole covers f
 - **Classic rules** (C5): OpenMW's melee hit is a reach and angle test with no per-bone shapes; the classic resolver
   keeps that (bound capsule only); hurt shapes serve the modern rules.
 
-## C1b: game items
+## As built: C1b, C2a, C2b
 
-- **Sheet** `mw_combat/data/movesets/sword_1h.ron` with combat.md's C1b table.
-- **Slots** in `sources.ron` (graph `humanoid`, root `Progress`): `attack.sword_1h.light{1,2,3}` (UAL2 `Sword_Regular_A/B/C`,
-  then UAL1 `Sword_Attack`, fallback `WeaponOneHand@slash`); `attack.sword_1h.light{1,2}_rec` (UAL2 `Sword_Regular_A_Rec`,
-  `_B_Rec`, fallback `Drop`); `dodge.roll.fwd|left|right` (UAL1 `Roll_RM`, `Dodge_Left_RM`, `Dodge_Right_RM`, fallback
-  `Drop`); `react.small.front|left|right|back` (UAL1 `Hit_Chest`, `Hit_Shoulder_L`, `Hit_Shoulder_R`, `Hit_Stomach`,
-  fallback `Hit1`-`Hit4`); `react.medium.front` (UAL2 `Hit_Knockback_RM`, root x0.25, fallback `Hit5`); `react.large.front`
-  (the same clip, root x0.6). No LaFAN1 candidate in C1. Candidate `events` (per-clip windows) are a new manifest field.
-- **Player**: `Combatant` on the player (health from the record, stamina as above, `min_tier: Small`, sheet by weapon);
-  the ready-weapon key (F, Morrowind's default) toggles the stance; sheathed, attack presses do nothing (owner 2026-11-02:
-  first the stance, then the fight; the implicit draw is gone). As built (CB-3, 2026-11-05): the avatar's
-  `CharacterReadiness` follows `Stance`, so its held weapon mounts on `Weapon Bone` while drawn and hides while sheathed
-  (the original shows no sheaths) and `feed_stance` sets the graph's one-handed set. The player never auto-equips
-  (`mw_actors::held::equipped`: first wieldable weapon, first shield; `EquippedHeld` on the avatar); levels name its
-  items in `player_held` (`arena`, `anim-lab`: `iron longsword`). Real cells: no weapon until an equip screen writes
-  `EquippedHeld`. As built (draw clips, 2026-11-05): F plays `base_anim`'s `WeaponOneHand@equip` / `@unequip`
-  (`mw_combat::SWORD_1H_DRAW`/`_SHEATHE`, already graph slot clips) in the humanoid graph's masked `upper` slot over
-  locomotion, playhead = a fixed-tick `sf_character::ReadyChange` (gameplay clock, net-ready) timed from the baked clip's
-  `equip.attach` / `unequip.detach` events (Morrowind's `Equip Attach` / `Unequip Detach` keys; UE attach notify): the
-  readiness (prop mount) flips at the key; attacks stay withheld until the draw ends and from a sheathe's first tick;
-  F during a change is ignored; no baked clip = instant (pop). Not yet: other weapon groups (C3 maps records to
-  sheets), the grip IK still treats the right hand as free during a change (`grip.rs` checks `Stance::Drawn`).
-- **Bindings** (defaults, the player can rebind): `Sprint` becomes **Dodge/Sprint** (tap = roll on release, hold = sprint;
-  Shift, pad East); `Attack` (Light): left mouse, pad right bumper; `Lock`: middle mouse, pad right stick click (ToggleView's
-  pad binding moves to D-pad up); `Sneak`'s pad binding moves to left stick click; `ReadyWeapon`: F.
-- **Training dummy** (named scaffold `TrainingDummy`; kept as the standing kind beside C2a's sparring dummy, both go when C6
-  NPCs fight): a level actor (a plain human NPC record) standing still, `Combatant` health 100, hostile, `Lockable`, never
-  attacks; refills at 0 and plays `Large`.
-- **Level `arena`** (scene `level-arena`): 40 m flat floor; player start; dummy 3 m ahead; a second dummy 10 m off (C1c
-  lock, switch later); a 1 m ledge for the lock break on mantle (C1c). Cameras `chain` (side view of player and dummy) and
-  `behind`.
-- **Visual checks**: new `docs/visual-checks/combat.md`; CB-1 (C1b): three-hit chain and a roll through the dummy; look for
-  hits landing when the blade arrives (not before), hit-stop reading as impact (not a stall), the stamina bar draining per
-  hit and refilling after recovery, no slide at the roll's end. CB-2 (C1c): locked strafe and four-way rolls around the dummy.
+Moved verbatim to [archive/combat-adapter-history.md](archive/combat-adapter-history.md) (C0d, 2026-11-26); still the running code:
+- [C1b: game items](archive/combat-adapter-history.md#c1b-game-items): `sword_1h` sheet and UAL slots, the player's `Combatant`, F stance and draw clips, bindings, training dummy, level `arena`, CB-1/CB-2.
+- [Sparring dummy (C2a)](archive/combat-adapter-history.md#sparring-dummy-c2a): `DummyKind::Sparring`, `sparring.ron` schedule, non-lethal refill, level `sparring`, CB-3a.
+- [Guard (C2b)](archive/combat-adapter-history.md#guard-c2b): sheet `guard`, `GUARD_ABSORB` 0.65, `GUARD_STABILITY` 1, guard clips, classic `blockMeleeAttack`, CB-3b.
 
-## Sparring dummy (C2a)
+## Reuse check (C0d mappings)
 
-As built 2026-11-10 (framework: combat.md "C2a"; check CB-3a). A **mode of the training dummy**, not a second actor type
-(`mw_player_bevy::dummy::DummyKind::Sparring`, component `Sparring`): same body, ground, combat, refill and `Lockable`, plus a
-strike schedule. The spec planned to replace the training dummy; the standing kind stays because the C1 checks (chain, lock)
-need a target that doesn't hit back.
-- **Data**: `mw_combat/data/sparring.ron` (`mw_combat::SPARRING`, `sparring()` checks it) -> `sf_combat::SparSchedule`: Light
-  (sword sheet `light1`), first 1.5 s, period 2.5 s, reach 2 m. Unparsable: it stands still (logged).
-- **Command**: `dummy::spar` (`ActionSystems::Command`) writes the dummy's `Command` each tick toward the nearest living
-  `PlayerBody` (view at it, `face_view`, Light on the schedule); the swing is the chooser's, the hit the sweep's and rules'.
-- **Damage**: the dummy's `Offense::attack` is `DEFAULT_ATTACK` (10): `StandardRules` takes 10 health per light1; on the
-  player's stat sheet through S5 (`PoolAdjust`, cause `Combat`; Morrowind.esm's player has 35).
-- **Non-lethal** (scaffold until the player's death flow; KCD practice bouts): while a sparring dummy stands, a player body brought
-  down refills (sheet health, cause `Rules`) as the dummy does; it plays the Death tier's reaction (falls back to `Large`).
-- **Look**: the dummy's avatar is `SparringAvatar` with `CharacterReadiness::Drawn`; the level host gives it the level's
-  `player_held` items (`mw_exterior_bevy` `equip_player`).
-- **Level** `sparring` (scene `level-sparring`): start, a sparring dummy 3 m ahead (`sparring` spawn), a standing dummy 6 m off
-  (`dummy`), cameras `behind`, `side`. Spawn names: `sparring*` spar, `dummy*` stand (`DummyKind::of_spawn`).
-- **Clips**: the player's reactions are the C1b slots (`react.small.{front,left,right,back}`: UAL1 `Hit_Chest`,
-  `Hit_Shoulder_L/R`, `Hit_Stomach`, fallback `Hit1`-`Hit4`; `react.medium|large.front`: UAL2 `Hit_Knockback`, fallback `Hit5`).
-  Content gap: Medium and Large have Front only (other sides fall back) and share one clip at full root travel (combat.md open
-  question 2).
+Bevy 0.20 and crates.io (2026-11-26): nothing maps game records onto combat numbers. OpenMW @ `4e718b5` (GPL-3.0, cite
+file + commit where ported): weapon groups, armour rating and weight class, normal-weapon resistance, on-strike
+inflict, projectile and bolt speeds, arrow recovery, siding, sneak critical, difficulty. Veloren (C-R1): poise scale and
+stun lengths as `Guess` only. Reused: effects' modern resist, interaction's `DestructionRules`.
+Ours: the poise, absorb and skill formulas (modern rules have no Morrowind source).
 
+## Industry comparison (C0d mappings)
 
-## Guard (C2b)
+| Mapping | Industry | Ours |
+|---|---|---|
+| Weapon classes | ER: class = moveset (dagger, straight sword, greatsword, spear, fist), numbers per weapon [M] | match: sheet per Morrowind group, numbers per record |
+| Damage types | ER: physical standard/strike/slash/pierce + magic, fire, lightning, holy [M]; Skyrim: one physical + elemental resists [M] | Skyrim-like: Morrowind data has no physical subtypes |
+| Armour curve | Morrowind `d/(d+AR)`; Skyrim about 0.12 % per point, cap 80 % [M]; ER flat defence + % negation [M] | saturating share, cap 80 %, same for every hit |
+| Poise | ER: from armour weight, hyper-armour on swings [V]; Veloren: body base + armour | match: weight class × slot shares + attributes |
+| Creature stance | ER: authored per enemy, stance break on bosses [M] | size rule + per-species and per-record overrides |
+| Sneak critical | Morrowind ×4 player melee on unaware victims; Skyrim ×3 one-handed, ×2 bows, perks up to ×15 [M] | Morrowind's GMST through `Contact.critical` |
+| Allies | OpenMW siding set; Skyrim followers spared by melee [M] | match (combat-delivery.md "Friendly fire") |
 
-As built 2026-11-10 (framework: combat.md "C2b"; check CB-3b). Sword sheet `guard` (hold right mouse / L1, `Control::Guard`; heavy
-moved to R), withheld while sheathed (`combat.rs` `ATTACKS`). Numbers: `mw_combat::GUARD_ABSORB` 0.65, `GUARD_STABILITY` 1, hit
-rows `guard_damage` 2x their stamina. Clips (`sources.ron`): `guard.sword_1h.raise` / `.idle` = UAL2 `Sword_Block` 0-0.21 s / 0.21-0.51
-s looping (fallback `Shield@block`), `.break` = UAL2 `Idle_Shield_Break` (then `Hit_Knockback`, `Hit5`); no guard-hit clip. Classic
-(C5): Morrowind has no held guard; `ClassicCombat::resolve_contact` sets `Outcome::guarded` from `blockMeleeAttack` and the
-classic profile's guard reaction is `Shield@block` (`guard_hit`).
+## Build plan (C0d data)
+
+Rows and verification: combat roadmap §4. **C3d** `weapon_classes.ron`, directions,
+`greatsword_2h` / `spear_2h` / `fist` sheets once AN33 cooks windows; **C3a** values from "Poise"; **C13** `ModernRules`
+(packet, absorb, resistances, on-strike); **C17** record-driven NPC and creature fighters; **C6f** creature files and the
+generated default; **C8b** ranged sheets, ammo, speeds, recovery; **C8d** cast slots, the big rule, `launch_spec`;
+**C14** prop keys; **C16** crime hooks. Tests: exact on synthetic records, vanilla rows `#[ignore = "needs Morrowind.esm"]`.
+
+## Open questions
+
+1. Fists: Morrowind hand-to-hand hurts fatigue unless the victim is down (knockout brawls). Modern: health (ER), or
+   fatigue first (non-lethal brawls)? Changes what the player can do: owner. Until answered: health.
+2. If AN32 shows daggers and longswords need distinct timings within `WeaponOneHand`, split the sheet by type (data).
+3. Veloren's ramping regen and re-stun buffer need framework fields: only if CB-10 shows stun-locks (C3a).

@@ -1,0 +1,137 @@
+# combat-adapter history
+
+Text moved verbatim from [combat-adapter.md](../combat-adapter.md) by spec slice C0d (2026-11-26): the C1 weapon-to-sheet
+table that "Weapon classes as data (C3d)" replaced, and the as-built sections of C1b, C2a and C2b (still the running
+code; the main spec keeps one-line pointers).
+
+## Weapon records to moveset sheets
+
+The equipped weapon (`mw_actors::held` loadout: weapon type, two-handed) picks `ModeState::moveset`:
+
+| Morrowind weapon type | Sheet | When |
+|---|---|---|
+| short blade, long blade 1H, blunt 1H, axe 1H | `sword_1h` | C1 |
+| none (hand-to-hand) | `fist` (UAL1 `Punch_Jab`, `Punch_Cross`, `Kick`) | C3 |
+| long blade 2H, blunt 2H, axe 2H | `greatsword_2h` | C3 (clips missing, combat.md open question 2) |
+| spear, staff (two-wide) | `spear_2h` | C3+ |
+| bow, crossbow, thrown | ranged, out of scope | later |
+
+Per-weapon numbers go into the `Fighter`, not the sheet: `offense.attack` = the record's max damage for the hit row's
+`kind` (`chop`, `slash`, `thrust` tags map to the record's three ranges) x condition / max condition; weapon `reach` scales the
+sheet's blade segment (C1: sheet default; later the mesh length along the weapon bone). Creatures get per-rig sheets with
+their `Attack1-3` clips (C6).
+
+Superseded 2026-11-26 by combat-adapter.md "Weapon classes as data (C3d)".
+
+## C1b: game items
+
+- **Sheet** `mw_combat/data/movesets/sword_1h.ron` with combat.md's C1b table.
+- **Slots** in `sources.ron` (graph `humanoid`, root `Progress`): `attack.sword_1h.light{1,2,3}` (UAL2 `Sword_Regular_A/B/C`,
+  then UAL1 `Sword_Attack`, fallback `WeaponOneHand@slash`); `attack.sword_1h.light{1,2}_rec` (UAL2 `Sword_Regular_A_Rec`,
+  `_B_Rec`, fallback `Drop`); `dodge.roll.fwd|left|right` (UAL1 `Roll_RM`, `Dodge_Left_RM`, `Dodge_Right_RM`, fallback
+  `Drop`); `react.small.front|left|right|back` (UAL1 `Hit_Chest`, `Hit_Shoulder_L`, `Hit_Shoulder_R`, `Hit_Stomach`,
+  fallback `Hit1`-`Hit4`); `react.medium.front` (UAL2 `Hit_Knockback_RM`, root x0.25, fallback `Hit5`); `react.large.front`
+  (the same clip, root x0.6). No LaFAN1 candidate in C1. Candidate `events` (per-clip windows) are a new manifest field.
+- **Player**: `Combatant` on the player (health from the record, stamina as above, `min_tier: Small`, sheet by weapon);
+  the ready-weapon key (F, Morrowind's default) toggles the stance; sheathed, attack presses do nothing (owner 2026-11-02:
+  first the stance, then the fight; the implicit draw is gone). As built (CB-3, 2026-11-05): the avatar's
+  `CharacterReadiness` follows `Stance`, so its held weapon mounts on `Weapon Bone` while drawn and hides while sheathed
+  (the original shows no sheaths) and `feed_stance` sets the graph's one-handed set. The player never auto-equips
+  (`mw_actors::held::equipped`: first wieldable weapon, first shield; `EquippedHeld` on the avatar); levels name its
+  items in `player_held` (`arena`, `anim-lab`: `iron longsword`). Real cells: no weapon until an equip screen writes
+  `EquippedHeld`. As built (draw clips, 2026-11-05): F plays `base_anim`'s `WeaponOneHand@equip` / `@unequip`
+  (`mw_combat::SWORD_1H_DRAW`/`_SHEATHE`, already graph slot clips) in the humanoid graph's masked `upper` slot over
+  locomotion, playhead = a fixed-tick `sf_character::ReadyChange` (gameplay clock, net-ready) timed from the baked clip's
+  `equip.attach` / `unequip.detach` events (Morrowind's `Equip Attach` / `Unequip Detach` keys; UE attach notify): the
+  readiness (prop mount) flips at the key; attacks stay withheld until the draw ends and from a sheathe's first tick;
+  F during a change is ignored; no baked clip = instant (pop). Not yet: other weapon groups (C3 maps records to
+  sheets), the grip IK still treats the right hand as free during a change (`grip.rs` checks `Stance::Drawn`).
+- **Bindings** (defaults, the player can rebind): `Sprint` becomes **Dodge/Sprint** (tap = roll on release, hold = sprint;
+  Shift, pad East); `Attack` (Light): left mouse, pad right bumper; `Lock`: middle mouse, pad right stick click (ToggleView's
+  pad binding moves to D-pad up); `Sneak`'s pad binding moves to left stick click; `ReadyWeapon`: F.
+- **Training dummy** (named scaffold `TrainingDummy`; kept as the standing kind beside C2a's sparring dummy, both go when C6
+  NPCs fight): a level actor (a plain human NPC record) standing still, `Combatant` health 100, hostile, `Lockable`, never
+  attacks; refills at 0 and plays `Large`.
+- **Level `arena`** (scene `level-arena`): 40 m flat floor; player start; dummy 3 m ahead; a second dummy 10 m off (C1c
+  lock, switch later); a 1 m ledge for the lock break on mantle (C1c). Cameras `chain` (side view of player and dummy) and
+  `behind`.
+- **Visual checks**: new `docs/visual-checks/combat.md`; CB-1 (C1b): three-hit chain and a roll through the dummy; look for
+  hits landing when the blade arrives (not before), hit-stop reading as impact (not a stall), the stamina bar draining per
+  hit and refilling after recovery, no slide at the roll's end. CB-2 (C1c): locked strafe and four-way rolls around the dummy.
+
+## Sparring dummy (C2a)
+
+As built 2026-11-10 (framework: combat.md "C2a"; check CB-3a). A **mode of the training dummy**, not a second actor type
+(`mw_player_bevy::dummy::DummyKind::Sparring`, component `Sparring`): same body, ground, combat, refill and `Lockable`, plus a
+strike schedule. The spec planned to replace the training dummy; the standing kind stays because the C1 checks (chain, lock)
+need a target that doesn't hit back.
+- **Data**: `mw_combat/data/sparring.ron` (`mw_combat::SPARRING`, `sparring()` checks it) -> `sf_combat::SparSchedule`: Light
+  (sword sheet `light1`), first 1.5 s, period 2.5 s, reach 2 m. Unparsable: it stands still (logged).
+- **Command**: `dummy::spar` (`ActionSystems::Command`) writes the dummy's `Command` each tick toward the nearest living
+  `PlayerBody` (view at it, `face_view`, Light on the schedule); the swing is the chooser's, the hit the sweep's and rules'.
+- **Damage**: the dummy's `Offense::attack` is `DEFAULT_ATTACK` (10): `StandardRules` takes 10 health per light1; on the
+  player's stat sheet through S5 (`PoolAdjust`, cause `Combat`; Morrowind.esm's player has 35).
+- **Non-lethal** (scaffold until the player's death flow; KCD practice bouts): while a sparring dummy stands, a player body brought
+  down refills (sheet health, cause `Rules`) as the dummy does; it plays the Death tier's reaction (falls back to `Large`).
+- **Look**: the dummy's avatar is `SparringAvatar` with `CharacterReadiness::Drawn`; the level host gives it the level's
+  `player_held` items (`mw_exterior_bevy` `equip_player`).
+- **Level** `sparring` (scene `level-sparring`): start, a sparring dummy 3 m ahead (`sparring` spawn), a standing dummy 6 m off
+  (`dummy`), cameras `behind`, `side`. Spawn names: `sparring*` spar, `dummy*` stand (`DummyKind::of_spawn`).
+- **Clips**: the player's reactions are the C1b slots (`react.small.{front,left,right,back}`: UAL1 `Hit_Chest`,
+  `Hit_Shoulder_L/R`, `Hit_Stomach`, fallback `Hit1`-`Hit4`; `react.medium|large.front`: UAL2 `Hit_Knockback`, fallback `Hit5`).
+  Content gap: Medium and Large have Front only (other sides fall back) and share one clip at full root travel (combat.md open
+  question 2).
+
+
+## Guard (C2b)
+
+As built 2026-11-10 (framework: combat.md "C2b"; check CB-3b). Sword sheet `guard` (hold right mouse / L1, `Control::Guard`; heavy
+moved to R), withheld while sheathed (`combat.rs` `ATTACKS`). Numbers: `mw_combat::GUARD_ABSORB` 0.65, `GUARD_STABILITY` 1, hit
+rows `guard_damage` 2x their stamina. Clips (`sources.ron`): `guard.sword_1h.raise` / `.idle` = UAL2 `Sword_Block` 0-0.21 s / 0.21-0.51
+s looping (fallback `Shield@block`), `.break` = UAL2 `Idle_Shield_Break` (then `Hit_Knockback`, `Hit5`); no guard-hit clip. Classic
+(C5): Morrowind has no held guard; `ClassicCombat::resolve_contact` sets `Outcome::guarded` from `blockMeleeAttack` and the
+classic profile's guard reaction is `Shield@block` (`guard_hit`).
+
+## Ragdoll routing as built (2026-11-05)
+
+Moved from combat-adapter.md "Ragdoll routing (Hit, Knockdown, Death)" by C0d (2026-11-26).
+
+As built (2026-11-05, hits on walkers; `sf_action`'s `PhysicsTakeover` for action characters is not built). Owner
+verdict on the first cut (every impact >= 15 N·s forced `catchFall`: "limp instantly"): hits must push along their
+direction. Canonical technique: Euphoria / RDR2 hit reactions (the impulse on the struck part, the balancer recovers
+with steps, the fall is the balance failing; a scripted fall only when the game decides). The walkers' `knockdown()`
+asks the adapter hook `RagdollTakeover` (resource, `mw_walkers_bevy::physics`) first for every impact >=
+`HIT_REACT_IMPULSE` (1 N·s) with `PhysicsTakeover { root, skeleton, mover, held, point, impulse, kind: Hit }`, `Held`
+bodies included (not `KnockedDown`: the powered ragdoll takes its impacts); a claim inserts its own request and owns the
+character (`Held`, get-up, the root's move) until its hand-back. A decline (or no hook, a `--no-default-features` app):
+`HitReact` under `KNOCKDOWN_IMPULSE`, the powered ragdoll above; a held body gets nothing. The host (`mw_exterior_bevy`,
+feature `delirium`) maps `Hit` to `mw_delirium_bevy::hit_reaction` with `HitRules` (human skeleton on a mover only):
+push = impact x `gain` (1: our props have no restitution, the body takes their incoming momentum; a bouncing source
+would bring `1 + e`); a takeover from `takeover` = 10 N·s (where the push first reads past the takeover's own settle
+sway); a knockdown after the push from `certain_fall` = 100 N·s (Delirium's balancer stays up to 120 N·s on its own,
+1.5 m/s on 80 kg, beyond a person's step recovery); `held` -> `live_only` (a further push on Delirium's own takeover,
+dropped otherwise: frozen corpses, limp ragdolls). The takeover (`mw_delirium::Takeover::hit(part, at, impulse,
+Outcome)`, the entry point combat's hits use later with weapon mass x speed) pushes the part nearest the point with
+`bodyBalance` on; `Outcome::KnockDown` (also kind `Knockdown`, game-decided: `knockdown_reaction`) keeps the balancer
+`Rules::knock_down_after` = 0.3 s then `catchFall` (0.5 s left a still body standing). Measured (`mw_delirium`
+`hit_reactions_vs_impulse`, chest, pelvis travel along the hit at 1 s): 36 N·s (a `V` ball head-on) 0.31-0.45 m, 45 N·s
+0.44-0.62, 80 N·s 0.59-0.98, never down under 120; knockdowns fall at 0.5-0.85 s, 36 N·s 0.28-0.91 m along. Walkers
+resume their AI when the hand-back removes `Held`/`Dormant`. Tests: `mw_walkers_bevy` `physics::tests`,
+`mw_delirium_bevy` `physics_hits_become_pushes`, `mw_delirium` `hits_push_along_their_direction`,
+`a_held_body_takes_a_second_hit`, `knockdown_impulses_hand_back` (real install). Visual check PH-15.
+
+As built (2026-11-05, deaths of walkers): `physics::kill()` asks the same hook with `kind: Death` (the blow as
+`point`/`impulse`, zero for none) unless the character is a powered-ragdoll knockdown (`KnockedDown`: it dies in its
+ragdoll); a claim inserts `Dead` (requires `Held`) and no `Ragdoll`. A character a layer already holds (`Held` without
+`KnockedDown`) is killable: the hook turns it terminal; a decline leaves it alive. The host maps `Death` to
+`mw_delirium_bevy::death_reaction` (`DeliriumReaction { kill: true }`): with a blow, `Takeover::kill_by_hit` pushes and
+keeps a weakened balancer for the dying window (`Rules::dying` = 0.6 s at `bodyStiffness` 4, Euphoria's `shot` +
+`shotRelax`; falls at ~1.1 s, 36 N·s carries the pelvis 0.37 m along the hit in 1 s); without (console `kill`)
+`Takeover::kill` collapses at once; either way `catchFall`, then near-limp `bodyRelax` once down (`Rules::dead_relax`),
+no get-up, never a hand-back; at rest
+(`Rules::corpse_secs`) it is `settled`, the host drops the takeover and the body keeps its last `PhysicsPose` (frozen),
+root `Held` + `DeliriumCorpse` (later requests refused). A kill on a live takeover turns it terminal (a down body relaxes
+at once). A claimed death Delirium then can't take (no rig) falls back to `Ragdoll { Death }`. The dev `I` key is gone:
+console `kill` (`physics::kill_in_view`, walkers only). Gaps: corpse drag (Delirium parts aren't Rapier bodies) and
+save/streaming persistence of the corpse pose. Tests: `physics::tests` (death routing), `mw_delirium_bevy`
+`deaths_of_human_walkers_become_terminal_takeovers`, `mw_delirium` `killed_takeover_falls_and_settles`. Visual check PH-16.
