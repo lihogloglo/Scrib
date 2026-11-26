@@ -46,6 +46,7 @@ pub mod door;
 pub mod door_body;
 pub mod index;
 pub mod input;
+mod report;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -137,6 +138,7 @@ pub fn add_with_defs(app: &mut App, defs: FurnitureDefs) {
         .add_systems(FixedUpdate, input::candidates.after(InteractionSystems::Apply).before(InteractionSystems::Focus))
         .add_systems(FixedUpdate, input::commands.after(InteractionSystems::Focus).before(InteractionSystems::Activate))
         .add_systems(Update, door::save_rest.after(DoorSystems::Default))
+        .add_systems(Update, report::log_reports.after(sf_interaction_bevy::SeatSystems::Request))
         .add_systems(FixedUpdate, door_body::block_sweeps.after(DoorSystems::Plan).before(DoorSystems::Commit))
         .add_systems(FixedUpdate, door_body::move_bodies.after(DoorSystems::Commit).before(PhysicsSystems::Step))
         .add_systems(Update, (door_body::pose_new_bodies, door_body::follow_pivots).chain().after(PhysicsSystems::Stream));

@@ -545,6 +545,42 @@ reports nothing" (shell 59). Not tested: `UserGone`, `NoEntrance`. Known, not fi
 frame or index row while its claim is still held writes no `Release` (today `IndexChange::Remove` also invalidates the
 claim, so `Lost(Claim)` comes first and hides it).
 
+## The approach before the enter (IN2c4, designed 2026-11-26; meta-7 approved)
+
+**Why.** Owner check ANIM-11 failed (E on "Sit" did nothing). The real-data repro (IN2c2, `docs/ledger/interaction.md`)
+shows every press made facing a seat ends `EnterRefused([MaxCorrection])`: the enter clips start 0.5-0.73 m in front
+of the seat with the back to it and travel 0.52-0.59 m, and the enter warp refuses a correction over half the clip's
+travel (ratio 2.5-3.9 from where a player stands; 1.00 standing on the slot itself). "Using a slot" step 1 only picked
+an entrance: nothing brought the user to the pose the enter clip starts from.
+
+**Reuse check.** Bevy 0.20: no character move-to, no smart-object or interaction-entry facility (nothing to reuse).
+Crates: path-finding crates (`vleue_navigator`, `oxidized_navigation`) solve a different problem (routes); the approach
+is at most the focus reach, in line of sight, and NPCs arrive by `sf_nav`; no crate aligns a body to a clip's start pose.
+Ours: `sf_action` already owns the body during a move and already chains rules by exits.
+
+**Industry comparison.** UE5 Smart Objects: slot entrance annotation, move to the entrance, then Motion Warping onto
+the slot. Bethesda furniture markers: the actor walks to the marker's entry point, input off, then the enter idle.
+RDR2 / KCD2 chairs: a short automatic walk and turn, cancelled by the stick. A larger warp tolerance instead would
+slide the body through a half turn while it sits: not what any of them ships.
+
+**Design.** A rule `interact.sit.approach` (kind Interaction, `owner: Approach(..)`, entry `offered`) ranked just
+under `interact.sit.enter`: the enter is tried first (already in place: no approach), else the approach starts.
+- **Target = the enter clip's start pose:** the slot frame (`SeatSense::enter`) composed with the inverse of the
+  enter clip's whole root travel, the pose from which the warp's correction is zero. Never the seat itself, and not
+  the def's entrance approach point (that one picks the side and is validated free; it may sit a few cm off the clip).
+- **The action layer moves the body** (no synthetic commands, net rule 2): a walk-gait `LocomotionIntent` towards the
+  target, slowed on arrival, then a turn in place to the target yaw (`desired_facing`). The stick does not steer it.
+- **Ends:** arrived within `arrive_m` and `arrive_rad` -> exit `Arrived` to `interact.sit.enter`; stick past the
+  deadzone, Jump, the seat sense lost, `timeout_s` elapsed or the target further than `max_m` -> back to locomotion
+  and ONE `SeatRefused` with a refusal naming the reason (`ApproachCancelled`, `ApproachTimeout`, `ApproachTooFar`),
+  so the shell releases the claim and reports it. Never silence.
+- **Numbers are rule data** (`seat_rules.ron`, like `refuse_ratio`): `arrive_m` 0.05, `arrive_rad` 0.09, `timeout_s`
+  3.0, `max_m` 2.5 (starting points; the first two keep the enter's ratio under about 0.2 of 0.5).
+- NPCs: nav brings them near (`sf_ai` `UseSlot`), the same rule does the last alignment.
+
+Slices: IN2c4 the rule in `sf_action`; IN2c5 shell (`SeatStep` for the approach, the `Release` of open point (w));
+IN2c6 the repro's stances A-E assert `Entered`.
+
 ## As built (IN33a, 2026-11-26)
 
 `sf_interaction/src/door.rs` (+ `tests_door.rs`, 8 exact tests): the design of "Slot kinds" Door as pure functions.
