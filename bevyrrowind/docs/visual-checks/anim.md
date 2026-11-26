@@ -24,7 +24,12 @@ p16.cfg23.03/.01 good enough to ship? (2) one jog of p45.05/stride.1.03? (3) do 
 Run 2 (next dev build, GRAPH_FORMAT 16): `scene wk-balmora`, F11, walk then speed up into a jog. (4) no pelvis dip or
 knee buckle while walk blends into jog? (5) feet stay put on sidesteps and backpedals (AN1d slides 2-3 cm there)?
 Proof log: `walkers feet: ... unplanted` and `head track: player body present` lines in last.log. A/B: graph guard
-`plant_speed` 0 (off). Status: awaiting owner (commit of AN1d, 2026-11-26).
+`plant_speed` 0 (off).
+Status: partial (owner 2026-11-26 sitting, run 2 on wk-balmora, dev exe 1c699df9, bake current, both proof lines
+seen): (5) YES, "planted feet seem to be planted". (4) NOT JUDGED: the keyboard has no walk input, so the walk clip
+and the walk->jog blend were never on screen ("the walk doesn't work because we don't have a specific button to just
+walk, but it's alright"); stays open until the player can walk. In passing: "the animations (jog and sprint) are
+still wonky, we'll have to find better ones (or generate them)". Run 1 (questions 1-3): awaiting owner.
 
 ## ANIM-9: sit/stand batch 1 candidates (AN26a)
 
