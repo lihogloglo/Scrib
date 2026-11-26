@@ -40,7 +40,7 @@ never changed by the wader**.
 | Query: `Polygon` and `Ribbon` supported, flow = segment direction × lerped speed, no cross profile; ocean dry where bed ≥ surface, other bodies not | `sf_water/src/query.rs:302-320, 414-437, 361-371` |
 | River waves already flat on the CPU: `WaveTerms::of(River) = FLAT` | `sf_water/src/records.rs:72` |
 | Query bodies built once: `source.bodies(..)` then `WorldspaceWater::new(bodies)` | `mw_environment_bevy/src/water.rs:262-267` |
-| Swim: `MoverMode::Swim { surface }` surface clamp exists; **no system sets it from water** (creature scaffold `Fly` for pure swimmers) | `sf_controller/src/mover.rs:225-229, 1083-1089`; `mw_walkers_bevy/src/walkers.rs:443-447` |
+| Swim: `MoverMode::Swim { surface }` surface clamp; set from the water query by `mw_environment_bevy/src/swim.rs` since FL-5c (2026-11-26; creature scaffold `Fly` for pure swimmers still there) | `sf_controller/src/mover.rs:225-229, 1083-1089`; `mw_walkers_bevy/src/walkers.rs:443-447` |
 | Nav swim level from `fSwimHeightScale` (OpenMW `getSwimLevel`) | `mw_bake/src/nav.rs:17-20, 73` |
 | Graph `swimming` parameter: declared, written by no system (grep) | `mw_graphs/src/build.rs:100-101` |
 | x10s-b2w `water.json` (2026-11-26): 95 rivers (max 1490 points, ~5 m apart, 18 516 segments), 186 lakes, 77 rivers with `joins`, 49 with `outlet`; steep runs (grade > 0.5) grouped: 142 drops > 2 m, p10/50/90 3.8/19.4/182 m, max 1127 m | node count over the file |
@@ -149,7 +149,7 @@ inlet/outlet zones; constants, an overlap rule). Bed carving under the ribbon st
   like `inherited`: zero on load, save shape unchanged): the step adds
   `current.xz · dt` to the horizontal displacement before the sweep in every mode (walls and banks stop the drift); the
   intent stays relative to the water.
-- **FL-5c**: `sf_water::swim::medium(&Immersion, swimming: bool, &SwimParams) -> Medium { swim, surface, current }`
+- **FL-5c** (built 2026-11-26, worldgen-3 rule, worldgen-4 system; `enter_fraction` = `fSwimHeightScale` itself, the share of the height `OpenMW` swims at; the `Mod` layer carries it): `sf_water::swim::medium(&Immersion, swimming: bool, &SwimParams) -> Medium { swim, surface, current }`
   (pure: enter at `swim.enter_fraction`, leave below `swim.exit_fraction`, current = horizontal sample velocity × gain,
   × `wade_gain × fraction` when wading, clamped) and the game system `mw_environment_bevy/src/swim.rs` in `FixedUpdate`,
   `ControllerSystems::Drive`: for every awake `Mover` (capsule from `MoverParams::radius/height`), `immersion()` →

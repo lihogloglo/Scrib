@@ -56,6 +56,7 @@ pub const CATALOG: &[(&str, &[&dyn AnyDef])] = &[
     ("mw_devtools_bevy::perf::flip_ab", crate::perf::flip_ab::TUNABLES),
     ("mw_environment_bevy::quality_tunables", mw_environment_bevy::quality_tunables::TUNABLES),
     ("mw_environment_bevy::worldgen_water", mw_environment_bevy::worldgen_water::TUNABLES),
+    ("sf_water::swim", mw_environment_bevy::swim::TUNABLES),
     ("sf_tunables::presets", sf_tunables::presets::TUNABLES),
     ("sf_ai_bevy::perception", sf_ai_bevy::perception::PERCEPTION_TUNABLES),
     ("sf_ai_bevy::exec", sf_ai_bevy::exec::TUNABLES),

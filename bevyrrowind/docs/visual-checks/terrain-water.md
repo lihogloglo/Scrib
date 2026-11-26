@@ -178,12 +178,16 @@ character, rings far from the legs, any flicker at the grid's edge.
 
 ### WA-16: Swimming in the current (FL-5c; `world:` x10s-b2w)
 
-Status: planned (after FL-5c).
-Launch: same as WA-13; then a guide lake (the nearest lake to the camera; FL-5c logs its id and centre).
-Do: walk into the river until swimming, hold still, then swim upstream, across, and climb out on a bank; swim in the lake.
-Look for: walking turns to swimming at about chest depth and back to wading when shallow, holding still drifts you
-downstream at about the water's visible speed (slower near the banks after FL-1), swimming upstream is slow but
-possible, the bank stops the drift; in the lake no drift at all. Swim strokes may still be the walk animation (graph
-`swimming` parameter is the anim lane's, ROADMAP 3.6).
+Status: awaiting owner (built 2026-11-26, worldgen-4).
+Launch 1 (river, the Odai 2.0 reach): `bash bevyrrowind/tools/owner_launch.sh view "world:C:/cargo-target/scrib/worldgen/x10s-b2w" --hour 12 --camera -2450,+90,1850,-2690,+5,1650`
+Launch 2 (altitude lake 142, level 125 m, 38 ha): same with `--camera -1446,+3,1662,-1081,+0,1392`.
+No log line proves it (the system is silent); the headless test `river_carries_a_swimmer` is the proof.
+Do: walk into the river until swimming, hold still, swim upstream, across, climb out on a bank; then swim in the lake.
+Yes/no: (1) does walking turn into swimming at about neck depth, and back to wading in the shallows, without popping
+between the two? (2) holding still in the river, are you carried downstream at about the water's visible speed? (3) can
+you still swim upstream (slowly) and does the bank stop the drift (never pushed through it)? (4) in the lake: you float
+at the surface, 125 m above the sea, with no drift?
+Known, not part of this check: strokes are still the walk animation, no dive, no breath (ROADMAP 3.6); the river's
+speed is the same across its width until FL-1.
 Bad: walking on the river bed in deep water, popping between swim and walk, being pushed through a bank, drift in still
 water, the current faster than the water looks.

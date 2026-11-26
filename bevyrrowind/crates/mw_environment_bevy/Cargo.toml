@@ -47,6 +47,8 @@ serde = { workspace = true, optional = true }
 sf_atmos_bevy.workspace = true
 sf_audio.workspace = true
 sf_character_bevy.workspace = true
+# Movers the water makes swim and carries (`swim`, FL-5c); already in the app's graph.
+sf_controller_bevy.workspace = true
 sf_coords.workspace = true
 sf_physics_bevy.workspace = true
 sf_records.workspace = true

@@ -65,6 +65,18 @@ wind (W-WIND, `sf_water/src/sea_wind.rs`): low-passed (30 s) and blended between
 `mw_environment_bevy/src/water.rs:141` (`add`; fixed-tick `step`, `bed`, `pools`, `sync`); `mw_water` gives bodies (sea at 0,
 interiors at `WHGT`), optics by region (`optics::*`), `SEA_FETCH_M` 20 km, shore settings.
 
+**Swimming (FL-5c, 2026-11-26):** `mw_environment_bevy/src/swim.rs`, `FixedUpdate` in `ControllerSystems::Drive`
+after the water's `step`: every awake `Mover` not in `Fly` asks `WaterQuery::immersion` for its capsule in the active
+worldspace, the pure rule `sf_water::swim::medium` decides (`swim.enter_fraction`, `swim.exit_fraction` hysteresis), and the
+system writes `MoverMode::Swim { surface }` or back to `Ground`, and `Locomotion::current` (the sample's horizontal
+velocity x `swim.current.gain`, x `swim.current.wade_gain` x submerged share when wading, capped at
+`swim.current.max_mps`; zero when dry). The mover adds the current to its displacement before the sweep, so banks stop
+the drift and the intent stays relative to the water. One rule for every body in the query: sea, pools, guide lakes
+and rivers. Morrowind's `fSwimHeightScale` (0.9) sets `swim.enter_fraction` at the `Mod` layer at start (`water.rs`
+`WaterInputs::build`); a swimmer floats at 0.75 of its height (`MoverParams::swim_depth`), above the 0.6 exit. `Fly`
+movers (pure-swimmer creature scaffold, noclip) are skipped. Not built: dive, breath, strokes, the graph's `swimming`
+parameter (ROADMAP 3.6).
+
 ## Bevy features used
 
 `MaterialPlugin` for both materials, batched indirect draws and per-view culling for patches (see

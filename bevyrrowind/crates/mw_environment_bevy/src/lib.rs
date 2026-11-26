@@ -6,6 +6,7 @@ pub mod night_sky;
 pub mod quality_tunables;
 pub mod render;
 pub mod shadow_tunables;
+pub mod swim;
 pub mod water;
 pub mod weather;
 pub mod worldgen_water;

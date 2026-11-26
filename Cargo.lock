@@ -5439,6 +5439,7 @@ dependencies = [
  "sf_atmos_bevy",
  "sf_audio",
  "sf_character_bevy",
+ "sf_controller_bevy",
  "sf_coords",
  "sf_physics_bevy",
  "sf_records",

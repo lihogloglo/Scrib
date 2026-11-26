@@ -34,7 +34,7 @@ use sf_water_bevy::{
 };
 use sf_world::{Worldspace, WorldspaceId};
 use sf_world_bevy::{ActiveWorldspace, WorldspaceRegistry};
-use tes3::esp::{Cell, Landscape};
+use tes3::esp::{Cell, GameSetting, GameSettingValue, Landscape};
 
 use mw_game_core::exterior::ExteriorCamera;
 /// The sea's wind input (W-WIND): the exterior copies the weather's `WindField` mean wind into it.
@@ -101,6 +101,8 @@ pub struct WaterInputs {
     cells: Option<CellRegions>,
     /// A generated world's lakes and rivers (`worldgen_water`, GW-3).
     guide: Option<sf_worldgen::water::GuideWater>,
+    /// The `fSwimHeightScale` game setting, when the records have it (`swim.enter_fraction`, FL-5c2).
+    swim_height_scale: Option<f32>,
 }
 
 impl WaterInputs {
@@ -118,17 +120,21 @@ impl WaterInputs {
             return Self::default();
         }
         let t = Instant::now();
+        let swim_height_scale = match db.get::<GameSetting>(&sf_records::RecordId::new("fSwimHeightScale")).map(|g| &g.value) {
+            Some(GameSettingValue::Float(v)) => Some(*v),
+            _ => None,
+        };
         let lands: Vec<((i32, i32), Vec<f32>)> = db.iter::<Landscape>().map(|(_, l)| (l.grid, mw_world::terrain::LandData::decode(l).heights)).collect();
         let regions: HashMap<(i32, i32), String> =
             db.iter::<Cell>().filter(|(_, c)| !c.is_interior()).filter_map(|(_, c)| Some((c.data.grid, c.region.clone()?))).collect();
         let Some(bounds) = mw_water::cell_bounds(lands.iter().map(|(g, _)| *g).chain(regions.keys().copied())) else {
-            return Self::default();
+            return Self { swim_height_scale, ..Self::default() };
         };
         let mask = mw_water::wet_mask(bounds, lands.iter().map(|(g, h)| (*g, h.as_slice())));
         // No openness until the shore bake: swamp regions start with their open-water record.
         let map = mw_water::optics_map(bounds, |x, y| regions.get(&(x, y)).cloned(), |_, _| None, 0.0);
         info!("water: wet mask {}x{} ({} LAND cells), regions {}x{} in {:.2} s", mask.width, mask.height, lands.len(), map.width, map.height, t.elapsed().as_secs_f32());
-        Self { mask: Some(mask), regions: Some(map), cells: Some((bounds, regions)), guide: None }
+        Self { mask: Some(mask), regions: Some(map), cells: Some((bounds, regions)), guide: None, swim_height_scale }
     }
 }
 
@@ -334,7 +340,9 @@ pub fn add(
         .insert_resource(ShoreBake(bake))
         .insert_resource(Pools { levels, look: look_of(optics::INTERIOR), current: None })
         .insert_resource(Water { world, time: 0.0 })
-        .add_systems(FixedUpdate, step.before(sf_physics_bevy::PhysicsSystems::Step))
+        .add_systems(FixedUpdate, step.before(sf_physics_bevy::PhysicsSystems::Step));
+    crate::swim::add(app, inputs.swim_height_scale);
+    app
         .add_systems(Update, (spawn_ocean, mark_camera, bed, shore_done, pools))
         .add_systems(PostUpdate, sync.after(TerrainSystems::Update).before(WaterSystems::Drive))
         .add_systems(PostUpdate, medium.after(TerrainSystems::Update).in_set(WaterSystems::Medium))
@@ -405,7 +413,7 @@ fn pools(mut commands: Commands, active: Res<ActiveWorldspace>, registry: Res<Wo
 /// The CPU query's copy of the GPU sea state (W-WIND): rebuilt when [`OceanSpectrum`] changes,
 /// blended at the twin's own time like the GPU.
 #[derive(Resource)]
-struct SeaSync {
+pub(crate) struct SeaSync {
     spectrum: OceanSpectrum,
     settings: ShoreSettings,
     /// Shore waves of the transition's `from` and of the sea state.
@@ -414,7 +422,7 @@ struct SeaSync {
 
 /// The query's state for this physics step (water.md "The water query": same 60 Hz step). The
 /// twin and the shore waves follow the GPU's sea state and transition (W-WIND).
-fn step(time: Res<Time<Fixed>>, spectrum: Res<OceanSpectrum>, shore: Res<WaterShoreInput>, mut sync: ResMut<SeaSync>, mut water: ResMut<Water>) {
+pub(crate) fn step(time: Res<Time<Fixed>>, spectrum: Res<OceanSpectrum>, shore: Res<WaterShoreInput>, mut sync: ResMut<SeaSync>, mut water: ResMut<Water>) {
     let t = time.elapsed_secs_f64();
     let exterior = ids::exterior();
     let settings = shore.field.as_ref().map_or(sync.settings, |f| f.settings);
