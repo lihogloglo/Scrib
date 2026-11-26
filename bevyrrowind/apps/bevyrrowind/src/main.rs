@@ -125,6 +125,10 @@ enum Command {
         /// Raster spacing with `--guide`, metres (default: the declared `site.cell_m`).
         #[arg(long)]
         cell_m: Option<f64>,
+        /// SC-1, with `--guide`: found the town `<east>,<north>` metres from the centre found (e.g. `-200,-380`: on
+        /// the plain south-west of the river reach); the crop and `centre_m` follow.
+        #[arg(long, value_delimiter = ',', num_args = 2, allow_hyphen_values = true)]
+        centre_offset_m: Vec<f64>,
         /// Output folder (created).
         #[arg(long)]
         out: PathBuf,
@@ -1032,7 +1036,7 @@ fn run(cli: Cli) -> Result {
             println!("worldgen-x10: {:.1} s total", started.elapsed().as_secs_f64());
             Ok(())
         }
-        Command::WorldgenSite { anchor, radius_m, guide: Some(guide), cell_m, out } => {
+        Command::WorldgenSite { anchor, radius_m, guide: Some(guide), cell_m, centre_offset_m, out } => {
             let started = std::time::Instant::now();
             // The road table names LTEX records: the content gives their texture files.
             let (_, content) = load(&install, false)?;
@@ -1045,12 +1049,16 @@ fn run(cli: Cli) -> Result {
             }
             let sharp_scale = mw_exterior_bevy::worldgen::WORLDGEN_SHARP.default_value();
             let table = mw_worldgen::site::SiteTable::builtin()?;
-            let args = mw_worldgen::site::SiteArgs { anchor, out, params, table, sharp_scale };
+            let centre_offset_m = match centre_offset_m[..] {
+                [east, north] => [east, north],
+                _ => [0.0, 0.0],
+            };
+            let args = mw_worldgen::site::SiteArgs { anchor, out, params, table, sharp_scale, centre_offset_m };
             print!("{}", mw_worldgen::site::run_guide(&content.db, &guide, &args)?);
             println!("worldgen-site: {:.1} s total", started.elapsed().as_secs_f64());
             Ok(())
         }
-        Command::WorldgenSite { anchor, radius_m, guide: None, cell_m: _, out } => {
+        Command::WorldgenSite { anchor, radius_m, guide: None, cell_m: _, centre_offset_m: _, out } => {
             let started = std::time::Instant::now();
             let (vfs, content) = load(&install, false)?;
             // Models on demand: bounds for every exterior reference (classification, member radii, as worldgen-x10),
@@ -1083,7 +1091,7 @@ fn run(cli: Cli) -> Result {
                 params.radius_m = r;
             }
             let table = mw_worldgen::site::SiteTable::builtin()?;
-            let args = mw_worldgen::site::SiteArgs { anchor, out, params, table, sharp_scale: 0.0 };
+            let args = mw_worldgen::site::SiteArgs { anchor, out, params, table, sharp_scale: 0.0, centre_offset_m: [0.0, 0.0] };
             print!("{}", mw_worldgen::site::run(&content.db, &bounds, &points, &args)?);
             println!("worldgen-site: {:.1} s total", started.elapsed().as_secs_f64());
             Ok(())

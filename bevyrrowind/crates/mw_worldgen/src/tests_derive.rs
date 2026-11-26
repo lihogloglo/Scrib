@@ -275,6 +275,7 @@ fn site_from_a_derived_guide_uses_the_dropped_anchor_and_the_valley_centre() {
         params,
         table: SiteTable::builtin().unwrap(),
         sharp_scale: 0.0,
+        centre_offset_m: [0.0, 0.0],
     };
     // The site's heights are the derived guide's tiles at the cell centres.
     let heights_ok = |guide: &Path, s: &site::Site, centre: [f64; 2]| {
@@ -317,6 +318,18 @@ fn site_from_a_derived_guide_uses_the_dropped_anchor_and_the_valley_centre() {
     assert!((river.centre_m[0] - 500.0).abs() <= 10.0 && (river.centre_m[1] - 300.0).abs() <= 10.0, "{river:?}");
     assert!(s2.json.source.contains("river reach nearest Town") && s2.json.source.contains("dropped by worldgen-derive"));
     heights_ok(&plain, &s2, river.centre_m);
+    assert!(!s2.json.source.contains("moved") && !summary.contains("moved"), "{summary}");
+
+    // SC-1: founded 20 m west and 15 m north of the reach's middle; the centre and the crop follow.
+    let out3 = o.path().join("planned3");
+    let beside = SiteArgs { centre_offset_m: [-20.0, 15.0], ..site_args("Town", &out3) };
+    let summary = site::run_guide(&db, &plain, &beside).unwrap();
+    let s3 = site::read(&out3).unwrap();
+    let moved = [river.centre_m[0] - 20.0, river.centre_m[1] + 15.0];
+    assert_eq!(s3.json.centre_m, moved, "{summary}");
+    assert!(s3.json.source.contains("centre moved [-20.0, 15.0] m east, north"), "{}", s3.json.source);
+    assert!(summary.contains("river:") && summary.contains("centre moved [-20.0, 15.0]"), "{summary}");
+    heights_ok(&plain, &s3, moved);
 
     // Neither in anchors.json nor dropped: refused.
     let e = site::run_guide(&db, &plain, &site_args("Nowhere", &o.path().join("none"))).unwrap_err().to_string();

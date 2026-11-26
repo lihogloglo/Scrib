@@ -31,6 +31,8 @@
 //! - ST-2b, a derived guide (`worldgen-derive`, [`crate::derive`]): an anchor it dropped is found in `derive.json`
 //!   (its stamp is at weight 0 already); when that run built a valley stamp for the anchor's site, `centre_m` is the
 //!   valley's centre and no river is searched (the plan and the terraces share one centre).
+//! - SC-1, `--centre-offset-m <east>,<north>` ([`SiteArgs::centre_offset_m`]): the town is founded that far from the
+//!   centre found above (a town beside its river, not astride it); `centre_m` and the crop follow, `source` says so.
 //! - `roads.u8`: 1 where the ground layer the game draws there ([`sf_worldgen::layers`]: the grid of the stamp of
 //!   weight over one half, else the global grid; the covering texel, no blend) is a road in `worldgen-site.toml`;
 //!   no file when the guide has no layers.
@@ -383,6 +385,9 @@ pub struct SiteArgs {
     pub table: SiteTable,
     /// The `worldgen.sharp` scale the game shows a guide at (`FilterParams::with_sharp_scale`; [`run_guide`] only).
     pub sharp_scale: f32,
+    /// [`run_guide`] only (SC-1): where the town is founded, metres east and north of the centre found (the river
+    /// reach's middle, or the valley stamp's centre); `[0, 0]` founds it there. `centre_m` and the crop follow.
+    pub centre_offset_m: [f64; 2],
 }
 
 /// The named anchor as `worldgen-x10` builds it: its name, source-frame centre and member keys.
@@ -1129,6 +1134,16 @@ fn centre_report(
     }
 }
 
+/// SC-1: the site centre `offset` metres (east, north) from the centre `found`, and the words [`run_guide`] adds to
+/// `source` and its report (empty without an offset).
+fn offset_centre(found: [f64; 2], offset: [f64; 2]) -> ([f64; 2], String) {
+    if offset.iter().all(|&v| v == 0.0) {
+        return (found, String::new());
+    }
+    let moved = format!(", centre moved [{:.1}, {:.1}] m east, north of it", offset[0], offset[1]);
+    ([found[0] + offset[0], found[1] + offset[1]], moved)
+}
+
 /// The `worldgen-site --guide` command body (ST-2, ST-2b); returns the printed report.
 ///
 /// The anchor is the one of that name in `anchors.json` (its stamp is dropped here), else one `worldgen-derive`
@@ -1145,7 +1160,7 @@ pub fn run_guide(db: &RecordDb, guide: &Path, args: &SiteArgs) -> Result<String,
     let valley = if anchor.derived { guide_valley(guide, &anchor.name, derived.as_ref())? } else { None };
     let (tiles, dropped) = guide_tiles(guide, anchor.stamp, args.sharp_scale)?;
     let open_s = started.elapsed().as_secs_f64();
-    let (river, centre) = match (&valley, anchor.mapped) {
+    let (river, found) = match (&valley, anchor.mapped) {
         (Some((_, c)), _) => (None, *c),
         (None, Some(mapped)) => {
             let r = find_river(&tiles, mapped, prm.river_search_m, prm.river_min_area_m2).ok_or_else(|| {
@@ -1164,6 +1179,7 @@ pub fn run_guide(db: &RecordDb, guide: &Path, args: &SiteArgs) -> Result<String,
             )));
         }
     };
+    let (centre, moved) = offset_centre(found, args.centre_offset_m);
     let ltex_file = |id: &str| db.get::<LandscapeTexture>(&RecordId::new(id)).map_or_else(String::new, |l| l.file_name.clone());
     let palette: Vec<String> = tiles.layers().map(|f| f.layers().palette.clone()).unwrap_or_default();
     let road_of: Vec<bool> = palette.iter().map(|id| args.table.roads.is_road(id, &ltex_file(id))).collect();
@@ -1182,7 +1198,7 @@ pub fn run_guide(db: &RecordDb, guide: &Path, args: &SiteArgs) -> Result<String,
         _ => String::new(),
     };
     site.json.source = format!(
-        "{} guide{from}, {around}, without its stamp {dropped_name} (worldgen.sharp {})",
+        "{} guide{from}, {around}{moved}, without its stamp {dropped_name} (worldgen.sharp {})",
         guide.display(),
         args.sharp_scale
     );
@@ -1191,6 +1207,9 @@ pub fn run_guide(db: &RecordDb, guide: &Path, args: &SiteArgs) -> Result<String,
     let [w, h] = json.dims;
     let mut out = String::new();
     centre_report(&mut out, guide, &anchor, &dropped_name, valley.as_ref(), river.as_ref(), prm);
+    if !moved.is_empty() {
+        let _ = writeln!(out, "  centre_m [{:.1}, {:.1}]: the site's{moved}", centre[0], centre[1]);
+    }
     let _ = writeln!(out, "  crop: {w} x {h} cells at {:.4} m, origin [{:.1}, {:.1}] m", json.cell_m, json.origin_m[0], json.origin_m[1]);
     let (cc, cr) = (w / 2, h / 2);
     let mut sides = [0usize; 4];
