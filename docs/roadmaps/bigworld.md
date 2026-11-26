@@ -65,8 +65,9 @@ with no build time or crates taken from other lanes. **Owner go for Stage A (202
   path: opaque content that casts nothing costs 1.84 ms (model 1.75). Recommended: keep the slot path, no standalone
   pass; impostors out of the cascades with an opaque shadow proxy, geometry leaves and a shadow LOD at T0, a
   depth-equal main pass for the impostor (spec "As built" BW-2b, "Risks").
-- [ ] **BW-2c** depth-equal main pass for today's `ImpostorMaterial` (`sf_lod_bevy`, granted by meta 2026-11-26),
-  with a counter of main-pass draws that no prepass drew. Verify: pipeline-descriptor test; counter 0; owner look.
+- [x] **BW-2c** (2026-11-26) depth-equal main pass for today's `ImpostorMaterial` (`sf_lod_bevy`): the far field's
+  impostors are alpha-tested once, in the depth prepass. Switch `far.impostor.depth_equal` (default on, live).
+  Counter `far/impostors/no_prepass`, expected 0. Not measured in game. Owner look `FF-7` awaiting.
 - [p] **BW-2d** bench arms for the shadow LOD, the trimmed hull and the depth-equal main pass. One run, on meta's go.
 
 **Stage B: a forest in a framework example scene** (owner looks, synthetic content).

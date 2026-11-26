@@ -35,6 +35,16 @@ at L1/L2, dropped at L3, `sf_lod/src/build.rs:150`) draw with `BlendProxyMateria
 (`levels.rs`, `FadeRange`). A far-eligible placement hands off only if its L1 node draws it: `NodeHeader::unrepresented` (`sf_lod/src/build.rs`) lists models the node draws nothing for (policy `Drop`, no cook, boundless particle models), and `Ends::inputs` (`sf_world_bevy/src/stream.rs`) keeps those to their own ring. Blended sources made of back-to-back triangle pairs are folded first (`cluster::fold_back_faces`), else the weld collapses them. `residency_pass` (`runtime.rs:570`) forces a parent visible while any child that should draw is
 not resident (no holes).
 
+**Impostors (`ImpostorMaterial`, `sf_lod_bevy/src/materials.rs:59`).** One mesh per far node holds its impostor cards:
+alpha-masked, forward-shaded, with their own prepass shader. The alpha test runs once, in the camera's depth prepass
+(BW-2c, 2026-11-26): in a view with a depth prepass `Material::specialize` (`materials.rs:100`) sets the main pass to
+depth-equal with no depth write (`depth_equal_main_pass`, `depth_equal.rs:46`) and the def `DEPTH_EQUAL_MAIN`, under which
+`impostor.wesl` neither alpha-tests nor range-dithers. Prepass and shadow pipelines and views without a depth prepass
+keep Bevy's state. It holds because both vertex stages mark the position `@invariant` and the camera prepass writes no
+`frag_depth` (`shader_tests.rs`). Switch: `far.impostor.depth_equal` (`lib.rs:105`, default on, live; off = alpha test in
+both passes). Counter `far/impostors/no_prepass` (`depth_equal.rs`, `count_unprepassed`): parts with a ready main-pass
+pipeline and no ready prepass pipeline, which the equal test would leave undrawn; expected 0, a warn line otherwise.
+
 **Static scene (default since owner 2026-11-17; `--scene` is a no-op).** `static_paths` (`mw_exterior_bevy/src/exterior.rs:1405`): scene needs no
 `--off scene`, and no `--off near/nif`, no `--lod-tint`; it turns the precombine off (never both). `ScenePlugin`
 (`sf_scene_bevy/src/lib.rs:64`) installs `SceneCells(SceneHook)` when enabled (`lib.rs:191`); the game also adds the vendored

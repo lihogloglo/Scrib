@@ -552,6 +552,7 @@ pub(crate) fn build_impostor_arrays(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<ImpostorMaterial>>,
     debug: Res<FarFieldDebug>,
+    settings: Res<FarFieldSettings>,
 ) {
     let mut state = shared.lock();
     for (ws, w) in &mut state.worlds {
@@ -599,6 +600,7 @@ pub(crate) fn build_impostor_arrays(
                 albedo: albedo.clone(),
                 normal_depth: normal_depth.clone(),
                 far_map: Handle::default(),
+                depth_equal: settings.impostor_depth_equal,
             })
         });
         w.impostors = Some(ImpostorSet { materials, layers });
@@ -802,7 +804,18 @@ fn emit_far_counters(c: &DiagCounters, out: &FarFieldStats, started: Instant) {
     c.add_duration_named("far/select/ms", started.elapsed());
 }
 
-/// Debug level tint and the light sprites' night factor.
+/// What [`update_materials`] last wrote into the materials.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) struct AppliedLook {
+    level_tint: bool,
+    /// The night factor, in hundredths.
+    night: f32,
+    impostor_sets: usize,
+    blend_materials: usize,
+    impostor_depth_equal: bool,
+}
+
+/// Debug level tint, the light sprites' night factor and the impostors' depth-equal switch.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_materials(
     debug: Res<FarFieldDebug>,
@@ -815,7 +828,7 @@ pub(crate) fn update_materials(
     mut sprites: ResMut<Assets<LightSpriteMaterial>>,
     night: Res<crate::FarLightsNight>,
     fog: Res<sf_render_order_bevy::TranslucentFog>,
-    mut applied: Local<Option<(bool, f32, usize, usize)>>,
+    mut applied: Local<Option<AppliedLook>>,
 ) {
     let Some(far) = far else { return };
     if sprites.get(&far.lights).is_some_and(|m| m.fog_params != fog.params || m.fog_volume != fog.volume)
@@ -837,7 +850,13 @@ pub(crate) fn update_materials(
     let imp_sets: Vec<[Handle<ImpostorMaterial>; 3]> =
         state.worlds.values().filter_map(|w| w.impostors.as_ref().map(|s| s.materials.clone())).collect();
     drop(state);
-    let wanted = (debug.level_tint, (night.0 * 100.0).round() / 100.0, imp_sets.len(), blend_entries.len());
+    let wanted = AppliedLook {
+        level_tint: debug.level_tint,
+        night: (night.0 * 100.0).round() / 100.0,
+        impostor_sets: imp_sets.len(),
+        blend_materials: blend_entries.len(),
+        impostor_depth_equal: settings.impostor_depth_equal,
+    };
     if *applied == Some(wanted) {
         return;
     }
@@ -872,6 +891,7 @@ pub(crate) fn update_materials(
             if let Some(mut m) = impostors.get_mut(h) {
                 let rgb = if debug.level_tint { Vec3::from_array(LEVEL_TINT[i]) } else { Vec3::ONE };
                 m.params.tint = Vec4::from((rgb, m.params.tint.w));
+                m.depth_equal = settings.impostor_depth_equal;
             }
         }
     }

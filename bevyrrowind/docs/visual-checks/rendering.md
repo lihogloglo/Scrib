@@ -271,6 +271,20 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Balmora 14:00, same in sc-scene and sc-noscene: brief, subtle flickers, the owner thinks shadows (maybe fog).
 - Status: known bug, not diagnosed (see the shadows checks SH-* for related cases).
 
+### FF-7: Far impostor trees unchanged with the alpha test in the prepass only (BW-2c, 2026-11-26)
+- Why: far impostors are now alpha-tested once, in the depth prepass; the main pass shades only the pixels the
+  prepass kept (`far.impostor.depth_equal`, default on). Nothing should look different; a fault shows as holes or
+  missing trees.
+- Kind: game location. Run: `scene handoff-forest` (Bitter Coast trees west of Seyda Neen, impostors from ~400 m).
+  A/B: the same with `--set far.impostor.depth_equal=false` (Bevy's stock state).
+- Log first: `sf_lod_bevy: far field of ...: ... N impostor models` with N > 0, and no line
+  `sf_lod_bevy: ... impostor parts have a main-pass pipeline and no prepass pipeline` (perf runs: counter
+  `far/impostors/no_prepass` = 0).
+- Look for (yes/no): 1. Do the trees past ~400 m look the same in both runs (shape, edges, brightness)? 2. Is any
+  far tree missing, see-through or holed, standing still or flying toward them (W) through the 350-450 m band?
+  3. Any flicker on the far trees while turning the camera?
+- Status: awaiting owner.
+
 ### RO-22: Near/far handoff band with GPU-culled statics (perf-push P3, 2026-11-12)
 - Why: near statics are no longer culled by distance on the CPU (`NoCpuCulling`); their visibility ranges (LOD levels,
   the dithered end band where the far field takes over) are now honoured only by the GPU preprocess, in every view.

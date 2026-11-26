@@ -3,7 +3,9 @@
 // so depth and shadow silhouettes match the main pass.
 //
 // Positions are `@invariant` here and in the main pass, so both compute
-// identical depth (the main pass tests equal-or-nearer against it).
+// identical depth: the main pass tests depth-equal against the camera
+// prepass (`depth_equal.rs`), which therefore must write the rasterised
+// depth, never a `frag_depth` (that one is for shadow views only).
 
 import super::impostor_common;
 import super::impostor_common::{params, rotate_y};

@@ -1,6 +1,12 @@
-// Octahedral impostors, main pass: blend three frames, alpha-test, light
-// through Bevy's PbrInput so shadows, clustered lights, fog and atmosphere
-// match the meshes they stand in for.
+// Octahedral impostors, main pass: blend three frames, light through Bevy's
+// PbrInput so shadows, clustered lights, fog and atmosphere match the meshes
+// they stand in for.
+//
+// DEPTH_EQUAL_MAIN (`depth_equal.rs`, set with the pipeline state): the view
+// has a depth prepass, which did the alpha test and the range dither; this
+// pass tests depth-equal against it and writes no depth, so only the pixels
+// the prepass kept get here and nothing is discarded. Without it (no depth
+// prepass, or the switch off) this pass tests alpha and dither itself.
 
 import super::impostor_common;
 import super::impostor_common::{params, rotate_y, far_map, far_sampler};
@@ -56,13 +62,15 @@ fn vertex(v: impostor_common::Vertex) -> VertexOutput {
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-@if(VISIBILITY_RANGE_DITHER)
+@if(VISIBILITY_RANGE_DITHER && !DEPTH_EQUAL_MAIN)
     visibility_range_dither(in.position, in.visibility_range_dither);
 
     let s = impostor_common::impostor_sample(in.uv0, in.uv1, in.uv2, in.weights, in.frames, in.layer_instance.x);
+@if(!DEPTH_EQUAL_MAIN) {
     if s.alpha < params.tint.a {
         discard;
     }
+}
     let n = rotate_y(s.normal, in.yaw);
 
     var pbr: PbrInput = pbr_input_new();

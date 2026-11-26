@@ -173,3 +173,37 @@ materialize + preprocess. Industry sources: `superfargoth/docs/research/far-vege
   T1 impostors out of the cascades with a masked prepass and a depth-equal main pass ~2.0 ms (0.83 bookkeeping, 1.0
   prepass, ~0.2 main), ~1.6 ms with a trimmed hull; an opaque shadow proxy for T1 inside the shadow range ~0.3 ms
   (the opaque cards' shadow spans). About 2.5-3.3 ms at stand density: under the stop limit, over the 2.0 ms budget.
+
+## BW-2c: depth-equal main pass for today's impostor (2026-11-26, bigworld-6)
+
+- **Pipeline** (`sf_lod_bevy/src/depth_equal.rs`, `depth_equal_main_pass`, called from `ImpostorMaterial::specialize`
+  when the material key's `depth_equal` is set): a descriptor that is not a prepass one (no `PREPASS_PIPELINE`
+  vertex def and not labelled `prepass_pipeline`), whose mesh key has `DEPTH_PREPASS` and whose stock state writes
+  depth, gets `depth_compare = Equal`, `depth_write_enabled = false` and the fragment def `DEPTH_EQUAL_MAIN`.
+  Prepass and shadow descriptors, views without a depth prepass and blended passes stay as Bevy built them.
+- **Shader:** `impostor.wesl` keeps its alpha test and its range dither only without `DEPTH_EQUAL_MAIN`. The def is
+  our own, set with the state, so the shader can never drop the discard on a pipeline that still tests
+  `GreaterEqual` (the spec's first wording, `@if(!DEPTH_PREPASS)`, would do that with the switch off).
+- **Switch:** tunable `far.impostor.depth_equal` (`sf_lod_bevy::IMPOSTOR_DEPTH_EQUAL`, default on) ->
+  `FarFieldSettings::impostor_depth_equal` -> `ImpostorMaterial::depth_equal` (pipeline key `ImpostorKey`), written
+  by `update_materials` when it changes, so it is live. The game binds it in `quality_presets::add_gates`.
+- **The open question, traced** (vendored `bevy_pbr/src/render/gpu_preprocess.rs`, `mesh_preprocess.wesl`,
+  `build_indirect_params.wesl`): the early and late preprocess passes loop over every render phase's own work
+  items with one shader, one view uniform and one depth pyramid per pass; a phase's main draw uses its own
+  `early_instance_count + late_instance_count`. The main alpha-mask phase and the prepass alpha-mask phase therefore
+  keep the same instances. They differ only through the CPU queue: `queue_material_meshes` and
+  `queue_prepass_material_meshes` read separate specialization caches, and a draw whose pipeline is still compiling
+  is skipped.
+- **Counter:** `count_unprepassed` (render world, `RenderSystems::Cleanup`) reads the public
+  `SpecializedMaterialPipelineCache`, `SpecializedPrepassMaterialPipelineCache`, `ViewKeyCache` and `PipelineCache`
+  for the extracted impostor parts (one entity per far node with impostors) in every camera view whose key has
+  `DEPTH_PREPASS`. It counts parts with a ready main-pass pipeline and no ready prepass pipeline, on screen or not,
+  so it is an upper bound of missing draws. Gauge `far/impostors/no_prepass` when the diag counters exist; one
+  warn line when an episode starts and one when it ends (peak, frames).
+- **Tests** (`test -p sf_lod_bevy`, 11): descriptor tests (main with a depth prepass: `Equal`, no write, the def,
+  nothing else changed; main without: stock; prepass and shadow: unchanged; blended: unchanged); a tripwire that
+  the vendored `bevy_pbr` still writes the marks the hook reads; `shader_tests.rs` (new dev-dependencies `naga`,
+  `wesl`): 20 def sets of both stages link and validate, the main pass has no `discard` under the def and has one
+  without, both vertex stages place the card with the same `@invariant` expression and the camera prepass writes
+  no `frag_depth`; the counter's rule.
+- **Not done:** no ms in game (one `perf ab` on the live switch prices it); the bench arm is BW-2d.

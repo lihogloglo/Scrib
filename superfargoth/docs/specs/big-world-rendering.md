@@ -399,6 +399,11 @@ slices append their detail there and keep a few lines here.
   no shadow 3.46, opaque 1.80. Opaque and casting nothing, both batches: 1.84 ms (a sum of spans; model 1.75).
   Bookkeeping 0.83-1.25 ms (model 0.55). Not priced by an arm: a trimmed hull, a masked prepass with a depth-equal
   main pass, a shadow LOD, the real impostor shader.
+- **BW-2c depth-equal impostor main pass** (`sf_lod_bevy/src/depth_equal.rs`): today's far-field
+  `ImpostorMaterial` follows fill rule 5. `depth_equal_main_pass` runs in `Material::specialize` and switches only
+  a main-pass descriptor of a view with a depth prepass; `impostor.wesl` drops its alpha test and range dither
+  under `DEPTH_EQUAL_MAIN`. Switch `far.impostor.depth_equal` (default on, live). Counter
+  `far/impostors/no_prepass` (expected 0). No ms measured.
 <!-- /agent-summary -->
 
 ## Risks and open questions
@@ -415,9 +420,11 @@ slices append their detail there and keep a few lines here.
   models (roadmap, owner answer 2), which have alpha-card leaves: they take rule 5 (the bench trees cost 3.07 ms
   masked without shadows against 0.69 ms opaque; rule 5 should remove most of the 2.15 ms main pass, not the
   0.78 ms prepass). Not priced.
-- **Depth-equal main pass** ([research note, part 3](../research/far-vegetation-fill-2026-11-26.md)). Not traced:
-  whether, with `OcclusionCulling`, the main pass can draw an instance that no prepass drew; with `Equal` it would
-  be missing for that frame. BW-2c counts it. The impostor loses per-pixel depth on the camera path (no
+- **Depth-equal main pass** ([research note, part 3](../research/far-vegetation-fill-2026-11-26.md)). Traced
+  in BW-2c: Bevy culls each render phase on the GPU with the same shader on the same inputs, so with
+  `OcclusionCulling` the main pass cannot draw an instance its prepass phase culled. The two can differ only on the
+  CPU, while a part's main-pass pipeline is ready and its prepass pipeline is missing or still compiling: the part
+  is then missing for those frames (`far/impostors/no_prepass`, expected 0). The impostor loses per-pixel depth on the camera path (no
   `frag_depth`): intersections with terrain and buildings are those of a flat card past ~125 m.
 - **Shadow-only ranges.** Not checked in code: that a batch on the shadow-only layer costs no preprocess in the
   camera view, and how lamp (point and spot) views treat that layer. Check in BW-5b.

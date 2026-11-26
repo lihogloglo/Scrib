@@ -16,15 +16,19 @@
 //! ```
 
 mod assets;
+mod depth_equal;
 mod materials;
 mod runtime;
+#[cfg(test)]
+mod shader_tests;
 
 pub use assets::{
     FarDirectoryAsset, FarDirectoryLoader, FarLoadError, FarNodeAsset, FarNodeLoader, ImpostorAtlasAsset, ImpostorAtlasLoader, NearCombineLoader,
     ProxySurface,
 };
+pub use depth_equal::{DEPTH_EQUAL_MAIN_DEF, NO_PREPASS_COUNTER, depth_equal_main_pass};
 pub use materials::{
-    ATTRIBUTE_IMPOSTOR, ATTRIBUTE_SPRITE, BlendProxyExt, BlendProxyMaterial, FarShadowExt, ImpostorMaterial, ImpostorParams, LightSpriteMaterial,
+    ATTRIBUTE_IMPOSTOR, ATTRIBUTE_SPRITE, BlendProxyExt, BlendProxyMaterial, FarShadowExt, ImpostorKey, ImpostorMaterial, ImpostorParams, LightSpriteMaterial,
     ProxyMaterial, SpriteParams, blend_proxy_material, impostor_mesh, light_mesh,
 };
 pub use runtime::{BlendProxyKey, FarMaterials, LEVEL_TINT, node_center};
@@ -68,6 +72,8 @@ pub struct FarFieldSettings {
     pub emissive_nits: f32,
     /// `StandardMaterial::emissive_exposure_weight` on blended proxies.
     pub emissive_exposure_weight: f32,
+    /// [`IMPOSTOR_DEPTH_EQUAL`]. Live: a change re-specializes the impostor pipelines.
+    pub impostor_depth_equal: bool,
 }
 
 /// `far.select.move_m`: [`FarFieldSettings::select_gate`] location quantum, also the guard band of the
@@ -91,8 +97,18 @@ pub const FAR_HANDOFF_SCALE: Def<f32> = def!(float "far.handoff_scale" = 1.0)
     .group(Group::ViewDistance)
     .lifetime(Lifetime::Restart);
 
+/// `far.impostor.depth_equal`: impostors are alpha-tested once, in the camera prepass. In a view
+/// with a depth prepass their main pass tests depth-equal, writes no depth and never discards
+/// ([`depth_equal_main_pass`]; big-world-rendering.md "Fill rules", rule 5). Off is Bevy's stock
+/// state (the alpha test in both passes), the A/B arm. The host binds it to
+/// [`FarFieldSettings::impostor_depth_equal`].
+pub const IMPOSTOR_DEPTH_EQUAL: Def<bool> = def!(bool "far.impostor.depth_equal" = true)
+    .help("Far impostors are alpha-tested once, in the depth prepass; the main pass shades only the pixels it kept")
+    .source(Source::Industry("UE r.EarlyZPassOnlyMaterialMasking: masked materials tested in the early Z pass, base pass at depth-equal"))
+    .group(Group::ViewDistance);
+
 /// This crate's tunables (live binding: tunables slice T2).
-pub const TUNABLES: &[&dyn AnyDef] = &[&FAR_SELECT_MOVE_M, &FAR_HANDOFF_SCALE];
+pub const TUNABLES: &[&dyn AnyDef] = &[&FAR_SELECT_MOVE_M, &FAR_HANDOFF_SCALE, &IMPOSTOR_DEPTH_EQUAL];
 
 impl FarFieldSettings {
     /// The far-field gate with its declared quantum, on or off.
@@ -122,6 +138,7 @@ impl Default for FarFieldSettings {
             select_gate: Self::select_gate_quanta(sf_world::SELECT_GATE.default_value()),
             emissive_nits: 1.0, // tunables: const (unit conversion: linear emissive to nits, the host sets its exposure calibration)
             emissive_exposure_weight: 0.0, // tunables: const (external contract: Bevy exposure mode paired with emissive_nits)
+            impostor_depth_equal: IMPOSTOR_DEPTH_EQUAL.default_value(),
         }
     }
 }
@@ -273,6 +290,11 @@ impl Plugin for FarFieldPlugin {
                     .after(StreamingSystems::Drive),
             )
             .add_systems(PostUpdate, runtime::update_far_shadow.in_set(FarFieldSystems::FarShadow));
+    }
+
+    fn finish(&self, app: &mut App) {
+        // After every plugin's `build`, so the diag counters are found whatever the order.
+        depth_equal::add_watch(app);
     }
 }
 

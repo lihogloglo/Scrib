@@ -360,6 +360,9 @@ pub fn add_gates(app: &mut App, select_gate_off: bool) -> bool {
         .add_tunable(&sf_terrain_bevy::TERRAIN_MORPH_START)
         .bind_resource(|t: &mut sf_terrain_bevy::TerrainSettings, v| t.cdlod = t.cdlod.with_morph_start(v));
     let _far = app.add_tunable(&SELECT_GATE).bind_resource(|f: &mut sf_lod_bevy::FarFieldSettings, on| f.select_gate.enabled = on);
+    // BW-2c: far impostors alpha-tested once, in the depth prepass (live; off = Bevy's stock state, the A/B arm).
+    let _impostor_depth_equal =
+        app.add_tunable(&sf_lod_bevy::IMPOSTOR_DEPTH_EQUAL).bind_resource(|f: &mut sf_lod_bevy::FarFieldSettings, on| f.impostor_depth_equal = on);
     let _streaming = app.add_tunable(&SELECT_GATE).bind_resource(|s: &mut sf_world_bevy::Streaming, on| {
         let quanta = sf_world::GateQuanta { enabled: on, ..s.config().scheduler.select_gate };
         s.set_select_gate(quanta);

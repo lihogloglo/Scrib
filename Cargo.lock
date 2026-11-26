@@ -8601,6 +8601,7 @@ dependencies = [
  "big_space",
  "glam 0.33.12",
  "log",
+ "naga",
  "postcard",
  "sf_bake",
  "sf_coords",
@@ -8614,6 +8615,7 @@ dependencies = [
  "sf_world",
  "sf_world_bevy",
  "thiserror 2.0.21",
+ "wesl",
  "workspace-hack",
 ]
 

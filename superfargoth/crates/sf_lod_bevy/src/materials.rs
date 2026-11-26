@@ -38,9 +38,24 @@ pub struct ImpostorParams {
     pub far: Vec4,
 }
 
+/// The pipeline key of [`ImpostorMaterial`].
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct ImpostorKey {
+    /// [`ImpostorMaterial::depth_equal`].
+    pub depth_equal: bool,
+}
+
+impl From<&ImpostorMaterial> for ImpostorKey {
+    fn from(m: &ImpostorMaterial) -> Self {
+        Self { depth_equal: m.depth_equal }
+    }
+}
+
 /// Octahedral impostors of one worldspace: every atlas in two texture
 /// arrays (one layer per model).
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
+#[bind_group_data(ImpostorKey)]
 pub struct ImpostorMaterial {
     #[uniform(0)]
     pub params: ImpostorParams,
@@ -55,6 +70,10 @@ pub struct ImpostorMaterial {
     #[texture(4)]
     #[sampler(5)]
     pub far_map: Handle<Image>,
+    /// The alpha test runs once, in the camera prepass: the main pass of a view with a depth
+    /// prepass tests depth-equal and never discards ([`crate::depth_equal_main_pass`];
+    /// [`crate::IMPOSTOR_DEPTH_EQUAL`]). Not a binding: the pipeline key.
+    pub depth_equal: bool,
 }
 
 impl Material for ImpostorMaterial {
@@ -82,13 +101,16 @@ impl Material for ImpostorMaterial {
         _pipeline: &MaterialPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         layout: &MeshVertexBufferLayoutRef,
-        _key: MaterialPipelineKey<Self>,
+        key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         descriptor.vertex.buffers = vec![layout.0.get_layout(&[
             Mesh::ATTRIBUTE_POSITION.at_shader_location(0),
             Mesh::ATTRIBUTE_UV_0.at_shader_location(1),
             ATTRIBUTE_IMPOSTOR.at_shader_location(2),
         ])?];
+        if key.bind_group_data.depth_equal {
+            crate::depth_equal_main_pass(descriptor, key.mesh_key);
+        }
         Ok(())
     }
 }
