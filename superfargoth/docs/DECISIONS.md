@@ -2034,3 +2034,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (specs-4, MAP0 answers): Morrowind map = painted parchment relief by default, vanilla relief a Classic
   profile; reveal per player with a shared-map co-op option; Modern sells region maps and operators reveal their
   destinations; Modern compass hints undiscovered places within 150 m unnamed, Classic has no compass (map.md).
+- 2026-11-26 (specs-5, FL-5c; meta 2026-11-26, owner informed): one swim rule: the player swims wherever `WaterQuery`
+  has water (generated rivers and lakes, the classic sea, interior pools), as vanilla and shipped open worlds do; no
+  per-body switch (water-bodies.md FL-5c).

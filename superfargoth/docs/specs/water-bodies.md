@@ -153,8 +153,9 @@ inlet/outlet zones; constants, an overlap rule). Bed carving under the ribbon st
   `ControllerSystems::Drive`: for every awake `Mover` (capsule from `MoverParams::radius/height`), `immersion()` →
   `Ground` ↔ `Swim { surface }` and `loco.current`; movers in `Fly` (creature scaffold) are left alone. The adapter maps
   `fSwimHeightScale` to `enter_fraction` with the nav bake's rule (`mw_bake/src/nav.rs:17-20`). Applies to every body in
-  the query (also the classic sea and interior pools; owner question in the handoff). Dive, breath, strokes, the graph's
-  `swimming` parameter (anim lane) stay ROADMAP 3.6.
+  the query, one rule: the player swims wherever `WaterQuery` has water, the classic sea and interior pools included
+  (meta 2026-11-26 from vanilla behaviour and the industry standard, owner informed; DECISIONS). Dive, breath,
+  strokes, the graph's `swimming` parameter (anim lane) stay ROADMAP 3.6.
 
 ### FL-6: waterfalls at drops > 2 m
 
