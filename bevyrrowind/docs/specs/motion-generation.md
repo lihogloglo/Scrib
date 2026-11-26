@@ -339,6 +339,24 @@ Loops are exact on their hub by a new `[[hub_loop]]` link job (link hub -> take 
 hubcheck: ends 0.0 deg / 0.0 cm on all 136; slide p95 median 22 (enter.front) / 44 (enter.left) / 26 / 48 (exits) / 15-19 (loops) cm/s, worst 198 (old chair exit.left), floor exits 85-105; grade 0 gated. 2 old-chair enter takes missed the hub (endpoint correction, 67 deg) and were set aside.
 **Height gap:** Kimodo seats the Hips at 0.53-0.57 m on every chair band whatever `pelvis_height` and cfg [2, 5] ask, puts the stool rest on the floor, and the floor family sits on the floor (Hips 0.10 m) under the seat14 top. Against band + 0.05 (the `sit.chair` offset): `sit.chair.seat54` Hips 0.569 m is 2 cm low (inside the 3 cm IK Guess), `sit.stool` 0.585 m is 10 cm low (AN26b: lift + leg IK, or another generator for high seats).
 
+**AN26b design (2026-11-26, anim-4).** Fixing the height at the cook, not by regenerating: the industry fits a clip
+to a prop height offline with a pelvis offset plus leg IK goals (UE5 IK Retargeter pelvis offset + IK goals, Contextual
+Animation's per-height sets), leaving runtime IK only the last few cm. No generator we have keeps a high seat
+(Kimodo ignores `pelvis_height`), and regenerating per band would multiply the takes. So:
+- **`ClipRules::pelvis_fit`** (`sf_anim`, a cook rule like `loop_cut`): `target_m` = the hub's pelvis height (band +
+  0.05, the `sit.chair` offset), `hub` = the piece's seated end (enter Last, exit and loops First). Lift = target minus
+  the hub frame's pelvis; per-frame weight from the pelvis height itself (standing frames 0, hub frame 1, loops 1
+  throughout), so no timing tunable; legs re-solved by two-bone IK onto their pre-lift ankles (out of reach: they
+  dangle). Every piece at one hub gets the same lift from the same hub frame, so junctions stay exact.
+- **Mirrored sides at the cook** (candidate `mirror`, the rig's mirror pairs; the graph's `Mirror` node math moved to
+  `sf_anim`): `.right` slots are cooked clips, so the shell picks clips by name only (UE mirror data tables, baked).
+- **Slot names** (contract with interaction-4, 2026-11-26): `<family>[.<style>].b<band cm>.{enter.<side>, loop,
+  loop.fidget, exit.<side>}` (`seat.chair.b48.enter.front`, `seat.stool.b64.loop`, `seat.chair.old.b48.exit.left`).
+  `sf_interaction_bevy` writes `SeatClips { family, band_cm, enter, exit }` on the user; the animation shell binds the
+  fixed `interact.sit.*` action slots to the nearest-band set of that family (no set: `seat.chair`, nearest band).
+  `mw_interaction::def_for` emits `seat.stool` (backless single seat) and `seat.floor` (band under ~0.3 m).
+- **Picks** (provisional until ANIM-9): per piece the non-gated take with the lowest foot-slide p95.
+
 ## Slices (one deliverable each)
 
 | Slice | Deliverable | Needs | Status |

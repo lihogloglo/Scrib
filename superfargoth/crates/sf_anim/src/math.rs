@@ -105,6 +105,19 @@ pub fn affine_rotation(m: &Affine3A) -> Quat {
     Quat::from_mat3a(&glam::Mat3A::from_cols(x, y, z)).normalize()
 }
 
+/// The shortest rotation taking unit `from` to unit `to`, exact for small
+/// angles too: `Quat::from_rotation_arc` returns the identity below about
+/// 7e-4 rad (its `dot > 1 - 2ε` cutoff), which left a two-bone solve up
+/// to ~0.3 mm off its target for small corrections.
+pub fn rotation_arc(from: Vec3, to: Vec3) -> Quat {
+    let dot = from.dot(to);
+    if dot < -1.0 + 2.0 * f32::EPSILON {
+        return Quat::from_axis_angle(any_perpendicular(from), std::f32::consts::PI);
+    }
+    let c = from.cross(to);
+    Quat::from_xyzw(c.x, c.y, c.z, 1.0 + dot).normalize()
+}
+
 /// A unit vector perpendicular to `v` (any).
 pub fn any_perpendicular(v: Vec3) -> Vec3 {
     let other = if v.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };

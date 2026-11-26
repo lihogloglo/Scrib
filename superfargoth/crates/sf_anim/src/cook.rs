@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 use crate::clip::{RAW, RotTrack, VecChannel, VecTrack, rebuild};
 use crate::distance::{DistanceRules, apply_distance};
 use crate::loop_cut::{LoopCut, LoopCutError, LoopCutRules};
+use crate::pelvis_fit::{FitPlan, FitRig, PelvisFit, PelvisFitError, PelvisFitStats, fit_pose, pelvis_height};
 use crate::source::BoundSource;
 use crate::{
     Clip, CurveTrack, Event, LocalPose, ModelPose, RigProfile, RootMotionMode, RootMotionTrack, Skeleton, SourceClip, SyncMarker, Trs,
@@ -249,6 +250,13 @@ pub struct ClipRules {
     /// the clip cooks as before and the bake key doesn't change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub distance: Option<DistanceRules>,
+    /// Fit a seated clip to a seat height: lift the pelvis so the hub frame
+    /// sits at the target and re-solve the legs so the feet keep their
+    /// contacts (`pelvis_fit.rs`). Applied to the frames as sampled, before
+    /// root-motion extraction; needs the rig profile. Absent: the clip cooks
+    /// as before and the bake key doesn't change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pelvis_fit: Option<PelvisFit>,
 }
 
 impl ClipRules {
@@ -341,7 +349,14 @@ pub struct CookReport {
     /// [`ClipRules::loop_cut`]: the window and seam errors, or why no loop
     /// was cut (the clip is then cooked unlooped). `None` without the rule.
     pub loop_cut: Option<Result<LoopCut, LoopCutError>>,
+    /// [`ClipRules::pelvis_fit`]: the lift and foot errors, or why no fit
+    /// was applied (the clip is then cooked unfitted). `None` without the
+    /// rule.
+    pub pelvis_fit: Option<Result<PelvisFitStats, PelvisFitError>>,
 }
+
+/// A cooked clip and its [`ClipRules::pelvis_fit`] result.
+type Cooked = (Clip, Option<Result<PelvisFitStats, PelvisFitError>>);
 
 /// [`cook_clip_for`] with its report. With [`ClipRules::loop_cut`], the clip
 /// is cooked unlooped first (its contacts give the touchdowns), the loop is
@@ -355,20 +370,37 @@ pub fn cook_clip_report(
     settings: &CookSettings,
 ) -> Result<(Clip, CookReport), CookError> {
     let Some(cut) = &rules.loop_cut else {
-        return cook_plain(skeleton, profile, source, rules, settings).map(|clip| (clip, CookReport::default()));
+        return cook_plain(skeleton, profile, source, rules, settings).map(|(clip, pelvis_fit)| (clip, CookReport { loop_cut: None, pelvis_fit }));
     };
     let once = ClipRules { looping: Looping::Once, loop_cut: None, ..rules.clone() };
-    let plain = cook_plain(skeleton, profile, source, &once, settings)?;
+    let (plain, fit) = cook_plain(skeleton, profile, source, &once, settings)?;
     match crate::loop_cut::cut(skeleton, source, rules, &plain, cut) {
         Ok(c) => {
-            let clip = cook_plain(skeleton, profile, &c.source, &c.rules, settings)?;
-            Ok((clip, CookReport { loop_cut: Some(Ok(c.stats)) }))
+            let (clip, pelvis_fit) = cook_plain(skeleton, profile, &c.source, &c.rules, settings)?;
+            Ok((clip, CookReport { loop_cut: Some(Ok(c.stats)), pelvis_fit }))
         }
-        Err(e) => Ok((plain, CookReport { loop_cut: Some(Err(e)) })),
+        Err(e) => Ok((plain, CookReport { loop_cut: Some(Err(e)), pelvis_fit: fit })),
     }
 }
 
-fn cook_plain(skeleton: &Skeleton, profile: Option<&RigProfile>, source: &SourceClip, rules: &ClipRules, settings: &CookSettings) -> Result<Clip, CookError> {
+/// [`ClipRules::pelvis_fit`] on the cook's source: the rig and the plan from
+/// the pelvis heights sampled at the highest rate (every candidate rate
+/// shares the first and last frame, so the hub's height is the same).
+fn fit_plan<'r>(skeleton: &Skeleton, rig: Option<&'r FitRig>, truth: &Truth, fit: &PelvisFit, rate: f32) -> Result<(&'r FitRig, FitPlan), PelvisFitError> {
+    let rig = rig.filter(|r| !r.legs.is_empty()).ok_or(PelvisFitError::NoLegs)?;
+    let n = frame_count(truth.duration, rate);
+    let mut pose = vec![Trs::IDENTITY; skeleton.len()];
+    let heights: Vec<f32> = (0..n)
+        .map(|f| {
+            truth.frame(f, n, &mut pose);
+            pelvis_height(skeleton, rig, &pose, 0.0)
+        })
+        .collect();
+    Ok((rig, FitPlan::new(&heights, fit)?))
+}
+
+#[allow(clippy::too_many_lines)]
+fn cook_plain(skeleton: &Skeleton, profile: Option<&RigProfile>, source: &SourceClip, rules: &ClipRules, settings: &CookSettings) -> Result<Cooked, CookError> {
     for t in &source.tracks {
         let ok = t.translation.as_ref().is_none_or(crate::Curve::is_valid)
             && t.rotation.as_ref().is_none_or(crate::Curve::is_valid)
@@ -397,7 +429,10 @@ fn cook_plain(skeleton: &Skeleton, profile: Option<&RigProfile>, source: &Source
         .filter(|_| rules.root_motion.anchor_end && rm_joint.is_none() && rules.additive.is_none())
         .map(|rm| (rm, end_anchor(skeleton, &bound, start + duration, rm)))
         .or_else(|| rm_joint.filter(|_| rules.root_motion.horizontal).map(|rm| (rm, start_anchor(skeleton, &bound, start, rm))));
-    let truth = Truth { skeleton, bound: &bound, start, duration, anchor };
+    let mut truth = Truth { skeleton, bound: &bound, start, duration, anchor, fit: None };
+    let fit_rig = rules.pelvis_fit.as_ref().and(profile).and_then(FitRig::from_profile);
+    let fit = rules.pelvis_fit.as_ref().map(|f| fit_plan(skeleton, fit_rig.as_ref(), &truth, f, settings.max_rate));
+    truth.fit = fit.as_ref().and_then(|r| r.as_ref().ok()).copied();
     // Rates go coarsest first and the first that passes wins. A pass whose
     // resampling error alone exceeds 1.5x the bound can't pass
     // (quantization adds at most half the bound, its budget), so it is
@@ -479,7 +514,8 @@ fn cook_plain(skeleton: &Skeleton, profile: Option<&RigProfile>, source: &Source
     if let Some(d) = &rules.distance {
         apply_distance(&mut clip, d);
     }
-    Ok(clip)
+    let fit = fit.map(|r| r.map(|(rig, plan)| truth.fit_stats(rig, &plan, n)));
+    Ok((clip, fit))
 }
 
 /// Cooks already-resampled frames (no root-motion extraction: a
@@ -1025,11 +1061,21 @@ struct Truth<'a> {
     /// [`RootMotionRules::anchor_end`]'s inverse of its ground frame at the
     /// last frame, or horizontal extraction's [`start_anchor`].
     anchor: Option<(usize, Affine3A)>,
+    /// [`ClipRules::pelvis_fit`], applied to every sample after the anchor.
+    fit: Option<(&'a FitRig, FitPlan)>,
 }
 
 impl Truth<'_> {
     /// Local pose at frame `f` of `n` (clip time `frame_time(f, n)`).
     fn frame(&self, f: usize, n: usize, out: &mut [Trs]) {
+        self.unfitted(f, n, out);
+        if let Some((rig, plan)) = &self.fit {
+            fit_pose(self.skeleton, rig, plan, out, 0.0);
+        }
+    }
+
+    /// [`Self::frame`] without the pelvis fit.
+    fn unfitted(&self, f: usize, n: usize, out: &mut [Trs]) {
         self.bound.sample(self.start + frame_time(f, n, self.duration), self.skeleton.rest(), out);
         if let Some((rm, inverse)) = self.anchor {
             let parent = ancestors(self.skeleton, rm).iter().fold(Affine3A::IDENTITY, |m, &j| m * out[j].to_affine());
@@ -1038,6 +1084,19 @@ impl Truth<'_> {
             out[rm].translation = t.translation;
             out[rm].rotation = t.rotation;
         }
+    }
+
+    /// The pelvis fit's report over the cooked clip's `n` frames.
+    fn fit_stats(&self, rig: &FitRig, plan: &FitPlan, n: usize) -> PelvisFitStats {
+        let mut pose = vec![Trs::IDENTITY; self.skeleton.len()];
+        let mut stats = PelvisFitStats { lift_m: plan.lift(), ..PelvisFitStats::default() };
+        for f in 0..n {
+            self.unfitted(f, n, &mut pose);
+            let (w, err) = fit_pose(self.skeleton, rig, plan, &mut pose, 0.0);
+            stats.frames_lifted += u32::from(w > 0.0);
+            stats.max_foot_err_m = stats.max_foot_err_m.max(err);
+        }
+        stats
     }
 
     /// Model pose at grid point `s` of `points` (`local` is scratch).

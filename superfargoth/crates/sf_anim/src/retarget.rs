@@ -557,6 +557,35 @@ impl Retargeter {
         let frames = self.frames(&FrameClip::from_clip(clip))?;
         Ok(cook_frames(&self.target, &frames, settings)?)
     }
+
+    /// [`Self::clip`] (`root` `None`) or [`Self::clip_with_root`], with
+    /// [`crate::ClipRules::pelvis_fit`] applied once, on the target's frames
+    /// with the target's rig profile, after the root track is made (the lift
+    /// moves the pelvis, never the track) and before they are cooked
+    /// (`pelvis_fit.rs`). Callers cook the source without the rule. Returns
+    /// the fit's result with the clip (`None` without `fit`).
+    pub fn clip_fitted(
+        &self,
+        clip: &Clip,
+        root: Option<&RootMotionRules>,
+        fit: Option<(&crate::RigProfile, &crate::PelvisFit)>,
+        settings: &CookSettings,
+    ) -> Result<(Clip, Option<Result<crate::PelvisFitStats, crate::PelvisFitError>>), RetargetError> {
+        if clip.skeleton != self.source.id() {
+            return Err(RetargetError::SkeletonMismatch);
+        }
+        let source = FrameClip::from_clip(clip);
+        let mut frames = match root {
+            Some(rules) => self.frames_with_root(&source, rules)?,
+            None => self.frames(&source)?,
+        };
+        let stats = fit.filter(|_| !frames.meta.additive).map(|(profile, fit)| crate::fit_frame_clip(&self.target, profile, &mut frames, fit));
+        let mut out = cook_frames(&self.target, &frames, settings)?;
+        if root.is_some() && out.root_motion.is_some() {
+            root_meta(&mut out);
+        }
+        Ok((out, stats))
+    }
 }
 
 /// Retargets `clip` from `source` to `target` (both with their rigs) and

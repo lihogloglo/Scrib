@@ -22,7 +22,7 @@
 use glam::{Affine3A, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::math::{affine_rotation, any_perpendicular, rotation_between_frames};
+use crate::math::{affine_rotation, any_perpendicular, rotation_arc, rotation_between_frames};
 use crate::{LocalPose, ModelPose, Skeleton, update_subtree};
 
 mod full_body;
@@ -128,7 +128,7 @@ pub fn two_bone(a: Vec3, b: Vec3, c: Vec3, target: Vec3, pole: Vec3, max_extensi
     let n_old = (n_new * (1.0 - w) + n_old.normalize_or_zero() * w).normalize_or(n_new);
     let root = rotation_between_frames(b - a, n_old, b_new - a, n_new);
     let c_moved = a + root * (c - a);
-    let mid = Quat::from_rotation_arc((c_moved - b_new).normalize(), (c_new - b_new).normalize());
+    let mid = rotation_arc((c_moved - b_new).normalize(), (c_new - b_new).normalize());
     (root, mid)
 }
 

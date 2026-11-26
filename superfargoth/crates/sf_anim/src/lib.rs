@@ -33,6 +33,7 @@ pub mod ik;
 mod import;
 mod loop_cut;
 mod math;
+mod pelvis_fit;
 mod pose;
 mod retarget;
 pub mod rig;
@@ -66,6 +67,7 @@ pub use ik::LimbSolver;
 pub use import::{Axis, SourceSpace, SpaceConverter, detect_root_motion_joint};
 pub use loop_cut::{LoopCut, LoopCutError, LoopCutRules};
 pub use math::{Trs, angle_between, nlerp, twist_angle};
+pub use pelvis_fit::{FitLeg, FitRig, HubEnd, PelvisFit, PelvisFitError, PelvisFitStats, STILL_M, fit_frame_clip};
 pub use pose::{
     BlendLayer, JointWeights, LocalPose, ModelPose, SoaTrs, apply_additive, blend, blend_in_place, blend_layers, local_to_model, make_additive,
     update_subtree,
@@ -150,6 +152,8 @@ mod fbik_tests;
 mod import_tests;
 #[cfg(test)]
 mod loop_cut_tests;
+#[cfg(test)]
+mod pelvis_fit_tests;
 #[cfg(test)]
 mod rig_tests;
 #[cfg(test)]
