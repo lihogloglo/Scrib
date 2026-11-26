@@ -41,9 +41,9 @@ pub use blendspace::Weights;
 #[cfg(feature = "bake")]
 pub use blendspace::triangulate;
 #[cfg(feature = "bake")]
-pub use compile::{CompileError, CompileSource, compile, compile_str};
+pub use compile::{CompileError, CompileSource, compile, compile_str, compile_styled};
 pub use compiled::{
-    Blend, BlendSpace, BodyEffector, ClipResolution, ClipSlot, CompiledGraph, Condition, DistanceMatch, GRAPH_FORMAT, GirdleSeg, HitReactOp, Layer, Leg, Machine, MirrorTable,
+    Blend, BlendSpace, BodyEffector, ClipResolution, ClipSlot, CompiledClass, CompiledGraph, CompiledStyles, Condition, DistanceMatch, GRAPH_FORMAT, GirdleSeg, HitReactOp, Layer, Leg, Machine, MirrorTable,
     Node, NodeKind, Op, OpEntry, ParamDef, ParamId, ParamType, PlayerNode, Provenance, SlotDef, SpringBonesOp, State, Transition, Value, WarpMode, WarpRotation,
     WarpWindow, parse_warp_window,
 };
@@ -61,5 +61,7 @@ pub use slot::{LateClip, MontageClip, MontageId, MontageStatus, NoticeKind, Slot
 mod creature_tests;
 #[cfg(all(test, feature = "bake"))]
 mod style_tests;
+#[cfg(all(test, feature = "bake"))]
+mod style_compile_tests;
 #[cfg(all(test, feature = "bake"))]
 mod tests;

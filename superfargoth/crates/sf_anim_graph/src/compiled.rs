@@ -12,6 +12,7 @@ use sf_anim::{JointWeights, LimbSolver, RootMotionMode, SkeletonId};
 use sf_bake::ProductKey;
 
 use crate::asset::{BodyFit, FootGuards, GradeLean, GradeStride, LayerMode, SyncRole};
+use crate::style::ClassName;
 
 /// A compiled number: constant or a parameter component.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -572,6 +573,36 @@ pub struct OpEntry {
 /// Mirror data (`sf_anim::mirror`, shared with the cook's mirror rule).
 pub use sf_anim::mirror::MirrorTable;
 
+/// The style classes of a compiled graph (animation-style.md "Class
+/// remap"): built by `compile_styled` from a `StyleTable`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CompiledStyles {
+    /// The `StyleTable::digest` it was compiled from (a different live
+    /// table = a stale bake).
+    pub table_digest: u64,
+    /// Index = the table's `ClassId`.
+    pub classes: Vec<CompiledClass>,
+}
+
+impl CompiledStyles {
+    /// No classes (compiled without a style table).
+    pub fn is_empty(&self) -> bool {
+        self.classes.is_empty()
+    }
+}
+
+/// One style class: which clip plays for each base clip, and the speeds
+/// its 1D blend-space samples sit at.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CompiledClass {
+    pub name: ClassName,
+    /// Per base clip slot (length = the graph's clip count before class
+    /// clips were appended): the class clip slot, `u16::MAX` for none.
+    pub remap: Box<[u16]>,
+    /// `(blend-space node, sample index, class speed m/s)`, sorted.
+    pub at: Box<[(u32, u16, f32)]>,
+}
+
 /// A compiled graph.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CompiledGraph {
@@ -611,6 +642,12 @@ pub struct CompiledGraph {
     /// Clips a slot may play by name (the graph's `slot_clips`): local
     /// name and clip slot. Absent when an optional clip dropped.
     pub slot_clips: Vec<(String, u16)>,
+    /// Per style class, its clip remap and blend-sample speeds
+    /// (animation-style.md "Class remap"); empty without a style table.
+    /// Always written: postcard is positional, a skipped field would not
+    /// decode.
+    #[serde(default)]
+    pub styles: CompiledStyles,
     #[serde(skip)]
     mask_weights: OnceLock<Vec<JointWeights>>,
     #[serde(skip)]
@@ -623,7 +660,7 @@ pub const LEAN_COUNTER_MAX: usize = 8;
 
 const MAGIC: &[u8; 4] = b"SFAG";
 /// Version of the compiled graph format.
-pub const GRAPH_FORMAT: u32 = 16;
+pub const GRAPH_FORMAT: u32 = 17;
 
 impl CompiledGraph {
     #[cfg(feature = "bake")]
@@ -654,6 +691,7 @@ impl CompiledGraph {
             slots: Vec::new(),
             slot_groups: Vec::new(),
             slot_clips: Vec::new(),
+            styles: CompiledStyles::default(),
             mask_weights: OnceLock::new(),
             curve_joints: OnceLock::new(),
         }
@@ -801,6 +839,12 @@ impl CompiledGraph {
         }
         if self.clip_events.len() != self.clips.len() || self.clip_curves.len() != self.clips.len() || self.warp_windows.len() != self.clips.len() {
             return Err("clip tables");
+        }
+        let clips = self.clips.len();
+        if self.styles.classes.iter().any(|c| {
+            c.remap.len() > clips || c.remap.iter().any(|&s| s != u16::MAX && usize::from(s) >= clips) || c.at.iter().any(|&(node, _, _)| !node_ok(node))
+        }) {
+            return Err("style tables");
         }
         for (i, node) in self.nodes.iter().enumerate() {
             if (node.subtree_end as usize) <= i || node.subtree_end as usize > n {

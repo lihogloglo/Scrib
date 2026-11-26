@@ -11,6 +11,7 @@
 //! - Subgraphs are inlined; their parameters merge by name.
 //! - Pose kinds (full or additive) are checked through every node.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use glam::{Vec2, Vec3};
@@ -23,8 +24,9 @@ use crate::asset::{
     SyncSpec, ValueSpec,
 };
 use crate::blendspace::triangulate;
+use crate::style::{ClassId, StyleTable};
 use crate::compiled::{
-    Blend, BlendSpace, BodyEffector, ClipResolution, ClipSlot, CompiledGraph, Condition, DistanceMatch, GirdleSeg, HitReactOp, Layer, Leg, Machine, MirrorTable, Node, NodeKind,
+    Blend, BlendSpace, BodyEffector, ClipResolution, ClipSlot, CompiledClass, CompiledGraph, CompiledStyles, Condition, DistanceMatch, GirdleSeg, HitReactOp, Layer, Leg, Machine, MirrorTable, Node, NodeKind,
     Op, OpEntry, ParamDef, ParamType, PlayerNode, Provenance, SlotDef, SpringBonesOp, State, Transition, Value, WarpWindow,
 };
 
@@ -99,6 +101,19 @@ fn u32_of(i: usize) -> u32 {
 
 /// Compiles a graph asset for `skeleton`.
 pub fn compile(name: &str, asset: &GraphAsset, skeleton: &Skeleton, source: &mut dyn CompileSource) -> Result<CompiledGraph, CompileError> {
+    compile_styled(name, asset, skeleton, source, None)
+}
+
+/// Compiles a graph asset for `skeleton` and, with a style table, each
+/// class's clip remap (animation-style.md "Class remap"): class clips are
+/// appended after the graph's own, so base clip slots never move.
+pub fn compile_styled(
+    name: &str,
+    asset: &GraphAsset,
+    skeleton: &Skeleton,
+    source: &mut dyn CompileSource,
+    styles: Option<&StyleTable>,
+) -> Result<CompiledGraph, CompileError> {
     let err = |message: String| CompileError { graph: name.to_owned(), message };
     let joints = u16::try_from(skeleton.len()).map_err(|_| err("skeleton too large".into()))?;
     let root_joint = u16::try_from(skeleton.root_motion_joint().unwrap_or(0)).unwrap_or(0);
@@ -117,6 +132,9 @@ pub fn compile(name: &str, asset: &GraphAsset, skeleton: &Skeleton, source: &mut
         referenced_events: Vec::new(),
     };
     c.run().map_err(err)?;
+    if let Some(table) = styles.filter(|t| !t.classes.is_empty()) {
+        c.styles(table).map_err(err)?;
+    }
     Ok(c.out)
 }
 
@@ -316,6 +334,55 @@ impl Compiler<'_> {
         self.clip_slots.insert(reference, slot);
         self.product_slots.insert(product, slot);
         Ok(slot)
+    }
+
+    // --- Style classes ------------------------------------------------------------------
+
+    /// Per class of `table`, the remap of every base clip under
+    /// `base_prefix` (the class clips load like authored ones, appended)
+    /// and the class speeds of the 1D blend-space samples it remaps.
+    fn styles(&mut self, table: &StyleTable) -> R<()> {
+        let base: Vec<(String, bool)> = self.out.clips.iter().map(|c| (c.reference.clone(), c.additive)).collect();
+        let mut classes = Vec::with_capacity(table.classes.len());
+        for (i, row) in table.classes.iter().enumerate() {
+            let class = ClassId(u16_of(i, "style classes")?);
+            let mut remap = vec![u16::MAX; base.len()];
+            for (slot, (reference, additive)) in base.iter().enumerate() {
+                if !reference.starts_with(table.base_prefix.as_str()) {
+                    continue;
+                }
+                let resolved = {
+                    let source = RefCell::new(&mut *self.source);
+                    table.resolve(class, reference, |s| source.borrow_mut().available(s) == Ok(true))
+                };
+                let Some(class_ref) = resolved else { continue };
+                let s = self.load_slot(&class_ref, &class_ref).map_err(|e| format!("style class {:?}: {e}", row.name))?;
+                if self.out.clips[usize::from(s)].additive != *additive {
+                    return Err(format!("style class {:?}: clip {class_ref:?} and its base {reference:?} differ in additivity", row.name));
+                }
+                remap[slot] = s;
+            }
+            let mut at = Vec::new();
+            for (n, node) in self.out.nodes.iter().enumerate() {
+                let NodeKind::Player(p) = &node.kind else { continue };
+                if p.space.as_ref().is_none_or(|s| s.y.is_some()) {
+                    continue;
+                }
+                for (k, &lane) in p.lanes.iter().enumerate() {
+                    if remap.get(usize::from(lane)).is_none_or(|&s| s == u16::MAX) {
+                        continue;
+                    }
+                    let rest = base[usize::from(lane)].0.strip_prefix(table.base_prefix.as_str()).unwrap_or_default();
+                    let gait = rest.split('.').next().unwrap_or_default();
+                    if let Some(&(_, speed)) = row.speeds.iter().find(|(key, _)| key == gait) {
+                        at.push((u32_of(n), u16_of(k, "blend-space samples")?, speed));
+                    }
+                }
+            }
+            classes.push(CompiledClass { name: row.name.clone(), remap: remap.into(), at: at.into() });
+        }
+        self.out.styles = CompiledStyles { table_digest: table.digest, classes };
+        Ok(())
     }
 
     fn warp_window(&mut self, clip: &Clip, e: &sf_anim::Event) -> R<WarpWindow> {

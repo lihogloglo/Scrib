@@ -349,6 +349,17 @@ per tier (High, 4060 laptop) into `docs/ledger/perf.md`.
   class is resolved by the caller (AN14b's two remaps). The `smooth.*` tunables are `Net::Gameplay`, not
   `Presentation`: the profile they smooth is host state. `injury_side` keeps its last side while the injury decays;
   `snap` with no injury sets `Center`. `gait_speed` is AN15b; `mw_graphs::gait_slot` does not delegate yet (AN14b).
+- **AN14b1 (2026-11-27), compiled class remap:** `compile_styled(name, asset, skeleton, source, styles)` (`compile`
+  = `compile_styled(.., None)`) fills `CompiledGraph.styles: CompiledStyles { table_digest, classes }`, one
+  `CompiledClass { name, remap, at }` per class: `remap[base slot]` = the class clip's slot or `u16::MAX` (what
+  `resolve` returns `None` for), `at` = `(blend-space node, sample, class speed)` rows for remapped 1D samples whose
+  gait key is in the class's `speeds`. Class clips go through the same loader as authored clips (shared slots per
+  reference, events, curves, provenance) and are appended, so base slots never move. Differences from the design:
+  the `styles` field is always written (postcard decodes a struct as a fixed tuple, so a skipped field cannot
+  default); a class clip whose additive flag differs from its base clip's fails the compile; class clips get no
+  `ClipResolution`; `validate()` refuses a remap past the clip list or an `at` row naming a missing node.
+  `GRAPH_FORMAT` 17: every graph product rebuilds (`steps.rs` passes the format into the bake key), so a
+  `bevyrrowind bake` follows. The runtime switch (`GraphInstance::set_style`) is AN14b2.
 
 ## Open questions (taste and scope; each with a recommendation)
 
