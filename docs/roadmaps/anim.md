@@ -171,11 +171,14 @@ Each family: recipe against slot contact points and MG4 height bands, generation
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| AN38 | Research: Delirium partial drive (per-region strength, disturbance), cost per body | research, test | - | measurement; ledger |
-| AN39 | Spec: `PhysicsTint` seam, states, cap, gate, fallback | docs | AN38 | doccheck |
-| AN40 | Seam + Delirium tint with cap and additive fallback | `sf_anim_bevy`, `mw_delirium_bevy` | AN39 | exact cap; no NaN, not through floor, comes to rest |
-| AN41 | Triggers: intoxication, injury, fatigue 0, medium hits | `mw_walkers_bevy`, `mw_combat` | AN40, AN22 | exact; owner ANIM-14 |
-| AN42 | Measurement: tint ms at the cap | tests | AN41 | `#[ignore = "measurement"]` |
+| AN38 | Research: Delirium partial drive (per-region strength, disturbance), cost per body | research, test | - | measurement; ledger | research **done 2026-11-26** (d96d9ec4); measurement: **a done** (A/B/F at N = 1, 4, 8: 0.50 / 0.67 / 0.86 ms per body, linear; pose follow alone collapses; ledger physics), b (C, D, E, G), c (pose error), d (`step_group`, start/drop) left |
+| AN39 | Spec: `PhysicsTint` seam, states, cap, gate, fallback | docs | AN38 | doccheck | **done 2026-11-26** (`superfargoth/docs/specs/physics-tint.md`, fed5bd81; the concurrent cap stays a Guess until AN38's numbers) |
+| AN40a | Seam: `sf_anim::tint` types, envelope, `TintBook` (gate, cap, states), `sf_anim_bevy` plugin, `TintTarget`, fallback messages; exposes the pose before the physics blend (`GraphOutput::pose` already includes it, `sf_anim_graph/src/instance.rs:239-241`); checks hurt volumes do not follow the tinted pose | `sf_anim`, `sf_anim_bevy` | AN39 | exact cap, states (fake provider) |
+| AN40b | Delirium tint provider (pinned-pelvis pose follow); step 1 = balancer coexistence test | `mw_delirium`, `mw_delirium_bevy` | AN38, AN40a | no NaN, not through floor, comes to rest |
+| AN41a | Hit triggers: Medium tier + impulse band -> Stagger (physics hits of 10 to `band.max_ns` 25 N s, Guess, become a stagger tint instead of today's owner-confirmed push takeover PH-14/15; `band.max_ns` = 10 keeps today's behaviour and is the A/B arm) | `mw_combat`, `mw_walkers_bevy` | AN40b, AN22 | exact |
+| AN41b | State triggers: injury, alcohol, fatigue -> Stumble, Sway, Sag; scene `anim-tint` | `mw_walkers_bevy` | AN41a | exact; owner ANIM-14 |
+| AN41c | Sway/Sag fallback key-pose clips (data) | `mw_combat` data | AN41b, AN36 | bake loads; ANIM-14 |
+| AN42 | Measurement: tint ms at the cap | tests | AN41b | `#[ignore = "measurement"]` |
 
 **Later / parked:** motion matching; quadruped legs IN26 (TV-R2 parked); first-person body (3.4b); player limp (Q3).
 

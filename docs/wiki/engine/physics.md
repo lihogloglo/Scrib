@@ -65,7 +65,7 @@ engine; no avian. See [Locomotion](locomotion-and-action.md) for the mover that 
 
 Delirium's ~700 engine numbers come from the no-game fork's stand-in table (`delirium_data::kv::unlock_own`, opened in
 `mw_delirium/src/sim.rs:17`): estimates from Delirium's own source, not GTA IV's, so behaviour differs from upstream. One Delirium
-character per process (`nmrs::set`). PH-12 floor hole and PH-13 drop-on-load are open (see [ledger](../../ledger/physics.md)).
+character asset per process (`nmrs::set`); many agents built from it run at once. PH-12 floor hole and PH-13 drop-on-load are open (see [ledger](../../ledger/physics.md)).
 The player has no physics capsule (slice 11 waits for the owner).
 
 ## Specs
