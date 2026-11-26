@@ -551,7 +551,7 @@ Bevy has no BVH or FBX loader (bevy_gltf only), so rule 8 goes to crates:
   BVH (cm, Y up, 60 fps) → auto-map + auto-align → retarget onto a
   `Bip01`-named Biped skeleton (Z up facing −Y, meters, arbitrary joint
   frames): worst 0.000 cm and 0.034° over 31 frames, 21 joints (gate
-  1 cm / 1°). Real 100STYLE and Quaternius FBX files are checked when the
+  1 cm / 1°). Real BVH and Quaternius FBX files are checked when the
   BYO bake runs (bevyrrowind animation-sources.md).
 
 Contacts come from foot height and speed thresholds on the source clip
@@ -702,8 +702,8 @@ mocap library. Learned motion matching (Holden et al., SIGGRAPH 2020) cuts
 its memory. Legacy content is a few hand-keyed cycles, where MM gains
 nothing. M3 builds what it needs, so it arrives as one more node type: the
 inertialization, the trajectory model (locomotion.md), and bake-time
-feature extraction. Candidate data is the 100STYLE dataset (CC BY 4.0, BVH,
-60 fps) and Quaternius' Universal Animation Library (CC0, glTF). LAFAN1
+feature extraction. No shippable dataset exists today (owner 2026-11-25: 100STYLE rejected as a clip source; Quaternius'
+Universal Animation Library, CC0, is too small alone), so it stays parked. LAFAN1
 (CC BY-NC-ND 4.0) and the Bandai Namco sets (CC BY-NC 4.0) are usable only
 as bring-your-own sources baked privately on the user's machine, never
 shipped (data plan and license table: `bevyrrowind/docs/specs/animation-sources.md`).

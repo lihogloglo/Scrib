@@ -45,7 +45,7 @@ before M4 (the pose-search database uses the same sources later).
 | Morrowind KF (user's install) | all vanilla NPC and creature clips | NIF/KF | Bethesda EULA | yes | no | baseline, fallback for every slot |
 | Quaternius Universal Animation Library 1 and 2 | 45 free + 120+ (Pro, paid) humanoid clips; UAL2 adds melee/armed combos, parkour, zombie locomotion | glTF/GLB, FBX | CC0 1.0 (itch.io page, OpenGameArt) | yes | yes (CC0) | primary humanoid source; framework test rigs already in `sf_character/tests/data` |
 | mesh2motion | CC0 rigs and clips incl. non-human rigs (spider and snake added; others to check) | GLB/glTF | assets CC0, app MIT (repo README, `LICENSE-CC0.MD`) | yes | yes | creature reference and test rigs |
-| 100STYLE (Ian Mason) | 100 locomotion styles: walk/run fwd/back/side, idles, transitions; 4M+ frames, 28-bone skeleton | BVH, 60 fps | CC BY 4.0 (ianxmason.com/100style) | yes | yes, with attribution | locomotion variety; pose-search database later |
+| 100STYLE (Ian Mason) | 100 locomotion styles: walk/run fwd/back/side, idles, transitions; 4M+ frames, 28-bone skeleton | BVH, 60 fps | CC BY 4.0 (ianxmason.com/100style) | yes | yes, with attribution | **not a source** (owner 2026-11-25: rejected, the styles read as cartoony; generated clips are the locomotion base, `docs/roadmaps/anim.md` decision 1) |
 | CMU Graphics Lab Motion Capture Database | ~2,600 takes, broad everyday and sports motion | ASF/AMC, C3D (BVH conversions exist) | "may include in commercially sold products, may not resell directly, even converted"; FAQ: "may be copied, modified, or redistributed"; "please don't crawl" (mocap.cs.cmu.edu) | yes | yes inside a product, never as a data pack | gap filler (idles, gestures, interactions) |
 | Mixamo (Adobe) | large humanoid library | FBX | Adobe FAQ (2022, "limited duration technology preview"): royalty-free in projects; no reselling or redistributing raw files as asset packs; no bulk downloads for ML; terms are those in force when used | yes, downloaded with the user's own Adobe account | no (treat as non-redistributable) | optional source; manual download list only |
 | LaFAN1 (Ubisoft La Forge) | 77 takes, 4.6 h: locomotion, obstacles, falls and get-ups, fighting, aiming | BVH, 30 fps | CC BY-NC-ND 4.0 (repo `license.txt`) | yes, private adaptation | **no** (ND forbids sharing adaptations) | BYO only: falls/get-ups (M4), traversal |
@@ -85,8 +85,7 @@ runtime):
    auto-map fails (Mixamo `mixamorig:*`, CMU/LaFAN1/100STYLE `Hips,
    LeftUpLeg…`, Quaternius' own names are the expected cases).
 3. `anim.cook` on the source skeleton with the manifest's `ClipRules`:
-   frame range (mocap takes are long: split by the manifest, e.g.
-   100STYLE's `Frame_Cuts.csv`), loop, root motion from the hips projected
+   frame range (mocap takes are long: split by the manifest), loop, root motion from the hips projected
    to the ground when the source has no root joint, contacts auto-detected.
 4. `anim.retarget` onto `base_anim`, `base_anim_female`, `base_animkna`
    (beast legs keep foot contacts through the IK fix-up) and, for first
@@ -99,13 +98,12 @@ runtime):
 ```ron
 sources: {
   "quaternius_ual2": (license: CC0, page: "https://quaternius.com/...", files: [("UAL2.glb", "sha256:…")], unit_scale: 1.0, up: Y),
-  "100style":       (license: CC_BY_4_0, attribution: "Ian Mason, 100STYLE", files: [...], unit_scale: 0.01, up: Y),
   "lafan1":         (license: CC_BY_NC_ND_4_0, private_only: true, files: [...], unit_scale: 0.01, up: Y),
   "mixamo":         (license: MixamoTerms, private_only: true, manual: [("Sword And Shield Slash", "In Place: off, 30 fps, without skin")]),
 },
 slots: {
   "loco.walk_fwd": (graph: "humanoid", required: false, candidates: [
-      ("quaternius_ual2", "Walk_Loop"), ("100style", "Neutral_FW.bvh", frames: (120, 480)), ("mw", "xbase_anim.kf#WalkForward")]),
+      ("quaternius_ual2", "Walk_Loop"), ("mw", "xbase_anim.kf#WalkForward")]),
   "react.getup_back": (graph: "humanoid", candidates: [("lafan1", "fallAndGetUp1_subject1.bvh", frames: (900, 1050))], fallback: drop),
 }
 ```
@@ -123,8 +121,7 @@ the Morrowind clip (required) or `Drop`:
 
 ```ron
 clips: {
-  "walk_fwd": (source: "quaternius_ual2:Walk_Loop", optional: true, fallback: Clip("walk_fwd.100style")),
-  "walk_fwd.100style": (source: "100style:Neutral_FW.bvh@120-480", optional: true, fallback: Clip("walk_fwd.mw")),
+  "walk_fwd": (source: "quaternius_ual2:Walk_Loop", optional: true, fallback: Clip("walk_fwd.mw")),
   "walk_fwd.mw": "xbase_anim.kf#WalkForward",
   "getup_back": (source: "lafan1:fallAndGetUp1_subject1.bvh@900-1050", optional: true, fallback: Drop),
 }
@@ -210,8 +207,8 @@ chain names of rig-profile.md.
   steps), right side `fallAndGetUp1_subject4` 122.47-127.40 (sits up first). Rejected: flat prone `fallAndGetUp2_subject2`
   29.0-34.6 (pauses on hands and knees, 5.6 s), pop-up-and-run takes, a kip-up. Picked with scan scripts (lying = hips
   under 0.3 m, belly/side from the hip and spine axes, still = every joint under 0.3 m/s).
-- `bevyrrowind anim-sources check` on a folder with Quaternius UAL1 free,
-  100STYLE and nothing else: reports present/missing per source and per
+- `bevyrrowind anim-sources check` on a folder with Quaternius UAL1 free
+  and nothing else: reports present/missing per source and per
   slot; the bake succeeds; missing slots resolve to Morrowind clips.
 - With no sources at all, the humanoid graph compiles and plays (pure KF).
 - Export guard: packaging a test mod that includes a LaFAN1-derived clip
