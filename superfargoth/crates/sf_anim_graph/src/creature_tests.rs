@@ -881,6 +881,81 @@ fn heel_roll_pins_the_toe_from_heel_off_to_toe_off() {
     assert!(rise > 0.05, "the heel rolled up {rise} m");
 }
 
+/// `AN1d`: the curves nominate a plant, the final (blended) pose decides it. On the walk/jog
+/// blend a walk lane's contact and roll curves held the ankle lock and then the toe pin while
+/// the jog lane lifted the blended foot, dragging it until the leg went straight. Here a heel
+/// roll about a still toe is blended half and half with a clip that lifts the foot flat from
+/// 0.2 s under the same curves: the blended heel rises (the lock hands over to the toe), then
+/// the toe rises too and lets go, so nothing is pinned while the roll curve says pin. The roll
+/// clip alone (a still toe) keeps its pin.
+#[test]
+fn roll_curves_pin_the_toe_only_while_the_blended_toe_is_still() {
+    let s = biped_with_toes();
+    let curves = || {
+        vec![
+            sf_anim::SourceCurve { name: "contact.foot_l".into(), curve: sampled(1.0, |t| if t < 0.4 { 1.0 } else { 0.0 }) },
+            sf_anim::SourceCurve { name: "roll.foot_l".into(), curve: sampled(1.0, |t| if (0.375..0.65).contains(&t) { 1.0 } else { 0.0 }) },
+        ]
+    };
+    let clip = |name: &str, pose: fn(f32) -> (Vec3, f32)| {
+        let src = SourceClip {
+            name: name.into(),
+            duration: 1.0,
+            tracks: vec![SourceTrack {
+                joint: "foot_l".into(),
+                translation: Some(sampled(1.0, move |t| pose(t).0 - Vec3::new(0.1, 0.5, 0.02))),
+                rotation: Some(sampled(1.0, move |t| Quat::from_rotation_x(pose(t).1))),
+                ..SourceTrack::default()
+            }],
+            curves: curves(),
+            ..SourceClip::default()
+        };
+        cook_clip(&s, &src, &walk_rules(), &CookSettings::default()).unwrap()
+    };
+    // Heel roll about the toe (15 cm ahead) from 0.40 s to 0.65 s; the foot lifted flat at
+    // 1.5 m/s from 0.2 s.
+    let clips = vec![
+        clip("roll", |t| {
+            let (base, th) = (Vec3::new(0.1, 0.05, 0.0), 0.6 * ((t - 0.4) / 0.25).clamp(0.0, 1.0));
+            (base + Vec3::new(0.0, 0.15 * th.sin(), 0.15 * (1.0 - th.cos())), th)
+        }),
+        clip("lift", |t| (Vec3::new(0.1, 0.05 + 1.5 * (t - 0.2).max(0.0), 0.0), 0.0)),
+    ];
+    // Per update in the roll window (contact down, roll up): the left foot's locks and its toe.
+    let run = |root: &str, guards: &str| {
+        let ron = format!(
+            r#"(nodes: {{"r": Clip(clip: "roll"), "l": Clip(clip: "lift"), "mix": Blend(a: "r", b: "l", alpha: 0.5)}},
+                layers: [(node: "{root}")], profile_limbs: Support,
+                procedural: [FootPlacement(pelvis: Joint("hips"), guards: (extension: 1.0{guards}))])"#
+        );
+        let rig = Rig::new(s.clone(), clips.clone(), &ron);
+        let b = rig.binding();
+        let (mut inst, mut out) = (GraphInstance::new(&b), GraphOutput::new(&rig.graph));
+        let ground = vec![Some(GroundSample { point: Vec3::ZERO, normal: Vec3::Y }); rig.graph.probe_count()];
+        let (contact, roll) = (rig.graph.curve("contact.foot_l").unwrap(), rig.graph.curve("roll.foot_l").unwrap());
+        let toe = rig.joint("toe_l");
+        let mut window = Vec::new();
+        for _ in 0..36 {
+            inst.update(&b, 1.0 / 60.0, 0, &UpdateInputs { ground: &ground, ..UpdateInputs::default() }, &mut out);
+            if out.curves[contact] <= 0.5 && out.curves[roll] > 0.5 {
+                window.push((out.feet.locks, out.model.translation(toe)));
+            }
+        }
+        window
+    };
+    let still = run("r", "");
+    assert!(still.len() >= 10, "{} rolling frames", still.len());
+    assert!(still.iter().all(|w| w.0 == 1), "the still toe pins through the roll: {:?}", still.iter().map(|w| w.0).collect::<Vec<_>>());
+    let slide = still.iter().map(|w| w.1.distance(still[0].1)).fold(0.0f32, f32::max);
+    assert!(slide < 5e-3, "the pinned toe slid {slide} m");
+    // The curves alone (detection off) pin the rising toe.
+    let curves_only = run("mix", ", plant_speed: 0.0");
+    assert!(curves_only.iter().any(|w| w.0 == 1), "detection off: the curves pin the blended toe");
+    let blend = run("mix", "");
+    assert!(blend.len() >= 10, "{} rolling frames", blend.len());
+    assert!(blend.iter().all(|w| w.0 == 0), "no pin while the blended toe rises: {:?}", blend.iter().map(|w| w.0).collect::<Vec<_>>());
+}
+
 /// `AN1c`: a toe pin (heel roll) the body walks away from lets go at `guards.extension`
 /// (UE5 Foot Placement's max extension ratio) instead of the pelvis dropping to keep it; on
 /// the walk/jog blend it pulled the pelvis down 13-18 cm. Ground below still lowers the pelvis.

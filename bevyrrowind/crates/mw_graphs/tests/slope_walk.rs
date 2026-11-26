@@ -113,13 +113,17 @@ fn humanoid_sim_with(index: usize, gait: bool) -> Option<Sim> {
         eprintln!("gait set: {:?}", add_gait_clips(&mut set));
     }
     let mut v = mw_graphs::validate(&mut set, Template::Humanoid).unwrap();
-    if let Some(deg) = std::env::var("IK_UNPLANT_ANGLE").ok().and_then(|s| s.parse::<f32>().ok()) {
-        // Measurement sweep (P-IK5): the shipped graph with another turn unplant angle (degrees;
-        // 1000 = off, the drift limit alone).
+    let env = |name: &str| std::env::var(name).ok().and_then(|s| s.parse::<f32>().ok());
+    let (unplant_angle, plant_speed) = (env("IK_UNPLANT_ANGLE"), env("IK_PLANT_SPEED"));
+    if unplant_angle.is_some() || plant_speed.is_some() {
+        // Measurement sweeps: the shipped graph with another turn unplant angle (P-IK5;
+        // degrees, 1000 = off, the drift limit alone) or plant speed (AN1d; leg reaches/s,
+        // 0 = off, the curves alone).
         let mut asset = sf_anim_graph::asset::parse_graph(mw_graphs::builtin(Template::Humanoid)).unwrap();
         for op in &mut asset.procedural {
             if let sf_anim_graph::asset::OpSpec::FootPlacement { guards, .. } = op {
-                guards.unplant_angle = deg.to_radians();
+                guards.unplant_angle = unplant_angle.map_or(guards.unplant_angle, f32::to_radians);
+                guards.plant_speed = plant_speed.unwrap_or(guards.plant_speed);
             }
         }
         v.graph = set.compile(&format!("{}:{}", set.name, Template::Humanoid.path()), &asset).unwrap();

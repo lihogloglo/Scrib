@@ -15,7 +15,9 @@
 //!   counter-rotated so the torso keeps its heading (UE Orientation Warping).
 //! - `FootPlacement`: foot height and tilt from ground samples, ground-plane
 //!   locks while the contact curve is above 0.5 (then the toe, while the
-//!   `roll.<effector>` curve says the heel rolls), released (also when the
+//!   `roll.<effector>` curve says the heel rolls) and the final pose's
+//!   ankle (toe) is still and low, with hysteresis (heights from frames it
+//!   rests at; `plant_speed` 0: the curves alone); released (also when the
 //!   foot drifts or turns past the unplant limits) into a decaying
 //!   offset of half-life `release` / 2 (the swing takes the correction);
 //!   one offset per girdle (critical springs): `Lower` drops each
@@ -72,6 +74,18 @@ pub(crate) struct LegState {
     plant_rotation: Quat,
     /// Smoothed ground height offset of the foot.
     height: Spring,
+    /// Plant detection on the final pose (`FootGuards::plant_speed`): the
+    /// last update's animated ankle and toe (same convention as the locks,
+    /// carried with the world), whether each is still (with hysteresis),
+    /// their lowest height (`y`) since the plant, and whether the heel has
+    /// risen past `heel_rise` since (the lock then hands over to the toe;
+    /// no re-plant until both curves are down).
+    prev_foot: Option<Vec3>,
+    prev_toe: Option<Vec3>,
+    /// Ankle, toe.
+    still: [bool; 2],
+    low: (f32, f32),
+    heel_up: bool,
 }
 
 /// A critically damped value.
@@ -717,7 +731,7 @@ fn foot_placement(
         let leg = &g.legs[usize::from(li)];
         let st = &mut ls[k];
         if finite_moved {
-            for l in st.lock.iter_mut().chain(&mut st.toe_lock) {
+            for l in st.lock.iter_mut().chain(&mut st.toe_lock).chain(&mut st.prev_foot).chain(&mut st.prev_toe) {
                 *l = unmove * (*l - moved.translation);
             }
             // A displacement between two points of the character's frame.
@@ -740,8 +754,53 @@ fn foot_placement(
             st.height = Spring { value: lift, velocity: 0.0 };
         }
         let mut target = f + Vec3::Y * st.height.update(lift, guards.foot_halflife, dt);
+        // Plant detection on the final pose (UE5 Foot Placement plant
+        // settings, ALS foot locking; the cook's contact rule): a joint of
+        // the blended, warped pose is still while its world speed (last
+        // update's position carried with the world) stays under
+        // `plant_speed`, and stops being still only past `lift` times it
+        // (no last position: still). Heights count from the lowest point
+        // since the plant, so a clip's float or a rig's offset changes
+        // nothing.
+        let leg_reach = reaches[k];
+        // `plant_speed` 0 turns the detection off: every joint is still and
+        // never rises, so the curves alone decide (as before `AN1d`).
+        let detect = guards.plant_speed > 0.0;
+        let under = |m: f32, prev: Option<Vec3>, at: Vec3| {
+            !detect
+                || prev.filter(|_| dt > 0.0).is_none_or(|p| horizontal(at - p).length() < guards.plant_speed * m * dt * leg_reach)
+        };
+        let hysteresis = |was: bool| if was { guards.lift } else { 1.0 };
+        st.still = [under(hysteresis(st.still[0]), st.prev_foot, f), toe.is_some_and(|t| under(hysteresis(st.still[1]), st.prev_toe, t))];
+        // Heights count only on frames a joint rests at (under `plant_speed`,
+        // no hysteresis): a heel-off pitches the foot in place, while a pose
+        // that jumps (a blend's lanes swapping) moves it too and is no roll.
+        let rests = (under(1.0, st.prev_foot, f), toe.is_some_and(|t| under(1.0, st.prev_toe, t)));
+        (st.prev_foot, st.prev_toe) = (Some(f), toe);
+        let mut toe_up = false;
+        if st.lock.is_some() && detect {
+            if rests.0 {
+                st.low.0 = st.low.0.min(f.y);
+                st.heel_up |= f.y - st.low.0 > guards.heel_rise * leg_reach;
+            }
+            if let (true, Some(t)) = (rests.1, toe) {
+                st.low.1 = st.low.1.min(t.y);
+            }
+            toe_up = toe.is_some_and(|t| t.y - st.low.1 > guards.toe_rise * leg_reach);
+        }
         let curve = |c: Option<u16>| c.and_then(|c| cx.curves.get(usize::from(c)).copied()).unwrap_or(0.0);
         let contact = curve(leg.contact);
+        // A risen heel lets the foot re-plant only at its next contact.
+        if contact <= 0.5 && curve(leg.roll) <= 0.5 {
+            st.heel_up = false;
+        }
+        // The curves nominate a plant (contact, or roll after it), the pose
+        // says which joint holds it: the ankle while it is still and its
+        // heel has not risen; then the toe while it is still and has not
+        // risen (the heel rolls, as authored or as a blend raises it under
+        // one lane's contact curve); neither once the toe moves too. A leg
+        // without a toe keeps its ankle lock through a heel rise.
+        let stance = contact > 0.5 && st.still[0] && !(st.heel_up && toe.is_some());
         // A state/slot switch that starts an inertialization releases any lock
         // held for the previous state into the smooth release spring instead of
         // holding the foot at the old state's stance until it trips `unplant`.
@@ -754,17 +813,17 @@ fn foot_placement(
         }
         // Heel roll: the contact is over (heel-off) but the toe is still
         // down: the toe pins, the ankle rises and turns about it as animated.
-        let rolling = contact <= 0.5 && curve(leg.roll) > 0.5 && !st.unplanting;
+        let rolling = !stance && (contact > 0.5 || curve(leg.roll) > 0.5) && st.still[1] && !toe_up && !st.unplanting;
         if let (true, Some(l), Some(t)) = (rolling, st.lock, toe) {
             // The toe under the locked foot, on the foot's ground.
             st.toe_lock.get_or_insert(l + horizontal(t - f));
-        } else if contact > 0.5 {
+        } else if stance {
             st.toe_lock = None;
         }
         // The locked position (ground plane, `y` its ground): the ankle's
         // lock, or the animated foot moved onto the pinned toe.
         let toe_pin = st.toe_lock.zip(toe).map(|(l, t)| l + horizontal(f - t));
-        let pin = if contact > 0.5 { st.lock } else if rolling { toe_pin } else { None };
+        let pin = if stance { st.lock } else if rolling { toe_pin } else { None };
         // Over-extension limit of a toe pin (UE5 Foot Placement plant
         // settings' max extension ratio): the pin may stretch the leg, at the
         // animated hip and foot height, by `extension` of the length the
@@ -793,7 +852,7 @@ fn foot_placement(
             let turned = turn > guards.unplant_angle;
             // Over-extension (`stretch` above): the toe pin would need the
             // leg past the limit at the animated hip and foot height.
-            let stretched = !turned && contact <= 0.5 && stretch.is_some_and(|(hip, l)| hip.distance(Vec3::new(p.x, f.y, p.z)) > l);
+            let stretched = !turned && !stance && stretch.is_some_and(|(hip, l)| hip.distance(Vec3::new(p.x, f.y, p.z)) > l);
             if !st.unplanting && (turned || stretched || drift > guards.unplant * reaches[k]) {
                 st.unplanting = true;
                 cx.feet.unplanted += 1;
@@ -809,7 +868,7 @@ fn foot_placement(
             Vec3::new(p.x, f.y + ground, p.z)
         };
         let mut planted = None;
-        if contact > 0.5 && !st.unplanting && st.lock.is_none() && !cx.inertializing {
+        if stance && !st.unplanting && st.lock.is_none() && !cx.inertializing {
             // A foot plants on the ground it touches, not on the smoothed
             // height still catching up (stair edges); where it is, with what
             // is left of a release (the sampled plane carried under it).
@@ -818,6 +877,7 @@ fn foot_placement(
             let l = Vec3::new(f.x + o.x, ground, f.z + o.z);
             (st.lock, st.offset, st.offset_velocity) = (Some(l), Vec3::ZERO, Vec3::ZERO);
             (st.turned, st.plant_rotation) = (0.0, model.rotation(foot));
+            (st.low, st.heel_up) = ((f.y, toe.map_or(f32::INFINITY, |t| t.y)), false);
             target = locked(l, l.y, &mut st.height);
             planted = Some(l);
         } else if let (Some(p), false) = (pin, st.unplanting) {
@@ -844,7 +904,7 @@ fn foot_placement(
             }
             critical_spring(&mut st.offset, &mut st.offset_velocity, Vec3::ZERO, 0.5 * release.max(1e-3), dt);
             if st.offset.length() < 1e-3 {
-                *st = LegState { height: st.height, ..LegState::default() };
+                *st = LegState { height: st.height, prev_foot: st.prev_foot, prev_toe: st.prev_toe, still: st.still, heel_up: st.heel_up, ..LegState::default() };
             } else {
                 target += st.offset;
             }

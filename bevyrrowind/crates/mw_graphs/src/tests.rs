@@ -278,5 +278,6 @@ fn classic_keeps_the_morrowind_graph() {
 /// 2026-11-26: the look-at (AN8: trunk, neck and head toward the host's look target) applies
 /// to Classic too. Then B2a: `Clip` nodes gained `distance: None` (Debug text only; the
 /// graph and its RON are unchanged). `AN1c`: `FootGuards` gained `extension` (the
-/// over-extension unplant, default 0.99).
-const CLASSIC_DIGEST: u64 = 0x1657_1da5_69d9_e2fc;
+/// over-extension unplant, default 0.99). `AN1d`: `FootGuards` gained `plant_speed`,
+/// `heel_rise`, `toe_rise` and `lift` (plant detection on the final pose).
+const CLASSIC_DIGEST: u64 = 0xf0a5_5a7c_38c5_673b;

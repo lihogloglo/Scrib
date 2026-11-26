@@ -363,7 +363,15 @@ last update's warp ratio and locks. A lock's height is the live sample there, el
   above its ground hit, with the foot rotated to the hit normal (clamped to
   30°). While the baked contact curve is above 0.5 the ground-plane position
   is locked; its height is the animated foot's over the ground under the
-  lock each update (heel-off stays animated); released over 0.1 s. A lock also lets go (same fade,
+  lock each update (heel-off stays animated); released over 0.1 s. The curves only nominate a
+  plant; the final blended pose decides it, as UE5 Foot Placement's plant settings (speed
+  threshold, distance to ground) and ALS foot locking do and as the cook plants (AN1d,
+  `FootGuards::plant_speed`): a lock takes and holds only while the ankle is still (world speed
+  under `plant_speed`, hysteresis `lift`) and its heel has not risen `heel_rise` since the plant,
+  then the toe pins while it is still and has not risen `toe_rise`, so a blend whose lanes'
+  curves disagree lets go of a foot its other lane lifts. Heights count only on frames the joint
+  moves under `plant_speed` (a pose that jumps between lanes is no heel roll; it releases and
+  re-plants); `plant_speed` 0 turns the detection off (the curves alone, the A/B arm). A lock also lets go (same fade,
   then re-plants where the foot is) once it drifts `guards.unplant` (0.3 of the reach) from the
   animated foot, or once the planted foot has turned `guards.unplant_angle` past the animated one
   since the plant: root yaw plus the clip's own foot yaw, so a turn-in-place clip that keeps its

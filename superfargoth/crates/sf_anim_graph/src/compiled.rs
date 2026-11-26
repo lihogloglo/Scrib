@@ -630,7 +630,7 @@ pub const LEAN_COUNTER_MAX: usize = 8;
 
 const MAGIC: &[u8; 4] = b"SFAG";
 /// Version of the compiled graph format.
-pub const GRAPH_FORMAT: u32 = 15;
+pub const GRAPH_FORMAT: u32 = 16;
 
 impl CompiledGraph {
     #[cfg(feature = "bake")]

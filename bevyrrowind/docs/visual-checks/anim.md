@@ -14,3 +14,15 @@ itself at 120° from the animated aim), no flip-flop when you stand behind it; s
 lets go; pick-up/let-go may lag up to 0.3 s (Morrowind's refresh). Close (A0) NPCs only. A/B: tunable
 `mw.anim.head_track.on` (dev tunables panel). Known: beast heads aim ~5° low (head axis measured on human rigs).
 Status: OK (owner 2026-11-26, exe c0df7ec9): interior (view Census and Excise Office) "yep all good"; exterior (wk-balmora + F11) "the walkers are fine".
+
+## ANIM-1: loco2 gait picks + feet planted on the walk/jog blend (AN5b short list, AN1d)
+
+Run 1: `owner_launch.sh clip-preview --browse "D:/Gamedev/Bevyrrowind/animation packs/generated/loco2"` (absolute
+folder; C = candidates only). Short list (ledger AN5b): walk p16.cfg23.03/.01, walk back.free.00, strafe.l.s10.04/.05,
+jog p45.05 + stride.1.03, jog back.s20.04, jog strafe.l.free.02; no usable sprint. Questions: (1) is one walk of
+p16.cfg23.03/.01 good enough to ship? (2) one jog of p45.05/stride.1.03? (3) do the arms swing enough (MW swings wider)?
+Run 2 (next dev build, GRAPH_FORMAT 16): `scene wk-balmora`, F11, walk then speed up into a jog. (4) no pelvis dip or
+knee buckle while walk blends into jog? (5) feet stay put on sidesteps and backpedals (AN1d slides 2-3 cm there)?
+Proof log: `walkers feet: ... unplanted` and `head track: player body present` lines in last.log. A/B: graph guard
+`plant_speed` 0 (off). Status: awaiting owner (commit of AN1d, 2026-11-26).
+

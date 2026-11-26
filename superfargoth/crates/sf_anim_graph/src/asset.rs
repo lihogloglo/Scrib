@@ -573,6 +573,42 @@ pub struct FootGuards {
     /// keep `unplant` only (strafes hold them a few cm past full extension;
     /// letting go slid the feet). 1 or more turns it off.
     pub extension: f32,
+    /// Plant detection on the final pose (`AN1d`; UE5 Foot Placement plant
+    /// settings' speed threshold and distance to ground, ALS foot locking,
+    /// the cook's contact rule, animation.md "Contacts"): the contact and
+    /// roll curves only nominate a plant; the blended, warped pose says
+    /// which joint holds it. A joint is still while its horizontal world
+    /// speed (last update's position carried with the character's motion,
+    /// as locks are) is under `plant_speed`, and stops being still only
+    /// past `lift` times it. A stance lock takes and holds while the ankle
+    /// is still and has not risen `heel_rise` over its lowest point since
+    /// the plant; then the toe pins while it is still and has not risen
+    /// `toe_rise` (the heel rolls, as authored or as a blend raises it under
+    /// one lane's contact curve); neither once the toe moves too. Heights
+    /// count only on frames a joint moves under `plant_speed` (a pose that
+    /// jumps is no heel roll). 0 turns the detection off (the curves alone
+    /// decide, the A/B arm). Tunable
+    /// (leg reaches per second, 0 or 1-10; default 4, source Industry: UE5 plant
+    /// settings' speed threshold; value from the `AN1d` `slope_walk` trace:
+    /// swinging feet 4-6, stance skate up to ~2 on the Morrowind run
+    /// strafes, which the lock absorbs, so speed only rejects a swing).
+    pub plant_speed: f32,
+    /// Heel rise that hands a stance lock to the toe (`plant_speed`).
+    /// Tunable (leg reaches, 0.002-0.1; default 0.01, source Industry: UE5
+    /// plant settings' distance to ground; value from the `AN1d` trace: pure
+    /// walk stance ankles rise under 0.005, the walk/jog blend's heel that
+    /// dragged the lock 0.02 within 0.07 s).
+    pub heel_rise: f32,
+    /// Toe rise that releases a toe pin (`plant_speed`). Tunable (leg
+    /// reaches, 0.01-0.3; default 0.08, source Industry: as `heel_rise`;
+    /// value Guess from the `AN1d` trace: a rolling toe (a mid-foot socket on
+    /// rigs without toe joints) rises 0.08-0.1 by toe-off).
+    pub toe_rise: f32,
+    /// Hysteresis of `plant_speed`: a still joint stops being still only
+    /// past this multiple of it. Tunable (ratio, 1-4; default 2, source
+    /// Industry: the cook's contact `release`; value Guess, same as the
+    /// cook).
+    pub lift: f32,
     /// Above this speed (m/s) the op blends out.
     pub max_speed: f32,
     /// Halflife of the op's weight (blend in and out), seconds.
@@ -590,6 +626,10 @@ impl Default for FootGuards {
             unplant: 0.3,
             unplant_angle: 45f32.to_radians(),
             extension: 0.99,
+            plant_speed: 4.0,
+            heel_rise: 0.01,
+            toe_rise: 0.08,
+            lift: 2.0,
             max_speed: 8.0,
             blend_halflife: 0.1,
             foot_halflife: 0.04,
