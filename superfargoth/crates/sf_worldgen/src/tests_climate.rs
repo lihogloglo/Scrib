@@ -270,7 +270,106 @@ pet_mm_per_c = { v = 60, unit = "mm/yr/C", min = 30, max = 90, source = "Industr
 drain_area_min_m2 = { v = 1e4, unit = "m2", min = 1e3, max = 1e7, source = "Guess" }
 drain_area_max_m2 = { v = 1e8, unit = "m2", min = 1e7, max = 1e11, source = "Guess" }
 drain_weight = { v = 0.4, unit = "ratio", min = 0, max = 1, source = "Guess" }
+override_blend_m = { v = 1500, unit = "m", min = 0, max = 20000, source = "Guess" }
 "#;
+
+const OVERRIDES: &str = r#"
+[override_columns]
+t_add = { unit = "K", min = -30, max = 30, source = "Guess" }
+p_scale = { unit = "ratio", min = 0, max = 5, source = "Guess" }
+p_pin = { unit = "mm/yr", min = 0, max = 10000, source = "Guess" }
+
+[regions."Ash Plain"]
+p_scale = 0.3
+t_add = 2.0
+
+[regions."North Isles"]
+p_pin = 900
+"#;
+
+fn with_overrides() -> String {
+    format!("{FILE}{OVERRIDES}")
+}
+
+#[test]
+fn parses_region_overrides() {
+    let f = ClimateFile::parse_toml(&with_overrides()).unwrap();
+    assert_eq!(f.overrides.len(), 2);
+    assert_eq!(f.overrides[0].region, "Ash Plain");
+    assert_eq!(
+        f.overrides[0].rain,
+        Adjust { scale: 0.3, add: 0.0, pin: None }
+    );
+    assert_eq!(
+        f.overrides[0].temperature,
+        Adjust { scale: 1.0, add: 2.0, pin: None }
+    );
+    assert_eq!(f.overrides[1].region, "North Isles");
+    assert_eq!(f.overrides[1].rain.pin, Some(900.0));
+    assert_eq!(f.overrides[1].temperature, Adjust::default());
+    assert_eq!(f.climate.override_blend_m, 1500.0);
+    assert_eq!(f.declared.len(), 17);
+    let sea = f.declared.iter().find(|d| d.name == "sea_temperature_c").unwrap();
+    assert_eq!(sea.v, 22.0);
+}
+
+#[test]
+fn rejects_bad_overrides() {
+    let good = with_overrides();
+    let p_add_column =
+        "[override_columns]\np_add = { unit = \"mm/yr\", min = 0, max = 100, source = \"Guess\" }";
+    let cases: &[(&str, &str, &str)] = &[
+        // a column name outside the six
+        (
+            "unknown column",
+            "[override_columns]",
+            "[override_columns]\nt_mul = { unit = \"ratio\", min = 0, max = 1, source = \"Guess\" }",
+        ),
+        // a column whose unit is not the fixed one
+        ("wrong unit", "unit = \"K\", min = -30", "unit = \"C\", min = -30"),
+        // a column source failing check_source
+        ("bad source", "max = 5, source = \"Guess\"", "max = 5, source = \"Hunch\""),
+        // a column with min > max
+        ("inverted range", "min = 0, max = 5,", "min = 6, max = 5,"),
+        // a column with a non-finite bound
+        ("non-finite bound", "min = -30, max = 30,", "min = -30, max = inf,"),
+        // a region value whose column is not declared
+        ("undeclared column", "t_add = 2.0", "p_add = 2.0"),
+        // a region value outside its column's range
+        ("out of range", "p_scale = 0.3", "p_scale = 7.0"),
+        // a pin together with a scale of the same field
+        ("pin and scale", "p_pin = 900", "p_pin = 900\np_scale = 0.5"),
+        // a region table with no value
+        ("empty region", "p_pin = 900\n", ""),
+        // an empty region name
+        ("empty name", "[regions.\"North Isles\"]", "[regions.\"\"]"),
+        // an unknown key inside a region table
+        ("unknown key", "p_pin = 900", "p_pin = 900\nsnow = 1"),
+    ];
+    for (what, from, to) in cases {
+        let text = good.replace(from, to);
+        assert_ne!(text, good, "{what}: the replace changed nothing");
+        assert!(ClimateFile::parse_toml(&text).is_err(), "{what}: accepted");
+    }
+    // a pin together with an add of the same field (p_add declared, so only the pin rule refuses it)
+    let declared = good.replace("[override_columns]", p_add_column);
+    assert_ne!(declared, good);
+    assert!(ClimateFile::parse_toml(&declared).is_ok());
+    let text = declared.replace("p_pin = 900", "p_pin = 900\np_add = 10");
+    assert_ne!(text, declared);
+    assert!(ClimateFile::parse_toml(&text).is_err(), "pin and add: accepted");
+}
+
+#[test]
+fn a_file_without_overrides_has_none() {
+    let f = ClimateFile::parse_toml(FILE).unwrap();
+    assert!(f.overrides.is_empty());
+    let d = ClimateFile::defaults();
+    assert_eq!(d.declared.len(), 17);
+    assert!(d.overrides.is_empty());
+    assert_eq!(d.climate, Climate::default());
+    assert_eq!(Climate::parse_toml(FILE).unwrap(), f.climate);
+}
 
 #[test]
 fn parses_and_rejects_params_files() {
@@ -284,6 +383,9 @@ fn parses_and_rejects_params_files() {
     let missing = FILE.replace("fallout_km =", "# fallout_km =");
     assert!(Climate::parse_toml(&missing).is_err());
     let missing = FILE.replace("drain_weight =", "# drain_weight =");
+    assert!(Climate::parse_toml(&missing).is_err());
+    assert_eq!(c.override_blend_m, 1500.0);
+    let missing = FILE.replace("override_blend_m =", "# override_blend_m =");
     assert!(Climate::parse_toml(&missing).is_err());
     let inverted = FILE.replace("v = 1e8,", "v = 1e7,").replace("v = 1e4,", "v = 1e7,");
     assert!(Climate::parse_toml(&inverted).is_err());

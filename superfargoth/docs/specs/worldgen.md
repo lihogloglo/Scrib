@@ -152,7 +152,7 @@ height; runs start noisy and stop at a finite time, not at strict equilibrium.
    a border width. Wind direction and sea-level temperature are recipe data per world (`Guess` until tuned by eye).
    Air enters the grid at `climate.inflow_saturation` of the capacity (1: mapgen4 starts the wind at humidity 1;
    0 = dry inflow). Slices: WG-E1a (a) + (b) and the hash test (built 2026-11-26); WG-E1b1 (c) (built 2026-11-26; 16 declared values); WG-E1b2 (d), the table a
-   rectilinear grid in TOML (temperature edges, precipitation edges, a class name per cell; built 2026-11-26, `climate_classes.rs` + the default `climate_classes.toml`, 12 classes); WG-E1c1 the override function (built 2026-11-26, `climate_override.rs`: box-blended weights from integer window counts), WG-E1c2 its data in the climate params file, WG-E1c3 the
+   rectilinear grid in TOML (temperature edges, precipitation edges, a class name per cell; built 2026-11-26, `climate_classes.rs` + the default `climate_classes.toml`, 12 classes); WG-E1c1 the override function (built 2026-11-26, `climate_override.rs`: box-blended weights from integer window counts), WG-E1c2 its data in the climate params file (built 2026-11-26, `climate::ClimateFile`: a 17th declared value `override_blend_m`, an `[override_columns]` table and one `[regions."<legend name>"]` table per region), WG-E1c3 the
    guide product. Cost: (a) + (b) 0.26-0.31 s on 6.4 M samples (measured at E1a, 16 threads; target under 1 s for the stage).
    *Material fields:* slope, curvature, flow, wetness, altitude, rock type, exposure, climate → splat inputs (the
    adapter maps them to its layers: LTEX or pack textures) and scatter density fields.

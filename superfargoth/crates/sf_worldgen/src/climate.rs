@@ -19,17 +19,21 @@
 //! evapotranspiration `PET = pet_mm_per_c * biotemperature`, mapped to `AI / (1 + AI)`, then raised towards 1 by the
 //! log of the drainage area between two declared areas ([`moisture`]).
 //!
-//! The sixteen values are tunables declared with unit,
+//! The seventeen values are tunables declared with unit,
 //! range and source ([`declared_defaults`]); a params file gives them as a `[params]` table of
-//! `{ v, unit, min, max, source }` entries, as the height-curve params do.
+//! `{ v, unit, min, max, source }` entries, as the height-curve params do. The file may also carry per-region
+//! overrides ([`ClimateFile`]): an `[override_columns]` table declaring unit, range and source of each column used
+//! (`t_scale`, `t_add`, `t_pin`, `p_scale`, `p_add`, `p_pin`) and one `[regions."<legend name>"]` table per region.
 
 use std::collections::BTreeMap;
 
 use rayon::prelude::*;
 use serde::Deserialize;
 
+use crate::climate_override::Adjust;
 use crate::filter::Declared;
 use crate::grid::Grid;
+use crate::recipe::Column;
 use crate::stratovolcano::Param;
 use crate::{Error, Result};
 
@@ -55,6 +59,18 @@ pub const PARAM_NAMES: &[&str] = &[
     "drain_area_min_m2",
     "drain_area_max_m2",
     "drain_weight",
+    "override_blend_m",
+];
+
+/// The override columns a params file may declare, with their fixed units.
+// tunables: const (format: the column names and units of the override tables)
+const OVERRIDE_COLUMNS: &[(&str, &str)] = &[
+    ("t_scale", "ratio"),
+    ("t_add", "K"),
+    ("t_pin", "C"),
+    ("p_scale", "ratio"),
+    ("p_add", "mm/yr"),
+    ("p_pin", "mm/yr"),
 ];
 
 /// Holdridge biotemperature: the air temperature clamped to 0..30 C.
@@ -222,6 +238,15 @@ pub fn declared_defaults() -> Vec<Declared> {
             "Guess",
             "share of the remaining dryness a full drainage area makes wet",
         ),
+        d(
+            "override_blend_m",
+            2000.0,
+            "m",
+            0.0,
+            20000.0,
+            "Guess",
+            "width of the box that blends a region's override across its border",
+        ),
     ]
 }
 
@@ -244,6 +269,7 @@ pub struct Climate {
     pub drain_area_min_m2: f64,
     pub drain_area_max_m2: f64,
     pub drain_weight: f64,
+    pub override_blend_m: f64,
 }
 
 impl Default for Climate {
@@ -256,6 +282,189 @@ impl Default for Climate {
 #[serde(deny_unknown_fields)]
 struct ParamsFile {
     params: BTreeMap<String, Param>,
+    #[serde(default)]
+    override_columns: BTreeMap<String, Column>,
+    #[serde(default)]
+    regions: BTreeMap<String, RegionRow>,
+}
+
+/// One `[regions."<name>"]` table: any of the six override columns.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RegionRow {
+    t_scale: Option<f64>,
+    t_add: Option<f64>,
+    t_pin: Option<f64>,
+    p_scale: Option<f64>,
+    p_add: Option<f64>,
+    p_pin: Option<f64>,
+}
+
+impl RegionRow {
+    fn values(&self) -> [(&'static str, Option<f64>); 6] {
+        [
+            ("t_scale", self.t_scale),
+            ("t_add", self.t_add),
+            ("t_pin", self.t_pin),
+            ("p_scale", self.p_scale),
+            ("p_add", self.p_add),
+            ("p_pin", self.p_pin),
+        ]
+    }
+}
+
+/// One region's override by legend name (resolved to a legend index by the caller).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NamedOverride {
+    pub region: String,
+    pub temperature: Adjust,
+    pub rain: Adjust,
+}
+
+/// A parsed climate params file.
+#[derive(Debug, Clone)]
+pub struct ClimateFile {
+    pub climate: Climate,
+    /// The 17 declared values with the file's v, min, max and source (for a product's provenance).
+    pub declared: Vec<Declared>,
+    /// Sorted by region name.
+    pub overrides: Vec<NamedOverride>,
+}
+
+/// One field's adjustment from its scale, add and pin columns (a pin excludes the other two).
+fn adjust(
+    region: &str,
+    field: &str,
+    scale: Option<f64>,
+    add: Option<f64>,
+    pin: Option<f64>,
+) -> Result<Adjust> {
+    if pin.is_some() && (scale.is_some() || add.is_some()) {
+        return Err(Error::Invalid(format!(
+            "climate: region {region:?} pins {field} and also scales or adds to it"
+        )));
+    }
+    let mut a = Adjust::default();
+    if let Some(s) = scale {
+        a.scale = s;
+    }
+    if let Some(v) = add {
+        a.add = v;
+    }
+    a.pin = pin;
+    Ok(a)
+}
+
+/// Checks the `[override_columns]` table: known names, fixed units, valid sources, finite ordered bounds.
+fn check_columns(columns: &BTreeMap<String, Column>) -> Result<()> {
+    for (name, c) in columns {
+        let unit = OVERRIDE_COLUMNS
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, u)| *u)
+            .ok_or_else(|| Error::Invalid(format!("climate: unknown override column {name}")))?;
+        if c.unit != unit {
+            return Err(Error::Invalid(format!(
+                "climate: override column {name} unit {:?}, expected {unit:?}",
+                c.unit
+            )));
+        }
+        crate::recipe::check_source(name, &c.source)?;
+        if !c.min.is_finite() || !c.max.is_finite() || c.min > c.max {
+            return Err(Error::Invalid(format!(
+                "climate: override column {name} range [{}, {}] is not finite and ordered",
+                c.min, c.max
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Checks one region table against the declared columns and builds its override.
+fn region_override(
+    name: &str,
+    row: &RegionRow,
+    columns: &BTreeMap<String, Column>,
+) -> Result<NamedOverride> {
+    if name.is_empty() {
+        return Err(Error::Invalid("climate: empty region name".into()));
+    }
+    let values = row.values();
+    if values.iter().all(|(_, v)| v.is_none()) {
+        return Err(Error::Invalid(format!(
+            "climate: region {name:?} gives no value"
+        )));
+    }
+    for (col, v) in values {
+        let Some(v) = v else { continue };
+        let c = columns.get(col).ok_or_else(|| {
+            Error::Invalid(format!(
+                "climate: region {name:?} uses {col}, not declared in [override_columns]"
+            ))
+        })?;
+        crate::recipe::check_range(&format!("climate: region {name:?} {col}"), v, c.min, c.max)?;
+    }
+    Ok(NamedOverride {
+        region: name.to_owned(),
+        temperature: adjust(name, "temperature", row.t_scale, row.t_add, row.t_pin)?,
+        rain: adjust(name, "rain", row.p_scale, row.p_add, row.p_pin)?,
+    })
+}
+
+impl ClimateFile {
+    /// The declared defaults, no override.
+    #[must_use]
+    pub fn defaults() -> Self {
+        Self {
+            climate: Climate::default(),
+            declared: declared_defaults(),
+            overrides: Vec::new(),
+        }
+    }
+
+    /// Parses a params file (TOML `[params]`, optional `[override_columns]` and `[regions.*]`): every name declared,
+    /// no unknown one, units as declared, sources valid, values in their ranges; override columns known, with their
+    /// fixed unit, a valid source and a finite ordered range; each region named, with at least one value, every value
+    /// in a declared column's range, and no pin together with a scale or an add of the same field.
+    pub fn parse_toml(text: &str) -> Result<Self> {
+        let file: ParamsFile = toml::from_str(text)?;
+        for name in file.params.keys() {
+            if !PARAM_NAMES.contains(&name.as_str()) {
+                return Err(Error::Invalid(format!("climate: unknown param {name}")));
+            }
+        }
+        let mut declared = declared_defaults();
+        for d in &mut declared {
+            let p = file
+                .params
+                .get(d.name)
+                .ok_or_else(|| Error::Invalid(format!("climate: param {} missing", d.name)))?;
+            if p.unit != d.unit {
+                return Err(Error::Invalid(format!(
+                    "climate: {} unit {:?}, expected {:?}",
+                    d.name, p.unit, d.unit
+                )));
+            }
+            crate::recipe::check_source(d.name, &p.source)?;
+            d.v = p.v;
+            d.min = p.min;
+            d.max = p.max;
+            d.source.clone_from(&p.source);
+        }
+        let climate = Climate::from_declared(&declared)?;
+        check_columns(&file.override_columns)?;
+        // BTreeMap iteration is in name order, so `overrides` is sorted by region name.
+        let overrides = file
+            .regions
+            .iter()
+            .map(|(name, row)| region_override(name, row, &file.override_columns))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self {
+            climate,
+            declared,
+            overrides,
+        })
+    }
 }
 
 impl Climate {
@@ -292,37 +501,13 @@ impl Climate {
             drain_area_min_m2: a0,
             drain_area_max_m2: a1,
             drain_weight: get("drain_weight")?,
+            override_blend_m: get("override_blend_m")?,
         })
     }
 
-    /// Parses a params file (TOML `[params]`): every name declared, no unknown one, units as declared, sources
-    /// valid, values in their ranges.
+    /// Parses a params file ([`ClimateFile::parse_toml`]), keeping only the climate values.
     pub fn parse_toml(text: &str) -> Result<Self> {
-        let file: ParamsFile = toml::from_str(text)?;
-        for name in file.params.keys() {
-            if !PARAM_NAMES.contains(&name.as_str()) {
-                return Err(Error::Invalid(format!("climate: unknown param {name}")));
-            }
-        }
-        let mut declared = declared_defaults();
-        for d in &mut declared {
-            let p = file
-                .params
-                .get(d.name)
-                .ok_or_else(|| Error::Invalid(format!("climate: param {} missing", d.name)))?;
-            if p.unit != d.unit {
-                return Err(Error::Invalid(format!(
-                    "climate: {} unit {:?}, expected {:?}",
-                    d.name, p.unit, d.unit
-                )));
-            }
-            crate::recipe::check_source(d.name, &p.source)?;
-            d.v = p.v;
-            d.min = p.min;
-            d.max = p.max;
-            d.source.clone_from(&p.source);
-        }
-        Self::from_declared(&declared)
+        ClimateFile::parse_toml(text).map(|f| f.climate)
     }
 }
 
