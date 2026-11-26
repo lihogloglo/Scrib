@@ -107,6 +107,12 @@ workspace-hack.workspace = true
 mw_install.workspace = true
 mw_records.workspace = true
 mw_vfs.workspace = true
+# `sit_repro_tests.rs` (IN2c2): the player's Sit replayed headless with the game's real rules, clips and seat defs.
+sf_action.workspace = true
+sf_action_bevy.workspace = true
+sf_anim.workspace = true
+sf_interaction_bevy.workspace = true
+sf_script_bevy.workspace = true
 # `level/nav.rs` tests: a throwaway bake store.
 tempfile.workspace = true
 

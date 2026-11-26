@@ -232,7 +232,11 @@ fn activate_reach_m(db: Option<&RecordDb>) -> f32 {
 /// Scaffold `PlayerSlots`: fixed clip lengths until B1's animation feed reports the real ones; the
 /// traversal and seat slots take their baked clips' lengths (a seat `loop` clip loops), the
 /// `sheet`'s slots its timings, and every baked slot its root track.
-fn rules(clips: &[SlotClip], sheet: Option<&CompiledSheet>) -> ActionRules {
+///
+/// # Panics
+/// If the framework rule files do not parse (a build-time fixture).
+#[must_use]
+pub fn rules(clips: &[SlotClip], sheet: Option<&CompiledSheet>) -> ActionRules {
     let mut slots = SlotTable::new()
         .with("loco.move", SlotInfo::looping())
         .with("air.fall", SlotInfo::looping())

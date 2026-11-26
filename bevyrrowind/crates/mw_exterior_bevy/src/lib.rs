@@ -23,6 +23,8 @@ pub mod main_menu;
 pub mod pause_menu;
 pub mod phase;
 mod shelter_casters;
+#[cfg(test)]
+mod sit_repro_tests;
 mod trails;
 pub mod worldgen;
 pub mod worldgen_roads;
