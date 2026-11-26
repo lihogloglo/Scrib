@@ -78,3 +78,39 @@ agent on its own today); body construction and drop; the impulse at which a push
 (`band.max_ns`). Over budget: lower `cap`, then `step_divisor` 2; never
 delete the feature. A grouped or parallel step that cuts the per-body cost raises the cap by the same rule; it waits on
 the provider's thread-safety check (R§5).
+
+## AN38e table: grouped at the missing counts, fan-out (2026-11-26; ledger physics.md "AN38e")
+
+State G (pose follow + pinned pelvis), test `tint_fanout_cost`, one clean run (16 threads, 60 warm-up + 600 timed
+ticks), ms per tick. Fan-out = one long-lived worker thread per agent released by a `Barrier`, each agent in its own
+floor world calling the plain `Agent::step`. Rows marked (d) are AN38d's.
+
+| N | grouped (`Agent::step_group`) median / p99 / max | fan-out median / p99 / max |
+|---|---|---|
+| 1 | (d) 0.456 / 0.775 / 0.851 | 0.542 / 1.192 / 1.267 |
+| 2 | (d) 0.833 / 1.130 / 1.360 | 0.727 / 1.091 / 1.166 |
+| 3 | 1.237 / 2.084 / 2.404 | 0.771 / 1.165 / 1.189 |
+| 4 | 1.604 / 2.174 / 2.629 | 0.794 / 1.211 / 1.392 |
+| 5 | 2.154 / 3.747 / 5.916 | 0.828 / 1.245 / 1.295 |
+| 6 | 1.011 / 1.501 / 1.891 | not measured |
+| 7 | 1.033 / 1.581 / 1.646 | not measured |
+
+Nobody falls, pelvis 100 % in every row. AN38d's N = 4 p99 of 3.998 (max 12.867) was one stray tick.
+
+## "Performance" as written for the group step (cap 4 through `step_group`; superseded by the fan-out 2026-11-26)
+
+**Group step (AN38d, one clean run: these numbers rest on it).** G through Delirium's `Agent::step_group`, median at
+N = 1 / 2 / 4 / 8: 0.46 / 0.83 / 1.61 / 0.84 ms; p99 at 4: 2.24 in one run, 4.0 in the other; at 8: 1.1. Up to 5 agents
+it runs on one thread (0.40 ms per body); from 6 Delirium splits, one task per agent on its own pool. The threshold
+is a constant in Delirium's data table, not a setting (history).
+
+**So the provider steps tints and takeovers together through `step_group`** (one shared collision world, each agent in
+its own shifted frame, as the test does), and **the cap is 4** (Low 2): 1.61 ms at N = 4 meets the median; its p99 is
+unsettled and N = 3, 5, 6, 7 are not timed; N = 5 is ~2.0 ms by the serial cost, at the limit. Past the split 8 agents
+cost less than 4, so a cap of 8 needs the counts 3-5 to split too: a provider-side fan-out (one task per agent on
+Bevy's `ComputeTaskPool`, each calling the agent's own step; no Delirium change). A one-constant patch in our pinned
+fork is not taken: Delirium is adopted from upstream as it is (owner policy; meta 2026-11-26). The fan-out is not
+measured: AN38e times N = 3-7 grouped, the p99 at 4 again and the fan-out at 2-5; AN42 repeats the
+cap in the game, where Delirium's pool shares the cores with Bevy's. Rule: the cap is the largest N with every count
+up to N inside both limits. Over budget: lower `cap`, then `step_divisor` 2; never delete the feature. Takeovers are
+never refused, so the cap only stops tints adding to them.

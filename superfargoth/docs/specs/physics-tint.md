@@ -14,9 +14,10 @@ Status (2026-11-26): spec (AN39), nothing built. Rows AN38-AN42 in `docs/roadmap
   bodies and `PhysicsPose`.
 - Gate: preset, capable, not held, tier <= A1, distance, cooldown, cap. The cap counts tints plus live takeovers;
   takeovers are never refused and preempt the lowest tint. Refused: the kind's fallback on the same tick; Classic: always.
-- Every number is a tunable, most `Guess` until AN42. Measured (AN38a-d): a pinned tinted body costs 0.65 ms per tick
-  stepped alone and 0.40 in Delirium's group step, which splits across cores from 6 agents; the cap is 4 (Low 2),
-  resting on one run; agents come from a pre-built pool (building one costs 5 ms). The provider must hold the pelvis
+- Every number is a tunable, most `Guess` until AN42. Measured (AN38a-e): a pinned tinted body costs 0.65 ms per tick
+  stepped alone; the provider steps each agent as its own task on the task pool (flat ~0.8 ms per tick for 2-5
+  agents; one agent inline), not through Delirium's group step (serial up to 5 agents, over budget at 5). The cap is 4
+  (Low 2), 5 only after AN40b's count test; agents come from a pre-built pool (building one costs 5 ms). The provider must hold the pelvis
   (pose follow alone collapses); a tint that falls is promoted to the takeover. Every kind runs on the pinned pelvis and holds the clip within ~10 degrees mean on the upper body (AN38c,
   "Performance").
 
@@ -40,7 +41,8 @@ creatures and beast races (owner answers 2-3, "Open questions"); wall contacts; 
 - **Hit bands on a human walker:** kinematic `HitReact` from 1 N s (`HIT_REACT_IMPULSE`, physics.rs:274), Delirium push
   takeover from 10 N s, push + knockdown from 100 N s (`HitRules`, lib.rs:153-174).
 - **Step:** `FixedUpdate` 60 Hz, one sequential loop, no cap (lib.rs:626-649); each takeover steps its own agent
-  (`mw_delirium/src/takeover.rs:625`), Delirium's `step_group` is never called; gauge `DeliriumStats.step_us`.
+  in its own collision world (`mw_delirium/src/takeover.rs:625`), Delirium's `step_group` is never called; gauge
+  `DeliriumStats.step_us`.
 - **Physics into animation:** `PhysicsPose { pose, weight, weights }` (`sf_anim_bevy/src/lib.rs:713-735`) goes to
   `GraphInstance::set_physics` (`sf_anim_graph/src/instance.rs:592-602`), blended per joint in local space as the graph's last
   stage, after the ops (`:1032-1049`); history keeps the animated pose (`:996-1006`). `GraphOutput::pose` (`:239-241`) is
@@ -76,13 +78,15 @@ strength and a blend weight of the simulated pose over the animation, both rampe
 | Jedi: Fallen Order (Waszak, GDC 2020): motors over authored melee reactions [4] | `Stagger` over the Medium and Large clips | wall contacts |
 | Frostbite (Sachania, GDC 2018): driven ragdolls, cost cuts, networking [5] | cap + gate; local presentation | - |
 | Havok powered ragdoll controllers; PhysX articulation implicit-PD drives [6] | Delirium per-joint PD | - |
+| Jolt: bodies that share no contact or constraint form separate islands, each solved by its own job on the job system [7] | one task per agent, each agent its own world ("Performance") | tinted bodies do not collide with each other |
 
 Not built, deliberately: our own solver; root-moving tints; learned controllers; A2/A3 tints; physics replication; a
 second provider for creatures.
 
 [1] dev.epicgames.com/documentation/unreal-engine/physics-driven-animation-in-unreal-engine and .../applying-a-physical-animation-profile-in-unreal-engine;
 [2] wccftech.com/rockstar-euphoria-evolved-rdr2; [3] gdcvault.com/play/1024087; [4] 80.lv/articles/gdc-2020-talk-on-physical-animation-in-star-wars-jedi-fallen-order;
-[5] gdcvault.com/play/1025210; [6] nvidia-omniverse.github.io/PhysX/physx/5.4.1/docs/Articulations.html.
+[5] gdcvault.com/play/1025210; [6] nvidia-omniverse.github.io/PhysX/physx/5.4.1/docs/Articulations.html;
+[7] jrouwe.github.io/JoltPhysics, "The Simulation Step in Detail" ("Solve Velocity Constraints").
 
 ## Design
 
@@ -150,7 +154,7 @@ pub struct TintPlugin { pub set: Handle<TintSet> }                       // + Ti
 
 The provider is a plugin, not a trait object (it needs ECS queries). Contract: insert `TintCapable`; in
 `TintSystems::Provider` ready bodies for an added `ActiveTint` from its pre-built pool (`Ready` once they step), step them toward `TintTarget` at
-`sample.strength`, apply `impulse` once, write `PhysicsBodies.takeovers` every tick, drop bodies when `ActiveTint` goes,
+`sample.strength` (several bodies: one task each, joined inside the system, "Performance"), apply `impulse` once, write `PhysicsBodies.takeovers` every tick, drop bodies when `ActiveTint` goes,
 send `Failed` on NaN or blow-up; every frame write the root's `PhysicsPose` (bodies as a local pose under the live root,
 interpolated between steps, per-joint `weights` from the regions). It holds its simulated pelvis on the animated pelvis
 (required, see above), never moves the root or the mover, never sets `Held`. `Failed` comes from the provider's own check
@@ -229,7 +233,7 @@ All `anim.tint.*`, in `TintSettings`/`TintSet`, live-editable; `Guess` until the
 | Name | Unit | Range | Default | Source / replaced by |
 |---|---|---|---|---|
 | `enabled` | bool | - | per preset | decision 10 (Classic off) |
-| `cap` | bodies | 0-16 | 4 | measured AN38d, one run (group step: 1.61 ms median at N = 4; "Performance"); AN38e and AN42 confirm; also the agent pool's size |
+| `cap` | bodies | 0-16 | 4 | measured AN38e, one run (fan-out: 0.79 / 1.21 ms median / p99 at N = 4, 0.83 / 1.25 at 5; "Performance"); 5 after AN40b's count test on the real pool; AN42 confirms in the game; also the agent pool's size |
 | `max_tier` | tier | A0-A1 | A1 | decision 10 |
 | `gate.max_distance_m` | m | 0-40 | 15 | Guess (A0 range, animation.md); owner check |
 | `gate.distance_hysteresis_m` | m | 0-10 | 3 | Guess |
@@ -257,14 +261,14 @@ alias plays the `HitReact` kick.
 ## Presets and the classic seam
 
 Classic: `enabled` false, every request `Refused(Preset)` with its fallback; no bodies, no cost. Low: `cap` 2; Medium to
-Ultra: 4 (the cost is CPU and the same on every preset; measured, "Performance"; a faster CPU raises it through the
+Ultra: 4 (the cost is CPU and the same on every preset; measured, "Performance"; more free cores raise it through the
 tunable). The seam is the request: classic rules may send none.
 
 ## Performance
 
 Fixed 60 Hz under a 120 fps target: one tick per ~2 frames, one per worst frame (two on a catch-up). Measured by
-`mw_delirium/tests/tint_cost.rs` (release; ledger physics.md "AN38a" to "AN38d"). Tables per state, pose-error numbers
-and how Delirium's split works: [history](archive/physics-tint-history.md).
+`mw_delirium/tests/tint_cost.rs` (release; ledger physics.md "AN38a" to "AN38e"). Tables per state, pose-error numbers,
+how Delirium's split works and the group-step design this replaced: [history](archive/physics-tint-history.md).
 
 **Budget: tints + takeovers at the cap <= 2.0 ms median and <= 2.7 ms p99 per tick** (2.7 ms = the frame's p99 11 ms
 minus its median 8.3 ms; physics share, not the 25 us animation budget).
@@ -273,21 +277,34 @@ minus its median 8.3 ms; physics share, not the 25 us animation budget).
 in N (median / p99 1.28 / 2.13 ms at N = 2, 2.54 / 3.62 at 4); pose follow with no pin collapses (pelvis 14 %); a body
 on the ground costs twice a standing one (0.56 -> 1.1-1.2 ms), hence the promotion rule.
 
-**Group step (AN38d, one clean run: these numbers rest on it).** G through Delirium's `Agent::step_group`, median at
-N = 1 / 2 / 4 / 8: 0.46 / 0.83 / 1.61 / 0.84 ms; p99 at 4: 2.24 in one run, 4.0 in the other; at 8: 1.1. Up to 5 agents
-it runs on one thread (0.40 ms per body); from 6 Delirium splits, one task per agent on its own pool. The threshold
-is a constant in Delirium's data table, not a setting (history).
+**Two ways to step N bodies (AN38d/e, state G; one clean run each: these numbers rest on them),** median / p99 ms
+per tick:
 
-**So the provider steps tints and takeovers together through `step_group`** (one shared collision world, each agent in
-its own shifted frame, as the test does), and **the cap is 4** (Low 2): 1.61 ms at N = 4 meets the median; its p99 is
-unsettled and N = 3, 5, 6, 7 are not timed; N = 5 is ~2.0 ms by the serial cost, at the limit. Past the split 8 agents
-cost less than 4, so a cap of 8 needs the counts 3-5 to split too: a provider-side fan-out (one task per agent on
-Bevy's `ComputeTaskPool`, each calling the agent's own step; no Delirium change). A one-constant patch in our pinned
-fork is not taken: Delirium is adopted from upstream as it is (owner policy; meta 2026-11-26). The fan-out is not
-measured: AN38e times N = 3-7 grouped, the p99 at 4 again and the fan-out at 2-5; AN42 repeats the
-cap in the game, where Delirium's pool shares the cores with Bevy's. Rule: the cap is the largest N with every count
-up to N inside both limits. Over budget: lower `cap`, then `step_divisor` 2; never delete the feature. Takeovers are
-never refused, so the cap only stops tints adding to them.
+| N | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| Delirium's `Agent::step_group` | 0.46 / 0.78 | 0.83 / 1.13 | 1.24 / 2.08 | 1.60 / 2.17 | 2.15 / 3.75 | 1.01 / 1.50 | 1.03 / 1.58 | 0.84 / 1.11 |
+| fan-out: one worker thread per agent, each its plain step | 0.54 / 1.19 | 0.73 / 1.09 | 0.77 / 1.17 | 0.79 / 1.21 | 0.83 / 1.25 | - | - | - |
+
+The group step runs on one thread up to 5 agents (0.40-0.43 ms per body) and fails both limits at 5; Delirium splits
+it over its own pool only from 6, by a constant in its data, not a setting (history). The fan-out is flat: one body's
+step plus the workers' wake, every measured count inside both limits. AN38d's 12.9 ms tick at N = 4 did not come back
+(max 2.63 ms).
+
+**So the provider fans out per agent and does not call `step_group`** (meta 2026-11-26, from AN38e). Each tick it
+steps every tint and takeover agent as its own task on Bevy's `ComputeTaskPool` (`scope`: the system returns when all
+have stepped), each agent in its own collision world calling its own step, as a takeover does today; agents share no
+state, so the result does not depend on which worker ran which. A single agent steps inline, with no task. The pinned
+Delirium fork is not patched: Delirium is adopted from upstream as it is (owner policy; meta 2026-11-26).
+
+**The cap is 4 (Low 2).** Rule: the cap is the largest N with every count up to N inside both limits. The fan-out
+meets it to 5, the last count measured, but on dedicated threads released by a `Barrier` with nothing else running:
+Bevy's pool shares its workers with the frame's other tasks, so its wake cost can differ, and with fewer free workers
+than agents the cost climbs toward the serial 0.65 ms per body. So AN40b prints the same counts through the provider on
+the real pool (N = 1-8; at 1, inline against one task), and the cap moves to 5 only on that print; AN42 repeats it in
+the game with takeovers mixed in. One agent is not settled: the plain step cost 0.65 / 1.04 ms inline (AN38b), 0.54 /
+1.19 on a worker (AN38e) and 0.46 / 0.78 through a one-member group step, which pins the calling thread to Delirium's
+physics cores (AN38d); all are inside the budget. Over budget: lower `cap`, then `step_divisor` 2; never delete the
+feature. Takeovers are never refused, so the cap only stops tints adding to them.
 
 **Start cost (AN38d): a tint never builds its agent on the frame it starts.** Building one agent costs 5.1-5.4 ms
 median (6.9 max), over half a frame; dropping it 0.26-0.32 ms. The provider keeps a pool of `cap` pre-built agents,
@@ -310,8 +327,9 @@ judges. AN40b prints it per kind on a walking clip. Still to time: the catch-ste
   the same ticks give the same states.
 - **Sanity (AN40b, headless, real install):** per kind no NaN, no part below the floor, the pelvis still at standing
   height 2 s into an undisturbed tint (the AN38a collapse), weight back to 0 and bodies
-  dropped within the envelope + 1 s, root untouched. Tracking error is printed (`#[ignore = "measurement: ..."]`). No
-  automated visual checks, ever.
+  dropped within the envelope + 1 s, root untouched; the same checks with four tints stepped as tasks (Delirium's
+  globals under concurrent steps: AN38e's five threads showed no fall, pelvis 100 %). Tracking error and the step ms at N = 1-8 on the real task pool (the
+  cap's count test, "Performance") are printed (`#[ignore = "measurement: ..."]`). No automated visual checks, ever.
 
 ## Verification (owner visual checks)
 
@@ -328,9 +346,9 @@ Large intensity at 0 is the clip alone, the A/B arm.)
 
 | ID | Deliverable + test | Crates | Depends | Verify |
 |---|---|---|---|---|
-| AN38 | measurement test (list in "Performance"); a (A, B, F) 39628390, b (C, D, E, G, N = 2) 37041235 and c (pose error) 8663e3a7 done; d (group step, start cost) measured, one run; e new: N = 3-7 grouped, p99 at 4 again, provider fan-out at 2-5 | `mw_delirium` tests | - | `cargo test -p mw_delirium --release -- --ignored`; ledger |
+| AN38 | measurement test (list in "Performance"); a (A, B, F) 39628390, b (C, D, E, G, N = 2) 37041235 and c (pose error) 8663e3a7 done; d (group step, start cost) and e (N = 3-7 grouped, p99 at 4 again, provider fan-out at 1-5; 5537595b) measured, one run each | `mw_delirium` tests | - | `cargo test -p mw_delirium --release -- --ignored`; ledger |
 | AN40a | seam: types, `sample`, `TintBook`, plugin sets, `TintTarget`, fallback messages; exact tests with a fake provider | `sf_anim`, `sf_anim_bevy` | AN39 | `cargo test -p sf_anim -p sf_anim_bevy` (exact cap) |
-| AN40b | Delirium provider: pinned pelvis for every kind, one group step, pre-built agent pool; sanity tests | `mw_delirium`, `mw_delirium_bevy` | AN38, AN40a | `cargo test -p mw_delirium -p mw_delirium_bevy` (no NaN, floor, rest) |
+| AN40b | Delirium provider: pinned pelvis for every kind, one task per agent on the task pool (one agent inline; no `step_group`), pre-built agent pool; sanity tests; the cap's count test | `mw_delirium`, `mw_delirium_bevy` | AN38, AN40a | `cargo test -p mw_delirium -p mw_delirium_bevy` (no NaN, floor, rest, also with four tints as tasks); `#[ignore = "measurement"]` step ms at N = 1-8 on the real pool: every count to 5 inside 2.0 / 2.7 ms moves `cap` to 5 |
 | AN41a | hit triggers: Medium and Large tiers and the impulse band -> `Stagger` | `mw_combat`, `mw_walkers_bevy` | AN40b, AN22 | `cargo test -p mw_combat -p mw_walkers_bevy` (exact) |
 | AN41b | state triggers: injury, alcohol, fatigue -> `Stumble`, `Sway`, `Sag`; scene `anim-tint` | `mw_walkers_bevy` | AN41a | exact tests; owner ANIM-14 |
 | AN41c | `Sway`/`Sag` fallback key-pose clips (data) | `mw_combat` data | AN41b, AN36 | bake loads them; ANIM-14 (5) |

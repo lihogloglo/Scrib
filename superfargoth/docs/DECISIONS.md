@@ -2088,3 +2088,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (owner via meta-6): remote sites may have no path at all (sites.md q2); a river blocked by a kept town
   pools beside it, never through it; inland sea-level channels stay calm arms of the sea, as long as that is fast
   and the industry standard (worldgen-hydrology.md q1, q2); building on water is later culture data in Magna Urbis.
+- 2026-11-26 (meta-6, from AN38e): the physics-tint provider steps each tint and takeover agent as its own task on
+  the task pool (one agent inline) instead of Delirium's `step_group` (serial to 5 agents, 2.15 / 3.75 ms at 5; fan-out
+  flat ~0.8 ms at 2-5). Cap stays 4; 5 only after AN40b's count test on the real pool (`physics-tint.md` "Performance").
