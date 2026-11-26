@@ -136,6 +136,10 @@ anywhere in Bevy's dependency closure (`superfargoth/docs/build-perf.md` "Featur
   `--release`, one Bevy per profile). `cargo dev` (the `dev` feature) is a second Bevy by design, and clippy
   keeps a check-mode one per feature set, in its own target dir (`<target>-check`): `cargo_turn.sh` runs clippy/check
   in a second lane beside tests and builds. Each is cached once; switching between them rebuilds nothing.
+- **Integration tests: one binary per crate.** A crate with more than two integration test files keeps them in
+  `tests/it/<file>.rs`, each a `mod` line of `tests/it/main.rs` (done: `mw_bake`, `mw_graphs`, `mw_anim`,
+  `mw_actors`); run one file with `test -p <crate> --test it <file>::`. Never a new file directly in `tests/`
+  there: it links its own executable again.
 - **Never `--all-features`:** it turns on every opt-in of the app at once (`dev`, `solari`, `dlss`, `delirium`,
   `trace`, `tracy`), a Bevy nobody else shares, and links GPL-3.0-only Delirium code. Use an opt-in only when your
   task needs it (each is its own Bevy). No dev-dependency asks for an opt-in Bevy feature; pass it on the command
