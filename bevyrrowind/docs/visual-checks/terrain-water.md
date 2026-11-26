@@ -118,3 +118,26 @@ underwater, pass. Colour regression: the Bitter Coast fix made the sea bluer, bu
 elsewhere, as before); only the visibility range was wrong. Next: give Bitter Coast its green tint back with coastal
 visibility. Storm sea still too meek, with no big crest foam and no sea spray: that goes to a separate storm-sea session
 inspired by Sea of Thieves. Open: U4 waterline.
+
+### WA-11: Waterline through the lens (U4a-d, U2; `scene wa-waterline`, `superfargoth/docs/specs/water-underwater.md`)
+
+Status: planned (after U4a-c / U4d / U2).
+Launch: `bash bevyrrowind/tools/owner_launch.sh scene wa-waterline` (Seyda Neen dock end, noon, clear), then the same with
+`--weather thunderstorm`; A/B `--off waterline`, `--off waterbelow`.
+Do: first person, F5 fly camera down through the surface slowly, hold half in, pitch up/down, roll; third person in the
+shallows by the dock, orbit the camera down through the surface and back. Repeat in the storm.
+Look for: one continuous line that follows the waves crossing the lens (no frame-wide flip, no dead zone while
+half in); murky green water below, sky and haze above; a thin bright film on the line with the image just above it
+slightly bent; from below, Snell's window bright overhead and a mirror of the water's colour outside it.
+Bad: the whole screen fogging at once, a straight line that ignores the waves, a dark or flickering rim, the line
+smearing or ghosting as waves pass (DLSS), haze painted over the underwater part.
+
+### WA-12: Lens droplets after surfacing (W-LENS; `scene wa-waterline`)
+
+Status: planned (after W-LENS).
+Launch: `bash bevyrrowind/tools/owner_launch.sh scene wa-waterline`; A/B `--off lensdrops`.
+Do: first and third person, stay under ~2 s and come up; then a quick dip in and out; then come up half way and hold.
+Look for: droplets on the lens right after surfacing that run down in streaks and clear one by one in ~4 s (fewer after
+the quick dip), the image bent and slightly blurred through each drop, none below the waterline while half in.
+Bad: a uniform blur or tint, drops that pop off together, drops sliding upward or sideways, a visible grid pattern,
+drops still there after ~5 s, any hitch when they start.

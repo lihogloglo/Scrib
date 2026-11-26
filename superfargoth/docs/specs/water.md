@@ -488,45 +488,10 @@ contact is high), wave cascades × openness (rivers get little), ripples. Buoyan
 
 ## Underwater
 
-- **Camera medium** per frame: the query at the near plane's four corners and centre. All below →
-  underwater; mixed → split; all above → above. Hysteresis 1 cm.
-- **Medium**: the body's optics. Below the surface, in-scatter and transmittance follow the same
-  formula as depth colour, with light attenuated by depth below the surface. **Froxel water medium**
-  (High+): froxels below the water-level clipmap's surface get the water's extinction and albedo,
-  lit through the surface (sun × transmittance to the surface × cascade-normal shafts), so light shafts
-  under the waves come from the froxels like god rays above. **Low/Medium**: an analytic full-screen
-  pass (homogeneous medium, distance from the depth buffer).
-- **Surface from below**: the water material's back face: total internal reflection outside Snell's
-  window (reflect the underwater colour/fog), refraction of the sky and scene inside it.
-- **Waterline split**: in the underwater post, a per-pixel test of the near-plane point against the
-  displaced surface (cascades sampled at that XZ) picks above/below, with a thin meniscus band (Crest's
-  approach). No hard horizontal cut when waves cross the lens.
-- **Caustics**: a tiling animated caustics atlas made by the `water.caustics` bake step (light refracted
-  through a tiling wave normal field onto a plane, photon splatting; Guardado 2004), 32 frames, 256².
-  The surface hook (terrain, `WorldMaterial`, characters) adds it on receivers below the water-level
-  clipmap's surface, projected along the refracted sun, faded by depth (0.3-12 m), × sun visibility
-  (CSM + cloud shadow). Because it runs in the opaque pass, the refracted view from above and the view
-  from below both show it.
-- **Exposure and cues**: no special exposure; the cue list gets `underwater` (the audio system applies a
-  low-pass), `surface_break` on crossings.
-- **Plan (2026-11-17, owner go; research `superfargoth/docs/research/underwater-2026-11-17.md`):** Crest's design in our
-  own passes. *Reuse check:* Bevy 0.20 has no underwater; `FullscreenMaterial` has no depth input, `VolumetricFog`/`FogVolume`
-  can't model a displaced infinite ocean, `DistanceFog` is per material; no crate does underwater (Crest 4 and Abyssal Garden,
-  MIT, are references only). Changes to the design above: (a) sky, aerial perspective and the `sf_atmos` composite run after
-  the water by depth, so they are **gated off** pixels whose ray starts underwater (a uniform when fully under, the waterline
-  mask when split), or the view is fogged twice; (b) the back face samples the sky itself (the sky pass skips water depth);
-  (c) **caustics are applied from depth** in the snapshot copy and the underwater post, not by a hook in every material;
-  (d) froxel shafts are an additive in-scatter gain on the atmosphere froxel volume (spectral extinction stays analytic).
-  Medium colour = the body's own region optics (`WaterLook`), so the swamp is murky and the open sea clear, no extra preset.
-  The meniscus line is wanted (owner: "a midline"). Slices, one deliverable each: U1 camera medium (CPU, cues), U2 surface
-  from below (Snell + TIR, `--off waterbelow`), U3 underwater post fully submerged (`--off underwater`), U4 waterline mask +
-  meniscus (`water.waterline`), U5 caustics bake + apply (`--off caustics`), U6 froxel shafts High+ (`--off watershafts`).
-  Deferred: lens droplets, bubbles/snow particles, fog on translucents underwater, swim physics.
-- **Reference for the look (owner 2026-11-15):** [Abyssal Garden](https://github.com/Noniv/abyssal-garden)
-  (MIT, one WebGPU HTML file, all procedural): shafts through a moving surface, caustics on the floor, kelp swaying
-  in a current with sparkle specks, drifting particles and bubbles, fish schools and mantas, a generated underwater
-  soundscape, swim collision that glides along rock, and Low/Medium/High tiers. Mine it for ideas and constants when
-  3.6 starts (MIT code can be ported with a notice); calibrate against our own measurements.
+Moved to [water-underwater.md](water-underwater.md) (2026-11-26): camera medium (U1, built), post fully submerged (U3,
+built), waterline per pixel (U4a mask in the post, U4b no double fog + exit distance, U4c meniscus, U4d band from the
+wave height), surface from below (U2: Snell window, TIR), lens droplets (W-LENS), caustics (U5), froxel shafts (U6).
+The "Underwater (when below)" budget row below stays here; per-slice costs are in that file.
 
 ## Buoyancy (CPU, `sf_physics`)
 
