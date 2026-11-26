@@ -1,1 +1,4 @@
+# Text files check out with LF on every machine (the index already holds LF only). Tests read shader and source
+# text and match "\n" patterns; with CRLF checkouts (Windows CI runners, fresh Windows clones) they fail.
+* text=auto eol=lf
 bevyrrowind/assets/animation/**/*.glb filter=lfs diff=lfs merge=lfs -text
