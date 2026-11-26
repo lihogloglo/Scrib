@@ -2031,3 +2031,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (bigworld-1, BW-0): millions of trees = three screen-size tiers (mesh, octahedral impostor, per-tile canopy
   proxy), instances never entities (16 B tile pools from a deterministic `InstanceSource`, GPU producer into
   `GpuBatchedMesh3d`); Bevy meshlets rejected for foliage (opaque-only, no wind); new crates only (`sf_bigworld*`).
+- 2026-11-26 (specs-4, MAP0 answers): Morrowind map = painted parchment relief by default, vanilla relief a Classic
+  profile; reveal per player with a shared-map co-op option; Modern sells region maps and operators reveal their
+  destinations; Modern compass hints undiscovered places within 150 m unnamed, Classic has no compass (map.md).

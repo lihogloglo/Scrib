@@ -220,3 +220,7 @@ ride camera. **Dropped (owner 2026-11-25):** the standing-idle strider passenger
    land vehicles wait a short while, then go on.
    **Answered (owner 2026-11-25):** the boat slows down and eventually stops (Sea of Thieves); after a while the crew
    loses patience and goes on, like land vehicles (wait time = a tunable).
+7. **Map (MAP0, map.md "Open questions").** **Answered 2026-11-26:** painted parchment default, vanilla relief as the
+   Classic profile; co-op reveal per player with a shared-map option (meta, industry standard); Modern region maps sold
+   by traders/publicans and operators/guides reveal their destinations; Modern compass hints undiscovered places within
+   150 m unnamed, Classic no compass.

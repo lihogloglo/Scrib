@@ -30,6 +30,10 @@ one route for guidance, auto-ride and opt-in map travel. Non-goals: the local ma
 | 2026-11-25 | Map = baked tile pyramid, data style profile, saved `MapReveal` fog, pins | travel roadmap decision 10 |
 | 2026-11-25 | Reveal: exploration plus guides and bought maps in Modern; exploration only in Classic (Q3) | Reveal sources |
 | 2026-11-25 | Morrowind compass without quest markers; quest markers `None` for Morrowind, `Compass` for the framework | Compass |
+| 2026-11-26 | Painted parchment relief = the one default Morrowind profile; vanilla height relief = optional Classic profile (Q1) | Map bake |
+| 2026-11-26 | Co-op reveal per player by default, "shared map" party option (Q2, industry standard: Elden Ring, Valheim) | Co-op and saves |
+| 2026-11-26 | Modern: traders and publicans sell region maps (`RevealRecord`); travel operators and guild guides discover their destinations as places (Q3) | Reveal sources |
+| 2026-11-26 | Modern compass shows undiscovered places within 150 m as unnamed markers (`NearHint`); Classic has no compass (Q4) | Compass |
 | 2026-11-25 | No free teleport by default: "travel anywhere discovered" (TV16) is opt-in, off, gated | Map travel |
 | 2026-11-11 | Generic renderer, packs are data profiles converted at bake | Map bake |
 
@@ -329,16 +333,18 @@ Morrowind (detail in ui-adapter.md "Map (MAP5)"):
 
 ## Open questions (owner: taste and scope only)
 
-1. **Morrowind map look:** a painted parchment relief (cartographic hillshade, paper art, ink coast and roads) or
-   vanilla's plain height-coloured relief? Recommended: painted parchment as the one default profile (one bake);
-   vanilla relief as an optional second profile for Classic (+~5 s bake when chosen).
-2. **Co-op reveal:** each player explores their own map, or the party shares one? Recommended: per player by
-   default (Elden Ring, Valheim), with a "shared map" party option.
-3. **Modern Morrowind, who reveals regions:** recommended: traders and publicans sell "map of <region>" items
-   (reading one applies its `RevealRecord`), and travel operators and guild guides discover their destinations as
-   places (no fog).
-4. **Modern Morrowind compass hints:** show undiscovered places nearby (150 m) as unnamed markers (Skyrim)?
-   Recommended: yes in Modern; Classic has no compass.
+All four answered by the owner 2026-11-26 (via meta-3), as recommended; recorded in "Owner decisions":
+
+1. **Morrowind map look:** painted parchment relief (cartographic hillshade, paper art, ink coast and roads) is the one
+   default profile (one bake); vanilla's plain height-coloured relief is an optional second profile for Classic
+   (+~5 s bake when chosen). **Answered:** yes.
+2. **Co-op reveal:** per player by default (Elden Ring, Valheim), with a "shared map" party option. **Decided** by
+   meta from the industry standard.
+3. **Modern Morrowind, who reveals regions:** traders and publicans sell "map of <region>" items (reading one applies
+   its `RevealRecord`); travel operators and guild guides discover their destinations as places (no fog).
+   **Answered:** yes.
+4. **Modern Morrowind compass hints:** undiscovered places within 150 m show as unnamed markers (Skyrim); Classic has
+   no compass. **Answered:** yes.
 
 Decided by the industry standard (no owner question): tile pyramid at 256 px BC7, live labels, fog as a runtime
 mask, radius reveal on a coarse grid, 100 pins, one tracked pin, beacon shared in co-op, guidance on one route query.
