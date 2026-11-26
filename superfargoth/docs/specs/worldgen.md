@@ -150,8 +150,10 @@ height; runs start noisy and stop at a finite time, not at strict equilibrium.
    (scatter rules and Magna Urbis's forest field read the continuous values). **Per-region override** (recipe data,
    the painted-ecotope equivalent): scale, add or pin temperature and precipitation per region after (b), blended over
    a border width. Wind direction and sea-level temperature are recipe data per world (`Guess` until tuned by eye).
-   Slices: WG-E1a (a) + (b) and the hash test; WG-E1b (c) + (d); WG-E1c overrides and the guide product. Cost target:
-   the whole stage under 1 s on 6.4 M samples (estimate, measured at E1a).
+   Air enters the grid at `climate.inflow_saturation` of the capacity (1: mapgen4 starts the wind at humidity 1;
+   0 = dry inflow). Slices: WG-E1a (a) + (b) and the hash test (built 2026-11-26); WG-E1b1 (c); WG-E1b2 (d), the table a
+   rectilinear grid in TOML (temperature edges, precipitation edges, a class name per cell); WG-E1c overrides and the
+   guide product. Cost: (a) + (b) 0.26-0.31 s on 6.4 M samples (measured at E1a, 16 threads; target under 1 s for the stage).
    *Material fields:* slope, curvature, flow, wetness, altitude, rock type, exposure, climate → splat inputs (the
    adapter maps them to its layers: LTEX or pack textures) and scatter density fields.
 7. **Runtime detail (< 2 m):** one stateless detail function guided by the material fields: an analytic

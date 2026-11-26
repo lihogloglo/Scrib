@@ -53,6 +53,7 @@
 
 pub mod anchors;
 pub mod cliffs;
+pub mod climate;
 pub mod dem;
 pub mod filter;
 pub mod flood;

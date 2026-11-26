@@ -1,0 +1,286 @@
+#![allow(clippy::float_cmp)] // exact comparisons are the point of these tests
+
+use super::*;
+use crate::hash_f64;
+
+fn grid(w: usize, h: usize, spacing: f64, f: impl Fn(usize, usize) -> f64) -> Grid {
+    let mut data = Vec::with_capacity(w * h);
+    for y in 0..h {
+        for x in 0..w {
+            data.push(f(x, y));
+        }
+    }
+    Grid {
+        w,
+        h,
+        spacing,
+        data,
+    }
+}
+
+fn rain(heights: &Grid, c: &Climate) -> Rain {
+    precipitation(heights, &temperature(heights, c), c).unwrap()
+}
+
+fn with_wind(deg: f64) -> Climate {
+    Climate {
+        wind_toward_deg: deg,
+        ..Climate::default()
+    }
+}
+
+/// 128 x 16, 1 km: sea at columns 0-19, a ridge up to 3000 m at column 50 and back to 0 at column 80, then 10 m land.
+fn ridge() -> Grid {
+    grid(128, 16, 1000.0, |x, _| match x {
+        0..20 => -100.0,
+        20..=50 => 3000.0 * (x - 20) as f64 / 30.0,
+        51..=80 => 3000.0 * (80 - x) as f64 / 30.0,
+        _ => 10.0,
+    })
+}
+
+/// Rotates a grid by one quarter turn clockwise (north edge becomes the east edge).
+fn rot(g: &Grid) -> Grid {
+    let (w, h) = (g.h, g.w);
+    grid(w, h, g.spacing, |x, y| g.data[(g.h - 1 - x) * g.w + y])
+}
+
+#[test]
+fn lapse_on_a_cone() {
+    let cone = grid(33, 33, 100.0, |x, y| {
+        let r = (x as f64 - 16.0).hypot(y as f64 - 16.0);
+        2000.0 - 150.0 * r
+    });
+    let c = Climate::default();
+    let t = temperature(&cone, &c);
+    for (x, want_h) in [(16, 2000.0), (20, 1400.0), (24, 800.0)] {
+        let i = 16 * 33 + x;
+        assert_eq!(cone.data[i], want_h);
+        let want = c.sea_temperature_c - c.lapse_k_per_km * want_h / 1000.0;
+        assert!(
+            (t.data[i] - want).abs() < 1e-4,
+            "T({want_h} m) = {}, want {want}",
+            t.data[i]
+        );
+    }
+    let mut sea = 0;
+    for (z, tv) in cone.data.iter().zip(&t.data) {
+        if *z <= 0.0 {
+            assert_eq!(*tv, c.sea_temperature_c);
+            sea += 1;
+        }
+    }
+    assert!(sea > 0);
+    let c2 = Climate {
+        vertical_scale: 2.0,
+        ..c
+    };
+    let t2 = temperature(&cone, &c2);
+    for ((z, a), b) in cone.data.iter().zip(&t.data).zip(&t2.data) {
+        if *z > 0.0 {
+            let (d1, d2) = (c.sea_temperature_c - a, c.sea_temperature_c - b);
+            assert!(
+                (d2 - 2.0 * d1).abs() <= 1e-9 * 2.0 * d1,
+                "drop {d1} -> {d2}"
+            );
+        }
+    }
+}
+
+#[test]
+fn ridge_casts_a_rain_shadow() {
+    let g = ridge();
+    let r = rain(&g, &with_wind(90.0));
+    let p = &r.p.data;
+    assert!(p.iter().all(|v| v.is_finite() && *v >= 0.0));
+    let w = g.w;
+    for y in 1..g.h {
+        assert_eq!(&p[y * w..(y + 1) * w], &p[..w], "row {y}");
+    }
+    for (wind, lee, h) in [(25, 75, 500.0), (35, 65, 1500.0), (45, 55, 2500.0)] {
+        assert_eq!(g.data[wind], h);
+        assert_eq!(g.data[lee], h);
+        assert!(
+            p[lee] < 0.3 * p[wind],
+            "{h} m: lee {} vs windward {}",
+            p[lee],
+            p[wind]
+        );
+    }
+    assert!(
+        p[80] < p[20],
+        "lee foot {} vs windward foot {}",
+        p[80],
+        p[20]
+    );
+    println!(
+        "foot ratio P[80] / P[20] = {:.4} ({:.1} / {:.1} mm/yr)",
+        p[80] / p[20],
+        p[80],
+        p[20]
+    );
+}
+
+#[test]
+fn flat_land_dries_downwind() {
+    let g = grid(64, 8, 1000.0, |_, _| 10.0);
+    let r = rain(&g, &with_wind(90.0));
+    for y in 0..g.h {
+        let row = &r.p.data[y * g.w..(y + 1) * g.w];
+        for x in 1..g.w {
+            assert!(
+                row[x] < row[x - 1],
+                "row {y} column {x}: {} !< {}",
+                row[x],
+                row[x - 1]
+            );
+        }
+    }
+}
+
+#[test]
+fn moisture_is_conserved() {
+    let g = ridge();
+    let c = Climate {
+        land_recycling: 0.0,
+        ..with_wind(90.0)
+    };
+    let r = rain(&g, &c);
+    let b = r.budget;
+    let err = (b.inflow + b.source - b.rain - b.outflow).abs();
+    assert!(
+        err <= 1e-6 * (b.inflow + b.source),
+        "budget {b:?}, error {err}"
+    );
+    let l_km = g.spacing / 1000.0;
+    let sum: f64 = r.p.data.iter().sum::<f64>() * l_km;
+    assert!(
+        (sum - b.rain).abs() <= 1e-9 * b.rain,
+        "sum(P) l = {sum}, rain = {}",
+        b.rain
+    );
+}
+
+#[test]
+fn axis_winds_are_symmetric() {
+    let field = grid(48, 48, 500.0, |x, y| {
+        if x + y < 12 {
+            return -80.0;
+        }
+        let r = (x as f64 - 14.0).hypot(y as f64 - 30.0);
+        1500.0 - 120.0 * r
+    });
+    let c = Climate {
+        latitude_k_per_km: 0.0,
+        ..Climate::default()
+    };
+    let base = rain(
+        &field,
+        &Climate {
+            wind_toward_deg: 90.0,
+            ..c
+        },
+    );
+    let (mut f, mut p) = (field.clone(), base.p.clone());
+    for k in 1..=3 {
+        f = rot(&f);
+        p = rot(&p);
+        let deg = f64::from((90 + 90 * k) % 360);
+        let r = rain(
+            &f,
+            &Climate {
+                wind_toward_deg: deg,
+                ..c
+            },
+        );
+        assert_eq!(
+            hash_f64(&r.p.data),
+            hash_f64(&p.data),
+            "quarter turn {k} (wind {deg} deg)"
+        );
+    }
+}
+
+#[test]
+fn same_rain_on_any_thread_count() {
+    let (w, h) = (200, 160);
+    let field = grid(w, h, 1000.0, |x, y| {
+        if x < 6 || y < 6 || x >= w - 6 || y >= h - 6 {
+            return -50.0;
+        }
+        let r = (x as f64 - 90.0).hypot(y as f64 - 85.0);
+        (2500.0 - 25.0 * r).max(20.0) + 200.0 * (x as f64 * 0.3).sin() * (y as f64 * 0.2).cos()
+    });
+    let c = with_wind(30.0);
+    let run_in = |threads: usize| {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap();
+        pool.install(|| hash_f64(&rain(&field, &c).p.data))
+    };
+    let one = run_in(1);
+    assert_eq!(run_in(2), one);
+    assert_eq!(run_in(8), one);
+}
+
+#[test]
+#[ignore = "measurement: prints the cost of temperature + precipitation on 6.4 M samples"]
+fn cost_on_a_world_sized_grid() {
+    let (w, h) = (2530, 2530);
+    let field = grid(w, h, 20.0, |x, y| {
+        let r = (x as f64 - 1265.0).hypot(y as f64 - 1265.0);
+        (3000.0 - 3.0 * r).max(-50.0) + 100.0 * (x as f64 * 0.01).sin() * (y as f64 * 0.013).cos()
+    });
+    for deg in [90.0, 30.0] {
+        let c = with_wind(deg);
+        let start = std::time::Instant::now();
+        let t = temperature(&field, &c);
+        let t_ms = start.elapsed().as_secs_f64() * 1000.0;
+        let start = std::time::Instant::now();
+        let r = precipitation(&field, &t, &c).unwrap();
+        let p_ms = start.elapsed().as_secs_f64() * 1000.0;
+        let mut p = r.p.data.clone();
+        p.sort_by(f64::total_cmp);
+        println!(
+            "climate cost {w} x {h}, wind {deg}: temperature {t_ms:.0} ms, precipitation {p_ms:.0} ms, {} threads; P median {:.0}, p99 {:.0}, max {:.0} mm/yr",
+            rayon::current_num_threads(),
+            p[p.len() / 2],
+            p[p.len() * 99 / 100],
+            p[p.len() - 1]
+        );
+    }
+}
+
+const FILE: &str = r#"
+[params]
+lapse_k_per_km = { v = 6.0, unit = "K/km", min = 4, max = 9.8, source = "Industry(standard atmosphere lapse rate)" }
+sea_temperature_c = { v = 22, unit = "C", min = -5, max = 30, source = "Guess" }
+vertical_scale = { v = 2, unit = "ratio", min = 0.5, max = 4, source = "Guess" }
+latitude_k_per_km = { v = 0.01, unit = "K/km", min = -0.05, max = 0.05, source = "Guess" }
+wind_toward_deg = { v = 270, unit = "deg", min = 0, max = 360, source = "Guess", help = "x" }
+capacity = { v = 200000, unit = "mm/yr km", min = 50000, max = 500000, source = "Guess" }
+capacity_per_k = { v = 0.07, unit = "1/K", min = 0.04, max = 0.08, source = "Industry(Clausius-Clapeyron)" }
+evaporation_km = { v = 80, unit = "km", min = 20, max = 200, source = "Guess" }
+land_recycling = { v = 0.1, unit = "ratio", min = 0, max = 0.5, source = "Guess" }
+fallout_km = { v = 8, unit = "km", min = 2, max = 20, source = "Guess" }
+background_km = { v = 500, unit = "km", min = 100, max = 1000, source = "Guess" }
+inflow_saturation = { v = 0.9, unit = "ratio", min = 0, max = 1, source = "Guess" }
+"#;
+
+#[test]
+fn parses_and_rejects_params_files() {
+    let c = Climate::parse_toml(FILE).unwrap();
+    assert_eq!(c.sea_temperature_c, 22.0);
+    assert_eq!(c.wind_toward_deg, 270.0);
+    assert_eq!(c.inflow_saturation, 0.9);
+    let missing = FILE.replace("fallout_km =", "# fallout_km =");
+    assert!(Climate::parse_toml(&missing).is_err());
+    let unknown =
+        format!("{FILE}extra = {{ v = 1, unit = \"m\", min = 0, max = 2, source = \"Guess\" }}\n");
+    assert!(Climate::parse_toml(&unknown).is_err());
+    let range = FILE.replace("v = 6.0,", "v = 12,");
+    assert!(Climate::parse_toml(&range).is_err());
+    assert_eq!(declared_defaults().len(), PARAM_NAMES.len());
+    assert_eq!(Climate::default().lapse_k_per_km, 6.5);
+}
