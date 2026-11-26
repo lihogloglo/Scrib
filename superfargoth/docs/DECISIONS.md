@@ -2037,3 +2037,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (specs-5, FL-5c; meta 2026-11-26, owner informed): one swim rule: the player swims wherever `WaterQuery`
   has water (generated rivers and lakes, the classic sea, interior pools), as vanilla and shipped open worlds do; no
   per-body switch (water-bodies.md FL-5c).
+- 2026-11-26 (specs-5, DQ-34): dialogue authoring = our own parser for a Yarn 3 subset into `DialogueScene`, not a
+  vendored fork of yarnspinner-rust: the port is Yarn 2.5 only on a pinned unmaintained ANTLR (~385 KB generated, ~15k
+  lines to keep vs ~2.5k ours) and its saliency would be a second selection beside the rule DB (dialogue-authoring.md).

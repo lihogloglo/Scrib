@@ -123,7 +123,8 @@ pub struct Rule {
     response: Response,
     writes: SmallVec<[FactWrite; 2]>,
 }
-pub struct Response { line: Option<LineRef { topic: RecordId, response: RecordId }>, then: Option<FollowUp>, replies: Option<RecordId> }
+pub struct Response { line: Option<LineRef { topic: RecordId, response: RecordId }>, then: Option<FollowUp>, replies: Option<RecordId>,
+                      scene: Option<SceneEntry> /* DQ-35a: enter an authored scene, dialogue-authoring.md */ }
 pub struct FollowUp { concept: RecordId, delay_ticks: u32, who: Speaker | Listener }
 pub struct FactWrite { key: FactKey /* memory.* only */, op: Set(i64) | Add(i64) | Clear, expires_ticks: Option<u32> }
 ```

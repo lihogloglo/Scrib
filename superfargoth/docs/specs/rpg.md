@@ -261,6 +261,13 @@ How a session is shown (`DialoguePresenter`: Classic window, Cinematic shots + s
 the shot solver, pacing, gaze and talk, `Interrupt { reason }` with resume, timed choices (`Deadline` on `Choosing`)
 and the viseme bake: [dialogue-presentation.md](dialogue-presentation.md) (DQ-26). The session stays presentation-free.
 
+### Authoring
+
+New content writes Yarn Spinner 3 subset files, imported by our own parser (`sf_dialogue_yarn`) into a serde
+`DialogueScene` that a `SceneCursor` in this session steps; node and line groups select through the rule DB. Stable
+`LineId`s key per-locale CSV string tables (lock hash, voice), overridden per mod; the `LineProvider` seam is off:
+[dialogue-authoring.md](dialogue-authoring.md) (DQ-34). Morrowind's DIAL/INFO keeps its own path.
+
 ## Adapter hooks (summary)
 
 | Hook | Supplies |
@@ -293,4 +300,5 @@ greeting order/selection/choice re-ask/goodbye/claim (rule selection tests: dial
 ## Open questions
 
 1. (Resolved 2026-10-21: `PlayerId` lives in `sf_ids`.)
-2. Journal text snapshot vs re-render on display for localisation (snapshot kept as fallback).
+2. (Resolved 2026-11-26, DQ-34: entries re-render from `source` when it names a line ID in the active string tables;
+   the snapshot stays the fallback (unknown ID, removed mod, slotted line). dialogue-authoring.md "Journal re-render".)
