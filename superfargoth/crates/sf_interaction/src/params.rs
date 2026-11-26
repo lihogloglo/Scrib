@@ -33,6 +33,10 @@ pub struct InteractParams {
     pub focus_switch_margin: f32,
     /// How long a challenger must keep that lead before focus switches, s (range 0-1).
     pub focus_switch_s: f32,
+    /// A door's swing from closed to open (and back), s (range 0.2-3).
+    pub door_swing_s: f32,
+    /// Delay before a close-behind door closes once its opener has left the doorway, s (range 0-10).
+    pub door_close_behind_s: f32,
     /// Fixed simulation rate leases count in, ticks per second.
     pub tick_hz: f32,
 }
@@ -66,6 +70,10 @@ impl Default for InteractParams {
             focus_switch_margin: 0.2,
             // tunables: const (bound from interact.focus.switch_s in sf_interaction_bevy; Guess)
             focus_switch_s: 0.15,
+            // tunables: const (bound from interact.door.swing_s in sf_interaction_bevy (IN33b2); Guess)
+            door_swing_s: 0.8,
+            // tunables: const (bound from interact.door.close_behind_s in sf_interaction_bevy (IN33b2); Guess)
+            door_close_behind_s: 1.0,
             // tunables: const (bound from the app's fixed timestep in sf_interaction_bevy; net.md 60 Hz tick)
             tick_hz: 60.0,
         }
@@ -98,5 +106,10 @@ impl InteractParams {
     #[must_use]
     pub fn focus_switch_ticks(&self) -> u64 {
         self.ticks(self.focus_switch_s)
+    }
+
+    #[must_use]
+    pub fn door_close_behind_ticks(&self) -> u64 {
+        self.ticks(self.door_close_behind_s)
     }
 }

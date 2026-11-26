@@ -79,6 +79,17 @@ pub struct InteractableDef {
     pub adverts: Vec<(TagId, f32)>,
 }
 
+impl InteractableDef {
+    /// The first door slot: its index, the slot (its `local` is the doorway) and the door data.
+    #[must_use]
+    pub fn door(&self) -> Option<(u8, &SlotDef, &DoorDef)> {
+        self.slots.iter().enumerate().find_map(|(i, s)| match &s.kind {
+            SlotKind::Door(d) => Some((u8::try_from(i).ok()?, s, d)),
+            _ => None,
+        })
+    }
+}
+
 /// One place on an object a body uses (a seat, a doorway, a ladder, a stool at a workstation).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SlotDef {

@@ -162,15 +162,28 @@ pub enum SlotKind {
 ### Slot kinds
 
 - **Pose** (seat, bed, lean, counter, idle): "Using a slot" below; beds also fire the adapter's rest hook (IN3).
-- **Door** (IN33): state `Closed | Open`, saved. "Locked" is not core state: the shell reads it from crime's
-  `LockState` through the activation gate (crime.md decision 8; neither core names the other). The leaf is a
-  **kinematic hinge** body turned over `interact.door.swing_s`, away from the user when the def swings both ways; a
-  blocked sweep (shape cast against characters) pauses the swing, never pushes a character into geometry. The
-  doorway is the slot: an NPC passing claims it (Occupied while passing), others take queue tickets; `UseSlot(door)`
-  = claim, open if closed, pass, close behind after `interact.door.close_behind_s` if it found it closed and the def
-  says `close_behind`, release. The player never claims a doorway (NPCs wait for them through local avoidance).
-  Every state change is a `WorldChange` (IN14) and feeds nav's door state (NV10). **Travel (load) doors are not door
-  slots**: their default stays the adapter's (Bevyrrowind: the fade in `mw_doors_bevy`, AI12).
+- **Door** (IN33): a **kinematic hinged leaf**, no physics joint (UE: a movable mesh on a timeline; Bethesda and
+  OpenMW `worldimp.cpp` rotateDoor turn the reference and undo the step when an actor is hit [M]; a rapier revolute
+  joint with a motor was not taken: a dynamic leaf pushes characters into geometry and needs per-door tuning; Bevy
+  and the crates have no door). Core `door.rs`: `DoorState { open, t, sign, opener, close_at }`: `open` is the target
+  and, with the swing `sign`, the saved state (at rest: a swinging door saves its target); `t` runs 0 closed to 1 open,
+  linear over `interact.door.swing_s`; the leaf angle is `sign * smoothstep(t) * open_deg` about the def's axis
+  through its hinge. `toggle` flips `open` (mid-swing it reverses) and returns one `DoorChanged { placement, open,
+  user, tick }` per flip, never per frame; `sign` is chosen at a flip from closed: away from the user when the def
+  swings both ways (side test against the doorway = the slot's frame), else +1. "Locked" is not core state: the shell
+  reads it from crime's `LockState` through the activation gate (crime.md decision 8; neither core names the other).
+  **Blocked:** before a step the shell tests the leaf's shape at its next pose against characters (shape overlap
+  query); a blocked leaf pauses, never pushes a character into geometry. **Verbs:** `open` and `close` are slotless
+  verbs of the def (`requires.none` / `requires.all` = the state tag `door.open`), so the player toggles without a
+  claim (the player never claims a doorway; NPCs wait for them through local avoidance). The def's one `Door` slot is
+  the doorway (verb `pass`, a `users` filter players don't match): an NPC passing claims it (Occupied while
+  passing), others take queue tickets; `UseSlot(door)` = claim, open if closed, pass, release; **close behind:** when
+  the user that opened it releases and the def says `close_behind`, the door closes itself
+  `interact.door.close_behind_s` later, once, unless toggled first. The shell (`Doors`, `DoorSystems::{Plan, Commit}`,
+  `DoorMoved { placement, leaf }`) moves the leaf's body with a kinematic target and the host turns its visual pivot.
+  Containers send `DoorChanged` on open and close without a leaf. Every state change becomes a `WorldChange` (IN14)
+  and feeds nav's door state (NV10). **Travel (load) doors are not door slots**: their default stays the adapter's
+  (Bevyrrowind: the fade in `mw_doors_bevy`, AI12).
 - **Lever** (IN34): positions, saved; the use toggles at the clip's contact event and sends its signal to the linked
   targets (a door, a gate, a light); scripted activators stay scripts (the adapter's). `WorldChange` per toggle.
 - **Ladder** (IN43): the def's bottom-to-top points form an **edge chain** consumed by locomotion.md's
@@ -513,6 +526,16 @@ enter N+1; entered M → Occupied M+1; exited K → released K+1. Open: `interac
 stand-up carries ~7 cm past the exit pose (action-layer rule data).
 
 **IN32c0 (2026-11-26):** from the offer to the end of the use the seat default puts `SeatClips { family, band_cm, enter, exit }` on the user (no entrance or no free exit: `Front`; `exit` follows `pick_exit`; kept through a lost-claim stand-up until `SeatExited`), inserted and removed rather than a required component, for the animation side to resolve its clip set.
+
+## As built (IN33a, 2026-11-26)
+
+`sf_interaction/src/door.rs` (+ `tests_door.rs`, 8 exact tests): the design of "Slot kinds" Door as pure functions.
+`DoorState::{resting, toggle, stepped, step, is_moving, angle_rad, leaf, released, poll}`, `swing_sign`, `DoorChanged`,
+`DOOR_OPEN` (`door.open`), `InteractableDef::door()` (first `Door` slot), `InteractParams::{door_swing_s,
+door_close_behind_s, door_close_behind_ticks}` (the two tunables are bound by the shell in IN33b2a). `t` lands exactly
+on 0 / 1 (a step that leaves under 0.1 % of itself arrives). The opener is recorded only at a flip from fully closed:
+a user that reopens a closing door mid-swing gets no close-behind. A zero or non-finite axis leaves the leaf at the
+object frame. Door saves must not go through ron (`UserKey`, `PlacementId` are u128).
 
 ## Owner questions
 
