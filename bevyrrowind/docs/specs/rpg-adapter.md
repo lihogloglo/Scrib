@@ -153,6 +153,33 @@ choices offered → choose 2 without the ring → response 3 → give the player
 `state = -1`, journal has two entries → ask `ring` → response 1 → postcard round-trip of
 `WorldRpg` + `CharacterRpg` + NPC state equals the original.
 
+## Quests (DQ-18)
+
+Maps journal topics onto the framework quest model (`superfargoth/docs/specs/quests.md`). Behaviour from OpenMW
+`apps/openmw/mwdialogue/quest.cpp`, `journalimp.cpp`, `apps/openmw/mwgui/journalviewmodel.cpp` at 4e718b50.
+
+- **`QuestDb` from `MwJournalDb`** (`mw_rpg/src/db.rs:46`): one `QuestDef` per journal topic. `name` = its `QSTN`
+  INFO text; `group` = the case-folded `QSTN` name (OpenMW's quest book identifies a quest by name, so several
+  topics share one row: `journalviewmodel.cpp:155-183`); `listed` = has a `QSTN` name (nameless topics stay out of
+  the quest book, same lines). When no loaded file has any `QSTN` (Morrowind.esm alone), every quest with entries
+  lists under its id (the as-built fallback, "Data" above). No objectives, stages or aliases: the latest journal
+  entry is the one implicit objective (dialogue-quests decision 7).
+- **Status.** A journal INFO's `QSTF` -> `StageFlags { status: Some(Done) }`, `QSTR` -> `Some(Active)`, carried by
+  `journal_command` (`db.rs:167`) exactly where `finish`/`restart` are today. The flag applies even when the index is
+  below the current stage (OpenMW sets finished before comparing indexes, `quest.cpp:80-84`); a repeated `Journal`
+  for an entry already in the journal only raises the stage and applies no flag (`journalimp.cpp:81-94`).
+  `SetJournalIndex` never changes status (`journalimp.cpp:118`, `quest.cpp:52`). The first `Journal` or
+  `SetJournalIndex` on a quest starts it `Active` (OpenMW `getOrStartQuest`).
+- **Restart reopens the group.** A `QSTR` entry also emits `SetQuestStatus { Active }` for every `Done` quest of the
+  same group (OpenMW reopens finished quests with the same name, `journalimp.cpp:98-108`).
+- **`Failed`** never comes from Morrowind data (failures are entry text); nothing infers it.
+- **Facts.** The INFO `Journal` filter reads `quest.<id>.stage` (the value `QuestLog::stage` gives today).
+- **Settings:** `quests.markers = None` in both presets (owner 2026-11-25); Classic `quests.hud.tracked_line = Off`
+  (book only, vanilla has no tracker); Modern `Always`, `quests.track.auto_new = true`.
+- **Test (real install, exact):** `MS_FargothRing` lists as "Fargoth's Ring", `Active` after index 10 with entry 10
+  as its objective, `Done` after 100 (`QSTF`); quest-book group count equals the distinct `QSTN` names among started
+  quests; one `QSTR` quest from the data reopens its finished group members.
+
 ## Co-op
 
 Filters read the context player (`ctx.player`): `Item`, PC functions, player faction. Quest,

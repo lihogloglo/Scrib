@@ -125,11 +125,15 @@ All ids are `RecordId` (case-folded strings) unless noted. All types derive
 
 ### Quests
 
-- `QuestLog: BTreeMap<RecordId, QuestState { stage: i32, finished: bool }>`; an absent quest is
-  stage 0, not finished.
-- `set_stage(quest, stage, flags) -> QuestChange`: stages may go up or down (Bethesda scripts
-  set lower stages; the journal never forgets). `StageFlags { finish, restart }`: `finish` sets
-  `finished`, `restart` clears it. Returns old/new for events.
+Full model in [quests.md](quests.md) (DQ-16): status, objectives, aliases, quest facts, `QuestChanged`, the
+tracked quest and markers. Here only the stage store it extends:
+
+- `QuestLog: BTreeMap<RecordId, QuestState>`; as built `QuestState { stage: i32, finished: bool }`
+  (`quest.rs:11`), DQ-17 `{ stage, status: QuestStatus, objectives, aliases, updated }`. An absent quest is
+  stage 0, not started.
+- `set_stage(quest, stage, flags)`: stages may go up or down (Bethesda scripts set lower stages; the journal
+  never forgets). As built `StageFlags { finish, restart }`; DQ-17 `StageFlags { status: Option<QuestStatus> }`
+  (finish = `Done`, restart = `Active`, fail = `Failed`); a closed quest stays closed unless the flags reopen it.
 
 ### Journal
 
@@ -148,9 +152,14 @@ All ids are `RecordId` (case-folded strings) unless noted. All types derive
 
 ### World and character state
 
-- `WorldRpg { quests: QuestLog, journal: Journal, topics: Topics }`: shared, host-owned.
+- `WorldRpg { quests: QuestLog, journal: Journal, topics: Topics }`: shared, host-owned. Quest status,
+  objectives and filled aliases live in `quests` (quests.md "Data model"), so every player and every reader
+  (dialogue rules, AI, UI) sees one state; saved as `sf/rpg` (v2 with DQ-17, quests.md "Co-op and saves").
+- `QuestDb` (quest definitions, `sf.quest` records): built at load like `DialogueDb`, never saved.
 - `CharacterRpg { loadout: Loadout }`: one per player character (and per NPC that carries items).
   Stats arrive in M7.
+- `PlayerQuests { tracked }`: per player, presentation only (the tracked quest), saved in that player's
+  `CharacterSave`, never a fact (quests.md "Tracked quest").
 
 ## Commands and events (net rules 2, 5, 8)
 
@@ -159,7 +168,8 @@ returns `RpgEvent`s (data) for UI, replication and scripts.
 
 | Command | Effect | Events |
 |---|---|---|
-| `SetStage { quest, stage, flags, entry: Option<EntryDraft> }` | quest stage + optional journal entry | `StageChanged`, `JournalAdded` |
+| `SetStage { quest, stage, flags, entry: Option<EntryDraft> }` | quest stage + optional journal entry | `StageChanged` (DQ-17: `QuestChanged`), `JournalAdded` |
+| `SetQuestStatus`, `SetObjective`, `FillAlias` (DQ-17) | quest status, objectives, aliases | `QuestChanged { quest, delta }` (quests.md "Commands and events") |
 | `AddTopic(id)` | learn a topic (idempotent) | `TopicLearned` (first time only) |
 | `HearLine { topic, line }` | append a heard response (learns the topic) | `TopicLearned` (first time only) |
 | `AddItem { holder, item, count, attrs }` / `RemoveItem { holder, item, count }` | inventory change | `ItemsChanged { holder, item, delta }` |
@@ -250,7 +260,8 @@ topics are ASCII; revisit for localised packs).
 host-applied requests only. 3: plain serde data, no presentation. 6: `PlayerId` in every context;
 no singleton player. 7: `ActorKey`, `StackId`, `RecordId`, never `Entity`. 8: `RpgEvent` is data.
 `PlayerId` lives in the serde-only `sf_ids` crate (2026-10-21); `sf_rpg` and `sf_action` re-export
-it, and `sf_net` (N2) will re-export it rather than own it.
+it, and `sf_net` (N2) will re-export it rather than own it. Quests (quests.md "Co-op and saves"): progress, objectives and aliases are shared world
+state; the tracked quest and `JournalSeen` are per player and never feed gameplay.
 
 ## Tests
 

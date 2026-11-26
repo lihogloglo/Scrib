@@ -132,12 +132,14 @@ framework games get objectives and a compass.
 
 | ID | Deliverable | Crates | Depends | Verify |
 |---|---|---|---|---|
-| DQ-16 | Spec: rpg.md "Quests" (objectives, status, aliases, facts, `QuestChanged`), journal-ui "Tracked quest" | docs | – | doc review |
-| DQ-17 | `Objective`, `QuestStatus` (Active/Done/Failed), aliases; commands + events; serde | `sf_rpg` | DQ-16 | unit + postcard round trip |
-| DQ-18 | Morrowind mapping: latest entry = implicit objective, QSTF/QSTR finish/restart to status | `mw_rpg` | DQ-17 | real-install exact |
-| DQ-19 | Tracked-quest + quest-list view-model (per-player tracked, filters) | `sf_rpg_ui` | DQ-17 | unit |
-| DQ-20 | Journal quest tab + HUD tracked line (Modern), book only (Classic) | `sf_ui_screens`, `mw_ui` | DQ-19 | owner DJ-5 |
-| DQ-21 | Framework compass strip from `Objective.target` (off in Morrowind) | `sf_ui_screens` | DQ-17 | example scene; owner DJ-6 |
+| DQ-16 | Spec: rpg.md "Quests" (objectives, status, aliases, facts, `QuestChanged`), journal-ui "Tracked quest" | docs | – | **done 2026-11-26** (new `superfargoth/docs/specs/quests.md`; rpg.md pointers; journal-ui.md "Tracked quest"; rpg-adapter.md "Quests (DQ-18)"; map.md Compass pointer) |
+| DQ-17a | quests.md core: `QuestStatus`, objectives, aliases, `StageFlags.status`, `SetQuestStatus`/`SetObjective`/`FillAlias`, `QuestChanged` deltas, `QuestDb` + `apply_quest`, quest facts, implicit objective, `PlayerQuests`; mechanical caller updates (`mw_rpg`, `mw_rpg_bevy`, `sf_rpg_ui`) | `sf_rpg` | DQ-16 | unit + postcard round trip |
+| DQ-17b | Saves: `sf/rpg` v2 (v1 migration), `CharacterSave` v5 with `PlayerQuests` (quests.md "Co-op and saves") | `sf_save_bevy` | DQ-17a | migration + golden tests |
+| DQ-18 | Morrowind mapping (rpg-adapter.md "Quests (DQ-18)"): `QuestDb` from journal topics (name, group, listed), QSTF/QSTR to status, restart reopens the group, presets' `quests.*` | `mw_rpg`, `mw_rpg_bevy` | DQ-17a | real-install exact |
+| DQ-19 | Quest-list rows (status, groups, `Failed` filter), `QuestDetail`, `tracked_view` (journal-ui.md "Tracked quest") | `sf_rpg_ui` | DQ-17a | unit |
+| DQ-20 | Journal quest tab + HUD `hud.quest` tracked line (Modern), book only (Classic) | `sf_ui_screens`, `mw_ui` | DQ-19 | owner DJ-5 |
+| DQ-21a | Objective marker source `objective_markers` + `TargetPositions` hook (quests.md "Markers") | `sf_rpg_ui` | DQ-19 | unit |
+| DQ-21b | Objective markers drawn by map.md's compass (MAP4), framework example scene; off in Morrowind (`quests.markers = None`) | `sf_ui_screens` | DQ-21a, MAP4 | example scene; owner DJ-6 |
 
 ### Stage 4: rule-based selection and barks
 

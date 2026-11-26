@@ -190,6 +190,8 @@ zoom range, compass rule (`Never | Discovered | NearHint`), whether discovering 
   undiscovered places within `map.compass.hint_range_m` as an unnamed marker (kind rule `NearHint`, Skyrim; 0
   turns it off); the tracked pin; party members (co-op); quest objectives only when the quests setting
   `QuestMarkers` is `Compass` or `Guidance` (dialogue-quests roadmap decision 7; a game may ship `None`).
+  Objective markers arrive as a list from quests.md "Markers" (`objective_markers`, DQ-21) and skip the place
+  range and fade (quest markers show at any distance, Skyrim/Witcher 3).
 - Cost: query the place buckets around the player once per tick, bearings per frame: <= 0.05 ms CPU (inside the HUD
   0.5 ms budget).
 

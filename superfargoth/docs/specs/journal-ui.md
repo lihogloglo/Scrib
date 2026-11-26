@@ -64,7 +64,7 @@ All in `sf_rpg_ui`; deps `sf_rpg`, `sf_ui`, `serde`.
 - **Quests.** `QuestRow { id, name, finished, stage, entries, last_seq, last_day, new }`
   (`ViewModel` kind `journal.quest`), one per quest with journal entries, in first-entry order;
   status from `QuestLog`. `QuestFilter::{Active, Finished, All}` is an `equals("finished")`
-  filter; `QuestSort::{Name, Recent}`.
+  filter; `QuestSort::{Name, Recent}`. (As built; DQ-19 changes status, filter and rows: "Tracked quest".)
 - **Topics.** `TopicIndexRow { id, name, initial, learned, heard, new }` (kind `journal.topic`),
   sorted by name. `Alphabet`: ordered tab labels (default Latin A–Z) plus aliases (`Ä → A`);
   `initial` is the tab of the first character, uppercased, or `#`. `tabs()` gives every
@@ -84,11 +84,53 @@ All in `sf_rpg_ui`; deps `sf_rpg`, `sf_ui`, `serde`.
   `JournalCtx { world: &WorldRpg, labels: &dyn JournalLabels, paginator: &dyn Paginator }`
   (`dyn` at the crate boundary, §8b rule 7).
 
+## Tracked quest
+
+Spec DQ-16 (2026-11-26), build DQ-19 (view-models, `sf_rpg_ui`) and DQ-20 (screens). State and rules in
+[quests.md](quests.md) (`QuestStatus`, objectives, implicit objective, `PlayerQuests`, `quests.*` tunables); this
+section is the view side. Still read-only over world state; the only writes are `TrackCommand`s on the viewer's own
+`PlayerQuests`.
+
+**Quest log rows (DQ-19).** `QuestRow` (`rows.rs:14`) changes:
+- `finished: bool` -> `status: QuestStatus`; new fields `kind: Option<RecordId>`, `tracked: bool`, `objective:
+  Option<String>` (the first `Active` objective's text, implicit included: the list's one-line summary), `updated`
+  (quest change clock, replaces `last_seq` as the "recent" key when larger). `fields()` lists them.
+- One row per **started, listed quest or group** (`QuestDef.listed`, `QuestDef.group`), in first-entry order, then
+  start order for quests without entries; a quest with no def lists when it has journal entries (as built). A group
+  row's key is the group id, its name the first member's, its status `Done` if any member is `Done`, else `Failed`
+  if any is `Failed`, else `Active` (OpenMW `journalviewmodel.cpp:155-183`, 4e718b50, plus `Failed`).
+- `QuestFilter` (`screen.rs:30`): `Active | Done | Failed | All` (`Finished` renamed `Done`); an `equals("status")`
+  filter. `QuestSort` gains `Kind` (by `kind`, then name). Morrowind's book uses `Active` and `All` only.
+- **`QuestDetail`** (`JournalScreen` content `Quest(id)`, Modern only): header (name, status, kind, tracked),
+  `objectives: Vec<ObjectiveRow { key, text, status, optional, has_target }>` from `sf_rpg::objectives` (closed
+  objectives after open ones, each group in def order), then the quest's entries as the book (as built). Actions:
+  `track(id)` / `untrack(id)` return a `TrackCommand` (greyed when the row is not `Active`).
+- `JournalLabels` (`labels.rs:6`) gains `objective_text(quest, objective) -> Option<String>` (default: the def
+  text; the implicit objective uses `entry_text`).
+
+**Tracked view (DQ-19).** `tracked_view(world, db, &PlayerQuests, labels) -> Vec<TrackedLine { quest, name,
+objectives: Vec<ObjectiveLine { text, status }>, revision }>`: per tracked quest, its `Active` objectives up to
+`quests.hud.max_objectives` (implicit: the latest entry). `revision` bumps on every `QuestChanged` for that quest,
+so the HUD knows when to flash (a just-completed objective shows `Done` for one flash, then leaves). Pure, per
+player; a client builds only its own.
+
+**Screens (DQ-20,** `sf_ui_screens` **+** `mw_ui` **skin).**
+- Journal: a "Quests" tab in Modern showing the filtered list and `QuestDetail` with a Track button; Classic keeps
+  the book with its quest pages (as built, DJ-1) and no track action.
+- HUD: a `hud.quest` slot (top right, ui.md "Extension slots"; next to `hud.compass`, `sf_ui_screens/src/hud.rs:145`)
+  showing each `TrackedLine`: quest name, objective lines clamped to `quests.hud.lines` with an ellipsis (Morrowind's
+  implicit objective is a whole entry). Visibility by `quests.hud.tracked_line`: `Always`, `OnChange` (shown
+  `quests.hud.flash_s` after a revision change), `Off` (Classic). Flash and fade by `quests.hud.flash_s` /
+  `fade_s`. Hidden while a menu covers the HUD.
+- Owner check DJ-5 (Modern Morrowind): start Fargoth's ring, the HUD line shows the latest entry; finish it, the
+  quest moves to Done and tracking moves on.
+
 ## Co-op
 
 Read-only over host world state (`WorldRpg`, replicated); no commands, nothing written to the
 world. `JournalSeen` is per-player presentation state (rule 3), kept by each client with its
-profile/save, never on the host. No clock or RNG. Stable ids only (`RecordId`, entry `seq`).
+profile/save, never on the host. The tracked quest (`PlayerQuests`) is per player too, applied
+locally at once and sent to the host only for its save (quests.md "Tracked quest"). No clock or RNG. Stable ids only (`RecordId`, entry `seq`).
 
 ## Industry comparison
 
@@ -100,7 +142,8 @@ profile/save, never on the host. No clock or RNG. Stable ids only (`RecordId`, e
 | Journal search | Pillars of Eternity, BG3 | AND terms, highlight ranges | **match** |
 | New markers clearing on view | Witcher 3, BG3, Skyrim | per-player `JournalSeen` | **match** |
 | Widow / orphan / keep-with-next | CSS Fragmentation 3, print typesetting | `PageMetrics` | **match** |
-| Tracked quest / map markers | Skyrim, Witcher 3 | none (no objectives in `sf_rpg`) | **gap (P2)**: needs quest objectives (M7) |
+| Tracked quest / map markers | Skyrim, Witcher 3, Cyberpunk | "Tracked quest" below; markers into map.md MAP4 (quests.md "Markers") | **match** once DQ-19..21 land (spec DQ-16) |
+| Objective-centric quest log (status tabs, objectives, past log) | Witcher 3, Cyberpunk, BG3 | `QuestFilter` + `QuestDetail` | **match** (DQ-19) |
 | Locale-aware collation of the index | ICU collation | lowercase + aliases | **differ**: enough for Latin packs; ICU when a localised pack needs it |
 
 ## Tests
@@ -109,4 +152,6 @@ Synthetic journals: paginator (fit, split with orphans / widows, keep-with-next,
 contiguous coverage), fixed-width wrap, quest split and sorts, letter tabs and aliases, topic
 filter, search folding and highlights (multi-byte text), seen watermark compaction, screen
 navigation, opening at the last spread, place kept across new entries and resize, serde round trip
-of `JournalSeen`.
+of `JournalSeen`. DQ-19: rows per listed quest or group (group status rule), `Failed` filter, `QuestDetail`
+objective order and implicit objective, track action greyed on closed quests, `tracked_view` objective cap and
+revision bumps, `PlayerQuests` round trip.
