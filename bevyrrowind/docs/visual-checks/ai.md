@@ -84,7 +84,9 @@ Log: `ai: N wanderers on navmesh, M on pathgrid fallback (since start: X navmesh
 - Q2: stay near it, step around it within ~7 m: does it NOT greet a second time, and walk on after ~4 s? yes/no
 - Q3: walk ~8 m away and come back: does it greet again? yes/no
 - Q4: approach one from behind: does it turn around smoothly (no snap)? yes/no
-- Status: awaiting owner.
+- Status: FAIL (owner 2026-11-26, dev exe at 1c699df9): "doesn't seem to greet me no ... don't think I saw them
+  turn smoothly either". Log `%TEMP%/bw-owner-2026-11-26-2011/last.log`: player body present, 30 movers, head track
+  "1 tracking the player", no `greeting:` line: no greeting ever started. Cause and fix: see the re-check below.
 
 ### AI-14: far NPCs run at tier 0 and come back without a pop (AI10c2, 2026-11-26)
 - Kind: game, dev build. `owner_launch.sh view "Balmora" --hour 12` (exterior, noon), F11 drops the player.
@@ -94,7 +96,9 @@ Log: `ai: N wanderers on navmesh, M on pathgrid fallback (since start: X navmesh
   watch? (expected no)
 - Q2: walk toward a far NPC: does it start moving normally when you get near, with no pop? (expected yes)
 - Q3: turn away for 10 s and back: is every nearby NPC still there, none vanished? (expected yes)
-- Status: awaiting owner.
+- Status: Q1 PASS (owner 2026-11-26, exe 1c699df9: "I don't see far npc jumping from place"; proof `tier0: 498
+  logical, 0 queued, 49 placed`). The owner saw far NPCs "slide. Then they are animated as I get closer" and accepts
+  sliding at that distance. Q2 covered by that remark (no pop reported); Q3 not answered: stays on the to-check list.
 
 ### AI-15: NPCs keep their place when you leave and come back (AI10c3a, 2026-11-26)
 - Kind: game, dev build. `owner_launch.sh view "Seyda Neen" --hour 12` (exterior, noon), F11 drops the player.
@@ -104,4 +108,5 @@ Log: `ai: N wanderers on navmesh, M on pathgrid fallback (since start: X navmesh
 - Q2: same for its facing: does it face the way it did, without a snap when you arrive? (expected yes)
 - Q3: is every NPC of the village still there? (expected yes; known gap AI10c3b: one that walked into a
   neighbouring cell may be missing until that cell reloads)
-- Status: awaiting owner.
+- Status: Q3 PASS (owner 2026-11-26, exe 1c699df9: "nobody seems missing"). Q1-Q2 NOT TESTED: no `actors: N poses
+  kept at unload` line, the village never unloaded in a 2.5 min run. Stays on the to-check list (run ~300 m away first).
