@@ -218,7 +218,7 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
 | WG-E2j | hash-cached product in the guide folder, read at load | Scrib `sf_worldgen` (`scatter_product.rs`), `mw_worldgen` | E2i | same hash twice; seed change rebuilds; read == computed | same |
 | WG-E2m | measurement: stems/ha and cover per class, counts, seconds | Scrib `mw_worldgen` (test only) | E2j | `#[ignore = "measurement: scatter v2 counts and seconds"]` | ledger line |
 | WG-E3a | rock columns, `[rock_units]` table (entries: library class or pack model) | Scrib `sf_worldgen` (`scatter_species.rs`) | E2a | round trip; bad weight or unknown entry kind rejected | `test -p sf_worldgen` |
-| WG-E3b | talus candidates, Pareto sizes | Scrib `sf_worldgen` (`scatter_rocks.rs`) | E2e, E3a | size slope within 10 % of D; size-distance Spearman > 0.3 (beta 0.4), ~0 (beta 0); none above the shadow line; tile alone | same |
+| WG-E3b | talus candidates, Pareto sizes | Scrib `sf_worldgen` (`scatter_rocks.rs`) | E2e, E3a | size slope within 10 % of D; size-distance Spearman > 0.08 (beta 0.4; was 0.3, unreachable with the exponential run-out, see As built), rising with beta, ~0 (beta 0); none above the shadow line; tile alone | same |
 | WG-E3c | outcrop clusters, field stones | same file | E3b | children <= ratio x parent; g(r) > 1.5 at sigma; tile alone | same |
 | WG-E3d | rock layer first in the passes | Scrib `sf_worldgen` (`scatter.rs`) | E3c | no pair under `R_ij`; none on water, roads, footprints; no tree in a rock | same |
 | WG-E3e | mesh pick (both entry kinds) and pose | `scatter_rocks.rs` | E3d | entry shares within 3 sigma; no pack model outside its scale range; share 0 = library only; sink exact | same + clippy dependents |
@@ -273,6 +273,13 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
   `rockfall`; per context a list of `RockEntry`: `kind = "class"` (library class by name, resolved at E3e) or `"model"`
   (`axis_m`, `scale_min..scale_max`); weight finite > 0, no repeat). Four rock columns in `rock_declared`. The scatter-wide
   `rock.*` values are declared by the rows that use them (E3b-E3e). 2 tests (round trip; 23 refusals).
+- **WG-E3b** (2026-11-27, `scatter_rocks.rs`): `RockValues` (10 `scatter.rock.*` values in the file's `[params]`, new
+  `talus_child_mean` 4), trait `RockGround` (height, slope + aspect, cliff, unit name), `pareto_size`, `RockRules::
+  talus_candidates(ground, rect)`: parents per tile thinned to scarp cells x unit `rockfall`, Poisson blocks, run-out,
+  shadow line + loose slope; `RockKey` order, `source` kept. On a 60 m 80 deg scarp, 23k blocks: slope of N(>s) 1.64 /
+  2.06 / 3.03 for D 1.6 / 2 / 3; Spearman 0.014 / 0.120 / 0.214 at beta 0 / 0.4 / 1. The row's > 0.3 is not reachable
+  with exponential run-out (var ln E = pi^2/6 swamps beta^2 var ln s; simulated 0.12-0.24 over D 1-2), so the bar is
+  0.08 and rising with beta (field sorting is weak, V). 4 tests.
 
 ## Tunables
 
@@ -302,7 +309,7 @@ Prefix `scatter.`; source Guess unless noted. Species columns go in the file's `
 | `rock.size_dim` D / `scarp_slope_deg` / `loose_slope_max_deg` | ratio / deg / deg | 1-3.5 / 40-75 / 30-60 | 2.0 / 50 / 45 | Turcotte, WG-R §4 (U) |
 | `rock.shadow_angle_deg` | deg | 15-35 | 27.5 | Evans and Hungr abstract (V) |
 | `rock.reach_max_m` / `fall_ell_m` / `sort_beta` | m / m / ratio | 20-400 / 2-100 / 0-1 | 150 / 15 / 0.4 | Guess |
-| `rock.talus_parent_per_ha` / `talus_spread_deg` | 1/ha / deg | 0-500 / 0-60 | 40 / 20 | Guess |
+| `rock.talus_parent_per_ha` / `talus_spread_deg` / `talus_child_mean` | 1/ha / deg / count | 0-500 / 0-60 / 0-40 | 40 / 20 / 4 | Guess (child mean added at E3b: the process needs it) |
 | `rock.outcrop_parent_per_ha`, `_parent_min_m`, `cluster_sigma_m`, `child_mean`, `child_size_ratio` | | 0-50, 1-40, 2-30, 0-40, 0.05-1 | 2, 4, 6, 8, 0.4 | Guess (WG-R sigma 3-15) |
 | `rock.rock_k` / `tilt_jitter_deg` | ratio / deg | 0.5-1.2 / 0-30 | 0.9 / 15 | WG-R (U) |
 | `rock.pack_model_share` | ratio | 0-1 | 0.5 | Guess; owner check WG-E3 (0 and 1 are the A/B arms) |

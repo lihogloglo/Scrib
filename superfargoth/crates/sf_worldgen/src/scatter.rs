@@ -493,19 +493,19 @@ pub fn budget_keep(table: &Table, prm: &Params, expected: &[Vec<f64>]) -> Vec<f3
 
 /// splitmix64 finaliser (Steele, Lea, Flood, OOPSLA 2014).
 #[inline]
-fn mix(mut z: u64) -> u64 {
+pub(crate) fn mix(mut z: u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     z ^ (z >> 31)
 }
 
 #[inline]
-fn unit(h: u64) -> f64 {
+pub(crate) fn unit(h: u64) -> f64 {
     (h >> 11) as f64 * (1.0 / (1u64 << 53) as f64)
 }
 
 /// The hash stream of (seed, tile, species).
-fn stream(seed: u64, tx: i32, ty: i32, species: u32) -> u64 {
+pub(crate) fn stream(seed: u64, tx: i32, ty: i32, species: u32) -> u64 {
     let a = mix(seed ^ 0x5ca7_7e40_0000_0001);
     let b = mix(a ^ i64::from(tx).cast_unsigned().wrapping_mul(0x9e37_79b9_7f4a_7c15));
     let c = mix(b ^ i64::from(ty).cast_unsigned().wrapping_mul(0xc2b2_ae3d_27d4_eb4f));
@@ -514,7 +514,7 @@ fn stream(seed: u64, tx: i32, ty: i32, species: u32) -> u64 {
 
 /// Draw `k` of candidate `i` of a stream, in [0, 1).
 #[inline]
-fn draw(base: u64, i: u64, k: u64) -> f64 {
+pub(crate) fn draw(base: u64, i: u64, k: u64) -> f64 {
     unit(mix(base ^ (i.wrapping_mul(16).wrapping_add(k).wrapping_add(1)).wrapping_mul(0x9e37_79b9_7f4a_7c15)))
 }
 
@@ -707,7 +707,7 @@ const BACKGROUND_SALT: u64 = 0xb6c0_2d00_0000_1e2d;
 
 /// Square metres per hectare.
 // tunables: const (units)
-const M2_PER_HA: f64 = 10_000.0;
+pub(crate) const M2_PER_HA: f64 = 10_000.0;
 
 /// The integer key of a candidate; output order (spec "Determinism across tiles").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -758,7 +758,7 @@ pub fn size_mark(sp: &SpeciesRow, u: f64) -> f64 {
 
 /// Poisson(`mu`) by inversion of one uniform `u` (bounded: far past the tail the count stops).
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // a bound of a few hundred at most
-fn poisson(mu: f64, u: f64) -> u32 {
+pub(crate) fn poisson(mu: f64, u: f64) -> u32 {
     if mu <= 0.0 {
         return 0;
     }
@@ -777,7 +777,7 @@ fn poisson(mu: f64, u: f64) -> u32 {
 
 /// Hash `k` of item `i` of a stream (the raw bits [`draw`] maps to `[0, 1)`).
 #[inline]
-fn hash_k(base: u64, i: u64, k: u64) -> u64 {
+pub(crate) fn hash_k(base: u64, i: u64, k: u64) -> u64 {
     mix(base ^ (i.wrapping_mul(16).wrapping_add(k).wrapping_add(1)).wrapping_mul(0x9e37_79b9_7f4a_7c15))
 }
 

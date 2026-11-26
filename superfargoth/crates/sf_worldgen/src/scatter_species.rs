@@ -70,9 +70,17 @@ pub const SPECIES_COLUMNS: &[(&str, &str)] = &[
     ("hat_water_distance_m", "m"),
 ];
 
-/// The scatter-wide v2 values (spec "Tunables"; `tunables.md` "Definition": value, unit, range, source).
+/// The scatter-wide v2 values (spec "Tunables"; `tunables.md` "Definition": value, unit, range, source), then the
+/// rock layer's `scatter.rock.*` values ([`crate::scatter_rocks::declared`]).
 #[must_use]
 pub fn declared() -> Vec<Declared> {
+    let mut v = vegetation_declared();
+    v.extend(crate::scatter_rocks::declared());
+    v
+}
+
+/// The vegetation part of [`declared`].
+fn vegetation_declared() -> Vec<Declared> {
     let d = |name, v, unit, min, max, source: &str, help| Declared { name, v, unit, min, max, source: source.into(), help };
     vec![
         d("scatter.stand_wavelength_m", 250.0, "m", 50.0, 1000.0, "Guess",
