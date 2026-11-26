@@ -44,6 +44,7 @@ pub const SPECIES_COLUMNS: &[(&str, &str)] = &[
     ("crown_b", "ratio"),
     ("crown_k", "ratio"),
     ("shade_tolerance", "ratio"),
+    ("footprint_ratio", "ratio"),
     ("align", "ratio"),
     ("tilt_jitter_deg", "deg"),
     ("offset_m", "m"),
@@ -105,6 +106,8 @@ pub fn species_declared() -> Vec<Declared> {
         d("crown_k", 0.8, "ratio", 0.3, 1.2, "Guess", "conflict distance R_ij = k (r_i + r_j)"),
         d("shade_tolerance", 0.3, "ratio", 0.0, 1.0, "Industry(Makowski 2019 stol form)",
           "intensity kept in full shade: x lerp(stol, 1, light)"),
+        d("footprint_ratio", 0.01, "ratio", 0.0, 0.5, "Guess",
+          "stem footprint radius per metre of size mark: a hard obstacle for later layers"),
         d("align", 0.0, "ratio", 0.0, 1.0, "Guess", "up axis blended toward the ground normal (0 upright)"),
         d("tilt_jitter_deg", 0.0, "deg", 0.0, 30.0, "Guess", "random tilt of the up axis"),
         d("offset_m", 0.0, "m", -5.0, 5.0, "Guess", "height above the ground per unit scale"),
@@ -231,6 +234,8 @@ pub struct Species {
     pub crown_b: f64,
     pub crown_k: f64,
     pub shade_tolerance: f64,
+    /// Stem footprint radius per metre of size mark (a hard obstacle for later layers).
+    pub footprint_ratio: f64,
     pub align: f64,
     pub tilt_jitter_deg: f64,
     pub offset_m: f64,
@@ -372,6 +377,8 @@ struct RawSpecies {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     shade_tolerance: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    footprint_ratio: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     align: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tilt_jitter_deg: Option<f64>,
@@ -392,7 +399,7 @@ struct RawSpecies {
 }
 
 impl RawSpecies {
-    fn numeric(&self) -> [(&'static str, Option<f64>); 14] {
+    fn numeric(&self) -> [(&'static str, Option<f64>); 15] {
         [
             ("parent_per_ha", self.parent_per_ha),
             ("cluster_sigma_m", self.cluster_sigma_m),
@@ -405,6 +412,7 @@ impl RawSpecies {
             ("crown_b", self.crown_b),
             ("crown_k", self.crown_k),
             ("shade_tolerance", self.shade_tolerance),
+            ("footprint_ratio", self.footprint_ratio),
             ("align", self.align),
             ("tilt_jitter_deg", self.tilt_jitter_deg),
             ("offset_m", self.offset_m),
@@ -529,6 +537,7 @@ fn species_row(raw: &RawSpecies, columns: &BTreeMap<String, ColumnDecl>) -> Resu
         crown_b: values["crown_b"],
         crown_k: values["crown_k"],
         shade_tolerance: values["shade_tolerance"],
+        footprint_ratio: values["footprint_ratio"],
         align: values["align"],
         tilt_jitter_deg: values["tilt_jitter_deg"],
         offset_m: values["offset_m"],
@@ -671,6 +680,7 @@ impl SpeciesFile {
                 crown_b: opt("crown_b", s.crown_b),
                 crown_k: opt("crown_k", s.crown_k),
                 shade_tolerance: opt("shade_tolerance", s.shade_tolerance),
+                footprint_ratio: opt("footprint_ratio", s.footprint_ratio),
                 align: opt("align", s.align),
                 tilt_jitter_deg: opt("tilt_jitter_deg", s.tilt_jitter_deg),
                 offset_m: opt("offset_m", s.offset_m),

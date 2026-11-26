@@ -49,6 +49,10 @@ mod tests_candidates;
 #[path = "tests_scatter_competition.rs"]
 mod tests_competition;
 
+#[cfg(test)]
+#[path = "tests_scatter_layers.rs"]
+mod tests_layers;
+
 /// One-degree slope bins of the area census (0..90°).
 // tunables: const (layout: one bin per degree of slope, the census resolution of the slope cut)
 pub const SLOPE_BINS: usize = 90;
@@ -665,7 +669,7 @@ fn tilt(up: [f32; 3], deg: f32, turn: f64) -> [f32; 3] {
 // stream per parent tile carries the share `b = background_fraction` of the candidates, thinned at the point by the
 // same factors (suitability squared: the cluster's parent and offspring factors). `stand` is the stand density `D`
 // for the canopy (0 in a clearing, forced or mosaic; a canopy candidate in a clearing is dropped) and 1 for lower
-// layers (their light factor is WG-E2f's). `prior` is the caller's region prior, clamped to
+// layers (thinned at the point by the light, WG-E2f below). `prior` is the caller's region prior, clamped to
 // `[0, scatter.region_prior_max]`. Each candidate gets a size mark by inversion ([`size_mark`]; canopy quantiles
 // scaled by `scatter.edge_size_ratio` in the edge band), its crown radius `crown_a_m + crown_b h`, and a tie-break
 // hash for the competition's priority (size mark, then hash).
@@ -793,29 +797,81 @@ impl CandidateRules<'_> {
         (2.0 * f64::from(self.file.values.competition_rounds) - 1.0) * self.r_max_m()
     }
 
-    /// The halo `H = 3 sigma_max + (2k - 1) R_max`, m: how far past its square a tile rebuilds parents.
+    /// The layers present, in pass order, each with how far past a square its candidates reach so that the
+    /// square's winners of every layer are exact, m. Per layer `l`: `reach_l = (2k - 1) R_max(l)`; the winners of
+    /// `l` must be exact wherever a later layer `m` builds candidates, grown by `l`'s influence on `m` (stems
+    /// `foot_l + foot_m`, canopy crowns `crown_l`: the light), so `grow_l = max_m (grow_m + influence) + reach_l`.
+    #[must_use]
+    pub fn layer_grows(&self) -> Vec<(Layer, f64)> {
+        let mut layers: Vec<Layer> = self.file.species.iter().map(|s| s.layer).collect();
+        layers.sort_unstable();
+        layers.dedup();
+        let k2 = 2.0 * f64::from(self.file.values.competition_rounds) - 1.0;
+        let of = |l: Layer, f: &dyn Fn(&SpeciesRow) -> f64| {
+            self.file.species.iter().filter(|s| s.layer == l).map(f).fold(0.0, f64::max)
+        };
+        let crown = |s: &SpeciesRow| s.crown_a_m + s.crown_b * s.size_max_m;
+        let reach: Vec<f64> = layers.iter().map(|&l| k2 * of(l, &|s| s.crown_k * 2.0 * crown(s))).collect();
+        let foot: Vec<f64> = layers.iter().map(|&l| of(l, &|s| s.footprint_ratio * s.size_max_m)).collect();
+        let shade: Vec<f64> = layers.iter().map(|&l| if l == Layer::Canopy { of(l, &crown) } else { 0.0 }).collect();
+        let mut grow = vec![0.0; layers.len()];
+        for l in (0..layers.len()).rev() {
+            let need = (l + 1..layers.len()).map(|m| grow[m] + (foot[l] + foot[m]).max(shade[l])).fold(0.0, f64::max);
+            grow[l] = need + reach[l];
+        }
+        layers.into_iter().zip(grow).collect()
+    }
+
+    /// How far the outermost layer's candidates reach past a square, m (the competition reach for one layer).
+    #[must_use]
+    pub fn square_reach_m(&self) -> f64 {
+        self.layer_grows().into_iter().map(|(_, g)| g).fold(0.0, f64::max)
+    }
+
+    /// The halo `H = 3 sigma_max + `[`Self::square_reach_m`] (`3 sigma_max + (2k - 1) R_max` for one layer), m:
+    /// how far past its square a tile rebuilds parents.
     #[must_use]
     pub fn halo_m(&self) -> f64 {
         let sigma = self.file.species.iter().map(|s| s.cluster_sigma_m).fold(0.0, f64::max);
-        THOMAS_REACH_SIGMAS * sigma + self.competition_reach_m()
+        THOMAS_REACH_SIGMAS * sigma + self.square_reach_m()
     }
 
-    /// The square of tile `(tx, ty)` grown by the competition reach: the rect its candidates (and its stand map)
-    /// cover.
+    /// The square of tile `(tx, ty)` grown by [`Self::square_reach_m`]: the rect its candidates (and its stand
+    /// map) cover.
     #[must_use]
     pub fn tile_rect(&self, (tx, ty): (i32, i32)) -> [f64; 4] {
-        let (t, g) = (self.tile_m, self.competition_reach_m());
+        let (t, g) = (self.tile_m, self.square_reach_m());
         let (x0, y0) = (f64::from(tx) * t, f64::from(ty) * t);
         [x0 - g, y0 - g, x0 + t + g, y0 + t + g]
     }
 
-    /// Every candidate inside `rect = [x0, y0, x1, y1]` (half open), sorted by key. `stand` must cover `rect`
-    /// (built over it or a larger rect).
+    /// Every candidate inside `rect = [x0, y0, x1, y1]` (half open), sorted by key, with nothing over them (light
+    /// 1, no obstacle). `stand` must cover `rect` (built over it or a larger rect).
     #[must_use]
     pub fn candidates(&self, fields: &dyn Fields, stand: &StandMap, rect: [f64; 4]) -> Vec<Candidate> {
         let mut out = Vec::new();
-        for (s, sp) in self.file.species.iter().enumerate() {
-            self.species_candidates(fields, stand, rect, s, sp, &mut out);
+        let cover = Cover::new(self.file.values.shade_per_crown);
+        for s in 0..self.file.species.len() {
+            self.species_candidates(fields, stand, rect, &cover, s, &mut out);
+        }
+        out.sort_unstable_by_key(|c| c.key);
+        out
+    }
+
+    /// The candidates of one layer inside `rect`, sorted by key, under the earlier layers' `cover` (light and stem
+    /// obstacles, spec "Design" 7). `stand` must cover `rect`.
+    #[must_use]
+    pub fn layer_candidates(
+        &self,
+        fields: &dyn Fields,
+        stand: &StandMap,
+        rect: [f64; 4],
+        layer: Layer,
+        cover: &Cover,
+    ) -> Vec<Candidate> {
+        let mut out = Vec::new();
+        for s in (0..self.file.species.len()).filter(|&s| self.file.species[s].layer == layer) {
+            self.species_candidates(fields, stand, rect, cover, s, &mut out);
         }
         out.sort_unstable_by_key(|c| c.key);
         out
@@ -829,13 +885,18 @@ impl CandidateRules<'_> {
         fields: &dyn Fields,
         stand: &StandMap,
         rect: [f64; 4],
+        cover: &Cover,
         s: usize,
-        sp: &SpeciesRow,
         out: &mut Vec<Candidate>,
     ) {
+        let sp = &self.file.species[s];
         let v = &self.file.values;
         let suit = &self.suitability[s];
         let canopy = sp.layer == Layer::Canopy;
+        // Lower layers: the dominating intensity is raised by the edge boost, then each point is thinned by
+        // `lerp(stol, 1, L) x (1 + edge_boost in the band) / (1 + edge_boost)` (Lewis-Shedler at the point).
+        let boost = if canopy { 1.0 } else { 1.0 + v.edge_boost };
+        let stol = sp.shade_tolerance;
         let t = self.tile_m;
         let area = t * t;
         let pmax = v.region_prior_max;
@@ -843,23 +904,34 @@ impl CandidateRules<'_> {
         let sigma = sp.cluster_sigma_m;
         let reach = THOMAS_REACH_SIGMAS * sigma;
         let inside = |x: f64, y: f64| x >= rect[0] && x < rect[2] && y >= rect[1] && y < rect[3];
-        // (stand factor, edge band) at a point; `None` drops a canopy candidate in a clearing.
+        // (stand factor, edge band) at a point; `None` drops a canopy candidate in a clearing. Lower layers take
+        // only the edge band (their stand factor is the light).
         let stand_at = |x: f64, y: f64| -> Option<(f64, bool)> {
-            if !canopy {
-                return Some((1.0, false));
-            }
             let p = stand.at(x, y);
+            if !canopy {
+                return Some((1.0, p.edge_band));
+            }
             (p.class != StandClass::Clearing).then_some((p.d, p.edge_band))
         };
         let prior = |x: f64, y: f64| (self.prior)(s, x, y).clamp(0.0, pmax) / pmax;
-        let mut emit = |key: CandidateKey, x: f64, y: f64, edge: bool, u: f64, tiebreak: u64| {
-            let q = if edge { u * v.edge_size_ratio } else { u };
+        // `keep` is the point's uniform for the light thinning (lower layers).
+        let mut emit = |key: CandidateKey, x: f64, y: f64, edge: bool, u: f64, tiebreak: u64, keep: f64| {
+            if !canopy {
+                let light = stol + (1.0 - stol) * cover.light(x, y);
+                if keep >= light * if edge { boost } else { 1.0 } / boost {
+                    return;
+                }
+            }
+            let q = if edge && canopy { u * v.edge_size_ratio } else { u };
             let size_m = size_mark(sp, q);
+            if cover.blocked(x, y, sp.footprint_ratio * size_m) {
+                return;
+            }
             out.push(Candidate { key, pos: [x, y], size_m, crown_m: sp.crown_a_m + sp.crown_b * size_m, tiebreak });
         };
         let species = s as u32;
-        let kappa_max = (1.0 - b) * sp.parent_per_ha / M2_PER_HA * pmax;
-        let bg_max = b * sp.parent_per_ha / M2_PER_HA * sp.offspring_mean * pmax;
+        let kappa_max = (1.0 - b) * sp.parent_per_ha / M2_PER_HA * pmax * boost;
+        let bg_max = b * sp.parent_per_ha / M2_PER_HA * sp.offspring_mean * pmax * boost;
         let tx0 = ((rect[0] - reach) / t).floor() as i32;
         let ty0 = ((rect[1] - reach) / t).floor() as i32;
         let tx1 = ((rect[2] + reach) / t).floor() as i32;
@@ -898,7 +970,7 @@ impl CandidateRules<'_> {
                         }
                         let Some((_, edge)) = stand_at(x, y) else { continue };
                         let key = CandidateKey { layer: sp.layer, species, tile, parent: j as u32, offspring: o as u32 };
-                        emit(key, x, y, edge, draw(ob, o, 2), hash_k(ob, o, 3));
+                        emit(key, x, y, edge, draw(ob, o, 2), hash_k(ob, o, 3), draw(ob, o, 4));
                     }
                 }
                 // Background.
@@ -918,7 +990,7 @@ impl CandidateRules<'_> {
                         continue;
                     }
                     let key = CandidateKey { layer: sp.layer, species, tile, parent: BACKGROUND, offspring: i as u32 };
-                    emit(key, x, y, edge, draw(bb, i, 3), hash_k(bb, i, 4));
+                    emit(key, x, y, edge, draw(bb, i, 3), hash_k(bb, i, 4), draw(bb, i, 5));
                 }
             }
         }
@@ -949,7 +1021,6 @@ fn priority(a: &Candidate, b: &Candidate) -> std::cmp::Ordering {
 }
 
 /// The conflicting neighbours of every candidate of one layer (indices into `cands`), by a bucket grid.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)] // cell indices
 fn conflicts(file: &SpeciesFile, cands: &[Candidate]) -> Vec<Vec<u32>> {
     let k = |c: &Candidate| file.species[c.key.species as usize].crown_k;
     let r_max = cands.iter().map(|c| 2.0 * k(c) * c.crown_m).fold(0.0, f64::max);
@@ -957,54 +1028,21 @@ fn conflicts(file: &SpeciesFile, cands: &[Candidate]) -> Vec<Vec<u32>> {
     if n < 2 || r_max <= 0.0 {
         return vec![Vec::new(); n];
     }
-    let (mut x0, mut y0, mut x1, mut y1) = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
-    for c in cands {
-        (x0, y0, x1, y1) = (x0.min(c.pos[0]), y0.min(c.pos[1]), x1.max(c.pos[0]), y1.max(c.pos[1]));
-    }
-    let cell = r_max.max(((x1 - x0) * (y1 - y0) / n as f64).sqrt());
-    let nx = ((x1 - x0) / cell).floor() as usize + 1;
-    let ny = ((y1 - y0) / cell).floor() as usize + 1;
-    let cell_of = |c: &Candidate| {
-        let cx = (((c.pos[0] - x0) / cell).floor() as usize).min(nx - 1);
-        let cy = (((c.pos[1] - y0) / cell).floor() as usize).min(ny - 1);
-        (cx, cy)
-    };
-    // Counting sort into cells (CSR).
-    let mut start = vec![0u32; nx * ny + 1];
-    for c in cands {
-        let (cx, cy) = cell_of(c);
-        start[cy * nx + cx + 1] += 1;
-    }
-    for i in 0..nx * ny {
-        start[i + 1] += start[i];
-    }
-    let mut next = start.clone();
-    let mut items = vec![0u32; n];
-    for (i, c) in cands.iter().enumerate() {
-        let (cx, cy) = cell_of(c);
-        let slot = &mut next[cy * nx + cx];
-        items[*slot as usize] = i as u32;
-        *slot += 1;
-    }
+    let pts: Vec<[f64; 2]> = cands.iter().map(|c| c.pos).collect();
+    let grid = Buckets::new(&pts, r_max);
     (0..n)
         .into_par_iter()
         .map(|i| {
             let a = &cands[i];
-            let (cx, cy) = cell_of(a);
             let mut out = Vec::new();
-            for gy in cy.saturating_sub(1)..=(cy + 1).min(ny - 1) {
-                for gx in cx.saturating_sub(1)..=(cx + 1).min(nx - 1) {
-                    let g = gy * nx + gx;
-                    for &j in &items[start[g] as usize..start[g + 1] as usize] {
-                        let b = &cands[j as usize];
-                        if j as usize != i
-                            && (a.pos[0] - b.pos[0]).hypot(a.pos[1] - b.pos[1]) < k(a) * a.crown_m + k(b) * b.crown_m
-                        {
-                            out.push(j);
-                        }
-                    }
+            grid.near(a.pos, r_max, |j| {
+                let b = &cands[j as usize];
+                if j as usize != i
+                    && (a.pos[0] - b.pos[0]).hypot(a.pos[1] - b.pos[1]) < k(a) * a.crown_m + k(b) * b.crown_m
+                {
+                    out.push(j);
                 }
-            }
+            });
             out.sort_unstable();
             out
         })
@@ -1048,20 +1086,190 @@ pub fn compete(file: &SpeciesFile, cands: &[Candidate], rounds: u32) -> Vec<bool
 }
 
 impl CandidateRules<'_> {
-    /// The competition winners inside tile `(tx, ty)`'s square (half open), sorted by key: candidates over
-    /// [`Self::tile_rect`], [`compete`] at `scatter.competition_rounds`, kept by membership. `stand` must cover the
-    /// tile rect. Bitwise the same as the winners of any larger build, cut to the square.
+    /// The winners of every layer inside `square = [x0, y0, x1, y1]` (half open), sorted by key: layer by layer in
+    /// pass order, candidates over the square grown by the layer's reach ([`Self::layer_grows`]) under the earlier
+    /// layers' winners ([`Cover`]), competition at `scatter.competition_rounds`, kept by membership. `stand` must
+    /// cover the square grown by [`Self::square_reach_m`]. Bitwise the same as any larger build cut to the square.
+    #[must_use]
+    pub fn square_winners(&self, fields: &dyn Fields, stand: &StandMap, square: [f64; 4]) -> Vec<Candidate> {
+        let mut cover = Cover::new(self.file.values.shade_per_crown);
+        let mut out = Vec::new();
+        let inside = |c: &Candidate| {
+            c.pos[0] >= square[0] && c.pos[0] < square[2] && c.pos[1] >= square[1] && c.pos[1] < square[3]
+        };
+        for (layer, g) in self.layer_grows() {
+            let rect = [square[0] - g, square[1] - g, square[2] + g, square[3] + g];
+            let cands = self.layer_candidates(fields, stand, rect, layer, &cover);
+            let won = compete_layer(self.file, &cands, self.file.values.competition_rounds);
+            let winners: Vec<Candidate> = cands.into_iter().zip(won).filter(|(_, w)| *w).map(|(c, _)| c).collect();
+            cover.add(self.file, &winners);
+            out.extend(winners.into_iter().filter(inside));
+        }
+        out
+    }
+
+    /// The winners inside tile `(tx, ty)`'s square ([`Self::square_winners`]). `stand` must cover
+    /// [`Self::tile_rect`].
     #[must_use]
     pub fn tile_winners(&self, fields: &dyn Fields, stand: &StandMap, (tx, ty): (i32, i32)) -> Vec<Candidate> {
-        let cands = self.candidates(fields, stand, self.tile_rect((tx, ty)));
-        let won = compete(self.file, &cands, self.file.values.competition_rounds);
         let t = self.tile_m;
         let (x0, y0) = (f64::from(tx) * t, f64::from(ty) * t);
-        cands
-            .into_iter()
-            .zip(won)
-            .filter(|(c, w)| *w && c.pos[0] >= x0 && c.pos[0] < x0 + t && c.pos[1] >= y0 && c.pos[1] < y0 + t)
-            .map(|(c, _)| c)
-            .collect()
+        self.square_winners(fields, stand, [x0, y0, x0 + t, y0 + t])
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Scatter v2 lower layers (spec "Design" 7; slice WG-E2f). Canopy winners shade the layers under them: the light at
+// a point is `L = exp(-shade_per_crown n)`, `n` the canopy crowns over it (Makowski 2019's `Q_eff = lerp(stol, 1,
+// Q)` form); a lower candidate is kept with `lerp(stol, 1, L)`, x `(1 + edge_boost)` in the edge band (its
+// dominating intensity raised by `1 + edge_boost`, Lewis-Shedler at the point). Every earlier winner's stem
+// footprint (`footprint_ratio x size mark`) is a hard obstacle: a later candidate is dropped when the two footprints
+// overlap. Rocks (WG-E3) will join the stems. Both are integer counts or comparisons at the point, so a layer's
+// candidates stay a pure function of the point and of the earlier winners within its reach
+// ([`CandidateRules::layer_grows`]).
+
+/// A CSR bucket grid over points (cell `max(reach, sqrt(area / n))`, so never more cells than points).
+#[derive(Default)]
+struct Buckets {
+    x0: f64,
+    y0: f64,
+    cell: f64,
+    nx: usize,
+    ny: usize,
+    start: Vec<u32>,
+    items: Vec<u32>,
+}
+
+impl Buckets {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)] // cell indices
+    fn new(pts: &[[f64; 2]], reach: f64) -> Self {
+        let n = pts.len();
+        if n == 0 {
+            return Self { nx: 1, ny: 1, cell: 1.0, start: vec![0, 0], ..Self::default() };
+        }
+        let (mut x0, mut y0, mut x1, mut y1) = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for p in pts {
+            (x0, y0, x1, y1) = (x0.min(p[0]), y0.min(p[1]), x1.max(p[0]), y1.max(p[1]));
+        }
+        let cell = reach.max(((x1 - x0) * (y1 - y0) / n as f64).sqrt());
+        // Layout: one cell when every point coincides and nothing reaches.
+        let cell = if cell > 0.0 { cell } else { 1.0 };
+        let nx = ((x1 - x0) / cell).floor() as usize + 1;
+        let ny = ((y1 - y0) / cell).floor() as usize + 1;
+        let mut b = Self { x0, y0, cell, nx, ny, start: vec![0u32; nx * ny + 1], items: vec![0u32; n] };
+        for p in pts {
+            let (cx, cy) = b.cell_of(*p);
+            b.start[cy * nx + cx + 1] += 1;
+        }
+        for i in 0..nx * ny {
+            b.start[i + 1] += b.start[i];
+        }
+        let mut next = b.start.clone();
+        for (i, p) in pts.iter().enumerate() {
+            let (cx, cy) = b.cell_of(*p);
+            let slot = &mut next[cy * nx + cx];
+            b.items[*slot as usize] = i as u32;
+            *slot += 1;
+        }
+        b
+    }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // clamped cell indices
+    fn cell_of(&self, p: [f64; 2]) -> (usize, usize) {
+        let cx = (((p[0] - self.x0) / self.cell).floor() as usize).min(self.nx - 1);
+        let cy = (((p[1] - self.y0) / self.cell).floor() as usize).min(self.ny - 1);
+        (cx, cy)
+    }
+
+    /// Every point index in the cells the square `p +- reach` touches (a superset of the points within `reach`).
+    fn near(&self, p: [f64; 2], reach: f64, mut f: impl FnMut(u32)) {
+        let (gx0, gy0) = self.cell_of([p[0] - reach, p[1] - reach]);
+        let (gx1, gy1) = self.cell_of([p[0] + reach, p[1] + reach]);
+        for gy in gy0..=gy1 {
+            for gx in gx0..=gx1 {
+                let g = gy * self.nx + gx;
+                for &j in &self.items[self.start[g] as usize..self.start[g + 1] as usize] {
+                    f(j);
+                }
+            }
+        }
+    }
+}
+
+/// Discs `[x, y, radius]` behind a bucket grid.
+#[derive(Default)]
+struct Discs {
+    all: Vec<[f64; 3]>,
+    r_max: f64,
+    grid: Buckets,
+}
+
+impl Discs {
+    fn rebuild(&mut self) {
+        self.r_max = self.all.iter().map(|d| d[2]).fold(0.0, f64::max);
+        let pts: Vec<[f64; 2]> = self.all.iter().map(|d| [d[0], d[1]]).collect();
+        self.grid = Buckets::new(&pts, self.r_max);
+    }
+
+    /// Calls `f(distance, radius)` for every disc whose centre may lie within `radius + extra` of `p`.
+    fn near(&self, p: [f64; 2], extra: f64, mut f: impl FnMut(f64, f64)) {
+        if self.all.is_empty() {
+            return;
+        }
+        self.grid.near(p, self.r_max + extra, |j| {
+            let d = self.all[j as usize];
+            f((p[0] - d[0]).hypot(p[1] - d[1]), d[2]);
+        });
+    }
+}
+
+/// The earlier layers' winners as a later layer sees them (spec "Design" 7): canopy crowns (the light) and every
+/// stem footprint (hard obstacles).
+pub struct Cover {
+    shade_per_crown: f64,
+    crowns: Discs,
+    stems: Discs,
+}
+
+impl Cover {
+    /// Nothing over the ground: light 1 everywhere, no obstacle. `shade_per_crown` is `scatter.shade_per_crown`.
+    #[must_use]
+    pub fn new(shade_per_crown: f64) -> Self {
+        Self { shade_per_crown, crowns: Discs::default(), stems: Discs::default() }
+    }
+
+    /// Adds a layer's winners: canopy crowns (radius `crown_m`) and every stem (radius `footprint_ratio x size_m`).
+    pub fn add(&mut self, file: &SpeciesFile, winners: &[Candidate]) {
+        for c in winners {
+            let sp = &file.species[c.key.species as usize];
+            if sp.layer == Layer::Canopy {
+                self.crowns.all.push([c.pos[0], c.pos[1], c.crown_m]);
+            }
+            self.stems.all.push([c.pos[0], c.pos[1], sp.footprint_ratio * c.size_m]);
+        }
+        self.crowns.rebuild();
+        self.stems.rebuild();
+    }
+
+    /// The canopy crowns over `(x, y)` (centre closer than its crown radius).
+    #[must_use]
+    pub fn crowns_over(&self, x: f64, y: f64) -> u32 {
+        let mut n = 0;
+        self.crowns.near([x, y], 0.0, |d, r| n += u32::from(d < r));
+        n
+    }
+
+    /// The light at `(x, y)`: `exp(-shade_per_crown x crowns over it)`, in `(0, 1]`.
+    #[must_use]
+    pub fn light(&self, x: f64, y: f64) -> f64 {
+        (-self.shade_per_crown * f64::from(self.crowns_over(x, y))).exp()
+    }
+
+    /// A stem footprint of radius `r` at `(x, y)` overlaps an earlier stem (`distance < r_i + r`).
+    #[must_use]
+    pub fn blocked(&self, x: f64, y: f64, r: f64) -> bool {
+        let mut hit = false;
+        self.stems.near([x, y], r, |d, ri| hit |= d < ri + r);
+        hit
     }
 }

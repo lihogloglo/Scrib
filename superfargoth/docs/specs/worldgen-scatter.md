@@ -251,6 +251,12 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
   key; each round a rayon map (eligible and no higher eligible conflict wins; a winner's neighbours are out); CSR
   bucket grid of cell `max(R_max, sqrt(area / n))`. `CandidateRules::tile_winners` = candidates over `tile_rect`,
   compete, membership. 4 tests (grid == brute force; no pair under `R_ij`; rounds only add; g(<0.8 R) = 0; tile alone; threads).
+- **WG-E2f** (2026-11-27, `scatter.rs` v2 lower layers): `square_winners` / `tile_winners` run the layers in pass
+  order (candidates per layer over the square grown by `layer_grows`: `grow_l = max_m (grow_m + max(foot_l + foot_m,
+  crown_l)) + (2k - 1) R_max(l)`), each layer's winners added to a `Cover` (canopy crowns: `L = exp(-shade_per_crown
+  n)`; every stem `footprint_ratio x size`, new species column, Guess 0.01). Lower candidates: dominating intensity x
+  `(1 + edge_boost)`, kept at the point with `lerp(stol, 1, L) x (1 + edge_boost in band) / (1 + edge_boost)`; dropped
+  when their footprint overlaps an earlier stem. One CSR `Buckets` grid shared with the competition. 3 tests.
 
 ## Tunables
 
@@ -275,6 +281,7 @@ Prefix `scatter.`; source Guess unless noted. Species columns go in the file's `
 | species `crown_a_m`, `crown_b` | m, ratio | 0-5, 0-0.5 | 0.75, 0.2 | Brack and Wood form (V snippet) |
 | species `crown_k` | ratio | 0.3-1.2 | 0.8 | Guess (zone of influence, U) |
 | species `shade_tolerance` | ratio | 0-1 | 0.3 | Makowski `stol` form (V) |
+| species `footprint_ratio` | ratio | 0-0.5 | 0.01 | Guess (stem radius per metre of size; slenderness H/D 25-100, U) |
 | species hats (T, P, moisture, slope, altitude, water distance) | per driver | 4 values | open | Guess |
 | `rock.size_dim` D / `scarp_slope_deg` / `loose_slope_max_deg` | ratio / deg / deg | 1-3.5 / 40-75 / 30-60 | 2.0 / 50 / 45 | Turcotte, WG-R §4 (U) |
 | `rock.shadow_angle_deg` | deg | 15-35 | 27.5 | Evans and Hungr abstract (V) |
