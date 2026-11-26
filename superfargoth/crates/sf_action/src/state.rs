@@ -99,6 +99,11 @@ pub struct ActionState {
     /// seated move then stands up as baked with no exit event (the shell re-claims nothing).
     #[serde(skip)]
     pub seat: Option<SeatState>,
+    /// The slot [`crate::Sense::seat`] sensed last tick (target, slot index; `IN2b1`): a sense that
+    /// differs is a new offer ([`crate::Entry::offered`]), answered once. Not serialized: a load
+    /// sees the held claim as a new offer and answers it again.
+    #[serde(skip)]
+    pub seat_sensed: Option<(TargetId, u8)>,
 }
 
 /// The slot a character sits in ([`ActionState::seat`]).
@@ -149,6 +154,7 @@ impl ActionState {
             forced: None,
             lock: None,
             seat: None,
+            seat_sensed: None,
         }
     }
 }

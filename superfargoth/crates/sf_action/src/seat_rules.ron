@@ -1,20 +1,21 @@
 // Framework seat rules (docs/specs/interaction.md "Using a slot", slice IN2a). Hosts add them after
 // the base rules when their interaction shell senses claimed slots (`Sense::seat`) and their slot
-// source has the clips' root paths. Ranked above `interact.use`: with a claimed seat, Interact
-// sits; the loop and the stand-up rank above it too, so a press buffered during the enter never
-// activates instead of seating. Numbers are starting points tuned on test scenes.
+// source has the clips' root paths. The enter starts on its own when the shell offers a claimed
+// slot (IN2b1: the shell's activation pipeline consumed the Interact press); the loop and the
+// stand-up rank above `interact.use`, so a press while seated stands up instead of activating.
+// Numbers are starting points tuned on test scenes.
 [
     (
-        // Sit: Interact while this user holds a slot claim. The enter clip's end is warped onto
-        // the slot frame; too large a correction refuses (the shell's approach brings the user
-        // close first).
+        // Sit: the shell offers a newly claimed slot (no press). The enter clip's end is warped
+        // onto the slot frame; too large a correction refuses (the shell's approach brings the
+        // user close first) and the shell hears `SeatRefused`.
         id: "interact.sit.enter",
         kind: Interaction,
         category: Interact,
         rank: 100,
         slots: ["interact.sit.enter"],
         owner: Warp(target: Slot, profile: Linear, refuse_ratio: 0.5, steer: false),
-        entry: (classes: [Interact], states: [Grounded], from: [Loco]),
+        entry: (offered: true, states: [Grounded], from: [Loco]),
         exits: [(on: End, to: Rule("interact.sit.loop"))],
         steer: false,
     ),

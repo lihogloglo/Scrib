@@ -490,6 +490,12 @@ seated body can't get stuck). `EventKind::SeatEntered(slot)` / `SeatExited(slot)
 IN2b turns them into `occupy` / `release`. Rules are data in `seat_rules.ron` (`SEAT_RULES`: `interact.sit.enter`,
 `.loop`, `.exit`; not in `BASE_RULES`). `ActionState::seat` is `serde(skip)`: a save made while seated loads standing
 (the spec's `seated: Option<SlotRef>` in `CharacterSave` is still to do, with IN2b).
+**IN2b1:** the activation press is gone by the time the claim lands, so the claimed seat itself is the request: rule
+entry flag `offered: true` (no request classes) starts `interact.sit.enter` on the tick `Sense::seat` turns up new
+(none last tick, or another target/slot; `ActionState::seat_sensed`); if no offered rule starts that tick,
+`EventKind::SeatRefused(slot)` once (not grounded, `MaxCorrection`, wrong previous move), no retry until a new
+offer: the shell releases the claim. `sf_action_bevy::SeatAim(Option<SeatSense>)` is the shell's write (before
+`ActionSystems::Step`).
 
 ## Owner questions
 

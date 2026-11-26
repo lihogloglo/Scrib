@@ -1,5 +1,6 @@
-//! Seat tests (`IN2a`): sit and stand through [`SEAT_RULES`] against a sensed slot. Logic is exact
-//! (which rule runs, refusals, events once each, poses on the slot frame within 1e-4).
+//! Seat tests (`IN2a`, `IN2b1`): sit and stand through [`SEAT_RULES`] against a sensed slot; the
+//! enter starts when the slot is offered (sensed new), with no press. Logic is exact (which rule
+//! runs, refusals, events once each, poses on the slot frame within 1e-4).
 
 use std::sync::Arc;
 
@@ -89,6 +90,10 @@ struct Run {
     yaw: f32,
     anchor: Vec3,
     seat: Option<WorldSeat>,
+    /// The sensed seat's slot index.
+    slot: u8,
+    grounded: bool,
+    focus: Option<Focus>,
     /// Every event so far.
     log: Vec<ActionEvent>,
 }
@@ -106,6 +111,9 @@ impl Run {
             yaw: 0.0,
             anchor: Vec3::ZERO,
             seat,
+            slot: SLOT,
+            grounded: true,
+            focus: None,
             log: Vec::new(),
         }
     }
@@ -116,8 +124,8 @@ impl Run {
         cmd.tick = self.tick;
         let ctx = StepCtx { rules: &self.rules, slots: &self.slots, params: &self.params, source: CharacterId(3) };
         let rel = |p: RootPose| RootPose::new(p.position - self.feet, p.yaw);
-        let seat = self.seat.map(|w| SeatSense { target: SEAT, slot: SLOT, enter: rel(w.enter), exit: rel(w.exit) });
-        let sense = Sense { grounded: true, yaw: self.yaw, seat, ..Sense::default() };
+        let seat = self.seat.map(|w| SeatSense { target: SEAT, slot: self.slot, enter: rel(w.enter), exit: rel(w.exit) });
+        let sense = Sense { grounded: self.grounded, yaw: self.yaw, seat, focus: self.focus, ..Sense::default() };
         step(&ctx, &mut self.state, &cmd, &sense, &mut self.out);
         if self.out.started {
             self.anchor = self.feet;
@@ -149,10 +157,11 @@ impl Run {
         self.out.refusals.iter().find(|r| r.rule == RuleKey::of(id)).map(|r| r.reason)
     }
 
-    /// Sat down on the chair: Interact, then the enter warp to its end.
+    /// Sat down on the chair: the offered seat starts the enter on the first tick (no press), then
+    /// the enter warp runs to its end.
     fn seated() -> Self {
         let mut r = Self::new(Some(chair()));
-        r.step(press(ActionClass::Interact));
+        r.step(Command::default());
         assert_eq!(r.state.mov, RuleKey::of(ENTER), "events {:?}, refusals {:?}", r.out.events, r.out.refusals);
         r.until(LOOP, Command::default(), 70);
         r
@@ -180,8 +189,12 @@ fn assert_on(r: &Run, pose: RootPose) {
     assert!(yaw_diff(r.yaw, pose.yaw).abs() < 1e-4, "yaw {}, want {}", r.yaw, pose.yaw);
 }
 
+fn starts(r: &Run, id: &str) -> usize {
+    r.log.iter().filter(|e| e.kind == EventKind::MoveStart(RuleKey::of(id))).count()
+}
+
 #[test]
-fn interact_with_a_seat_sits_exactly_on_the_slot() {
+fn an_offered_seat_sits_exactly_on_the_slot() {
     let r = Run::seated();
     assert_on(&r, chair().enter);
     let entered: Vec<_> = r.log.iter().filter(|e| e.kind == EventKind::SeatEntered(SLOT)).collect();
@@ -192,6 +205,24 @@ fn interact_with_a_seat_sits_exactly_on_the_slot() {
     assert_eq!(w.root.position, Vec3::ZERO);
     assert_eq!(r.out.intent.desired_velocity, Vec3::ZERO, "mover off");
     assert!(r.state.seat.is_some_and(|s| s.entered && s.target == SEAT && s.slot == SLOT));
+    assert_eq!(r.count(EventKind::SeatRefused(SLOT)), 0);
+}
+
+/// The shell's claim lands some ticks after the press it consumed: the seat sense appearing is
+/// the request, on that tick, with no press.
+#[test]
+fn a_seat_sensed_later_starts_the_enter_with_no_press() {
+    let mut r = Run::new(None);
+    for _ in 0..5 {
+        r.step(Command::default());
+    }
+    assert_eq!(r.state.mov, RuleKey::of("loco"));
+    r.seat = Some(chair());
+    r.step(Command::default());
+    assert_eq!(r.state.mov, RuleKey::of(ENTER), "events {:?}, refusals {:?}", r.out.events, r.out.refusals);
+    r.until(LOOP, Command::default(), 70);
+    assert_on(&r, chair().enter);
+    assert_eq!(starts(&r, ENTER), 1);
 }
 
 #[test]
@@ -254,25 +285,100 @@ fn losing_the_seat_while_seated_forces_the_stand_up() {
     assert_eq!(r.count(EventKind::SeatExited(SLOT)), 1);
 }
 
+/// Another slot sensed while seated is a change: stand up, and the new offer is refused once (the
+/// enter starts only from locomotion), never sat after the stand-up.
 #[test]
-fn interact_without_a_seat_is_refused() {
+fn another_slot_while_seated_stands_up_and_refuses_the_new_one() {
+    let mut r = Run::seated();
+    r.slot = SLOT + 1;
+    r.step(Command::default());
+    assert_eq!(r.state.mov, RuleKey::of(EXIT));
+    assert_eq!(r.count(EventKind::SeatRefused(SLOT + 1)), 1, "{:?}", r.log);
+    r.until("loco", Command::default(), 60);
+    for _ in 0..20 {
+        r.step(Command::default());
+    }
+    assert_eq!(r.count(EventKind::SeatExited(SLOT)), 1, "{:?}", r.log);
+    assert_eq!(r.count(EventKind::SeatRefused(SLOT + 1)), 1, "no retry while the same slot stays");
+    assert_eq!(starts(&r, ENTER), 1, "no re-sit");
+}
+
+/// With no seat, Interact goes to the base rules as before `IN2b1`: with no focus `interact.use`
+/// refuses (nothing starts), with a focus it activates; the seat enter takes no press either way.
+#[test]
+fn interact_without_a_seat_goes_to_interact_use() {
     let mut r = Run::new(None);
     r.step(press(ActionClass::Interact));
-    assert_eq!(r.refused(ENTER), Some(Refused::Slot), "{:?}", r.out.refusals);
+    assert_eq!(r.refused("interact.use"), Some(Refused::Focus), "{:?}", r.out.refusals);
+    assert_eq!(r.refused(ENTER), None, "{:?}", r.out.refusals);
     assert_eq!(r.state.mov, RuleKey::of("loco"));
     assert!(r.state.seat.is_none() && r.state.warp.is_none());
     assert!(!r.out.started && r.log.is_empty(), "{:?}", r.log);
     assert_eq!(r.feet, Vec3::ZERO);
+
+    let door = Focus { target: TargetId(7), tag: TagId::of("door") };
+    r.focus = Some(door);
+    for _ in 0..5 {
+        r.step(Command::default());
+    }
+    r.step(press(ActionClass::Interact));
+    // No clip in this slot table: the use starts and ends on the press tick.
+    assert_eq!(starts(&r, "interact.use"), 1, "{:?}", r.out.refusals);
+    assert!(r.out.events.iter().any(|e| e.kind == EventKind::Activate(door.tag) && e.target == Some(door.target)));
+    assert_eq!(starts(&r, ENTER), 0);
+}
+
+/// A refused offer is answered once: `SeatRefused` with the target, nothing starts, and the step
+/// never retries while the same seat stays sensed.
+#[test]
+fn a_refused_offer_sends_seat_refused_once() {
+    let far = WorldSeat { enter: RootPose::new(Vec3::new(0.0, 0.0, 3.0), std::f32::consts::PI), ..chair() };
+    let mut r = Run::new(Some(far));
+    r.step(Command::default());
+    assert_eq!(r.refused(ENTER), Some(Refused::MaxCorrection), "{:?}", r.out.refusals);
+    let refused: Vec<_> = r.out.events.iter().filter(|e| e.kind == EventKind::SeatRefused(SLOT)).collect();
+    assert_eq!(refused.len(), 1, "{:?}", r.out.events);
+    assert_eq!(refused[0].target, Some(SEAT));
+    for _ in 0..30 {
+        r.step(Command::default());
+        assert_eq!(r.refused(ENTER), None, "not retried: {:?}", r.out.refusals);
+    }
+    assert_eq!(r.state.mov, RuleKey::of("loco"));
+    assert!(r.state.seat.is_none() && r.state.warp.is_none());
+    assert_eq!(r.count(EventKind::SeatRefused(SLOT)), 1, "{:?}", r.log);
+    assert_eq!(starts(&r, ENTER), 0);
+    assert_eq!(r.feet, Vec3::ZERO);
+}
+
+/// An offer while airborne is refused (the enter needs the ground) and stays refused once the body
+/// lands; the shell offers again (a new sense) to retry.
+#[test]
+fn an_airborne_offer_is_refused_once_then_a_new_offer_sits() {
+    let mut r = Run::new(None);
+    r.grounded = false;
+    r.step(Command::default());
+    r.seat = Some(chair());
+    r.step(Command::default());
+    assert_eq!(r.refused(ENTER), Some(Refused::State), "{:?}", r.out.refusals);
+    r.grounded = true;
+    for _ in 0..30 {
+        r.step(Command::default());
+    }
+    assert_eq!(r.count(EventKind::SeatRefused(SLOT)), 1, "{:?}", r.log);
+    assert_eq!(starts(&r, ENTER), 0);
+    // The shell releases and re-claims: a new offer.
+    r.seat = None;
+    r.step(Command::default());
+    r.seat = Some(chair());
+    r.step(Command::default());
+    assert_eq!(r.state.mov, RuleKey::of(ENTER), "{:?}", r.out.refusals);
 }
 
 #[test]
-fn a_seat_too_far_refuses_max_correction() {
-    let far = WorldSeat { enter: RootPose::new(Vec3::new(0.0, 0.0, 3.0), std::f32::consts::PI), ..chair() };
-    let mut r = Run::new(Some(far));
-    r.step(press(ActionClass::Interact));
-    assert_eq!(r.refused(ENTER), Some(Refused::MaxCorrection), "{:?}", r.out.refusals);
-    assert_eq!(r.state.mov, RuleKey::of("loco"));
-    assert!(r.state.seat.is_none() && r.state.warp.is_none());
+fn offered_takes_no_request_classes() {
+    let bad = r#"[(id: "x", kind: Interaction, category: Interact, entry: (classes: [Interact], offered: true))]"#;
+    let errors = RuleSetBuilder::new().add_ron(&Origin::Framework, BASE_RULES).add_ron(&Origin::Framework, bad).build().expect_err("refused");
+    assert!(errors.iter().any(|e| e.message.contains("offered")), "{errors:?}");
 }
 
 #[test]

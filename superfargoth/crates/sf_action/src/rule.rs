@@ -229,6 +229,13 @@ pub struct Entry {
     /// Needs a lock-on target with the active stick on this side of it ([`StickSide::of`]; C1c
     /// locked rolls).
     pub lock: Option<StickSide>,
+    /// Starts with no press when the interaction shell offers a claimed slot (`IN2b1`): on the tick
+    /// [`crate::Sense::seat`] turns up new for this character (none last tick, or another target or
+    /// slot), where an Interact press could fire. The claimed seat is the request (the shell's
+    /// activation pipeline consumed the press); takes no request classes. An offer is answered that
+    /// tick: the move starts, or [`crate::EventKind::SeatRefused`] goes out once and it never retries
+    /// while the same slot stays sensed.
+    pub offered: bool,
 }
 
 /// A move a rule may start from ([`Entry::from`]). Not `From`, which would shadow the std trait.
@@ -491,6 +498,9 @@ impl RuleSetBuilder {
             }
             if !r.entry.auto_in.is_empty() && r.entry.classes.is_empty() {
                 errors.push(err(origin, r, "auto_in needs request classes (an automatic rule fires anyway)".into()));
+            }
+            if r.entry.offered && !r.entry.classes.is_empty() {
+                errors.push(err(origin, r, "offered takes no request classes (the offered slot is the request)".into()));
             }
             if r.entry.classes.iter().any(|c| !ClassSet::LATCHABLE.contains(*c)) {
                 errors.push(err(origin, r, "Move, Sprint and Sneak are state classes, not requests".into()));

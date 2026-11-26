@@ -138,6 +138,7 @@ pub mod legacy {
                             forced: None,
                             lock: None,
                             seat: None,
+                            seat_sensed: None,
                         },
                         locomotion: b.locomotion,
                     }

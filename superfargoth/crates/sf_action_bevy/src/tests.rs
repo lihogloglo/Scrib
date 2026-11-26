@@ -334,3 +334,86 @@ fn a_held_dodge_sprint_key_sprints_and_a_tap_rolls() {
         assert!(tap.iter().all(|&(_, sprint)| !sprint), "{fps} fps: tap sprinted: {tap:?}");
     }
 }
+
+/// A sit-down stand-in for the headless seat test: half a metre forward while turning round.
+struct SitDown;
+
+impl sf_action::RootPath for SitDown {
+    fn duration(&self) -> f32 {
+        0.5
+    }
+
+    fn root_at(&self, t: f32) -> sf_anim::RootPose {
+        let u = (t / 0.5).clamp(0.0, 1.0);
+        sf_anim::RootPose::new(Vec3::new(0.0, 0.0, 0.5) * u, std::f32::consts::PI * u)
+    }
+}
+
+/// Every seat event the character sent, by tick.
+#[derive(Resource, Default)]
+struct SeatEvents(Vec<sf_action::ActionEvent>, Vec<RuleKey>);
+
+fn write_idle(tick: Res<ActionTick>, mut characters: Query<&mut ActionCharacter>) {
+    for mut c in &mut characters {
+        c.command = Command::empty(tick.0);
+    }
+}
+
+fn record_seat(mut seen: ResMut<SeatEvents>, characters: Query<&ActionCharacter>) {
+    for c in &characters {
+        seen.0.extend(c.output.events.iter().filter(|e| matches!(e.kind, sf_action::EventKind::SeatEntered(_) | sf_action::EventKind::SeatRefused(_))));
+        seen.1.push(c.state.mov);
+    }
+}
+
+/// `IN2b1`: the interaction shell's claimed slot (`SeatAim`) is the request: with no press, the
+/// grounded character starts the enter the tick it appears and sits once the clip lands.
+#[test]
+fn a_seat_aim_sits_with_no_press() {
+    let slots = SlotTable::new()
+        .with("loco.move", SlotInfo::looping())
+        .with("air.fall", SlotInfo::looping())
+        .with("air.jump", SlotInfo::once(0.3))
+        .with("air.land.normal", SlotInfo::once(0.25))
+        .with("air.land.hard", SlotInfo::once(0.5))
+        .with("interact.sit.enter", SlotInfo::once(0.5))
+        .with("interact.sit.loop", SlotInfo::looping())
+        .with("interact.sit.exit", SlotInfo::once(0.5))
+        .with_root("interact.sit.enter", std::sync::Arc::new(SitDown));
+    let mut b = sf_action::RuleSetBuilder::new();
+    b.add_ron(&sf_action::Origin::Framework, BASE_RULES).add_ron(&sf_action::Origin::Framework, sf_action::SEAT_RULES);
+    let rules = ActionRules { rules: b.build().expect("base and seat rules"), slots: Box::new(slots) };
+    let mut app = app(60);
+    app.insert_resource(rules)
+        .init_resource::<SeatEvents>()
+        .add_systems(FixedUpdate, write_idle.in_set(ActionSystems::Command))
+        .add_systems(FixedUpdate, record_seat.after(ActionSystems::Step));
+    let e = spawn(&mut app);
+    let pi = std::f32::consts::PI;
+    let seat = SeatSense {
+        target: sf_action::TargetId(9),
+        slot: 2,
+        enter: sf_anim::RootPose::new(Vec3::new(0.0, 0.0, 0.5), pi),
+        exit: sf_anim::RootPose::new(Vec3::ZERO, pi),
+    };
+    // The claim lands once the body stands on the ground (the shell's pipeline runs after a press).
+    while app.world().resource::<SeatEvents>().1.len() < 10 {
+        app.update();
+    }
+    app.world_mut().entity_mut(e).insert(SeatAim(Some(seat)));
+    let (sit, enter) = (RuleKey::of("interact.sit.loop"), RuleKey::of("interact.sit.enter"));
+    for _ in 0..200 {
+        app.update();
+        if app.world().resource::<SeatEvents>().1.contains(&sit) {
+            break;
+        }
+    }
+    let seen = app.world().resource::<SeatEvents>();
+    assert!(seen.1.contains(&enter), "never entered: {:?}", seen.1);
+    let loop_at = seen.1.iter().position(|&k| k == sit).expect("sat within the ticks");
+    assert!(loop_at <= 10 + 40, "sat after {loop_at} ticks");
+    let entered: Vec<_> = seen.0.iter().filter(|e| e.kind == sf_action::EventKind::SeatEntered(2)).collect();
+    assert_eq!(entered.len(), 1, "{:?}", seen.0);
+    assert_eq!(entered[0].target, Some(seat.target));
+    assert!(!seen.0.iter().any(|e| matches!(e.kind, sf_action::EventKind::SeatRefused(_))), "{:?}", seen.0);
+}

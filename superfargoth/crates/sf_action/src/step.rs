@@ -125,6 +125,10 @@ pub enum EventKind {
     /// The exit move ended (or anything else took the body out of the slot): the shell releases
     /// it. Once per [`EventKind::SeatEntered`]; an enter cut short before landing sends neither.
     SeatExited(u8),
+    /// The offered slot `.0` of the event's target ([`crate::Entry::offered`]) started no move
+    /// (refused: too far, not grounded, another move running): the shell releases the claim. Once
+    /// per offer; the step never retries while the same slot stays sensed.
+    SeatRefused(u8),
 }
 
 /// Gameplay events are data: sent, replayed, de-duplicated by (tick, source, kind).
@@ -337,11 +341,11 @@ impl Facts {
 }
 
 fn forced(r: &CompiledRule) -> bool {
-    r.rule.category.framework_only() && r.classes.is_empty() && !r.force_only()
+    r.rule.category.framework_only() && r.classes.is_empty() && !r.force_only() && !r.rule.entry.offered
 }
 
 fn automatic(r: &CompiledRule) -> bool {
-    r.classes.is_empty() && !forced(r) && !r.force_only()
+    r.classes.is_empty() && !forced(r) && !r.force_only() && !r.rule.entry.offered
 }
 
 /// `r` may start from the current move `cur` ([`crate::Entry::from`]).
@@ -364,6 +368,10 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
 
     let (landed, impact, coyote) = body_edges(state, sense, p, tick);
     out.events.extend(landed.then(|| event(None, EventKind::Land)));
+    // A claimed slot sensed new this tick is an offer (`IN2b1`), answered this tick.
+    let sensed = sense.seat.map(|s| (s.target, s.slot));
+    let offer = sensed.filter(|_| sensed != state.seat_sensed);
+    state.seat_sensed = sensed;
 
     // 1. Command: modes.
     let stick_active = cmd.stick.length() > p.deadzone;
@@ -456,13 +464,15 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
             firing.insert(ActionClass::Jump);
         }
         let auto_ok = open || (cancel.contains(ActionClass::Move) && stick_active);
+        // An offer fires where an Interact press would, without latching.
+        let offering = offer.is_some() && cancel.contains(ActionClass::Interact);
         let exit_target = exit.and_then(|(_, to)| to);
 
         let mut winner = None;
         for &i in rules.priority() {
             let r = rules.at(i);
             let by = r.classes.intersection(firing);
-            let requested = !by.is_empty();
+            let requested = !by.is_empty() || (offering && r.rule.entry.offered);
             // The current move restarts once it is over (ended, exited or lapsed), or earlier when
             // a press it takes fires through its own cancel window (a roll chained into a roll).
             if (Some(i) == cur && !open && !requested) || started.contains(&i) || state.timers.redo.iter().any(|&(k, _)| k == r.key) {
@@ -473,7 +483,7 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
                 continue;
             }
             let cur_rule = cur.map(|c| rules.at(c));
-            let gated = requested && !other && by.intersection(sense.refused) == by;
+            let gated = !by.is_empty() && !other && by.intersection(sense.refused) == by;
             let checked = facts
                 .entry(r)
                 .and(if prev_ok(r, cur_rule) { Ok(()) } else { Err(Refused::Prev) })
@@ -503,6 +513,11 @@ pub fn step(ctx: &StepCtx<'_>, state: &mut ActionState, cmd: &Command, sense: &S
         start(ctx, rules.at(i), state, sense, facts.mode, plan, out);
         started[round] = i;
         cur = Some(i);
+    }
+    if let Some((target, slot)) = offer
+        && !started.iter().any(|&i| i != usize::MAX && rules.at(i).rule.entry.offered)
+    {
+        out.events.push(event(Some(target), EventKind::SeatRefused(slot)));
     }
 
     // 9. Move (Sim owner): the mover's intent, slowed with the clock under hit-stop. Locked on,

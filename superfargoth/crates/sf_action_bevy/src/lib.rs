@@ -40,7 +40,7 @@ use sf_action::{
     ActionClass, ActionOutput, ActionState, CharacterId, CharacterParams, ClassSet, ClipOutput, Command, Focus, Obstacle, ObstacleClass, RuleSet,
     Sense, SlotSource, StepCtx, Tick, WarpOutput,
 };
-pub use sf_action::{PlayerId, TICK_HZ};
+pub use sf_action::{PlayerId, SeatSense, TICK_HZ};
 use sf_controller::{
     Affordance, ContextHit, ContextParams, ContextProbes, ContextQuery, ContextRequest, CorrectionParams, GroundProbe, KinematicMover, Locomotion,
     MoveInput, MoverMode, MoverParams, RenderCorrection, RootMotion,
@@ -165,6 +165,13 @@ pub struct LockAim(pub Option<Vec3>);
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
 pub struct SoftAim(pub Option<Vec3>);
 
+/// The interaction slot this character holds the claim on ([`Sense::seat`], `IN2b1`): written
+/// before [`ActionSystems::Step`] by the interaction shell, only while the claim is this user's. A
+/// slot sensed new starts the seat enter with no press; the shell hears `SeatEntered`, `SeatExited`
+/// and `SeatRefused` in [`ActionCharacter::output`] events.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+pub struct SeatAim(pub Option<SeatSense>);
+
 /// A probe that never hits ([`NoClip`] bodies).
 struct NoHits;
 
@@ -280,8 +287,15 @@ impl ActionBody {
 /// How far ahead the ledge probe looks, m (the context probe's `ObstacleAhead` range).
 const OBSTACLE_RANGE_M: f32 = 1.5;
 
-/// What [`step_actions`] reads per character: the gate and the lock and soft-aim senses.
-type StepQuery = (&'static mut ActionCharacter, &'static ActionBody, Option<&'static ActionGate>, Option<&'static LockAim>, Option<&'static SoftAim>);
+/// What [`step_actions`] reads per character: the gate, the lock and soft-aim senses and the seat.
+type StepQuery = (
+    &'static mut ActionCharacter,
+    &'static ActionBody,
+    Option<&'static ActionGate>,
+    Option<&'static LockAim>,
+    Option<&'static SoftAim>,
+    Option<&'static SeatAim>,
+);
 
 #[allow(clippy::needless_pass_by_value)]
 fn step_actions<G: GroundProbe + Resource>(
@@ -291,7 +305,7 @@ fn step_actions<G: GroundProbe + Resource>(
     mut characters: Query<StepQuery>,
 ) {
     let Some(rules) = rules else { return };
-    for (mut c, body, gate, lock, soft) in &mut characters {
+    for (mut c, body, gate, lock, soft, seat) in &mut characters {
         let c = &mut *c;
         let ctx = StepCtx { rules: &rules.rules, slots: &*rules.slots, params: &c.params, source: c.id };
         let v = body.loco.motion.velocity;
@@ -312,7 +326,7 @@ fn step_actions<G: GroundProbe + Resource>(
             refused: gate.map_or(ClassSet::EMPTY, |g| g.0),
             lock_target: lock.and_then(|l| l.0),
             soft_target: soft.and_then(|s| s.0),
-            seat: None,
+            seat: seat.and_then(|s| s.0),
         };
         sf_action::step(&ctx, &mut c.state, &c.command, &sense, &mut c.output);
         log_traversal_press(&rules.rules, &c.command, obstacle.as_ref(), &c.output);
