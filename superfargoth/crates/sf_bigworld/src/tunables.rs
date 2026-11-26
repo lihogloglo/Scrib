@@ -1,6 +1,6 @@
 //! Big-world tunables (`bigworld.*`, spec `docs/specs/tunables.md`; big-world-rendering.md "Tiers"). The tile edge
 //! moves every instance, so it applies on restart; the tier switch sizes and the crossfade band are read each frame
-//! by the band maths (`crate::Bands`) and apply live.
+//! by the band maths (`crate::Bands`) and apply live, as does the ring planner's hysteresis (`crate::Ring`).
 
 use sf_tunables::{AnyDef, Def, Group, Lifetime, Source, Unit, def};
 
@@ -36,4 +36,12 @@ pub const FADE_BAND: Def<f32> = def!(float "bigworld.fade_band" = 0.1)
     .lifetime(Lifetime::Live)
     .group(Group::Foliage);
 
-pub const TUNABLES: &[&dyn AnyDef] = &[&TILE_M, &MESH_SWITCH_PX, &AGGREGATE_SWITCH_PX, &FADE_BAND];
+pub const HYSTERESIS_TILES: Def<u32> = def!(count "bigworld.ring.hysteresis_tiles" = 1)
+    .range(0, 4)
+    .unit(Unit::Count)
+    .help("A tile loads when it comes within the view radius and unloads only once it is this many tiles farther, so walking back and forth over a tile edge does not reload it")
+    .source(Source::Guess)
+    .lifetime(Lifetime::Live)
+    .group(Group::Foliage);
+
+pub const TUNABLES: &[&dyn AnyDef] = &[&TILE_M, &MESH_SWITCH_PX, &AGGREGATE_SWITCH_PX, &FADE_BAND, &HYSTERESIS_TILES];

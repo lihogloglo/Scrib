@@ -50,11 +50,12 @@ fn tunables_golden() {
         assert_eq!(def.default_value(), default, "{name}");
         assert_eq!(def.bounds(), Some(bounds), "{name}");
     }
-    assert_eq!(TUNABLES.len(), 4);
+    // The fifth def (`bigworld.ring.hysteresis_tiles`) is checked in `tests_ring.rs`.
+    assert_eq!(TUNABLES.len(), 5);
     let mut names: Vec<_> = TUNABLES.iter().map(|d| d.name()).collect();
     names.sort_unstable();
     names.dedup();
-    assert_eq!(names.len(), 4, "names unique");
+    assert_eq!(names.len(), 5, "names unique");
     for (def, ..) in table {
         assert!(names.contains(&def.name()), "{} listed in TUNABLES", def.name());
     }

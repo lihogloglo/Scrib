@@ -37,4 +37,19 @@ impl TileKey {
         let s = f64::from(tile_m);
         [f64::from(self.x) * s, f64::from(self.z) * s]
     }
+
+    /// Distance on the ground from world point `(x, z)` to this tile's closed square: 0 inside or on an edge, else
+    /// the distance to the nearest edge or corner. Plain `sqrt` (correctly rounded), so it is the same on every
+    /// machine. A NaN coordinate gives NaN.
+    #[must_use]
+    pub fn distance_to(self, x: f64, z: f64, tile_m: f32) -> f64 {
+        if x.is_nan() || z.is_nan() {
+            return f64::NAN;
+        }
+        let s = f64::from(tile_m);
+        let [x0, z0] = self.min_corner(tile_m);
+        let dx = (x0 - x).max(x - (x0 + s)).max(0.0);
+        let dz = (z0 - z).max(z - (z0 + s)).max(0.0);
+        (dx * dx + dz * dz).sqrt()
+    }
 }

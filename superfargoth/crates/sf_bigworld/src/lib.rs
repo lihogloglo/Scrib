@@ -11,12 +11,14 @@
 mod bands;
 mod hash;
 mod instance;
+mod ring;
 mod source;
 mod tile;
 pub mod tunables;
 
 pub use bands::{BandSettings, Bands, SpeciesDims, TierFades, ViewScale};
 pub use instance::{Instance, PackedInstance, PackedTile, TileHeader};
+pub use ring::{Ring, RingDelta, RingSettings, ring_radii};
 pub use source::{InstanceSource, SyntheticForest};
 pub use tile::TileKey;
 
@@ -24,3 +26,5 @@ pub use tile::TileKey;
 mod tests;
 #[cfg(test)]
 mod tests_bands;
+#[cfg(test)]
+mod tests_ring;
