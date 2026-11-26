@@ -412,6 +412,12 @@ Fact store, Nemesis-style relations and vendettas, bounded gossip, reputation pe
   combat or dialogue. Scripts see one actor in every tier (KCD).
 - **Fast-forward** (rest, wait, long travel): `fast_forward(actor, hours)` advances tier-0 state; the adapter keeps
   OpenMW's `fastForward` rules.
+- **As built (AI10a, 2026-11-26):** `sf_ai::logical`. Differs from the shape above: `until` is an
+  `Option<GameInstant>` (game ms: arrivals fall between minutes; ends still read the minute rounded down, like every
+  tier), and the state also holds `pos`, `at`, `follow`, the arrival action and instant, and the served directive id.
+  Routes come through the `LogicalEnv` seam (`RouteRef { from, to, length_m, speed_mps }`, `point_on`), not
+  `sf_nav` types: the shell composes `WorldGraph` + NV12 (AI10c). Speed is per simulated second (game ms /
+  `time_scale`), so tier 0 matches a tier-2 walker. Fight holds (pinned). `fast_forward(state, stack, hours, ..)`.
 - **CPU tier** = host setting `sim.cpu_tier` (auto from cores, AI9d), apart from the graphics preset. Clients vary
   only presentation.
 

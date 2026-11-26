@@ -34,6 +34,10 @@
 //!   take, held goal, spent placement) and its [`ReactGoal`]s for the move executors.
 //! - `AI9a` (tier allocator core): [`alloc`], the [`Allocator`] of tiers 2/1/0 under the fixed
 //!   [`CpuTier`] caps (pins, visibility, nearest-player distance, hysteresis, staggered first decide).
+//! - `AI10a` (tier-0 core): [`logical`], the event-stepped [`LogicalState`] (route, progress,
+//!   activity, until) every logical actor runs, the per-kind [`LogicalTransitions`] (custom kinds
+//!   registered, [`LogicalTransitions::validate`] at load), the [`LogicalEnv`] seam and
+//!   [`fast_forward`] with the adapter's [`FastForwardRules`].
 //!
 //! The console command `ai.trace` and BRP live in `sf_ai_bevy` (AI3): actor references and the
 //! console context are the shell's.
@@ -45,6 +49,7 @@ pub mod exec;
 pub mod htn;
 pub mod ids;
 pub mod light;
+pub mod logical;
 pub mod perception;
 pub mod profile;
 pub mod react;
@@ -79,6 +84,10 @@ pub use ids::{ConsiderationId, DirectiveId, DriveId, InputId, MethodId, NoiseKin
 pub use light::{
     LightConfig, LightSource, MAX_LIGHT_RAYS, Stance, VISIBILITY_MODIFIERS_CAPACITY, VisibilityFactors, is_dark,
     light_exposure, source_contribution,
+};
+pub use logical::{
+    ActivityRef, Arrival, CustomTransition, FastForwardRules, LogicalCtx, LogicalEnv, LogicalState, LogicalTransitions,
+    ModernFastForward, RouteRef, Transition, TransitionInput, UnregisteredKind, fast_forward,
 };
 pub use perception::{
     Awareness, AwarenessBand, AwarenessConfig, AwarenessMeter, Distraction, HeardNoise, LastSeen, Notify,
@@ -123,6 +132,8 @@ mod tests_exec;
 mod tests_htn;
 #[cfg(test)]
 mod tests_light;
+#[cfg(test)]
+mod tests_logical;
 #[cfg(test)]
 mod tests_notify;
 #[cfg(test)]

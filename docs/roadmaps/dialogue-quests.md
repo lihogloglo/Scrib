@@ -163,24 +163,34 @@ Ends with: Modern Morrowind talks in staged scenes; Classic keeps the window; co
 
 | ID | Deliverable | Crates | Depends | Verify |
 |---|---|---|---|---|
-| DQ-26 | Spec: rpg.md + ui "Dialogue presentation" (presenter trait, shot solver, pacing, interrupts) + industry comparison | docs | – | doc review |
-| DQ-27 | `DialoguePresenter` trait; Classic presenter = today's window behind it | `sf_rpg_ui` | DQ-26 | unit; DJ-1 unchanged |
-| DQ-28 | Shot solver (two-shot / over-shoulder / close, occlusion ray, tunables) | new thin `sf_dialogue_bevy` | DQ-27 | headless sanity (no NaN, camera not inside geometry) |
-| DQ-29 | Cinematic presenter: subtitle line, reading-time pacing, topics as a choice panel | `sf_rpg_ui`, `mw_ui` | DQ-28 | owner DJ-8 |
-| DQ-30 | Speaker gaze + procedural talk layer (jaw, head, gesture) on text lines | `sf_dialogue_bevy` | anim lane look-at / additive layers | owner DJ-9 |
-| DQ-31 | Interrupt: host `Interrupt{reason}` on combat/damage/crime, fallback bark, timed choices (`deadline_ticks`) | `sf_rpg` | DQ-25 | headless exact |
-| DQ-32 | Rhubarb viseme bake for voiced lines (offline tool step in bake) | `mw_bake` | DQ-30 | bake log counts; owner DJ-10 |
+| DQ-26 | Spec: rpg.md + ui "Dialogue presentation" (presenter trait, shot solver, pacing, interrupts) + industry comparison | docs | – | **done 2026-11-26** (56b49233, new superfargoth/docs/specs/dialogue-presentation.md) |
+| DQ-27 | Presenter trait; Classic = today's window behind it. Unit: same requests | `sf_rpg_ui`, `mw_rpg_bevy` | DQ-26 | `cargo test -p sf_rpg_ui`; DJ-1 |
+| DQ-28a | Camera takeover (blend, cut, look hand-back). Headless: no NaN, eye free | `sf_camera(_bevy)` | DQ-27 | `cargo test -p sf_camera_bevy` |
+| DQ-28b | Shot solver, pure. Sanity suite | new `sf_dialogue_stage` | DQ-28a | `cargo test -p sf_dialogue_stage` |
+| DQ-28c | Shell: participants, rapier `Occlusion`, writes the takeover. camera.ron | new `sf_dialogue_bevy` | DQ-28b | `cargo test -p sf_dialogue_bevy` |
+| DQ-29a | Cinematic + Barks logic: pager, pacing, panel model. Exact | `sf_rpg_ui` | DQ-27 | `cargo test -p sf_rpg_ui` |
+| DQ-29b | Subtitle, panel, deadline widgets; theme; Modern default | `sf_ui_screens`, `mw_ui`, `mw_rpg_bevy` | DQ-29a, DQ-28c | `cargo test -p sf_ui_screens`; DJ-8 |
+| DQ-30a | Gaze plan + talk signal, pure. Exact | `sf_dialogue_stage` | DQ-28b | `cargo test -p sf_dialogue_stage` |
+| DQ-30b | `look_target`, nods, gestures, `TalkRig` (Morrowind `Talking`; drop the `Y` scaffold) | `sf_dialogue_bevy`, `mw_actors_bevy` | DQ-30a, anim lane | `cargo test -p sf_dialogue_bevy`; DJ-9 |
+| DQ-31a | `Interrupt`, resume records, `talk.interrupted` cue, save gate. Exact | `sf_rpg` | DQ-25a | `cargo test -p sf_rpg` |
+| DQ-31b | `Deadline` on `Choosing`. Exact | `sf_rpg` | DQ-31a | `cargo test -p sf_rpg` |
+| DQ-31c | Morrowind triggers + wire the claim. Headless | `mw_rpg_bevy` | DQ-31a, DQ-12 | `cargo test -p mw_rpg_bevy` |
+| DQ-32a | `VisemeTrack`, Rhubarb TSV reader, talk from visemes. Exact | `sf_dialogue_stage` | DQ-30a | `cargo test -p sf_dialogue_stage` |
+| DQ-32b | Bake: decode, Rhubarb, cache by hash; log counts and seconds | `mw_bake` | DQ-32a | `cargo test -p mw_bake`; DJ-10 |
 
 ### Stage 6: authoring for new content (framework)
 
 | ID | Deliverable | Crates | Depends | Verify |
 |---|---|---|---|---|
-| DQ-33 | Research: `bevy_yarnspinner` 0.10 compiler for node groups/saliency, `VariableStorage` fit (separate slice) | research | – | note |
-| DQ-34 | Spec: `DialogueScene` model, stable line IDs, string tables per locale | docs | DQ-33 | doc review |
-| DQ-35 | `DialogueScene` + runner on the session | `sf_rpg` | DQ-34 | unit + round trip |
-| DQ-36 | Yarn importer (crate or own parser per DQ-33) | new `sf_dialogue_yarn` | DQ-35 | fixture `.yarn` goldens |
-| DQ-37 | Line IDs + locale tables; journal re-renders from `source` | `sf_rpg`, `sf_rpg_ui` | DQ-35 | unit |
-| DQ-38 | `LineProvider` seam, off by default | `sf_rpg` | DQ-35 | unit: no state writes |
+| DQ-33 | Research: `bevy_yarnspinner` 0.10 compiler for node groups/saliency, `VariableStorage` fit (separate slice) | research | – | **done 2026-11-26** (7c1fec90, research note dialogue-authoring-2026-11-26.md) |
+| DQ-34 | Spec: `DialogueScene` model, stable line IDs, string tables per locale | docs | DQ-33 | **done 2026-11-26** (429a3252, superfargoth/docs/specs/dialogue-authoring.md, own Yarn 3 subset parser) |
+| DQ-35a | `DialogueScene` model, `SceneDb`, `validate`, `Response.scene`. Round trip | `sf_rpg` | DQ-34, DQ-23a | `cargo test -p sf_rpg` |
+| DQ-35b | `SceneCursor` runner in `DialogueSession`, scene outputs, `SceneWrite`. Exact unit + save mid-node | `sf_rpg` | DQ-35a, DQ-23b, DQ-24b | `cargo test -p sf_rpg` |
+| DQ-36a | Own Yarn 3 subset lexer + parser to AST, upstream fixtures + notice. Parse goldens | new `sf_dialogue_yarn` | DQ-34 | `cargo test -p sf_dialogue_yarn` |
+| DQ-36b | Lowering to `DialogueScene` + rules, rejection list, deterministic tagger. Testplan goldens + ID stability | `sf_dialogue_yarn` | DQ-36a, DQ-35b | `cargo test -p sf_dialogue_yarn` |
+| DQ-37a | `LineTable`: CSV per locale per mod, fallback, override, lock/stale, voice key, `export_base`. Exact unit | `sf_rpg` | DQ-35a | `cargo test -p sf_rpg` |
+| DQ-37b | `SceneLine` in the dialogue view-model + journal re-render from `source`. Unit | `sf_rpg_ui` | DQ-37a, DQ-35b | `cargo test -p sf_rpg_ui` |
+| DQ-38 | `LineProvider` seam, off by default. Unit: no state writes | `sf_rpg` | DQ-35b | `cargo test -p sf_rpg` |
 
 Ink importer (`bladeink`), radiant quest templates (alias `Query` fill) and walk-and-talk scenes: queued after
 Stage 6, seam only today.

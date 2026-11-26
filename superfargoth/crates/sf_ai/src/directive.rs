@@ -573,6 +573,13 @@ impl DirectiveStack {
         self.accrue(now);
     }
 
+    /// When the next [`Limit`] runs out if nothing else changes (the served directive's
+    /// [`Limit::For`] counting on): tier 0's next stack event (`AI10a`, [`crate::logical`]).
+    /// `None` when no limit can end a directive.
+    pub fn next_deadline(&self) -> Option<GameTime> {
+        self.next_expiry(u64::MAX).map(|(at, _)| game_time(at))
+    }
+
     /// The earliest deadline at or before `now`, and its index (ties: nearest the top).
     fn next_expiry(&self, now: u64) -> Option<(u64, usize)> {
         let clock = minutes(self.clock);

@@ -69,6 +69,13 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   Reduced every `ai.alloc.reduced_decide_s` (1 s); a walker whose step ran out stands until then. Operators and events
   (dirty read key, failed precondition, failed walk) run every tick; untiered actors plan every tick; Logical walkers
   stand (no planner) until AI10; the pathgrid fallback is not gated. `ai.tiers` prints the plans of the last second.
+  Tier 0 core (AI10a, `sf_ai/src/logical.rs`; not in game until AI10c): `LogicalState::step` jumps event to event
+  (route arrival, `DirectiveStack::next_deadline`, `LogicalEnv::next_window_edge` hook), each served kind taken up
+  through `LogicalTransitions::transition` (StayNear waits in place or walks home, GoTo/Escort walk and end
+  `Completed` at the arrival minute, Follow stands at the leader's logical position, Use walks then holds, Fight holds,
+  Custom registered; `validate` fails at load for an unregistered custom kind). Routes advance at walk speed in
+  simulated seconds (game ms / `time_scale`), arrival fixed when the route is taken up. `fast_forward` = step + the
+  adapter's `FastForwardRules` (MA7).
 - **Greeting** (MA4c2, 2026-11-26; `mw_walkers_bevy/src/greeting.rs`): every awake AI actor steps `mw_ai`'s OpenMW
   greeting machine (`greeting_step`, MA4c1) on the fixed tick in `GreetSystems` (`add` `greeting.rs:215`): Decide
   (`:255`, after `ReactionSystems::React`; asks for the Hello when a greeting starts), the voices' answer
