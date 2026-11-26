@@ -1,7 +1,7 @@
 # The pre-PR gate (CONTRIBUTING.md "Building") off the owner's laptop (build-speed BS3, 2026-11-26).
 # Windows runners: same OS, linker (rust-lld, .cargo/config.toml) and paths as the dev machine, so green here
 # means what a green local gate means. Jobs run in parallel; caches are saved from main only (branches restore
-# them), which keeps the repo under GitHub's 10 GB cache limit.
+# them; cargo_cache.mjs prunes each to its run's units), which keeps the repo under GitHub's 10 GB cache limit.
 #
 # Agents: `bash bevyrrowind/tools/ci_push.sh <name> <paths>` (or push a wt/** worktree branch, or open a PR)
 # instead of running the full gate locally, then
@@ -17,12 +17,18 @@ on:
     paths: ["**", "!**/*.md", "!docs/**", "superfargoth/vendor/**"]
   workflow_dispatch:
 
-# One run per branch. A newer push cancels the running one on ci/wt branches and PRs, never on main: sessions
-# push main often, and a cancelled main run saves no cache (the first run was cancelled at 50 min by a docs push).
-# On main the newest push waits for the running one instead.
+# ci/wt branches and PRs: one run per branch, a newer push cancels the running one. Main: one group per commit, so
+# every push gets its own full verdict (lanes commit straight to main and CI is the backstop). A per-branch group
+# keeps only one pending run even without cancel-in-progress: 42 of 46 main runs on 2026-11-26 were replaced
+# before they started.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# ci_report.mjs reads the run list (last green main run) and commit files for its suspect list.
+permissions:
+  contents: read
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -51,21 +57,56 @@ jobs:
       - name: Toolchain (rust-toolchain.toml)
         shell: bash
         run: rustup toolchain install || rustup show
-      - uses: Swatinem/rust-cache@v2
+      # Whole-target cache, one entry per main commit (cargo_cache.mjs says why not Swatinem/rust-cache). Saved from
+      # main only; every branch restores the newest main entry. Why each unit rebuilt, when a run is slower than its
+      # change explains: set CARGO_LOG=cargo::core::compiler::fingerprint=info on the build step.
+      - uses: actions/cache/restore@v6
         with:
-          shared-key: test
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          # A red test or lint run still compiled everything: keep the cache, or main stays cold while red.
-          cache-on-failure: true
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: test-v1-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml') }}-${{ github.sha }}
+          restore-keys: test-v1-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml') }}-
+      - name: Unchanged sources get an old mtime (cargo freshness)
+        shell: bash
+        run: node .github/workflows/cargo_cache.mjs mtimes
       # Build and run are separate steps: the log shows each one's time, and a hung test fails only the run step
       # (its own timeout) so the cache is still saved after it; a job timeout would save nothing.
       - name: build tests (cargo test --workspace --no-run)
+        id: build
         shell: bash
-        run: cargo test --workspace --no-run
+        run: '{ cargo test --workspace --no-run --message-format=json-render-diagnostics > "$RUNNER_TEMP/test.jsonl"; } 2>&1 | tee "$RUNNER_TEMP/build.log"'
       - name: run tests (cargo test --workspace)
         timeout-minutes: 45
         shell: bash
-        run: cargo test --workspace --no-fail-fast
+        run: cargo test --workspace --no-fail-fast 2>&1 | tee "$RUNNER_TEMP/run.log"
+      # A red step names its crates (annotations in `gh run view`, table in the job summary).
+      - name: Name the failing crates
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_SUSPECTS: ${{ github.ref == 'refs/heads/main' && '1' || '0' }}
+        run: |
+          node .github/workflows/ci_report.mjs "test build" "$RUNNER_TEMP/build.log"
+          node .github/workflows/ci_report.mjs "tests" "$RUNNER_TEMP/run.log"
+      # A red test run still compiled everything: keep the cache, or main stays cold while red. A failed build is
+      # not saved (its prune would drop every unit it never reached).
+      - name: Prune the cache to this build's units
+        if: always() && steps.build.outcome == 'success'
+        shell: bash
+        run: node .github/workflows/cargo_cache.mjs prune target/debug "$RUNNER_TEMP/test.jsonl" && du -sh target
+      - uses: actions/cache/save@v6
+        if: always() && steps.build.outcome == 'success' && github.ref == 'refs/heads/main'
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: test-v1-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml') }}-${{ github.sha }}
       - name: Disk left
         if: always()
         shell: bash
@@ -79,18 +120,49 @@ jobs:
       - name: Toolchain (rust-toolchain.toml)
         shell: bash
         run: rustup toolchain install || rustup show
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache/restore@v6
         with:
-          shared-key: clippy
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-on-failure: true
-      - name: clippy --workspace
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: clippy-v1-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml') }}-${{ github.sha }}
+          restore-keys: clippy-v1-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml') }}-
+      - name: Unchanged sources get an old mtime (cargo freshness)
         shell: bash
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: node .github/workflows/cargo_cache.mjs mtimes
+      - name: clippy --workspace
+        id: clippy
+        shell: bash
+        run: '{ cargo clippy --workspace --all-targets --message-format=json-render-diagnostics -- -D warnings > "$RUNNER_TEMP/clippy.jsonl"; } 2>&1 | tee "$RUNNER_TEMP/clippy.log"'
       - name: clippy --workspace, dev-only code
         if: always()
         shell: bash
-        run: cargo clippy --workspace --all-targets --features bevyrrowind/dev -- -D warnings
+        run: '{ cargo clippy --workspace --all-targets --features bevyrrowind/dev --message-format=json-render-diagnostics -- -D warnings > "$RUNNER_TEMP/clippy-dev.jsonl"; } 2>&1 | tee "$RUNNER_TEMP/clippy-dev.log"'
+      - name: Name the failing crates
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_SUSPECTS: ${{ github.ref == 'refs/heads/main' && '1' || '0' }}
+        run: |
+          node .github/workflows/ci_report.mjs "clippy" "$RUNNER_TEMP/clippy.log"
+          node .github/workflows/ci_report.mjs "clippy (dev)" "$RUNNER_TEMP/clippy-dev.log"
+      # Saved when the first pass compiled; units a failing pass never reached are pruned, not kept stale.
+      - name: Prune the cache to this run's units
+        if: always() && steps.clippy.outcome == 'success'
+        shell: bash
+        run: node .github/workflows/cargo_cache.mjs prune target/debug "$RUNNER_TEMP/clippy.jsonl" "$RUNNER_TEMP/clippy-dev.jsonl" && du -sh target
+      - uses: actions/cache/save@v6
+        if: always() && steps.clippy.outcome == 'success' && github.ref == 'refs/heads/main'
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: clippy-v1-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml') }}-${{ github.sha }}
 
   # No compiling: licences/advisories, the workspace-hack, the tunables census.
   policy:
