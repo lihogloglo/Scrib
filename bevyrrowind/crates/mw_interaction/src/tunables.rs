@@ -1,6 +1,7 @@
 //! The adapter's tunables (CONTRIBUTING "No hardcoded tunables", tunables.md): declared here
 //! (Bevy-free), registered and bound by the game shell (`IN32b`/`IN32c`), read by the pure code through
-//! [`FurnitureParams`] (defaults straight from the declarations, so no value is written twice).
+//! [`FurnitureParams`] (defs) and [`MeasureParams`] (the bake's measuring, `IN32b1`), defaults straight
+//! from the declarations, so no value is written twice.
 //!
 //! Switches: only `mw.rules.interaction.sit` so far; the other `mw.rules.interaction.*` switches
 //! (interaction-adapter.md "Morrowind has none of this") land with their slices.
@@ -47,9 +48,75 @@ pub const COUNTER_STAND_M: Def<f32> = length(def!(float "mw.interact.counter_sta
     .range(0.1, 0.6)
     .help("Root of a standing or leaning user at a table or counter, out from its edge"));
 
+/// A bake-time measuring threshold (`IN32b1`, [`crate::measure()`]): net `Gameplay` (the defs feed
+/// gameplay), scope `Dev`, source `Guess`, lifetime `Bake` (part of the bake key).
+const fn measuring(d: Def<f32>) -> Def<f32> {
+    d.source(Source::Guess).scope(Scope::Dev).net(Net::Gameplay).lifetime(Lifetime::Bake)
+}
+
+/// `mw.interact.measure.backrest_above_m`: geometry this far above a seat's top is backrest (or
+/// arms), m.
+pub const BACKREST_ABOVE_M: Def<f32> = measuring(def!(float "mw.interact.measure.backrest_above_m" = 0.2)
+    .range(0.05, 0.5)
+    .unit(Unit::Meters)
+    .help("Geometry this far above a seat's top counts as its backrest (or arms) when the bake finds the seat's front"));
+
+/// `mw.interact.measure.backrest_offset`: how far off-centre the backrest geometry must sit, as a
+/// share of the half footprint, for its side to be the back.
+pub const BACKREST_OFFSET: Def<f32> = measuring(def!(float "mw.interact.measure.backrest_offset" = 0.3)
+    .range(0.1, 0.9)
+    .unit(Unit::Ratio)
+    .help("Backrest geometry this far off a seat's centre (share of the half footprint) makes that side the back; less = no backrest"));
+
+/// `mw.interact.measure.upright_min_area`: least area of backrest or headboard geometry, as a
+/// share of the footprint area, for it to count.
+pub const UPRIGHT_MIN_AREA: Def<f32> = measuring(def!(float "mw.interact.measure.upright_min_area" = 0.1)
+    .range(0.01, 1.0)
+    .unit(Unit::Ratio)
+    .help("Backrest or headboard geometry needs this much area (share of the footprint area) to count; less = the fallback side"));
+
+/// `mw.interact.measure.bench_aspect`: a seat with no backrest this many times longer than deep is
+/// a bench, used from a long side.
+pub const BENCH_ASPECT: Def<f32> = measuring(def!(float "mw.interact.measure.bench_aspect" = 1.5)
+    .range(1.1, 4.0)
+    .unit(Unit::Ratio)
+    .help("A backless seat this many times longer than deep is a bench and faces a long side; below it, a stool facing +Z"));
+
+/// `mw.interact.measure.headboard_above_m`: geometry this far above a bed's top is a head- or
+/// footboard, m.
+pub const HEADBOARD_ABOVE_M: Def<f32> = measuring(def!(float "mw.interact.measure.headboard_above_m" = 0.15)
+    .range(0.05, 0.6)
+    .unit(Unit::Meters)
+    .help("Geometry this far above a bed's top counts as a head- or footboard when the bake finds the head end"));
+
+/// `mw.interact.measure.bed_end_share`: each end zone of a bed, as a share of its length.
+pub const BED_END_SHARE: Def<f32> = measuring(def!(float "mw.interact.measure.bed_end_share" = 0.25)
+    .range(0.1, 0.5)
+    .unit(Unit::Ratio)
+    .help("The head and foot zones of a bed, each this share of its length, where the boards are measured"));
+
+/// `mw.interact.measure.head_share`: the head end's least share of the two ends' board area.
+pub const HEAD_SHARE: Def<f32> = measuring(def!(float "mw.interact.measure.head_share" = 0.6)
+    .range(0.5, 0.95)
+    .unit(Unit::Ratio)
+    .help("The end with at least this share of the two ends' board area is a bed's head; neither = the fallback (+ long axis)"));
+
 /// The crate's tunables, for the shell to register.
-pub const TUNABLES: &[&dyn AnyDef] =
-    &[&SIT, &BENCH_SEAT_M, &APPROACH_M, &EDGE_SEAT_INSET_M, &COUNTER_SPACING_M, &COUNTER_STAND_M];
+pub const TUNABLES: &[&dyn AnyDef] = &[
+    &SIT,
+    &BENCH_SEAT_M,
+    &APPROACH_M,
+    &EDGE_SEAT_INSET_M,
+    &COUNTER_SPACING_M,
+    &COUNTER_STAND_M,
+    &BACKREST_ABOVE_M,
+    &BACKREST_OFFSET,
+    &UPRIGHT_MIN_AREA,
+    &BENCH_ASPECT,
+    &HEADBOARD_ABOVE_M,
+    &BED_END_SHARE,
+    &HEAD_SHARE,
+];
 
 /// The values [`crate::defs::def_for`] reads, as plain fields (the shell binds them from
 /// [`TUNABLES`]).
@@ -78,6 +145,40 @@ impl Default for FurnitureParams {
             edge_seat_inset_m: EDGE_SEAT_INSET_M.default_value(),
             counter_spacing_m: COUNTER_SPACING_M.default_value(),
             counter_stand_m: COUNTER_STAND_M.default_value(),
+        }
+    }
+}
+
+/// The thresholds [`crate::measure()`] reads, as plain fields (the bake uses the defaults; a dev
+/// override applies at the next bake).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MeasureParams {
+    /// [`BACKREST_ABOVE_M`], m.
+    pub backrest_above_m: f32,
+    /// [`BACKREST_OFFSET`], share of the half footprint.
+    pub backrest_offset: f32,
+    /// [`UPRIGHT_MIN_AREA`], share of the footprint area.
+    pub upright_min_area: f32,
+    /// [`BENCH_ASPECT`], length over depth.
+    pub bench_aspect: f32,
+    /// [`HEADBOARD_ABOVE_M`], m.
+    pub headboard_above_m: f32,
+    /// [`BED_END_SHARE`], share of the length.
+    pub bed_end_share: f32,
+    /// [`HEAD_SHARE`], share of the two ends' board area.
+    pub head_share: f32,
+}
+
+impl Default for MeasureParams {
+    fn default() -> Self {
+        Self {
+            backrest_above_m: BACKREST_ABOVE_M.default_value(),
+            backrest_offset: BACKREST_OFFSET.default_value(),
+            upright_min_area: UPRIGHT_MIN_AREA.default_value(),
+            bench_aspect: BENCH_ASPECT.default_value(),
+            headboard_above_m: HEADBOARD_ABOVE_M.default_value(),
+            bed_end_share: BED_END_SHARE.default_value(),
+            head_share: HEAD_SHARE.default_value(),
         }
     }
 }

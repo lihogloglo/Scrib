@@ -105,7 +105,7 @@ Stages 2 and 3 run in parallel after Stage 1; Stage 6 can start any time (IN20 n
 | IN38 | Adapter breakables (crates, barrels, urns, sacks, pottery), materials, `NoiseKind` | `mw_interaction` | IN1, IN29 | exact rows on game data |
 | IN4 | Impact damage from `ContactForceEvent` thresholds | `sf_interaction_bevy` | IN1 | exact map; owner IN-4 |
 | IN18 | `NoiseEvent` emitters: impacts, breaks, doors, throws, drops, bashes (pick, trap and forced-lock noise is crime's, `sf_crime_bevy`, crime-locks.md) | `sf_interaction_bevy` | IN4, IN33, AI8a | exact loudness per case |
-| IN37 | Bash locks/doors: strength-scaled lock damage, contents risk, offence hook | `sf_interaction`, `mw_interaction` | IN1, IN33 | exact thresholds |
+| IN37 | Bash locks/doors: strength-scaled lock damage, contents risk, offence hook (blow scale matches crime's lock `max_hp` = `mw.crime.lock_hp_per_level`, Guess 2; vandalism offence "as Theft" per crime-adapter: check against interaction-adapter MWR1) | `sf_interaction`, `mw_interaction` | IN1, IN33 | exact thresholds |
 | IN14 | `WorldChange` vocabulary + placement diff | `sf_interaction` | IN1, IN6, IN33 | one event per transition |
 | IN15 | `ResetRules`, classes, ttl, cap, lazy reconcile, at-rest snap, holder link | `sf_interaction`, `sf/overlay` | IN1, IN30 | expiry, eviction, old saves |
 | IN36 | Thrown props hit people: damage/stagger by mass × speed, assault when seen | `sf_interaction_bevy`, `sf_combat` | IN4, Q2 | exact curve; owner IN-36 |

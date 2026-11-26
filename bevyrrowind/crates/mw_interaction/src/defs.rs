@@ -16,9 +16,12 @@
 //!   (left to right) has exclusion bits `k - 1` and `k` (a two-place bench: `0b01`, `0b11`,
 //!   `0b10`, def.rs's example). Benches too wide for the 8-bit mask (more than 5 places) get the
 //!   whole places only, which don't overlap. One entrance, Front.
-//! - **Bed**: a `lie` slot at the centre facing the front (the open long side; the clip lies along
-//!   the frame's X axis), entrances Front and Back, plus a `sit` slot on the front edge; they share
-//!   exclusion bit 0.
+//! - **Bed** (anim contract AN25, motion-generation.md "Interaction families"): a `lie` slot at the
+//!   centre whose +Z points to the head ([`Measured::head`]): the body lies along +Z, face up. It is
+//!   got into from the long sides, entrances Left and Right: the lier's own sides (the user's right
+//!   is `Y x head`, +X for a head at +Z), clips `bed.lie.enter.left` / `.right`. Plus one edge `sit`
+//!   (`seat.bed_edge`) per long side, facing out, entered from its Front. All three share exclusion
+//!   bit 0; a side a wall blocks is dropped at run time by `EndPoseFree`, not here.
 //! - **Table** (all four edges) and **counter** (front and back): standing `lean` stations, one per
 //!   [`FurnitureParams::counter_spacing_m`] along each usable edge, facing the top, entered from
 //!   behind (Back); `reach` covers the station's share of the top up to the centre line (hand
@@ -80,9 +83,13 @@ pub struct Measured {
     pub footprint: [f32; 2],
     /// Height of the usable top surface (seat, bed, table top) above the floor, m.
     pub top: f32,
-    /// The side it is used from: a seat faces it, a bed is got into from it, a counter is served
-    /// across it.
+    /// The side it is used from: a seat faces it, a table or counter is served across it (a counter's
+    /// stations stand on this side and the opposite one). Beds don't read it ([`crate::measure()`]
+    /// sets it to `head`).
     pub front: Facing,
+    /// A bed's head end: its `lie` slot's +Z. Seats, tables, counters and shelves don't read it
+    /// ([`crate::measure()`] sets it to `front`).
+    pub head: Facing,
 }
 
 /// The footprint as a box seen from the front.
@@ -99,9 +106,10 @@ struct Box2 {
 }
 
 impl Box2 {
-    fn of(m: &Measured) -> Self {
-        let front = m.front.dir();
-        let (half_depth, half_width) = match m.front {
+    /// The footprint of `m` seen from `side` (its `front` for most kinds, its `head` for beds).
+    fn of(m: &Measured, side: Facing) -> Self {
+        let front = side.dir();
+        let (half_depth, half_width) = match side {
             Facing::PosX | Facing::NegX => (m.footprint[0] / 2.0, m.footprint[1] / 2.0),
             Facing::PosZ | Facing::NegZ => (m.footprint[1] / 2.0, m.footprint[0] / 2.0),
         };
@@ -171,10 +179,10 @@ pub fn def_for(base: &RecordId, kind: Kind, m: &Measured, p: &FurnitureParams) -
     if !(sane(m.footprint[0]) && sane(m.footprint[1]) && sane(m.top) && m.center.iter().all(|c| c.is_finite())) {
         return None;
     }
-    let b = Box2::of(m);
+    let b = Box2::of(m, m.front);
     let slots = match kind {
         Kind::Seat => seat_slots(&b, m.top, p),
-        Kind::Bed => bed_slots(&b, m.top, p),
+        Kind::Bed => bed_slots(&Box2::of(m, m.head), m.top, p),
         Kind::Table => station_slots(&b, m.top, p, "counter.table", &[b.front, -b.front, b.across, -b.across]),
         Kind::Counter => station_slots(&b, m.top, p, "counter.bar", &[b.front, -b.front]),
         Kind::Shelf => return None,
@@ -219,20 +227,26 @@ fn path_mask(k: usize, count: usize) -> u8 {
     left | right
 }
 
+/// `b` is the bed seen from its head (`b.front` = head, `b.across` = the lier's right).
 fn bed_slots(b: &Box2, top: f32, p: &FurnitureParams) -> Vec<SlotDef> {
-    let out = b.half_depth + p.approach_m;
-    let front_approach = b.center + b.front * out;
+    let out = b.half_width + p.approach_m;
+    let inset = (b.half_width - p.edge_seat_inset_m).max(0.0);
     let mut lie = pose("bed", "bed.lie", verb::LIE, facing(b.center, b.front), top);
     lie.entrances = smallvec![
-        Entrance { side: Side::Front, approach: front_approach },
-        Entrance { side: Side::Back, approach: b.center - b.front * out },
+        Entrance { side: Side::Left, approach: b.center - b.across * out },
+        Entrance { side: Side::Right, approach: b.center + b.across * out },
     ];
     lie.group = Some(0b1);
-    let edge_root = b.center + b.front * (b.half_depth - p.edge_seat_inset_m).max(0.0);
-    let mut edge = pose("seat", "seat.bed_edge", verb::SIT, facing(edge_root, b.front), top);
-    edge.entrances = smallvec![Entrance { side: Side::Front, approach: front_approach }];
-    edge.group = Some(0b1);
-    vec![lie, edge]
+    let mut slots = vec![lie];
+    // The edge seats, left then right, each facing out of its long side.
+    for side in [-b.across, b.across] {
+        let root = b.center + side * inset;
+        let mut edge = pose("seat", "seat.bed_edge", verb::SIT, facing(root, side), top);
+        edge.entrances = smallvec![Entrance { side: Side::Front, approach: b.center + side * out }];
+        edge.group = Some(0b1);
+        slots.push(edge);
+    }
+    slots
 }
 
 /// Standing stations along each of `edges` (outward unit normals), facing the top.

@@ -89,7 +89,9 @@ Bevy-free crate `bevyrrowind/crates/mw_interaction` (21 exact tests), nothing wi
 - `defs.rs`: `def_for(base, kind, &Measured { center, footprint, top, front: Facing }, &FurnitureParams)`. Slot frame =
   root on the floor, +Z the way the user faces; `band` = `top`. Seat: places of `bench_seat_m` across the front, plus
   the places between them for 2-5 places (slot `k` has mask bits `k - 1`, `k`), Front entrance (`seat.chair` /
-  `seat.bench`). Bed: `lie` (`bed.lie`, Front + Back) and an edge `sit` (`seat.bed_edge`), sharing bit 0. Table (4
+  `seat.bench`). Bed (frame fixed in IN32b1, anim contract AN25): `lie` (`bed.lie`) with +Z to the head
+  (`Measured::head`), body along +Z, entrances Left and Right (the lier's own sides, right = `Y x head`), plus one edge
+  `sit` (`seat.bed_edge`) per long side facing out (Front entrance); all three share bit 0. Table (4
   edges) / counter (front, back): `lean` stations per `counter_spacing_m`, facing the top, entered from Back, `reach` to
   the centre line (`counter.table` / `counter.bar`). Shelf, degenerate shapes, `sit` off: `None`.
 - `activation.rs`: `ROWS` (record class, condition, verb tag, prompt, default action, Classic, switch, availability);
@@ -97,9 +99,30 @@ Bevy-free crate `bevyrrowind/crates/mw_interaction` (21 exact tests), nothing wi
   (search, pickpocket, creature talk, swing, bash, snuff/relight, sleep, browse) are `NotYet(<slice>)`, never offered.
 - `tunables.rs`: `mw.rules.interaction.sit` (bool) and `mw.interact.{bench_seat_m, approach_m, edge_seat_inset_m,
   counter_spacing_m, counter_stand_m}` (`Guess`), read through `FurnitureParams`.
-- Left: IN32b, the bake fills `Measured` from census shapes (front side, footprint centre) and prints def counts per
-  kind on the install; IN32c, the shell registers `TUNABLES`, indexes defs and registers the offered rows as default
+- Left: IN32b (split: IN32b1 measuring as pure code, below; IN32b2 the bake calls it and prints def counts per kind
+  on the install); IN32c, the shell registers `TUNABLES`, indexes defs and registers the offered rows as default
   verbs (replacing `activatable`'s verb strings). Hand IK targets and adverts are not set yet.
+
+### As built (IN32b1, 2026-11-26)
+
+`mw_interaction::measure(kind, &[[Vec3; 3]], top, &MeasureParams) -> Option<Measured>` (`measure.rs`, 30 crate tests).
+IN32b2's bake calls it once per base record with the census triangles (collision first, render fallback, the same soup
+`census::shape` reads) and `Shape::top_below(kind.cap())`, then `def_for`. Model frame, engine axes, Y up, floor = the
+lowest point; `center`/`footprint` = the x/z bounds of all triangles. Triangles are clipped exactly against the
+measuring planes (area-weighted, so density and long panels don't bias). Rules (thresholds `mw.interact.measure.*`,
+`Guess`, lifetime `Bake`):
+- **Seat front** = away from the backrest: the area above `top + backrest_above_m` (0.2 m), if at least
+  `upright_min_area` (0.1) of the footprint area, whose centroid is at least `backrest_offset` (0.3) of the half
+  footprint off-centre (larger of x, z); symmetric arms cancel. **Fallback** (stools, backless benches, a centred
+  post): aspect >= `bench_aspect` (1.5) faces the + side of the short axis, else +Z.
+- **Bed head** = the end zone (outer `bed_end_share`, 0.25, of the long axis) holding at least `head_share` (0.6) of
+  the area above `top + headboard_above_m` (0.15 m) in both zones, that area >= `upright_min_area` of the footprint.
+  **Fallback** (bedrolls, hammocks, equal posts): + end of the long axis. `front` = `head` for beds.
+- **Table, counter, shelf front** = + side of the short axis (def stations use both long sides / all edges, so the
+  sign is not measured). `head` = `front` for every non-bed kind. Square footprints count as long along x.
+- `None`: no triangles, any non-finite point, zero extent in x or z, top not positive finite.
+- Open for IN32b2: `def_for` roots slots at y = 0 of the object frame; a model whose floor (min y) is off its origin
+  needs the floor offset applied (check the census `lo.y` spread on the install).
 
 ## World rules mapping (IN41, IN38, IN19)
 

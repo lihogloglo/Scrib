@@ -13,7 +13,7 @@ use crate::tunables::FurnitureParams;
 const EPS: f32 = 1.0e-5;
 
 fn measured(footprint: [f32; 2], top: f32, front: Facing) -> Measured {
-    Measured { center: [0.0, 0.0], footprint, top, front }
+    Measured { center: [0.0, 0.0], footprint, top, front, head: front }
 }
 
 fn def(kind: Kind, m: &Measured) -> InteractableDef {
@@ -64,7 +64,7 @@ fn chair_is_one_front_seat() {
 
 #[test]
 fn chair_facing_neg_x_off_centre() {
-    let m = Measured { center: [1.0, 2.0], footprint: [0.6, 0.4], top: 0.54, front: Facing::NegX };
+    let m = Measured { center: [1.0, 2.0], footprint: [0.6, 0.4], top: 0.54, front: Facing::NegX, head: Facing::NegX };
     let d = def(Kind::Seat, &m);
     assert_eq!(d.slots.len(), 1);
     let s = &d.slots[0];
@@ -137,37 +137,59 @@ fn long_benches() {
     }
 }
 
+/// AN25: the lie slot's +Z is the head, entered from the long sides (the lier's left and right);
+/// one edge seat per long side facing out; all three share bit 0.
 #[test]
-fn bed_lies_and_sits_on_its_edge() {
-    let d = def(Kind::Bed, &measured([2.0, 1.0], 0.74, Facing::PosZ));
-    assert_eq!(d.slots.len(), 2);
-    let (lie, edge) = (&d.slots[0], &d.slots[1]);
+fn bed_lies_head_first_entered_from_the_long_sides() {
+    // 2.0 m long along z, head at +Z; 1.0 m wide.
+    let d = def(Kind::Bed, &measured([1.0, 2.0], 0.74, Facing::PosZ));
+    assert_eq!(d.slots.len(), 3);
+    let (lie, left, right) = (&d.slots[0], &d.slots[1], &d.slots[2]);
     check_pose(lie, "bed", "lie", "bed.lie", 0.74);
-    check_pose(edge, "seat", "sit", "seat.bed_edge", 0.74);
     assert!(near(lie.local.translation, Vec3::ZERO));
-    assert!(near(faces(lie), Vec3::Z));
+    assert!(near(faces(lie), Vec3::Z), "head at +Z");
     let sides: Vec<_> = lie.entrances.iter().map(|e| (e.side, e.approach)).collect();
     assert_eq!(sides.len(), 2);
-    assert_eq!(sides[0].0, Side::Front);
-    assert!(near(sides[0].1, Vec3::new(0.0, 0.0, 0.8)));
-    assert_eq!(sides[1].0, Side::Back);
-    assert!(near(sides[1].1, Vec3::new(0.0, 0.0, -0.8)));
-    // Half depth 0.5 - inset 0.2.
-    assert!(near(edge.local.translation, Vec3::new(0.0, 0.0, 0.3)));
-    assert!(near(faces(edge), Vec3::Z));
-    assert_eq!(edge.entrances.len(), 1);
-    assert_eq!(edge.entrances[0].side, Side::Front);
-    assert!(near(edge.entrances[0].approach, Vec3::new(0.0, 0.0, 0.8)));
-    // They exclude each other.
-    assert_eq!(lie.group, Some(0b1));
-    assert_eq!(edge.group, Some(0b1));
+    // Face up, head +Z: the lier's right is +X. Half width 0.5 + approach 0.3.
+    assert_eq!(sides[0].0, Side::Left);
+    assert!(near(sides[0].1, Vec3::new(-0.8, 0.0, 0.0)));
+    assert_eq!(sides[1].0, Side::Right);
+    assert!(near(sides[1].1, Vec3::new(0.8, 0.0, 0.0)));
+    for (edge, out) in [(left, Vec3::NEG_X), (right, Vec3::X)] {
+        check_pose(edge, "seat", "sit", "seat.bed_edge", 0.74);
+        // Half width 0.5 - inset 0.2, facing out.
+        assert!(near(edge.local.translation, out * 0.3));
+        assert!(near(faces(edge), out));
+        assert_eq!(edge.entrances.len(), 1);
+        assert_eq!(edge.entrances[0].side, Side::Front);
+        assert!(near(edge.entrances[0].approach, out * 0.8));
+    }
+    assert!(d.slots.iter().all(|s| s.group == Some(0b1)), "they exclude each other");
+}
+
+/// The head, not the front, sets the bed frame: a head at -X turns everything.
+#[test]
+fn bed_frame_follows_the_head() {
+    let m = Measured { center: [1.0, 0.0], footprint: [2.0, 1.0], top: 0.5, front: Facing::PosZ, head: Facing::NegX };
+    let d = def(Kind::Bed, &m);
+    let lie = &d.slots[0];
+    assert!(near(faces(lie), Vec3::NEG_X));
+    assert!(lie.local.rotation.abs_diff_eq(Quat::from_rotation_y(-FRAC_PI_2), EPS));
+    // Head -X: the lier's right is Y x -X = +Z.
+    assert_eq!(lie.entrances[0].side, Side::Left);
+    assert!(near(lie.entrances[0].approach, Vec3::new(1.0, 0.0, -0.8)));
+    assert_eq!(lie.entrances[1].side, Side::Right);
+    assert!(near(lie.entrances[1].approach, Vec3::new(1.0, 0.0, 0.8)));
+    assert!(near(faces(&d.slots[1]), Vec3::NEG_Z));
+    assert!(near(faces(&d.slots[2]), Vec3::Z));
 }
 
 #[test]
-fn bedroll_edge_seat_stays_inside() {
-    let d = def(Kind::Bed, &measured([1.8, 0.3], 0.22, Facing::PosZ));
-    // Half depth 0.15 < inset 0.2: the edge seat sits at the centre, not behind it.
+fn bedroll_edge_seats_stay_inside() {
+    let d = def(Kind::Bed, &measured([0.3, 1.8], 0.22, Facing::PosZ));
+    // Half width 0.15 < inset 0.2: both edge seats sit at the centre, not beyond it.
     assert!(near(d.slots[1].local.translation, Vec3::ZERO));
+    assert!(near(d.slots[2].local.translation, Vec3::ZERO));
 }
 
 #[test]
@@ -228,7 +250,13 @@ fn shelf_and_degenerate_shapes_have_no_def() {
     assert!(def_for(&id, Kind::Seat, &measured([0.0, 0.4], 0.5, Facing::PosZ), &p).is_none());
     assert!(def_for(&id, Kind::Seat, &measured([0.5, 0.4], -0.1, Facing::PosZ), &p).is_none());
     assert!(def_for(&id, Kind::Table, &measured([f32::NAN, 0.4], 0.8, Facing::PosZ), &p).is_none());
-    let m = Measured { center: [f32::INFINITY, 0.0], footprint: [0.5, 0.5], top: 0.5, front: Facing::PosZ };
+    let m = Measured {
+        center: [f32::INFINITY, 0.0],
+        footprint: [0.5, 0.5],
+        top: 0.5,
+        front: Facing::PosZ,
+        head: Facing::PosZ,
+    };
     assert!(def_for(&id, Kind::Seat, &m, &p).is_none());
 }
 
@@ -261,6 +289,13 @@ fn params_default_to_the_declarations() {
             "mw.interact.edge_seat_inset_m",
             "mw.interact.counter_spacing_m",
             "mw.interact.counter_stand_m",
+            "mw.interact.measure.backrest_above_m",
+            "mw.interact.measure.backrest_offset",
+            "mw.interact.measure.upright_min_area",
+            "mw.interact.measure.bench_aspect",
+            "mw.interact.measure.headboard_above_m",
+            "mw.interact.measure.bed_end_share",
+            "mw.interact.measure.head_share",
         ]
     );
     // Every number has a range: the shell's registration accepts the whole list.
