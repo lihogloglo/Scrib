@@ -60,7 +60,7 @@ fast spammable roll [5]. Rare strong states (stagger, stumble, collapse) react p
    windows, per-phase rate (strike 1.3-1.6x), additive anticipation/overshoot, step-in by the `Warp` owner. Missing
    moves are key-pose `PoseSeq` clips (Overgrowth, GDC 2014). The roll stays UAL `Roll` (CB-6) until beaten.
 10. **Physics tint on Delirium, rare and capped** (DECISIONS 2026-11-19; anim-style §3 cost verdict): stagger, drunk or
-    wounded stumble, exhausted collapse, medium hits (combat.md §4); A0/A1 only, concurrent cap (tunable), additive
+    wounded stumble, exhausted collapse, medium and large hits (combat.md §4); A0/A1 only, concurrent cap (tunable), additive
     fallback over the cap and in Classic. Baseline limp is never physics. Framework seam `PhysicsTint`; Delirium fills it.
 11. **Motion matching stays parked** (anim.md §2): no shippable dataset.
 
@@ -158,7 +158,7 @@ Each family: recipe against slot contact points and MG4 height bands, generation
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| AN32 | Measurement: weapon groups' text keys, durations, root travel; `Hit1-5`, `KnockDown`, `Shield`; missing moves | tests `mw_bake` | - | printed; ledger |
+| AN32 | Measurement: weapon groups' text keys, durations, root travel; `Hit1-5`, `KnockDown`, `Shield`; missing moves | tests `mw_bake` | - | printed; ledger | **done 2026-11-26** (a humanoid sets, b creature `Attack1-3`: `mw_bake/tests/attack_clips_survey.rs`; ledger animation: hit at 0.47-0.80 s, one of three follow windows by strength, no attack lunges, no held guard; creatures: 6 of 234 moves travel >= 1.0 m to the hit, none >= 1.5 m)
 | AN33 | Text keys -> sheet windows at cook (anticipation, active, recovery) | `mw_combat` | AN32 | exact vs keys |
 | AN34 | Per-phase rate + additive anticipation/overshoot op | `sf_anim_graph`, `mw_combat` | AN33 | exact; owner ANIM-12 (level-sparring) |
 | C4 | Attack clip pass: sword sheet on Morrowind chop/slash/thrust by direction, step-in `Warp`, `ik.feet` (B5) | `mw_combat`, `mw_player_bevy` | AN34, B5, Q2 | owner CB-1 re-check |
@@ -173,9 +173,9 @@ Each family: recipe against slot contact points and MG4 height bands, generation
 |---|---|---|---|---|
 | AN38 | Research: Delirium partial drive (per-region strength, disturbance), cost per body | research, test | - | measurement; ledger | research **done 2026-11-26** (d96d9ec4); measurement: **a done** (A/B/F at N = 1, 4, 8: 0.50 / 0.67 / 0.86 ms per body, linear; pose follow alone collapses; ledger physics), **b done** (C, D, E, G + first 2 s + N = 2: pinned-pelvis pose follow G stands at 0.65 ms per body, 1.28 median / 2.1 p99 ms per tick at N = 2, fails the budget at N = 4: cap 2 confirmed; C 0.63, stumble 0.52, a fallen body 1.1-1.2), c (pose error), d (`step_group`, start/drop) left |
 | AN39 | Spec: `PhysicsTint` seam, states, cap, gate, fallback | docs | AN38 | doccheck | **done 2026-11-26** (`superfargoth/docs/specs/physics-tint.md`, fed5bd81; the concurrent cap stays a Guess until AN38's numbers) |
-| AN40a | Seam: `sf_anim::tint` types, envelope, `TintBook` (gate, cap, states), `sf_anim_bevy` plugin, `TintTarget`, fallback messages; exposes the pose before the physics blend (`GraphOutput::pose` already includes it, `sf_anim_graph/src/instance.rs:239-241`); checks hurt volumes do not follow the tinted pose | `sf_anim`, `sf_anim_bevy` | AN39 | exact cap, states (fake provider): the cap test keeps 4 as its fixture value (6 requests -> 4 Active, 2 Refused); the default read from `TintSettings` is 2 (Low 1) |
+| AN40a | Seam: `sf_anim::tint` types, envelope, `TintBook` (gate, cap, states), `sf_anim_bevy` plugin, `TintTarget`, fallback messages; exposes the pose before the physics blend (`GraphOutput::pose` already includes it, `sf_anim_graph/src/instance.rs:239-241`); checks hurt volumes do not follow the tinted pose | `sf_anim`, `sf_anim_bevy` | AN39 | exact cap, states (fake provider; `TintEnd` has 7 variants, no `Interrupted`: only a takeover ends a tint early; the same kind again refreshes it at the higher of the two intensities, one exact case): the cap test keeps 4 as its fixture value (6 requests -> 4 Active, 2 Refused); the default read from `TintSettings` is 2 (Low 1) |
 | AN40b | Delirium tint provider (pinned-pelvis pose follow); step 1 = balancer coexistence test | `mw_delirium`, `mw_delirium_bevy` | AN38, AN40a | no NaN, not through floor, comes to rest; pelvis still at standing height 2 s into an undisturbed tint (the AN38a collapse); `Failed` comes from the provider's own check (NaN, part below the floor, pelvis off target), not `agent.fallen` |
-| AN41a | Hit triggers: Medium tier + impulse band -> Stagger (physics hits of 10 to `band.max_ns` 25 N s, Guess, become a stagger tint instead of today's owner-confirmed push takeover PH-14/15; `band.max_ns` = 10 keeps today's behaviour and is the A/B arm) | `mw_combat`, `mw_walkers_bevy` | AN40b, AN22 | exact |
+| AN41a | Hit triggers: Medium and Large tiers + impulse band -> Stagger (Large, owner 2026-11-26: the profile's UPPER regions, priority `Hit`, intensity = tunable `mw.tint.large.intensity`, 0-1, default 1.0, Guess; 0 sends no request = the Large clip alone, the A/B arm; the Large clip stays the move; refused -> the clip plus the `HitReact` kick; exact: one `TintRequested` per Large reaction, none at intensity 0. Medium: physics hits of 10 to `band.max_ns` 25 N s, Guess, become a stagger tint instead of today's owner-confirmed push takeover PH-14/15; `band.max_ns` = 10 keeps today's behaviour and is the A/B arm) | `mw_combat`, `mw_walkers_bevy` | AN40b, AN22 | exact |
 | AN41b | State triggers: injury, alcohol, fatigue -> Stumble, Sway, Sag; scene `anim-tint` | `mw_walkers_bevy` | AN41a | exact; owner ANIM-14 |
 | AN41c | Sway/Sag fallback key-pose clips (data) | `mw_combat` data | AN41b, AN36 | bake loads; ANIM-14 |
 | AN42 | Measurement: tint ms at the cap (cap 2, each kind, and mixed with 1 and 2 takeovers) | tests | AN41b | `#[ignore = "measurement"]` |
@@ -195,7 +195,7 @@ Each family: recipe against slot contact points and MG4 height bands, generation
 |---|---|---|
 | Interaction | IN27 slot frames, IK targets | AN26-AN30, MG7b, MG8; modifiers on slot clips |
 | AI | AI14/IN8, AI31, AI37, perception profile | AN8 look-at, AN22 styled walkers, AN31 |
-| Combat | sheets, poise (C3), C6 | AN32-AN37, C2, C4, AN41 medium-hit tint |
+| Combat | sheets, poise (C3), C6 | AN32-AN37, C2, C4, AN41 medium- and large-hit tint |
 | Crime, dialogue | LW14, DQ-30 | AN31 surrender/search, talk gestures; AN8. **Needed by DQ-30b** (`superfargoth/docs/specs/dialogue-presentation.md`; rows get IDs and an order when the dialogue lane reaches DQ-30): a per-character `look_target` writer, an additive head/neck rotation input for nods, a one-shot upper-body gesture slot |
 | Travel | IN7/IN23 seats | sit/astride clips (AN26 family) |
 
