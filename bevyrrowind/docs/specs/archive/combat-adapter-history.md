@@ -135,3 +135,25 @@ at once). A claimed death Delirium then can't take (no rig) falls back to `Ragdo
 console `kill` (`physics::kill_in_view`, walkers only). Gaps: corpse drag (Delirium parts aren't Rapier bodies) and
 save/streaming persistence of the corpse pose. Tests: `physics::tests` (death routing), `mw_delirium_bevy`
 `deaths_of_human_walkers_become_terminal_takeovers`, `mw_delirium` `killed_takeover_falls_and_settles`. Visual check PH-16.
+
+## As built pointers (moved from combat-adapter.md 2026-11-26)
+
+Moved by the "Morrowind attack clips" spec slice (specs-7, 2026-11-26), verbatim except the link targets, which now
+point inside this file.
+
+## As built: C1b, C2a, C2b
+
+Moved verbatim to [archive/combat-adapter-history.md](#c1b-game-items) (C0d, 2026-11-26); still the running code:
+- [C1b: game items](#c1b-game-items): `sword_1h` sheet and UAL slots, the player's `Combatant`, F stance and draw clips, bindings, training dummy, level `arena`, CB-1/CB-2.
+- [Sparring dummy (C2a)](#sparring-dummy-c2a): `DummyKind::Sparring`, `sparring.ron` schedule, non-lethal refill, level `sparring`, CB-3a.
+- [Guard (C2b)](#guard-c2b): sheet `guard`, `GUARD_ABSORB` 0.65, `GUARD_STABILITY` 1, guard clips, classic `blockMeleeAttack`, CB-3b.
+
+## Window synthesis before AN32 (moved from combat-adapter.md 2026-11-26)
+
+Superseded by "Morrowind attack clips" once AN32a measured the clips (verbatim):
+
+- **Windows**: AN33 cooks them from text keys ("Morrowind clips as the fallback layer"), AN32 measures; no window
+- **Window synthesis** (`mw_combat::windows`, R6 adapt; text-key kinds already parsed, `mw_anim/src/text_keys.rs:32-53`): one
+  `Hit(0)` window from `min hit` (or `hit` - 0.05 s) to `hit` + 0.05 s; `Charge` from `min attack` to `max attack`;
+  `Cancel(Dodge)` from `large follow start` (else `follow start`); `Cancel(Move)` at `follow stop`; `Accept(all)` from
+  `min attack`. One hit per attack (the original honours one hit key). The sheet's row numbers still apply.
