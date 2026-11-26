@@ -142,7 +142,8 @@ anywhere in Bevy's dependency closure (`superfargoth/docs/build-perf.md` "Featur
   line instead (`--features bevy/file_watcher`).
 - **During a slice (owner 2026-11-26: agents never idle on CI):** `test -p <your crates>` and
   `clippy -p <your crates and the crates that depend on them> --all-targets -- -D warnings` locally (pedantic is on in
-  `[workspace.lints]`; warm clippy takes ~5-10 s; `cargo tree -i <crate> -e normal --depth 1` lists dependents). If a
+  `[workspace.lints]`; warm clippy takes ~5-10 s; `cargo tree -i <crate> -e normal --depth 1` lists dependents), started
+  together as two background commands: they run in separate queue lanes. If a
   manifest changed, also `cargo deny check` and `cargo hakari generate --diff` (no compile, no queue). Then commit and
   push: CI runs the full gate afterwards as a backstop, and nobody waits for it. A red main is fixed before anything
   else. Filter output to errors and warnings (`2>&1 | grep -E "^(error|warning)" -A6`). Spec-only sessions shouldn't

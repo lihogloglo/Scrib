@@ -44,6 +44,9 @@ The working rules are still `CONTRIBUTING.md`; this page only says how the coord
 - **One lane per crate at a time.** Before saying yes to a slice in a crate another lane touched, check
   `git status --short <crate>` and the Scope lines (`head -2 .sessions/*.md`). A lane claims a crate in its Scope
   and tells meta when its commit frees it. Meta relays "X committed" to whoever waits on it.
+- **A long claim wait** (over ~30 min), only when the lane has no other slice in its queue that avoids the claimed
+  crate: the lane works in `bash bevyrrowind/tools/worktree.sh new <name>` and merges after the claim frees. Its first
+  build is a cold Bevy in its own target (~9 min, queued), so never for short waits.
 - **Hot crates** (2026-11-26, `docs/roadmaps/order.md`): `mw_walkers_bevy`, `sf_controller`, `sf_action`,
   `mw_rpg(_bevy)`, `mw_combat`, `mw_bake`. Two lanes may share a crate only in separate new files, and each commits
   only its own paths.
@@ -81,9 +84,10 @@ The working rules are still `CONTRIBUTING.md`; this page only says how the coord
   session's context (last usage record of its transcript). Lane prompts ask for "ctx Nk" in every message to meta.
   Check at least every hour and whenever a lane reports a commit. 2026-11-26: all four orchestrators went past 200k
   in about 2 h, unnoticed until the owner asked.
-- At ~200k, tell the lane: no new slices, collect the running one, commit, hand off, archive, message meta. Then open
-  its successor (`<lane>-<n+1>`, prompt in `.sessions/_prompts/<name>.md`: continue from the archived handoff, same
-  communication and commit rules), so a finished session is always replaced while its lane has a queue.
+- At ~200k, tell the lane: no new slices, collect the running one, commit, hand off, archive, message meta. The
+  handing-off lane writes its successor's prompt itself, `.sessions/_prompts/<lane>-<n+1>.md` from the template in
+  "Opening a lane session" (continue from the archived handoff, same communication and commit rules), so meta only
+  launches it: a finished session is always replaced while its lane has a queue, with no gap waiting on meta.
 - Meta's own successor: update the "Current meta:" line in `.sessions/meta.md`, open the new meta window, and the new
   meta announces its name to every lane. Lanes always address the meta named on that line.
 
