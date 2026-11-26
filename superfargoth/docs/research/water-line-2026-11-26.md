@@ -143,6 +143,8 @@ DLSS note (all of them): the band is written into the pre-upscale colour, analyt
 3. **First person vs third person.** The line at the camera lens makes sense in first person; in third person the camera swings through the surface often. Same effect in both? Recommended: yes, same effect (the near-plane test is the camera's, one rule).
 Not asked (industry default): mask format, resolution, per-pixel analytic vs mesh mask, DLSS handling, band defaults.
 
+**Answers (owner via meta-3, 2026-11-26):** 1 yes: bright thin film + slight refraction above the line; 2 yes: lens droplets ~4 s on exit; 3 same effect in 1st and 3rd person (meta-decided).
+
 ## 9. Sources
 
 - Crest (wave-harmonic/crest), cloned `depth 1` to `C:\Users\leogloglo\AppData\Local\Temp\research-1\water-line\crest`, commit `ff0602f07a687d47e5c803e10e3383d41c42e709`. Files read: `Shaders/Underwater/{UnderwaterMaskShared,UnderwaterMaskHorizonShared,UnderwaterEffect,UnderwaterEffectShared,UnderwaterMeniscus}.{hlsl,shader}`, `Shaders/OceanConstants.hlsl`, `Scripts/Underwater/UnderwaterRenderer.{Effect,Mask}.cs`. MIT. Read as data only, nothing run.

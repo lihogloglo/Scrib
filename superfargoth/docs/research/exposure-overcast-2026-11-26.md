@@ -156,6 +156,8 @@ Ranking by cost-benefit: 1 > 2 > 3 > 4 > 6 > 5. #1+#2 close the owner's symptom 
 3. Lamp/torch glow rises 2^k in overcast exposed units; lit towns at storm are brighter than at clear night. Accept? Recommend: yes (matches your lit-towns rule).
 4. Do you want live eye adaptation (E3-E5) at all after X1/X2, or keep a deterministic look? Recommend: defer until X1/X2 checked; interior transitions are the only strong case.
 
+**Answers (owner via meta-3, 2026-11-26):** 1 overcast default ~1.5 stops below clear, as a live tunable (meta-decided); 2 yes: storms keep a lower compensation and stay darker; 3 brighter-reading lamps under overcast OK (meta-decided); 4 live eye adaptation deferred until X1/X2 land.
+
 ## 9. Sources
 
 Code read: `superfargoth/crates/sf_sky/src/sky.rs`, `weather.rs`; `sf_weather/src/frame.rs`, `records.rs`; `sf_sky_bevy/src/lib.rs`; `sf_atmos_bevy/src/shaders/cloud_shadow.wesl`; `sf_atmos/src/settings.rs`;
