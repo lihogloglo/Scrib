@@ -388,6 +388,24 @@ Animation's per-height sets), leaving runtime IK only the last few cm. No genera
   `mw_interaction::def_for` emits `seat.stool` (backless single seat) and `seat.floor` (band under ~0.3 m).
 - **Picks** (provisional until ANIM-9): per piece the non-gated take with the lowest foot-slide p95.
 
+**As built (AN30a, 2026-11-27): first bed batch, the lying loops and the `lie.bed` hub.** `generated/bed1/_kimodo`
+(scrib-motiongen `recipes/bed-batch1.toml`, 1462485): `bed.lie.sleep` and `bed.lie.restless`, 8 seeds x 8 s each, 16 takes.
+**The lying loops are band-independent:** one set generated on flat ground (point `ground`), since a lying pose is the
+same at every bed height; the bed bands (0.22 / 0.52 / 0.64 / 0.74 m) are applied by the cook lift and the slot frame.
+Only enter and exit differ by height (a bedroll on the floor against a bed at 0.74 m); proposed groups for them:
+`bed22`, `bed64` (also serves 0.52), `bed74`.
+Measured (`.sessions/out/an30a-takes.md` at the time): all 16 lie face up with the head toward -Z and the feet toward
++Z (body axis +173 to -179 deg, so the slot frame's "+Z = head" needs a 180-degree yaw at the cook or in the hub
+placement); drift 0.7-2.9 cm; 0 gated (skate 0.1-2.4 cm/s, jerk p99 194-767: for lying takes the gates only catch
+blow-ups, not a wrong posture). **Height gap:** the Hips lie at 0.01-0.07 m against the 0.12 asked and the elbows go
+under the floor in 14 of 16 takes (to -0.078 m): Kimodo lays the body about 8 cm low, so the cook needs a measured
+lift (lowest body joint onto the surface plus a flesh radius), as the seats got `pelvis_fit`.
+Hub `lie.bed` (provisional, owner keep pending): sleep take 05, frame 145 (best skate + jerk rank, calmest 0.3 s of
+the middle third; Hips 0.033 m). Kimodo's heading (`RightLeg - LeftLeg`, turned to face +Z) is well defined for a
+supine body and points from the head to the feet; it is degenerate only for a body on its side, and a prone body comes
+out the other way round. Not generated yet (waits for the owner's ANIM-9 verdict on the sit takes): the exact hub
+loops (`[[hub_loop]]`), enter / exit links per band group, lean wall, counters.
+
 ## Slices (one deliverable each)
 
 | Slice | Deliverable | Needs | Status |

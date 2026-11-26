@@ -151,7 +151,7 @@ Each family: recipe against slot contact points and MG4 height bands, generation
 | AN27 | Chair pull-out/push-in, bench scoot, seated prop chain: reach, pick, drink/eat/read, put down (IN9, AI31) | generation | AN26, MG7b | grade; owner ANIM-9 |
 | AN28 | Doors (IN33): push/pull, hinge L/R, both sides, walk-through, knock, locked rattle, bash (IN37) | generation | AN25 | grade; owner ANIM-10 |
 | AN29 | Carry and place (IN35, AI31): pick up at 3 heights, carry 1H/2H/shoulder, place, give/take, throw | generation | MG7b | grade; owner ANIM-10 |
-| AN30 | Beds and lean spots (IN3) | generation | AN25 | grade; owner ANIM-9 |
+| AN30 | Beds and lean spots (IN3) | generation | AN25 | grade; owner ANIM-9, ANIM-14; **AN30a generated 2026-11-27** (bed1: lying sleep + restless loops, 16 takes on flat ground, band-independent; hub `lie.bed` provisional; bodies lie ~8 cm low, head toward -Z: cook lift + yaw to do); left, after the ANIM-9 verdict: b hub loops + enter/exit links per band group, c bake slots + lift, d lean wall, e counters |
 | AN31 | Social and fear reactions: turn-to-face, placate, cower, flee start, surrender (LW14), talk gestures (DQ-30) | generation | AN25 | grade; owner ANIM-11 |
 
 ### Stage 5: combat on Morrowind clips (the combat lane owns the sheets)

@@ -123,3 +123,15 @@ keys for backstep, kick and parry are named in this entry at build time. Questio
 (3) Kick: does it read as a kick (weight shift, foot out, back)? yes/no
 (4) Parry then riposte (only if C2d is built): one deflect, then one stab? yes/no
 Status: planned (after AN36 + AN37).
+
+## ANIM-14: bed batch 1, lying loops (AN30a)
+
+Built: 16 generated takes of a person asleep on their back (8 calm, 8 restless); no bed in the scene, the takes play on
+the flat floor. Known and not asked: the body lies about 8 cm into the floor (the lift comes with the bake).
+Run: `owner_launch.sh clip-preview --browse "D:/Gamedev/Bevyrrowind/animation packs/generated/bed1/_kimodo"` (absolute
+folder), G on a group. Questions:
+(1) G on `bed.lie.sleep.loop.ground0`: does any take read as a person asleep on their back (not a corpse, not a plank)? yes/no
+(2) G on `bed.lie.restless.loop.ground0`: does any take shift in its sleep without a pop or a limb snapping? yes/no
+(3) in either group: do the arms and legs rest in a natural place (no hand through the body, no twisted foot)? yes/no
+Proof log: `browse grades: 16 clips graded, 0 gated` in last.log. A keep in the sleep group confirms the `lie.bed` hub.
+Status: awaiting owner (AN30a generated 2026-11-27; after ANIM-9, same tool).
