@@ -1,7 +1,7 @@
 # Crime, law, stealth, locks and traps (`sf_crime`, `sf_crime_bevy`, `sf_rpg_ui`)
 
 Status: spec written 2026-11-10, revised 2026-11-25 (LW0: AI perception design, walked reports, lock contract;
-plan in the [crime roadmap](../../../docs/roadmaps/crime.md), "decision N" below = its §3); nothing built. Builds on [stats.md](stats.md) (`Counter` stats such as bounty,
+plan in the [crime roadmap](../../../docs/roadmaps/crime.md), "decision N" below = its §3; locks and traps: [crime-locks.md](crime-locks.md)); nothing built. Builds on [stats.md](stats.md) (`Counter` stats such as bounty,
 `StatOp`, `UseSkill`), [rpg.md](rpg.md) (`RpgCommand`, inventory, provider claims), [services.md](services.md)
 (`ServiceKind`, `DealVeto`, `Purse`), [effects.md](effects.md) (`SourceDef`: a trap is an effect source),
 [ai.md](ai.md) "Perception and stimuli" (`OffenceObserved`, awareness, fact store), [action.md](action.md) (the Sneak
@@ -45,8 +45,7 @@ Every shipped open-world RPG splits crime into four steps, and so do we:
 4. **Resolution**: pay, serve time (skill loss in Morrowind/Oblivion; Skyrim: a stat-reduction sleep; KCD: jail
    with a stat penalty), flee, or fight; stolen goods are confiscated on pay or jail.
 
-Locks follow Bethesda's numbers shape: a lock level, a tool quality, a skill term, a roll, tool wear; traps are an
-effect fired at the actor. Stealth: concealment versus observer perception; Bethesda rolls per check, modern
+Locks and traps: [crime-locks.md](crime-locks.md). Stealth: concealment versus observer perception; Bethesda rolls per check, modern
 stealth games (Skyrim, Dishonored, Thief) fill a meter over time. We offer both behind one rule.
 
 ## Reuse (Bevy, then crates, then our own)
@@ -55,8 +54,8 @@ Bevy: events, components, `FixedUpdate`; nothing for crime. Crates: none (a game
 `sf_stats` (bounty counter, `StatOp::UseSkill`, `CounterSet`), `sf_rpg` (`RpgCommand`, `service::DealVeto`),
 `sf_effects` (`Inflict` for a trap), `sf_ids` (seeded rolls, `ActorKey`, `PlayerId`), `sf_records` (offence and
 jurisdiction defs as records), the AI lane's fact store and `OffenceObserved`, `sf_save_bevy` sections.
-New: `sf_crime` (rules, ledger, lock state) and `sf_crime_bevy` (host). Interaction ("activate this") has no
-`gate_activation` runs before interaction's default on IN31's contract ("Locks and traps").
+New: `sf_crime` (rules, ledger, lock state) and `sf_crime_bevy` (host). Interaction ("activate this") knows no
+locks: crime's gate runs in its `ActivationSystems::Gates` ([crime-locks.md](crime-locks.md)).
 
 ## Design
 
@@ -304,43 +303,13 @@ pub struct DetectIn { pub target: TargetView, pub observer: ObserverView, pub di
 - **Departs** from crime reading light: light arrives through `factors` from AI8d.
 - **Departs** from nearest-observer exposure: `PlayerDetection` is the max over observers.
 
-Pickpocket takes the lock seam's shape (decision 9): `Timer` (KCD2 hold-to-search, risk from victim awareness, LW18)
+Pickpocket takes the lock seam's shape ([crime-locks.md](crime-locks.md), decision 9): `Timer` (KCD2 hold-to-search, risk from victim awareness, LW18)
 or `Roll` = `PickpocketRules::caught(&PickIn, roll) -> bool` (Classic and "auto").
 
 ### Locks and traps
 
-```rust
-pub struct LockState { pub level: i32 /* 0 = never locked */, pub locked: bool, pub key: Option<RecordId>,
-                       pub hp: u32 /* force damage left */, pub broken: bool, pub impossible: bool /* data flag */ }
-pub struct TrapState { pub source: Option<RecordId> }     // an effect SourceDef (effects.md); None = disarmed
-```
-
-**Ownership** (decision 8): crime owns everything here plus keys, trespass and the `sf/crime` overlay; interaction
-owns the door (IN33's swing slot: Open/Closed, hinge, queue) and reads "Locked" from the gate. On IN31's contract the
-crime gate runs before interaction's default and marks `Locked`/`TrapSprung` handled; neither core names the other.
-IN37 computes a blow (strength, weapon, contents, noise) and sends `LockRequest::Force`; crime settles `hp`, `broken`
-and the offence (vandalism if owned). DQ-7 `Lock`/`Unlock`/`GetLocked` act on `LockState` via `CrimeCommand`.
-
-Unlocking keeps the level (a once-locked object stays recognisable: trespass rule below). Both live on placed
-objects with content defaults and a sparse overlay (`sf/crime`). `gate_activation(&ObjectLaw, &ActorView) ->
-Gate` is pure and ordered: `Open` | `Locked { pickable }` | `KeyUsed { key, trap_disarmed }` | `TrapSprung { source }`.
-A key in the actor's inventory unlocks and disarms; a trap on an openable object fires before it opens.
-
-`LockRequest::{ Pick { object, tool }, Probe { object, tool }, Force { object, damage }, Lock { object, level } }`
-in the command stream (host-owned, validated: reach, tool held, tool has uses). `LockRules` (pure; roll seeded from
-(player, object, attempt, tick)): `pick_chance(&PickIn) -> Chance { Impossible | Percent(f32) }`, `window(&PickIn)`
-(sweet-spot width, jam rate), `tier(level)` (five prompt labels), `probe_chance`, `force(&LockState, damage)`,
-`tool_wear(&Tool) -> u32`, `skill_use`. **Seam** (decision 9; Skyrim, KCD2): `LockInteraction { Roll | Minigame }`,
-one `LockOutcome`. Minigame: host-seeded sweet spot, `window` from the adapter's ported pick term, break chance from
-the tier, client input stream re-simulated by the host (LW11); only `impossible` refuses. Roll: Classic and "auto". Settlement: `LockOutcome { Unlocked | Failed | Jammed | ToolBroken |
-Impossible | Disarmed | TrapSprung | Damaged | Forced }` plus `RpgCommand`s (tool use -1, remove at 0) and
-`StatOp::UseSkill` on success. **Outcome noise** (decision 10; UE `ReportNoiseEvent`, KCD2): `sf_crime_bevy` emits a
-`NoiseEvent` for failed and snapped picks, sprung traps, forced locks (LW13); IN18 keeps physical noise; Open is
-quiet. Every attempt (pick, probe, force) emits
-`UnlockAttempted { player, object }`, which the crime rules turn into a trespass `OffenceAttempt` if the object is
-owned and `level != 0 || locked || trapped` (the Open spell and scripts emit it too). A trap sprung calls effects
-`Inflict` from the object at the actor (range rule is an adapter option; classic: the effect targets the actor
-if within activation reach, else it detonates at the object).
+Moved to [crime-locks.md](crime-locks.md) (LW0c, decisions 8-10): `LockState`, `TrapState`, the activation gate,
+`LockRules`, `LockRequest` / `LockOutcome`, the `LockInteraction` seam, outcome noise, force, traps, their tests.
 
 ### Prompt and HUD
 
@@ -359,7 +328,7 @@ Client to host: `OffenceAttempt` (emitted by host systems; scripts through `Crim
 Host to clients (each with tick, player): `ReportChanged { report, state }`, at delivery `OffenceCommitted { id,
 bounty_added, jurisdiction, cause: BountyCause }`,
 `BountyChanged { jurisdiction, total }`, `Pardon`, `ArrestOffered/ArrestEnded`, `SentenceStarted/SentenceServed`,
-`LockChanged { object, lock, trap }`, `TrapSprung`, `StolenChanged { item, count }`, `Refused { reason }`.
+`LockChanged`, `TrapSprung` (fields in crime-locks.md), `StolenChanged { item, count }`, `Refused { reason }`.
 
 ## Co-op (net-ready rules)
 
@@ -434,9 +403,7 @@ Bevy-free, exact assertions, synthetic records and GMSTs (`sf_crime` tests):
 - **CrimeLedger**: ids increase; `Pardon` through `paid_through` calms exactly the witnesses with ids `<=`.
 - **Law flow**: `stance` ladder exactly at each boundary, kill on sight only for murder; `Warn` window then `Arrest`; Flee and Resist raise heat, never the stance; decay stops at the floor (Classic none); arrest options; Pay then Jail refuse a second time;
   `jail_days` floor; sentence resumes from a saved state; goods confiscated once.
-- **Locks**: `gate_activation` order (key unlocks and disarms; trap before open; locked without key); `pick_chance`
-  Impossible / Percent; `window` seeded and re-simulated; `force` to 0 hp breaks; tool wear removes at 0; `UnlockAttempted` yields trespass only when owned and (level or locked
-  or trapped); an unlocked-but-once-locked owned object is still trespass.
+- **Locks and traps**: [crime-locks.md](crime-locks.md) "Tests".
 - **Detection**: `StandardDetection` exact per term (light, stance, behind, speed reveal, clamp); upright, still, in
   front equals light-only visibility (model, roll and meter tests are `sf_ai`'s).
 - **Witnesses**: a fake `WitnessQuery`; allies and the dead never report; deterministic order.
