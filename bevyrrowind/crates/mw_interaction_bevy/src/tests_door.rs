@@ -1,6 +1,6 @@
 //! Headless tests of [`DoorHook`]: the pivot at spawn, the index entry, the kinematic listing and
 //! the restored rest state in R0, each toggle saved to the overlay, travel doors left alone, the
-//! pivot map following despawns.
+//! pivot map following despawns, the pivot at the rest state outside R0.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -332,6 +332,93 @@ fn an_open_door_is_open_again_after_its_cell_reloads() {
     tick(&mut app, 1);
     assert_eq!(shell_state(&app), DoorState::resting(true, sign));
     assert!(app.world().resource::<InteractionStateTags>().tags(DOOR).contains(&DOOR_OPEN));
+}
+
+fn set_blob(app: &App, bytes: Vec<u8>) {
+    app.world().resource::<WorldOverlay>().0.write().unwrap_or_else(PoisonError::into_inner).set_state(DOOR, DOOR_STATE_OWNER, bytes);
+}
+
+fn pivot_transform(app: &App) -> Transform {
+    let e = app.world().resource::<DoorPivots>().get(DOOR).expect("a pivot");
+    *app.world().get::<Transform>(e).expect("a pivot transform")
+}
+
+/// The closed pivot `spawn` gives: the stream's translation and rotation, unit scale.
+fn closed_pivot() -> Transform {
+    let l = local();
+    Transform { translation: l.translation, rotation: l.rotation, scale: Vec3::ONE }
+}
+
+/// The pivot at the open rest of `sign`: the closed translation (hinge at the origin), the closed
+/// rotation turned by the def's `open_deg` about the object's up axis.
+fn open_pivot(sign: i8) -> Transform {
+    let def = door_def(&RecordId::new(BASE), Vec3::ZERO);
+    let open_deg = def.door().expect("a door slot").2.open_deg;
+    let closed = closed_pivot();
+    Transform { rotation: closed.rotation * Quat::from_rotation_y(f32::from(sign) * open_deg.to_radians()), ..closed }
+}
+
+fn assert_near(got: &Transform, want: &Transform) {
+    assert!(got.translation.distance(want.translation) < 1e-4, "translation {got:?} != {want:?}");
+    assert!(got.rotation.angle_between(want.rotation) < 1e-3, "rotation {got:?} != {want:?}");
+    assert_eq!(got.scale, want.scale);
+}
+
+#[test]
+fn a_door_saved_open_spawns_open() {
+    let mut app = door_app();
+    let hook = DoorHook(Arc::new(Nothing));
+    let p = door();
+    set_blob(&app, DoorState::resting(true, 1).rest_bytes().to_vec());
+    spawn(&mut app, &hook, &p);
+    let spawned = pivot_transform(&app);
+    assert_near(&spawned, &open_pivot(1));
+    assert!(spawned.rotation.angle_between(closed_pivot().rotation) > 1.0, "turned: {spawned:?}");
+
+    residency(&mut app, &hook, &p, true);
+    tick(&mut app, 1);
+    app.update();
+    assert_eq!(app.world().resource::<Doors>().get(DOOR).map(|d| d.state), Some(DoorState::resting(true, 1)));
+    assert_near(&pivot_transform(&app), &spawned);
+}
+
+#[test]
+fn a_door_with_no_open_rest_spawns_closed() {
+    let blobs = [None, Some(DoorState::resting(false, 1).rest_bytes().to_vec()), Some(vec![9])];
+    for blob in blobs {
+        let mut app = door_app();
+        let hook = DoorHook(Arc::new(Nothing));
+        if let Some(bytes) = blob.clone() {
+            set_blob(&app, bytes);
+        }
+        spawn(&mut app, &hook, &door());
+        assert_eq!(pivot_transform(&app), closed_pivot(), "blob {blob:?}");
+    }
+}
+
+#[test]
+fn a_door_leaving_r0_mid_swing_rests_at_its_target() {
+    let mut app = door_app();
+    let hook = DoorHook(Arc::new(Nothing));
+    let p = door();
+    spawn(&mut app, &hook, &p);
+    residency(&mut app, &hook, &p, true);
+    tick(&mut app, 1);
+    approve_open(&mut app);
+    app.update();
+    tick(&mut app, 3);
+    app.update();
+    let shell = shell_state(&app);
+    assert!(shell.open && shell.is_moving(), "mid-swing: {shell:?}");
+    let open = open_pivot(shell.sign);
+    let swinging = pivot_transform(&app);
+    assert!(swinging.rotation.angle_between(open.rotation) > 1e-2, "not yet open: {swinging:?}");
+    assert!(swinging.rotation.angle_between(closed_pivot().rotation) > 1e-3, "moving: {swinging:?}");
+
+    residency(&mut app, &hook, &p, false);
+    assert_near(&pivot_transform(&app), &open);
+    app.update();
+    assert_near(&pivot_transform(&app), &open);
 }
 
 #[test]

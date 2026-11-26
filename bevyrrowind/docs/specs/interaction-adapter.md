@@ -263,6 +263,18 @@ comes from the row, and `Focus` is written only in that case: a closed door's or
 untouched and unmarked. No class lookup: any later class whose rows give two verbs different prompts gets the same
 correction.
 
+### As built (IN33c2d, 2026-11-26)
+
+Outside R0 a swing door's pivot stands at the door's rest state. `door::rest_pivot(origin, closed, def, rest)` is the
+one helper: the object frame of the closed placement, `DoorState::leaf`, then `door_body::leaf_pose` (the single
+place of the pose maths), the same pose `follow_pivots` gives a resident door without a body, so activation changes
+nothing visible. `DoorHook::spawn`: when the overlay blob decodes open, the pivot spawns at
+`DoorState::resting(true, sign)` (the pose comes from the target, never from a `t`); no blob, a closed one or one
+that does not decode gives the closed `Transform` as before, not routed through the helper. `DoorHook::deactivate`:
+before the door leaves `SwingDoors`, the pivot is put at the rest of the shell's target (`parked_pivot`:
+`Doors::get`, `DoorState::resting(state.open, state.sign)`), written only when it differs: a door that leaves R0
+mid-swing ends where `save_rest`'s blob says it is. The far proxy's closed pose is unchanged (not in IN33).
+
 ## World rules mapping (IN41, IN38, IN19)
 
 **Material rows** (`sf.interact.material` + a pattern table in `mw_interaction`, checked against the install at cook,

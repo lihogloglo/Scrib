@@ -13,8 +13,9 @@
 //!   when it leaves (also on a discard). `mw.rules.interaction.sit` off (Classic) indexes no
 //!   furniture; flipping it live removes or re-inserts the resident furniture.
 //! - **Doors** ([`door`]): a hook on the Door class spawns a swing door's (not a travel-door exit)
-//!   visuals under a [`DoorPivot`] and, in R0, indexes it with `mw_interaction::door_def`, lists
-//!   its body as kinematic and restores its saved rest state (`DoorRest`); the shell's `Doors`
+//!   visuals under a [`DoorPivot`] (at its rest state while outside R0) and, in R0, indexes it
+//!   with `mw_interaction::door_def`, lists its body as kinematic and restores its saved rest
+//!   state (`DoorRest`); the shell's `Doors`
 //!   registers and swings it, and each toggle writes its rest state to the placement overlay
 //!   (owner `door`). Log: `interact: N swing doors indexed in <worldspace> cell (x, y, z)`.
 //! - **Door bodies** ([`door_body`]): each swing step of the shell (`DoorMoved`) moves the door's

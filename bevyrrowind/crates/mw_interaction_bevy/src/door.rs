@@ -8,6 +8,11 @@
 //! `DoorRest`. Deactivation undoes the index entry and the kinematic listing; the shell
 //! (`sf_interaction_bevy::Doors`) registers and swings the door from the index changes.
 //!
+//! Outside R0 (spawned in the Near ring, or left R0 mid-swing) the pivot stands at the door's rest
+//! state, posed as `door_body::follow_pivots` poses a resident door without a body, so activation
+//! changes nothing visible: a door whose overlay blob decodes open spawns open, and deactivation
+//! puts the pivot at the rest of the shell's target (`DoorState::resting(open, sign)`).
+//!
 //! [`save_rest`] writes the rest state back: each toggle of a resident swing door (`DoorChanged`,
 //! an approved use or a close-behind) sets the door's `rest_bytes` (a swinging door's target) as
 //! its overlay blob, so the door is at that rest after its cell reloads and in a save. A flip is
@@ -20,11 +25,11 @@ use bevy_asset::{AssetServer, UntypedHandle};
 use bevy_camera::visibility::Visibility;
 use bevy_ecs::prelude::*;
 use bevy_log::info;
-use bevy_math::Vec3;
+use bevy_math::{Quat, Vec3};
 use bevy_transform::components::Transform;
 use mw_interaction::door_def;
 use sf_coords::{WorldPos, WorldTransform};
-use sf_interaction::{DOOR_STATE_OWNER, DoorState};
+use sf_interaction::{DOOR_STATE_OWNER, DoorDef, DoorState};
 use sf_interaction_bevy::{DoorChanged, DoorRest, Doors, IndexChange};
 use sf_physics_bevy::KinematicPlacements;
 use sf_physics_bevy::sf_physics::BodyId;
@@ -32,6 +37,7 @@ use sf_world::{DoorLink, IndexedPlacement, PlacementClass, PlacementId, Worldspa
 use sf_world_bevy::{ActivateCx, DoorLinks, LoadedModel, PlacementSpawner, PlacementSpawners, SpawnCx, WorldOverlay};
 use smallvec::SmallVec;
 
+use crate::door_body::leaf_pose;
 use crate::index::frame_of;
 
 /// The pivot of a swing door's visuals: the placement's translation and rotation (the scale
@@ -113,6 +119,28 @@ fn saved_rest(world: &World, id: PlacementId) -> Option<DoorState> {
     DoorState::from_rest_bytes(overlay.state(id, DOOR_STATE_OWNER)?)
 }
 
+/// The pivot's translation and rotation (under the parent at `origin`) of a door closed at
+/// `closed` and resting at `rest`: the pose `door_body::follow_pivots` gives a resident door
+/// without a body.
+fn rest_pivot(origin: WorldPos, closed: &WorldTransform, def: &DoorDef, rest: &DoorState) -> (Vec3, Quat) {
+    let object = frame_of(closed);
+    let pose = leaf_pose(closed, &object, &rest.leaf(def, &object));
+    (origin.delta_f32(pose.pos), pose.rotation)
+}
+
+/// The pivot of resident door `id` and where it stands at the rest of the shell's target, when
+/// the shell has the door and its pivot is alive.
+fn parked_pivot(world: &World, id: PlacementId) -> Option<(Entity, Vec3, Quat)> {
+    let door = world.get_resource::<SwingDoors>()?.get(id)?;
+    let shell = world.get_resource::<Doors>()?.get(id)?;
+    let (_, _, def) = shell.def.door()?;
+    let entity = world.get_resource::<DoorPivots>()?.get(id)?;
+    let pivot = world.get::<DoorPivot>(entity)?;
+    let rest = DoorState::resting(shell.state.open, shell.state.sign);
+    let (translation, rotation) = rest_pivot(pivot.origin, &door.transform, def, &rest);
+    Some((entity, translation, rotation))
+}
+
 /// Wraps the Door class's spawner with [`DoorHook`].
 pub(crate) fn hook_spawners(spawners: Option<ResMut<PlacementSpawners>>) {
     let Some(mut spawners) = spawners else { return };
@@ -144,7 +172,14 @@ impl PlacementSpawner for DoorHook {
             _ => Vec3::ZERO,
         };
         let origin = p.transform.pos.offset(-cx.local.translation);
-        let pivot_local = Transform { translation: cx.local.translation, rotation: cx.local.rotation, scale: Vec3::ONE };
+        let mut pivot_local = Transform { translation: cx.local.translation, rotation: cx.local.rotation, scale: Vec3::ONE };
+        if let Some(rest) = saved_rest(world, p.id).filter(|r| r.open) {
+            let def = door_def(&p.base.id, doorway);
+            if let Some((_, _, swing_def)) = def.door() {
+                let rest = DoorState::resting(true, rest.sign);
+                (pivot_local.translation, pivot_local.rotation) = rest_pivot(origin, &p.transform, swing_def, &rest);
+            }
+        }
         let pivot = world
             .spawn((
                 pivot_local,
@@ -192,6 +227,13 @@ impl PlacementSpawner for DoorHook {
     fn deactivate(&self, world: &mut World, cx: &ActivateCx<'_>, placement: &IndexedPlacement) {
         self.0.deactivate(world, cx, placement);
         let id = placement.placement.id;
+        if let Some((entity, translation, rotation)) = parked_pivot(world, id)
+            && let Some(mut t) = world.get_mut::<Transform>(entity)
+            && (t.translation != translation || t.rotation != rotation)
+        {
+            t.translation = translation;
+            t.rotation = rotation;
+        }
         let Some(door) = world.get_resource_mut::<SwingDoors>().and_then(|mut d| d.0.remove(&id)) else { return };
         world.write_message(IndexChange::unload(id));
         if let Some(mut kinematic) = world.get_resource_mut::<KinematicPlacements>() {
