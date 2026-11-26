@@ -42,7 +42,7 @@ city crowds (UE ZoneGraph; later if measured), navmesh authoring tools (data com
 | No multiplayer ceiling; gameplay never depends on graphics settings | "Streaming" (fixed nav ring), "Co-op" |
 | Steam Deck is the floor | "Budgets" |
 | Delegated 2026-11-08: two agent classes; doors by poly flags, no prop carving by default; client UI routes | "Data model", "Runtime rebuild", "Co-op" |
-| Owner 2026-11-11: NPCs climb, mantle and vault with the player's own moves (guards can follow onto roofs); later, after NV9: bake-time auto links from ledges in the mover's mantle/vault/drop envelopes, per class (UE NavLink generation, Unity auto off-mesh links) | NV9b (planned) |
+| Owner 2026-11-11: NPCs climb, mantle and vault with the player's own moves (guards can follow onto roofs); later, after NV9: bake-time auto links from ledges in the mover's mantle/vault/drop envelopes, per class (UE NavLink generation, Unity auto off-mesh links) | "Links" (NV9b) |
 | Owner 2026-11-26 (nav roadmap §7): fliers and swimmers in scope; tiles built in play only when missing or changed, off the frame, cached; NPCs swim after you, non-swimmers wait | "Volumes", "Runtime rebuild" |
 
 ## Canonical technique
@@ -73,6 +73,8 @@ avoidance, and take only `PathCorridor` and `LocalBoundary` from Detour. Fliers:
 - **Volumes, rebuild, stuck (NV0b, 2026-11-26):** Bevy 0.20 ships no navigation; `navmesh-rs` stays (its tilecache and
   crowd modules are references); no crate does 3D flight volumes (`rerecast` 1.0, `landmass` 0.9, `vleue_navigator`
   0.17, `bevy_northstar` 0.8; `oxidized_navigation` stale): field, swim band, rebuild queue, stuck monitor are ours.
+- **Links (NV0c):** `navmesh-rs` has Detour's off-mesh connections (radius, flags, area, direction, u32 user id;
+  `PathCorridor::move_over_offmesh_connection`); `sf_nav_recast` passes none yet; link generation is ours.
 - Our own: the thin glue (types, trait, graphs, query service, streaming, debug draw); no Recast/Detour rewrite.
 
 ## Data model
@@ -80,8 +82,7 @@ avoidance, and take only `PathCorridor` and `LocalBoundary` from Detour. Fliers:
 Built in NV1 (`sf_nav::types`, the code is the reference): `AgentClass { id, radius, height, max_climb, max_slope_deg,
 can_swim }` (adapter record `sf.nav.agent`), `AreaDef { id, name, cost: [f32; MAX_CLASSES], flags }` in the
 adapter's `AreaTable` (`sf.nav.area`), `PolyFlags` (WALK, SWIM, DOOR, JUMP, AVOID, DISABLED + adapter bits), `TileKey
-{ ws, class, region, x, z }`, `OffMeshLink { id: NavLinkId, a, b, radius, two_way, kind: TraverseKind, area, classes
-}` (`TraverseKind::Door(LinkId)` with NV11), `NavPoint { loc, poly }`. Serde except the backend-opaque `PolyRef` /
+{ ws, class, region, x, z }`, `OffMeshLink` ("Links"), `NavPoint { loc, poly }`. Serde except the backend-opaque `PolyRef` /
 `TileRef`, which never leave memory.
 
 - **Agent classes**: content data, one navmesh per (worldspace, class); Morrowind bakes **two**, `humanoid` (small
@@ -96,8 +97,7 @@ adapter's `AreaTable` (`sf.nav.area`), `PolyFlags` (WALK, SWIM, DOOR, JUMP, AVOI
   (worldspace, class, region), origin set with `RecastBackend::set_region_origin`.
 - **Tiles** (bake product): one blob per `TileKey`, backend format, LZ4. NV0 calibrates: humanoid cs 0.15 m, ch 0.1 m,
   128 voxels per side (19.2 m); `large` cs ≈ 0.5 m (`cs ≈ radius / 2`).
-- **Off-mesh links** (bake, per worldspace): pathgrid edges the mesh misses, authored jumps, drops, ladders, ledges
-  (`sf_interaction` or adapter data), door approach links.
+- **Off-mesh links**: kinds, sources, traversal and auto generation in "Links".
 - **Route graph** (bake, per worldspace, class mask per edge; replaces the HPA* "coarse graph", NV12): junctions,
   anchors and door approach nodes, polyline edges with walk-metre costs. ≤ 1.5 MiB Vvardenfell; always resident.
   "Route graph".
@@ -121,6 +121,7 @@ swap for rebuilds (`add_tile` over a resident key, NV10b; no TileCache API), and
 wall, in-tile polygon, or portal to a tile side). The bake's adapter seam (`sf_nav_bake`, built NV4a):
 
 Methods `regions`, `tile_input` (`TileInput` + `DoorVolume`s), `links`, + `water_bodies` (NV13c); the code is the reference.
+NV9 adds the class envelope hook and the link events ("Links").
 
 A **test double** (`GridBackend`: a walkable-cell grid with exact A*) lives in `sf_nav` so the core, `sf_ai` and the
 adapter test without Recast. Queries the AI calls (all take the actor's worldspace; there is no global
@@ -413,14 +414,50 @@ memory and query cost). HZD's `min_safe_height` = `floor` + the class's clearanc
   `FixedUpdate` beside the player's move, with render interpolation like the player's tick view; before AI6. On the
   Deck that is two ticks per 30 fps frame: tier 1 avoidance may run every other tick, staggered by `ActorKey`.
 
+## Links (off-mesh links and traversal, NV9a-c; spec NV0c 2026-11-26)
+
+Roadmap decisions 5, 6, 8, 15. `OffMeshLink { id: NavLinkId, a, b, radius, two_way, kind: TraverseKind, area, classes }`
+(a Detour off-mesh connection) lives in the tile holding `a` as an input of its build, so a rebuild re-includes it;
+state flips its polygon (`set_poly_state`, `DISABLED`) at a tick boundary. Ends stay under a tile apart. Kinds:
+`Walk` (pathgrid edges the mesh misses, NV9d), `Drop` (one-way), `Jump`, `Vault`, `Mantle`, `Climb` (auto per class,
+NV9b), `Ladder` (IN43 slot, NV9c), `Door(LinkId)` (`WorldGraph` hops only, never in a tile); `Swim` goes (decision 8).
+
+**Traversal (NV9a).** Within `radius` of `a` the corridor steps over the link (`move_over_offmesh_connection`),
+pauses, and nav emits `NavEvent::LinkReached { actor, link, kind, from, to }`. The operator (AI33; ladders
+`UseSlot(ladder)`) owns the mover through `sf_action`, the player's own states; nav never moves the body. It answers
+`NavCmd::LinkDone` (corridor resumes, NV8 `repair_start`) or `LinkFailed { reason: Timeout | Blocked | Envelope |
+Disabled | Interrupted }`, timeout `ai.nav.link.timeout_s` + `ai.nav.link.timeout_per_m_s` × length. The first three
+add `ai.nav.link.fail_cost_m` to that link for that actor only (a weak mover never bars a strong one), decaying over
+`ai.nav.link.fail_decay_s`, via the per-query filter; `ai.nav.link.max_fails` in the decay excludes it; then repath.
+A link disabled mid-traversal sends `NavEvent::LinkDisabled` (abort before the warp starts, else finish); a tile swap
+waits for the release. **Stuck monitor**: paused from `LinkReached` to the answer, restarted empty. **Net**: host-only,
+at tick boundaries in (`ActorKey`, `NavLinkId`) order; penalties derived, never saved or sent.
+
+**Auto links (NV9b; UE Navigation Link Generation, Unity drop height / jump distance).** Per class `TraverseEnvelope {
+max_vault, max_mantle, max_climb_up, max_drop, max_jump_gap }`, derived at bake from the class's mover profile by the
+player's own code (`ContextParams::from_mover`: 0.7 / 1.5 / 2.5 h; `max_drop` = the highest fall landed without damage;
+gap from the launch arc), no nav-only numbers; they enter the tile input hash. In `nav.tiles`, border edges in
+(polygon, edge) order are sampled every `ai.nav.link.spacing_m`; each sample seeks clear walkable ground outward
+(input gathered `max_jump_gap` past the border): lower by `max_climb`..`max_drop` = `Drop`, plus the reverse `Mantle` /
+`Climb` within reach; a gap = `Jump`; a wall ≤ `max_vault` = `Vault`. Same kind and landing polygon within
+`ai.nav.link.dedupe_m` = dropped; `ai.nav.link.max_per_tile` keeps the earliest. **Tests** (synthetic ledges): exact
+links for each limit ± 1 cm per class, a blocked landing, a straight ledge, permuted input, a rebuilt tile.
+
+**Interaction links (NV9c).** A ladder def (IN43, Bottom and Top entrances) becomes a two-way `Ladder` link between
+the approach points, from the cooked defs the adapter places (`links()`); its `WorldChange` flips it like a door.
+
+**Tunables** (Guess): `ai.nav.link.timeout_s` 4 s (0.5-30), `ai.nav.link.timeout_per_m_s` 0.5 s/m (0-5),
+`ai.nav.link.fail_cost_m` 50 m (0-1000), `ai.nav.link.fail_decay_s` 60 s (5-600), `ai.nav.link.max_fails` 2 (1-10),
+`ai.nav.link.spacing_m` 1 m (0.25-5), `ai.nav.link.dedupe_m` 0.5 m (0.1-3), `ai.nav.link.max_per_tile` 64 (0-1024).
+
 ## Doors
 
 - Each link end has an **approach point** (adapter: nearest walkable point in front of the door, from pathgrid nodes
   in Morrowind) inside its worldspace's mesh; the `WorldGraph` edge joins the two.
 - Seamless vs classic is a **host world rule** (`world.doors`, saved with the world; pack default, per-door data
   overrides), never a graphics option, because it changes sight, witnesses and crossings (seamless research §7 (i)).
-- **Seamless link** (portal-ready, seamless on): the traverse operator opens the door through activation rules, waits
-  for `passable`, walks through the `Gate`, and closes a door it found shut; `InWorldspace` changes at the crossing.
+- **Seamless link** (portal-ready, seamless on): kind `Door(LinkId)` ("Links"), operator AI12 `Traverse` (ai.md
+  "Executors"; closes a door it found shut); `InWorldspace` changes at the crossing.
 - **Fade-only link** (seamless off, trapdoors, one-way): the actor takes it only when no player can see either end
   (no viewer within the adapter's `door_watch_radius` with LOS to the end); otherwise it waits nearby or re-routes.
   This is Bethesda's out-of-view door teleport and works with seamless disabled for the whole pack.
@@ -470,6 +507,7 @@ fade links only unseen; Bethesda's out-of-view teleport). Full table and sources
 | Swimmers | OpenMW swim-flagged polys; UE/Unity surface navmesh | swim polys + water-body band | **match**, **ahead** on depth |
 | Rebuild | UE dynamic generation + invokers; Unity async `UpdateNavMesh`; Detour TileCache; OpenMW async + disk cache | bake step per tile on a worker, swap, cache | **match** UE, OpenMW |
 | Stuck | UE `UPathFollowingComponent` blocked detection; Bethesda unseen teleport | window → repath → repair → snap → fail | **match** |
+| Links | UE Smart Links + link generation; Unity `NavMeshLink`, `autoTraverseOffMeshLink = false`; OpenMW (`navigatorimpl.cpp` `4e718b5`): door and pathgrid links only | handoff to the player's moves, auto links per envelope | **match**; **ahead** of OpenMW |
 
 **Route graph (NV12):** coarse routing on a road/path graph with lane-location progress, as UE ZoneGraph + Mass LOD and
 GTA V/RDR2 path nodes, not tile-border HPA*; tier 0 advances by time (Bethesda unloaded Travel packages, KCD2), ahead

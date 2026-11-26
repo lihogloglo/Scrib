@@ -342,3 +342,15 @@ Canonical technique, last line; Budgets residency row:
 avoidance, and take only `PathCorridor` and `LocalBoundary` from Detour.
 
 | Tile residency | ≤ 64 MiB | ≤ 128 MiB |
+
+## Moved from nav.md 2026-11-26 (NV0c)
+
+Replaced by nav.md "Links" (owner decisions row, Data model, Doors):
+
+| Owner 2026-11-11: NPCs climb, mantle and vault with the player's own moves (guards can follow onto roofs); later, after NV9: bake-time auto links from ledges in the mover's mantle/vault/drop envelopes, per class (UE NavLink generation, Unity auto off-mesh links) | NV9b (planned) |
+{ ws, class, region, x, z }`, `OffMeshLink { id: NavLinkId, a, b, radius, two_way, kind: TraverseKind, area, classes
+}` (`TraverseKind::Door(LinkId)` with NV11), `NavPoint { loc, poly }`. Serde except the backend-opaque `PolyRef` /
+- **Off-mesh links** (bake, per worldspace): pathgrid edges the mesh misses, authored jumps, drops, ladders, ledges
+  (`sf_interaction` or adapter data), door approach links.
+- **Seamless link** (portal-ready, seamless on): the traverse operator opens the door through activation rules, waits
+  for `passable`, walks through the `Gate`, and closes a door it found shut; `InWorldspace` changes at the crossing.

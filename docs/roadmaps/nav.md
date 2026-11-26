@@ -87,7 +87,7 @@ Vvardenfell [5]. **Classic** uses the same navigation (OpenMW navigates by navme
 |---|---|---|---|---|
 | NV0b | nav.md: Goal (non-goal removed), "Volumes" (field, water bodies, queries), "Runtime rebuild", stuck monitor | docs | - | doccheck; done 2026-11-26 |
 | NV0b1 | nav.md "Route graph" section (NV12 spec) (**done 2026-11-26**) | docs | - | doccheck |
-| NV0c | nav.md "Links": traversal contract (handoff event, failure cost), auto drop/jump envelopes, interaction slots | docs | NV0b | doccheck |
+| NV0c | nav.md "Links": traversal contract (handoff event, failure cost), auto drop/jump envelopes, interaction slots | docs | NV0b | doccheck; done 2026-11-26 |
 | NV0d | ai-adapter.md "Navigation": PGRD road chains, water bodies, fliers/swimmers classes, PGRD fallback removal | docs | NV0b | doccheck; done 2026-11-26 |
 | NV-R1 | Research (Sonnet): `navmesh-rs` 0.2.6 changelog vs our patch; HZD field details; Detour tile rebuild cost at our cell size | research | - | note + ledger line |
 
