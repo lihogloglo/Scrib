@@ -254,8 +254,10 @@ At Medium and Low, `ppr` drops with the internal resolution and the distances sh
 standalone indirect pass in the eidolon pattern (own pipeline, our own alpha mask and shadow variants); see "Open
 questions".
 
-**Tripped (BW-2, 2026-11-26):** stand minus empty = 13.97 ms GPU against the 3.5 ms limit, so BW-3 does not start
-and the budget above is not met by the bench's content. Two rows broke: preprocess (4.2×, the slot path's own
+**Tripped (BW-2, 2026-11-26; BW-2b the same day priced the fixes: "As built" BW-2b):** stand minus empty = 13.97 ms
+GPU (14.96 with window focus) against the 3.5 ms limit, so BW-3 does not start and the budget above is not met by
+the bench's content. With no alpha test and no cascade casting the same slots cost 1.84 ms: the content assumptions
+of the two fill rows were wrong, not the slot path. Two rows broke: preprocess (4.2×, the slot path's own
 bookkeeping) and raster + fragment (10×, the fill of alpha-masked quads lit by `StandardMaterial` in the camera and
 three cascades). Materialize holds. The preset table above is the unmeasured model. What is known and what is not:
 "Risks".
@@ -440,19 +442,65 @@ four `per_view_shadow_pass` spans (cascade 0 holds nothing from 60 m up).
   crates opt-level 1, dependencies 3): the render-busy rise of 0.5 to 2.3 ms with the slot count (model: ≤ 0.2 ms)
   needs a release run before it counts.
 
+### BW-2b: the standard fixes, priced (2026-11-26)
+
+The `stand` arm takes per-batch variants (`fill.rs`, `main.rs`): `stand[/trees[.mod..]][/cards[.mod..]]`, only the
+named batches are spawned; `.unlit` = `StandardMaterial::unlit`, `.opaque` = `AlphaMode::Opaque` in place of
+`Mask`, `.noshadow` = `NotShadowCaster` on the batch. No arguments still runs the BW-2 list. One run of eleven arms
+(17:48, 177 s, **focus kept, no build running**: other lanes' builds were held by a build freeze); lines in
+`bevyrrowind/benchmarks/runs/bw2_ceiling/run2b.log`. GPU ms, span medians minus `empty` (0.70 ms); bookkeeping =
+materialize + preprocess. Industry sources: `superfargoth/docs/research/far-vegetation-fill-2026-11-26.md`.
+
+| Arm | whole frame | bookkeeping | prepasses | shadows | main opaque | Stands for |
+|---|---|---|---|---|---|---|
+| `stand` | **14.96** | 1.25 | 1.73 | 5.67 | 5.61 | BW-2's worst case, this time with focus (BW-2 said 13.97) |
+| `stand/trees` | 7.58 | 0.02 | 0.78 | 4.33 | 2.15 | the 1,973 mesh trees alone |
+| `stand/trees.opaque` | 3.44 | 0.02 | 0.29 | 2.74 | 0.10 | geometry leaves, no alpha test (Chlorophyll: trees fully triangles) |
+| `stand/trees.noshadow` | 3.07 | 0.01 | 0.78 | 0 | 2.17 | upper bound of what a shadow LOD or proxy for near trees can save |
+| `stand/cards` | 6.25 | 1.20 | 0.98 | 1.24 | 2.73 | the 179,901 cards alone |
+| `stand/cards.unlit` | 5.08 | 1.20 | 1.00 | 1.29 | 1.29 | a cheap fragment shader (the cheap end of an impostor shader) |
+| `stand/cards.noshadow` | 4.62 | 0.83 | 1.00 | 0 | 2.79 | far LODs and impostors cast into no cascade (UE per-LOD cast shadow off; far shadows from another system) |
+| `stand/cards.unlit.noshadow` | 3.46 | 0.83 | 1.00 | 0 | 1.42 | both |
+| `stand/cards.opaque` | 1.80 | 1.20 | 0.23 | 0.29 | 0.16 | no discard: the depth-only pipeline and early Z (what a mask-only prepass plus a depth-equal main pass, or an opaque shadow proxy, aims at) |
+| `stand/trees.opaque/cards.unlit.noshadow` | 6.92 | 0.86 | 1.25 | 2.75 | 1.46 | a combined set; equals the sum of its two halves within 0.02 ms |
+
+- **The alpha test is the cost, not the slot path.** Bevy 0.20 runs a `Mask` material's fragment shader in the depth
+  prepass, in every cascade and again in the main pass, which compares `GreaterEqual` and discards again; only
+  materials that never discard get the depth-only pipeline (research doc, part 2, with `path:line`). Without the
+  discard the cards' fill falls from 4.95 to 0.67 ms and the trees' prepass + main from 2.93 to 0.40 ms.
+- **The slot path meets its model once the content has no alpha test and casts nothing:** trees opaque without
+  shadows 0.69 ms + cards opaque without shadows 1.15 ms = **1.84 ms** (model 1.75). Derived from measured spans
+  (shadow spans drop to zero with `noshadow`; the preprocess drops 0.37 ms), not run as one arm.
+- **Sets under the 3.5 ms limit** (sums of measured halves; the halves add up, see the last row): opaque trees
+  without shadows + opaque cards with shadows = 2.49; + opaque cards without shadows = 1.84. **Not under:** any set
+  that keeps the trees' shadows as full meshes (opaque trees alone 3.44, of which 2.74 is three cascades of 2.9 M
+  triangles), and any set that keeps masked cards as they are (best 3.46 for the cards alone).
+- **Bookkeeping:** 1.25 ms for 254 k slots with five views, 0.83-0.86 ms when the cards are in the camera view only
+  (model 0.55): the camera view costs ~0.5 ms, each cascade ~0.09 ms.
+- **Not priced (no arm):** a trimmed card hull (Persson, Avalanche: a 4- to 8-vertex hull keeps 52-60 % of the
+  quad's area), a mask-only prepass with a depth-equal main pass that does not discard (UE
+  `r.EarlyZPassOnlyMaterialMasking`; needs a material that specialises its main pipeline, or a patch to the vendored
+  `bevy_pbr`: check which before BW-4), a shadow LOD for near trees (between 0 and 2.74 ms), the real impostor
+  shader (frame blend and parallax cost more per pixel than the flat card). Hashed alpha and alpha to coverage fix
+  quality, not fill, and alpha to coverage needs MSAA (off on the DLSS path).
+- **Expected for the design below, not measured:** T0 with geometry leaves and a shadow LOD ~0.7 ms + its shadows;
+  T1 impostors out of the cascades with a masked prepass and a depth-equal main pass ~2.0 ms (0.83 bookkeeping, 1.0
+  prepass, ~0.2 main), ~1.6 ms with a trimmed hull; an opaque shadow proxy for T1 inside the shadow range ~0.3 ms
+  (the opaque cards' shadow spans). About 2.5-3.3 ms at stand density: under the stop limit, over the 2.0 ms budget.
+
 ## Risks and open questions
 
-- **Slot path ceiling: measured, stop rule tripped** (BW-2, 2026-11-26). `materialize` is as modelled (1.3 ns per
-  slot). The preprocess is 0.8 ns per slot of capacity per view: 1.04 ms for 254 k slots and 5 views, 4.2× the model;
-  the two together are 1.37 ms against 0.55. The fallback is a standalone indirect pass (own pipeline), which means
-  our own alpha-mask and shadow pipelines, a rule 4 cost. It replaces the per-view capacity cost; it does not by
-  itself remove the fill cost of the next bullet. BW-3 waits for the owner's decision.
-- **Alpha overdraw: measured, the larger problem** (BW-2). Prepass + main opaque at stand density = 6.4 ms (the
-  threshold was 0.6), shadow cascades 1-3 another 5.9 ms. The near trees are ≥ 7.3 ms of it, the cards ≤ 5.0 ms.
-  Options for T0: geometry leaves (Chlorophyll F17: trees fully triangles, no alpha) or hashed alpha (Wyman & McGuire
-  2017). For T1: the impostor shader of BW-4 in place of `StandardMaterial`, and cards kept out of the near cascades.
-  Open: the bench cannot say how much of the fill each option buys back; that needs arms it does not have (stand's
-  trees and cards apart, a cheap-shader arm, cards without shadows).
+- **Slot path ceiling: the path holds, the content did not** (BW-2, BW-2b, 2026-11-26). The stop rule tripped on
+  `stand` (14.96 ms with focus). BW-2b shows why: with no alpha test and nothing cast into the cascades the same
+  254 k slots cost 1.84 ms (model 1.75); bookkeeping is 0.83-1.25 ms (model 0.55). The standalone indirect pass
+  (own alpha-mask and shadow pipelines, a rule 4 cost) would buy back part of that bookkeeping only, so it is **not**
+  the recommended way out. BW-3 still waits for the owner's decision.
+- **Alpha test and cascade casting: the real cost, with standard fixes** (BW-2b table). (1) T1 impostors cast into no
+  cascade; shadows past the mesh tier come from an opaque proxy (HZD keeps shadow casters apart from visual meshes;
+  UE far LODs cast nothing and far shadows come from another system). (2) T0 leaves are geometry, not alpha cards
+  (Chlorophyll F17). (3) Near trees cast through a shadow LOD (2.74 ms as full meshes). (4) The impostor draws with a
+  masked prepass and a main pass that neither discards nor overdraws (depth-equal), on a trimmed hull. Open: (3) and
+  (4) are not priced by an arm; the look of far tree shadows from a proxy is the owner's to judge.
 - **Render-thread CPU per slot** (BW-2, dev profile, not conclusive): render busy rose 0.5 ms at 10⁵ slots and
   2.3 ms at 10⁶ (model ≤ 0.2 ms). Needs a release run.
 - **Meshlets for T2 only.** The canopy is opaque, which is the case where Bevy meshlets work. Re-check at BW-7: the DX12

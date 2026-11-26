@@ -8,8 +8,10 @@
 //!
 //! ```text
 //! cargo run -p sf_bigworld_bevy --example forest_ceiling -- [options]
-//!   --arms <a,b,..>      arms in order: empty, stand, tree:<n> or card:<n> (default
+//!   --arms <a,b,..>      arms in order: empty, stand, stand/<part>.., tree:<n> or card:<n> (default
 //!                        empty,card:100000,card:300000,tree:100000,tree:300000,stand,card:1000000,tree:1000000)
+//!                        a stand part is trees or cards plus any of .unlit .opaque .noshadow: only the named
+//!                        batches, each in its look (unlit material, AlphaMode::Opaque, NotShadowCaster)
 //!   --arm <spec>         one arm (same as --arms <spec>)
 //!   --warm-s <s>         warm-up per arm, at least 30 frames (default 4)
 //!   --measure-s <s>      measured time per arm, at least --min-frames frames (default 12)
@@ -22,6 +24,8 @@
 //! No controls, no UI. Lines (stdout, `key=value`): one header (adapter, limits, settings), per arm `start`,
 //! `result` and one `pass=` line per GPU span, `warn=limit` before a batch over a binding limit, and `done` last.
 //! `start` and `result` give `slots=` (capacity) and `active=`; `start` adds `dropped=` when a tier overflowed.
+//!
+//! BW-2b run (the fill split of `stand`): `--arms empty,stand,stand/trees,stand/cards,stand/cards.unlit,stand/cards.noshadow,stand/cards.opaque,stand/cards.unlit.noshadow,stand/trees.opaque,stand/trees.noshadow,stand/trees.opaque/cards.unlit.noshadow`.
 #![allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 
 mod bench;
@@ -33,7 +37,7 @@ mod upload;
 use bevy::camera::Hdr;
 use bevy::core_pipeline::prepass::{DepthPrepass, MotionVectorPrepass};
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
-use bevy::light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, GlobalAmbientLight};
+use bevy::light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, GlobalAmbientLight, NotShadowCaster};
 use bevy::pbr::gpu_instance_batch::{GpuBatchedMesh3d, GpuInstanceBatchPlugin};
 use bevy::prelude::*;
 use bevy::render::diagnostic::RenderDiagnosticsPlugin;
@@ -41,7 +45,7 @@ use bevy::render::occlusion_culling::OcclusionCulling;
 use bevy::window::{PresentMode, WindowResolution};
 
 use bench::{Bench, BenchConfig, advance, count_focus, parse_arms, print_header, sample_frame};
-use fill::{Arm, MeshKind, StandView};
+use fill::{Arm, BatchLook, MeshKind, StandView};
 use sf_diag_bevy::{DiagCounters, FramePhasePlugin};
 use upload::{CeilingUploadPlugin, CeilingUploads, CeilingWrite};
 
@@ -130,12 +134,20 @@ fn parse_args() -> Result<Args, String> {
 #[derive(Component)]
 struct CeilingBatch;
 
-/// The bench's shared meshes and material, kept so arms can be respawned.
+/// The bench's shared meshes and materials, kept so arms can be respawned.
 #[derive(Resource)]
 struct CeilingAssets {
     tree: Handle<Mesh>,
     card: Handle<Mesh>,
-    material: Handle<StandardMaterial>,
+    /// The leaf material in each look, indexed `[opaque][unlit]` ([`BatchLook`]); `[0][0]` is the default.
+    materials: [[Handle<StandardMaterial>; 2]; 2],
+}
+
+impl CeilingAssets {
+    /// The material of a batch's look (`noshadow` is a component, not a material).
+    fn material(&self, look: BatchLook) -> Handle<StandardMaterial> {
+        self.materials[usize::from(look.opaque)][usize::from(look.unlit)].clone()
+    }
 }
 
 /// Camera height.
@@ -240,36 +252,43 @@ fn setup_scene(
     ));
 
     let mask = images.add(meshes::leaf_mask_image());
-    let material = materials.add(StandardMaterial {
-        base_color_texture: Some(mask),
-        alpha_mode: AlphaMode::Mask(0.5),
-        double_sided: true,
-        cull_mode: None,
-        perceptual_roughness: 0.9,
-        metallic: 0.0,
-        ..default()
-    });
+    let mut leaf = |opaque: bool, unlit: bool| {
+        materials.add(StandardMaterial {
+            base_color_texture: Some(mask.clone()),
+            alpha_mode: if opaque { AlphaMode::Opaque } else { AlphaMode::Mask(0.5) },
+            unlit,
+            double_sided: true,
+            cull_mode: None,
+            perceptual_roughness: 0.9,
+            metallic: 0.0,
+            ..default()
+        })
+    };
+    let materials = [[leaf(false, false), leaf(false, true)], [leaf(true, false), leaf(true, true)]];
     commands.insert_resource(CeilingAssets {
         tree: meshes.add(meshes::tree_mesh()),
         card: meshes.add(meshes::card_mesh()),
-        material,
+        materials,
     });
 }
 
-/// Spawns an arm's batches and queues each batch's bytes as one run at slot 0.
+/// Spawns an arm's batches, each in its look, and queues each batch's bytes as one run at slot 0.
 fn spawn_arm(commands: &mut Commands, assets: &CeilingAssets, uploads: &mut CeilingUploads, arm: Arm) {
     for batch in arm.batches {
         let mesh = match batch.kind {
             MeshKind::Tree => assets.tree.clone(),
             MeshKind::Card => assets.card.clone(),
         };
-        let entity = commands
-            .spawn((
-                GpuBatchedMesh3d { mesh, max_capacity: batch.capacity, ranges: Vec::new() },
-                MeshMaterial3d(assets.material.clone()),
-                CeilingBatch,
-            ))
-            .id();
+        let mut entity = commands.spawn((
+            GpuBatchedMesh3d { mesh, max_capacity: batch.capacity, ranges: Vec::new() },
+            MeshMaterial3d(assets.material(batch.look)),
+            CeilingBatch,
+        ));
+        if batch.look.noshadow {
+            // The vendored batch path leaves `NotShadowCaster` batches out of every light's visible list.
+            entity.insert(NotShadowCaster);
+        }
+        let entity = entity.id();
         uploads.writes.push(CeilingWrite { entity, first_slot: 0, bytes: batch.bytes });
     }
 }

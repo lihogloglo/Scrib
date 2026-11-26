@@ -21,7 +21,8 @@ with no build time or crates taken from other lanes. **Owner go for Stage A (202
 - **Core built, nothing draws in game yet.** `sf_bigworld` (Bevy-free) plans tiles and tiers and packs instances;
   `sf_bigworld_bevy` holds only the BW-2 bench example.
 - **The ceiling bench tripped the stop rule** (BW-2, 2026-11-26): the worst-case stand costs 13.97 ms GPU on the
-  slot path with plain alpha-masked PBR trees and cards, against a 2.0 ms budget. Stage B waits for the owner.
+  slot path with plain alpha-masked PBR trees and cards, against a 2.0 ms budget. BW-2b priced the standard fixes:
+  the same slots cost 1.84 ms once nothing is alpha-tested or cast into the cascades. Stage B waits for the owner.
 - Generated worlds draw every scattered tree as an entity: 7.21 M flora ran at 26 fps (owner run, 2026-11-19). The
   static scene, precombine and far field are off there (scaffold `WorldgenPlacementStatics`).
 - Placement exists and is deterministic per 256 m tile (`sf_worldgen::scatter`).
@@ -55,6 +56,11 @@ with no build time or crates taken from other lanes. **Owner go for Stage A (202
   **Stop rule tripped:** `stand` costs 13.97 ms GPU over the empty scene (limit 3.5; model 1.75): fill of alpha-masked
   PBR quads 12.4 ms, preprocess 1.04 ms (4.2×), materialize 0.33 ms (holds). BW-3 waits for the owner's decision
   (spec "Cost model", "As built" BW-2, "Risks").
+- [x] **BW-2b** (2026-11-26, meta GO) the standard fixes priced on the same bench (`stand` variants: trees / cards
+  apart, unlit, opaque, no shadow casting; one clean run). The alpha test and the cascades are the cost, not the slot
+  path: opaque content that casts nothing costs 1.84 ms (model 1.75). Recommended: keep the slot path, no standalone
+  pass; impostors out of the cascades with an opaque shadow proxy, geometry leaves and a shadow LOD at T0, a
+  depth-equal main pass for the impostor (spec "As built" BW-2b, "Risks").
 
 **Stage B: a forest in a framework example scene** (owner looks, synthetic content).
 - [p] **BW-3** GPU producer. Depends on BW-1, BW-2. Verify: GPU twin test.

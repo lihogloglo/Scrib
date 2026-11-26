@@ -220,8 +220,55 @@ pub fn slot_bytes(placed: &[Placed], kind: MeshKind, viewer: Vec3) -> Vec<u8> {
     bytes
 }
 
+/// The look of one batch (BW-2b): the bench's leaf material (`StandardMaterial`, `AlphaMode::Mask(0.5)`, lit, casting
+/// shadows) unless a flag says otherwise. `Default` is that material.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct BatchLook {
+    /// `unlit: true` on the material (a cheap fragment shader).
+    pub unlit: bool,
+    /// `AlphaMode::Opaque` in place of the mask (same texture as colour, no discard: early Z works).
+    pub opaque: bool,
+    /// `NotShadowCaster` on the batch entity (it leaves every shadow pass).
+    pub noshadow: bool,
+}
+
+impl BatchLook {
+    /// [`Default`] as a `const`.
+    pub const DEFAULT: Self = Self { unlit: false, opaque: false, noshadow: false };
+
+    /// The modifiers of a `stand` part, in canonical order (`.unlit.opaque.noshadow`).
+    pub const MODIFIERS: [&str; 3] = ["unlit", "opaque", "noshadow"];
+
+    fn flags(self) -> [bool; 3] {
+        [self.unlit, self.opaque, self.noshadow]
+    }
+
+    fn flag_mut(&mut self, modifier: &str) -> Option<&mut bool> {
+        match modifier {
+            "unlit" => Some(&mut self.unlit),
+            "opaque" => Some(&mut self.opaque),
+            "noshadow" => Some(&mut self.noshadow),
+            _ => None,
+        }
+    }
+
+    /// `.unlit.opaque.noshadow`, each only when set; empty for the default look.
+    fn suffix(self) -> String {
+        let mut suffix = String::new();
+        for (m, on) in Self::MODIFIERS.iter().zip(self.flags()) {
+            if on {
+                suffix.push('.');
+                suffix.push_str(m);
+            }
+        }
+        suffix
+    }
+}
+
 /// One batch of an arm: its mesh, its slot capacity, how many slots are active (the first ones), how many instances
-/// did not fit, and the bytes written at slot 0 (the whole capacity: inactive slots are zeroed, never garbage).
+/// did not fit, the bytes written at slot 0 (the whole capacity: inactive slots are zeroed, never garbage) and its
+/// look.
 #[derive(Clone, Debug)]
 pub struct BatchSpec {
     pub kind: MeshKind,
@@ -229,15 +276,44 @@ pub struct BatchSpec {
     pub active: u32,
     pub dropped: u32,
     pub bytes: Vec<u8>,
+    pub look: BatchLook,
 }
 
 impl BatchSpec {
     /// The first `capacity` of `placed` (nearest first) as active slots, then zeroed slots up to `capacity`.
-    fn fixed(kind: MeshKind, placed: &[Placed], capacity: u32, viewer: Vec3) -> Self {
+    fn fixed(kind: MeshKind, placed: &[Placed], capacity: u32, viewer: Vec3, look: BatchLook) -> Self {
         let keep = placed.len().min(capacity as usize);
         let mut bytes = slot_bytes(&placed[..keep], kind, viewer);
         bytes.resize(capacity as usize * SLOT_BYTES, 0);
-        Self { kind, capacity, active: keep as u32, dropped: (placed.len() - keep) as u32, bytes }
+        Self { kind, capacity, active: keep as u32, dropped: (placed.len() - keep) as u32, bytes, look }
+    }
+}
+
+/// Which batches a `stand` arm spawns and the look of each (`None` = not spawned).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StandParts {
+    pub trees: Option<BatchLook>,
+    pub cards: Option<BatchLook>,
+}
+
+impl StandParts {
+    /// Plain `stand`: both batches, default look.
+    pub const PLAIN: Self = Self { trees: Some(BatchLook::DEFAULT), cards: Some(BatchLook::DEFAULT) };
+
+    /// The canonical spec string: `stand` when plain, else `stand/trees<mods>/cards<mods>` with the named parts only.
+    pub fn name(self) -> String {
+        if self == Self::PLAIN {
+            return STAND_ARM.to_owned();
+        }
+        let mut name = STAND_ARM.to_owned();
+        for (part, look) in [("trees", self.trees), ("cards", self.cards)] {
+            if let Some(look) = look {
+                name.push('/');
+                name.push_str(part);
+                name.push_str(&look.suffix());
+            }
+        }
+        name
     }
 }
 
@@ -253,14 +329,15 @@ impl Arm {
     pub fn sweep(kind: MeshKind, n: u32) -> Self {
         let placed = nearest_instances(n);
         let bytes = slot_bytes(&placed, kind, Vec3::ZERO);
-        let batch = BatchSpec { kind, capacity: n, active: n, dropped: 0, bytes };
+        let batch = BatchSpec { kind, capacity: n, active: n, dropped: 0, bytes, look: BatchLook::DEFAULT };
         Self { name: format!("{}:{n}", kind.label()), batches: vec![batch] }
     }
 
     /// The cost model's worst case seen from `view`: a tree batch of every tree inside the mesh tier and a card batch
     /// of every tree inside the impostor tier that can cast into a sun cascade (within [`SHADOW_RANGE_M`]) or is in
-    /// the frustum, at the tiers' capacities. A tree in a crossfade band is in both batches.
-    pub fn stand(view: &StandView) -> Self {
+    /// the frustum, at the tiers' capacities. A tree in a crossfade band is in both batches. Only the batches `parts`
+    /// names are spawned, each with its look; the arm is named [`StandParts::name`].
+    pub fn stand(view: &StandView, parts: StandParts) -> Self {
         // The High-preset defaults of `bigworld.mesh.switch_px`, `bigworld.aggregate.switch_px`, `bigworld.fade_band`.
         let bands = Bands::new(SPECIES, ViewScale::new(INTERNAL_HEIGHT_PX, view.fov_y_rad), BandSettings::default());
         let reach = bands.impostor_end_m.max(bands.mesh_end_m) * forest().scale[1];
@@ -285,13 +362,9 @@ impl Arm {
             }
         }
         let viewer = view.position();
-        Self {
-            name: STAND_ARM.to_owned(),
-            batches: vec![
-                BatchSpec::fixed(MeshKind::Tree, &trees, STAND_TREE_CAPACITY, viewer),
-                BatchSpec::fixed(MeshKind::Card, &cards, STAND_CARD_CAPACITY, viewer),
-            ],
-        }
+        let tree = parts.trees.map(|look| BatchSpec::fixed(MeshKind::Tree, &trees, STAND_TREE_CAPACITY, viewer, look));
+        let card = parts.cards.map(|look| BatchSpec::fixed(MeshKind::Card, &cards, STAND_CARD_CAPACITY, viewer, look));
+        Self { name: parts.name(), batches: tree.into_iter().chain(card).collect() }
     }
 
     /// Slots of every batch together.
@@ -322,8 +395,10 @@ pub enum ArmSpec {
     Empty,
     /// One batch of `n` slots of one mesh ([`Arm::sweep`]).
     Sweep(MeshKind, u32),
-    /// A tree batch and a card batch, the cost model's worst case ([`Arm::stand`]).
+    /// A tree batch and a card batch, the cost model's worst case ([`Arm::stand`]), default look.
     Stand,
+    /// `stand/<part>..`: only the named batches of the worst case, each with its look (BW-2b).
+    StandParts(StandParts),
 }
 
 impl ArmSpec {
@@ -332,12 +407,45 @@ impl ArmSpec {
         match self {
             Self::Empty => Arm { name: EMPTY_ARM.to_owned(), batches: Vec::new() },
             Self::Sweep(kind, n) => Arm::sweep(kind, n),
-            Self::Stand => Arm::stand(view),
+            Self::Stand => Arm::stand(view, StandParts::PLAIN),
+            Self::StandParts(parts) => Arm::stand(view, parts),
         }
     }
 }
 
-/// `empty`, `stand`, `tree:<n>` or `card:<n>` with `n > 0`, parsed without building anything.
+/// The parts after `stand/`: `/`-separated, each `trees` or `cards` then `.unlit`, `.opaque`, `.noshadow` in any order,
+/// each batch and each modifier of a part at most once.
+fn parse_stand_parts(spec: &str, rest: &str) -> Result<StandParts, String> {
+    let mut parts = StandParts { trees: None, cards: None };
+    for part in rest.split('/') {
+        let mut words = part.split('.');
+        let batch = words.next().unwrap_or_default();
+        let slot = match batch {
+            "trees" => &mut parts.trees,
+            "cards" => &mut parts.cards,
+            "" => return Err(format!("arm `{spec}`: empty part (each `/` is followed by trees or cards)")),
+            _ => return Err(format!("arm `{spec}`: unknown part `{batch}` (trees or cards)")),
+        };
+        if slot.is_some() {
+            return Err(format!("arm `{spec}`: part `{batch}` named twice"));
+        }
+        let mut look = BatchLook::DEFAULT;
+        for modifier in words {
+            let flag = look.flag_mut(modifier).ok_or_else(|| {
+                format!("arm `{spec}`: unknown modifier `.{modifier}` on `{batch}` (unlit, opaque or noshadow)")
+            })?;
+            if *flag {
+                return Err(format!("arm `{spec}`: modifier `.{modifier}` repeated on `{batch}`"));
+            }
+            *flag = true;
+        }
+        *slot = Some(look);
+    }
+    Ok(parts)
+}
+
+/// `empty`, `stand`, `stand/<part>..` (see [`parse_stand_parts`]), `tree:<n>` or `card:<n>` with `n > 0`, parsed
+/// without building anything.
 pub fn parse_spec(spec: &str) -> Result<ArmSpec, String> {
     if spec == EMPTY_ARM {
         return Ok(ArmSpec::Empty);
@@ -345,9 +453,18 @@ pub fn parse_spec(spec: &str) -> Result<ArmSpec, String> {
     if spec == STAND_ARM {
         return Ok(ArmSpec::Stand);
     }
+    if let Some(rest) = spec.strip_prefix("stand/") {
+        return parse_stand_parts(spec, rest).map(ArmSpec::StandParts);
+    }
+    if spec.contains('.') {
+        return Err(format!(
+            "arm `{spec}`: look modifiers (.unlit, .opaque, .noshadow) apply only to stand parts \
+             (stand/trees.<modifier>, stand/cards.<modifier>)"
+        ));
+    }
     let (kind, n) = spec
         .split_once(':')
-        .ok_or_else(|| format!("arm `{spec}`: expected empty, stand, tree:<n> or card:<n>"))?;
+        .ok_or_else(|| format!("arm `{spec}`: expected empty, stand, stand/<part>.., tree:<n> or card:<n>"))?;
     let kind = match kind {
         "tree" => MeshKind::Tree,
         "card" => MeshKind::Card,
@@ -360,7 +477,8 @@ pub fn parse_spec(spec: &str) -> Result<ArmSpec, String> {
     Ok(ArmSpec::Sweep(kind, n))
 }
 
-/// `empty`, `stand`, `tree:<n>` or `card:<n>` with `n > 0`, built ([`parse_spec`] then [`ArmSpec::build`]).
+/// `empty`, `stand`, `stand/<part>..`, `tree:<n>` or `card:<n>` with `n > 0`, built ([`parse_spec`] then
+/// [`ArmSpec::build`]).
 pub fn parse_arm(spec: &str, view: &StandView) -> Result<Arm, String> {
     parse_spec(spec).map(|s| s.build(view))
 }
@@ -524,5 +642,116 @@ mod tests {
 
         let again = ArmSpec::Stand.build(&view);
         assert!(arm.batches.iter().zip(&again.batches).all(|(a, b)| a.bytes == b.bytes && a.active == b.active));
+    }
+
+    /// The BW-2b arm list (the `--arms` doc line in `main.rs`), every `stand` variant in it canonical.
+    const BW2B_STAND_ARMS: [&str; 10] = [
+        "stand",
+        "stand/trees",
+        "stand/cards",
+        "stand/cards.unlit",
+        "stand/cards.noshadow",
+        "stand/cards.opaque",
+        "stand/cards.unlit.noshadow",
+        "stand/trees.opaque",
+        "stand/trees.noshadow",
+        "stand/trees.opaque/cards.unlit.noshadow",
+    ];
+
+    fn parts(spec: &str) -> StandParts {
+        match parse_spec(spec) {
+            Ok(ArmSpec::StandParts(p)) => p,
+            other => panic!("`{spec}` parsed as {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stand_variants_parse_and_name_themselves() {
+        assert_eq!(parse_spec("stand"), Ok(ArmSpec::Stand));
+        for spec in &BW2B_STAND_ARMS[1..] {
+            assert_eq!(parts(spec).name(), *spec);
+        }
+        let look = |unlit, opaque, noshadow| Some(BatchLook { unlit, opaque, noshadow });
+        assert_eq!(parts("stand/trees"), StandParts { trees: look(false, false, false), cards: None });
+        assert_eq!(parts("stand/cards.opaque"), StandParts { trees: None, cards: look(false, true, false) });
+        assert_eq!(
+            parts("stand/trees.opaque/cards.unlit.noshadow"),
+            StandParts { trees: look(false, true, false), cards: look(true, false, true) }
+        );
+        // Any order of parts and modifiers; the name is canonical.
+        assert_eq!(parts("stand/cards.noshadow.unlit/trees.opaque").name(), "stand/trees.opaque/cards.unlit.noshadow");
+        assert_eq!(parts("stand/cards.opaque.unlit").name(), "stand/cards.unlit.opaque");
+        // Both parts at the default look are plain `stand`.
+        assert_eq!(parts("stand/trees/cards"), StandParts::PLAIN);
+        assert_eq!(StandParts::PLAIN.name(), "stand");
+        let list = format!("empty,{}", BW2B_STAND_ARMS.join(","));
+        assert_eq!(crate::bench::parse_arms(&list).map(|a| a.len()), Ok(11));
+    }
+
+    #[test]
+    fn stand_variants_reject_junk() {
+        for junk in [
+            "stand/",
+            "stand//cards",
+            "stand/cards/",
+            "stand/bush",
+            "stand/Trees",
+            "stand/tree",
+            "stand/trees.shiny",
+            "stand/trees.",
+            "stand/trees..unlit",
+            "stand/trees/trees",
+            "stand/cards.unlit/cards",
+            "stand/cards.unlit.unlit",
+            "stand/trees.opaque.noshadow.opaque",
+            "stand.unlit",
+            "stand.trees",
+            "tree:10.unlit",
+            "card:5.noshadow",
+            "card.opaque:5",
+            "empty.unlit",
+            "empty/trees",
+        ] {
+            let parsed = parse_spec(junk);
+            assert!(parsed.is_err(), "`{junk}` was accepted as {parsed:?}");
+        }
+        let msg = |s: &str| parse_spec(s).unwrap_err();
+        assert!(msg("stand/cards.unlit.unlit").contains("repeated"));
+        assert!(msg("stand/trees/trees").contains("twice"));
+        assert!(msg("stand/").contains("empty part"));
+        assert!(msg("stand/bush").contains("unknown part"));
+        assert!(msg("stand/trees.shiny").contains("unknown modifier"));
+        assert!(msg("tree:10.unlit").contains("only to stand parts"));
+        assert!(msg("empty.unlit").contains("only to stand parts"));
+    }
+
+    #[test]
+    fn stand_parts_match_the_plain_batches() {
+        let view = bench_view();
+        let plain = ArmSpec::Stand.build(&view);
+        assert!(plain.batches.iter().all(|b| b.look == BatchLook::default()));
+        let (plain_tree, plain_card) = (&plain.batches[0], &plain.batches[1]);
+        let same = |a: &BatchSpec, b: &BatchSpec| {
+            (a.kind, a.capacity, a.active, a.dropped) == (b.kind, b.capacity, b.active, b.dropped) && a.bytes == b.bytes
+        };
+
+        let trees = parse_arm("stand/trees", &view).expect("parses");
+        assert_eq!((trees.name.as_str(), trees.batches.len()), ("stand/trees", 1));
+        assert!(same(&trees.batches[0], plain_tree));
+        assert_eq!(trees.batches[0].look, BatchLook::DEFAULT);
+
+        let cards = parse_arm("stand/cards", &view).expect("parses");
+        assert_eq!((cards.name.as_str(), cards.batches.len()), ("stand/cards", 1));
+        assert!(same(&cards.batches[0], plain_card));
+        assert_eq!(cards.batches[0].look, BatchLook::DEFAULT);
+
+        let spec = "stand/trees.opaque/cards.unlit.noshadow";
+        let both = parse_arm(spec, &view).expect("parses");
+        assert_eq!((both.name.as_str(), both.batches.len()), (spec, 2));
+        let (tree, card) = (&both.batches[0], &both.batches[1]);
+        assert!(same(tree, plain_tree) && same(card, plain_card));
+        assert_eq!(tree.look, BatchLook { unlit: false, opaque: true, noshadow: false });
+        assert_eq!(card.look, BatchLook { unlit: true, opaque: false, noshadow: true });
+        assert_eq!((both.total_slots(), both.total_active()), (plain.total_slots(), plain.total_active()));
     }
 }
