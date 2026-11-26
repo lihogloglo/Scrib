@@ -355,6 +355,38 @@ measurement test.
   The synthetic source generates and packs a tile in 0.02 ms at 60/ha and 0.12 ms at 400/ha. A real scatter with
   terrain queries will cost more; BW-6 measures it.
 
+### BW-2: ceiling bench `forest_ceiling` (2026-11-26; e1b8c973, 0c9b0fab, 62d29ecc)
+
+`sf_bigworld_bevy` exists with an empty library: its one target is the example
+`superfargoth/crates/sf_bigworld_bevy/examples/forest_ceiling/` (24 unit tests in the example harness, `test = true`).
+The plugin arrives with BW-3. No new Bevy feature set (group [1] of `tools/bevy_variants.sh`).
+
+- **Scene.** A flat `SyntheticForest` at 400 trees/ha around the origin. Camera: the game's DLSS-path camera (`Hdr`,
+  no MSAA, depth and motion-vector prepass, `OcclusionCulling`) in a 1707×960 window, fov 60°, 60 m up and pitched 10°
+  down, so nothing hides the forest (the hard case). Sun at 45° with 4 cascades to 500 m, 2048 px. One ground plane.
+- **Meshes** (`meshes.rs`): a 12 m tree with an 8 m crown, 1,464 triangles (trunk plus 700 alpha-masked leaf quads); a
+  2-triangle 8 × 12 m card turned to the camera on the CPU (a stand-in for the impostor billboard); one procedural mask
+  texture, one `StandardMaterial` with `AlphaMode::Mask`.
+- **Slots** (`fill.rs`, `upload.rs`): 64 B `GpuMeshInstance` slots built once on the CPU and written with
+  `RenderQueue::write_buffer` in `GpuInstanceBatchSystems::Publish` (the groundcover writer's pattern, runs split at
+  16 MB). Inactive slots are zeroed.
+- **Arms** (`--arms`, default all eight, one launch):
+  - `empty`: the bare scene, the baseline to subtract;
+  - `card:<n>` and `tree:<n>` at 10⁵, 3·10⁵ and 10⁶: the n trees nearest the viewer in one batch of capacity n, all
+    active (10⁶ = a 2.8 km disc);
+  - `stand`: the cost model's worst case as the producer will write it, from `sf_bigworld::Bands` at the High defaults
+    (mesh end 124.7 m, impostor end 2,217 m, horizontal distance): 1,973 trees in a 4,096-slot batch, and 179,901 cards
+    in a 250,000-slot batch (every tree with an impostor fade that is inside the 500 m shadow range or the camera
+    frustum). The model's counts are 1,960 and about 180 k.
+- **Measurement** (`bench.rs`, `stats.rs`): per arm Settle (old batches gone, next arm built) → Warm (4 s) → Measure
+  (12 s and 120 frames, capped at 60 s), a 9 min watchdog. It prints `bw2 ceiling | ...` lines: frame median and p99,
+  main and render thread ms (`FramePhasePlugin`), the GPU total over top-level spans, every GPU span's median and p95,
+  frames without window focus, and a warning when a batch's per-view buffer would pass a wgpu limit.
+- **Run it:** `target/debug/examples/forest_ceiling.exe` with no arguments (dev profile: dependencies are optimised),
+  built by `cargo build -p sf_bigworld_bevy --example forest_ceiling`. Only the lane's orchestrator launches it.
+- **Adapter facts** (smoke launch): RTX 4060 Laptop on Vulkan reports `max_storage_buffer_binding_size` 2 GB and
+  `max_buffer_size` 4 GB, so a 10⁶-slot batch (about 176 MB per view) needs no raised limit there.
+
 ## Risks and open questions
 
 - **Slot path ceiling** (BW-2). Capacity-linear `materialize` and the preprocess over every view could cost more than
