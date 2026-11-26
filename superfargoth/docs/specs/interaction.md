@@ -130,7 +130,7 @@ pub struct SlotDef {
     pub band: f32,                   // seat/bed/top height, m (picks the clip band, motion-generation.md)
     pub verb: VerbDef,               // "sit", "sleep", "open", "pull", "climb", "work", "snuff" ...
     pub entrances: SmallVec<[Entrance; 4]>,     // side (Front/Back/Left/Right, ladder Bottom/Top), approach point, enter/exit clips
-    pub clips: ClipFamily,           // slot ids: "<kind>.<family>.{enter.<side>,loop,exit.<side>}" (motion-generation ids)
+    pub clips: ClipFamily,           // slot ids: "<kind>.<family>.{enter.<side>,loop,exit.<side>}" (motion-generation ids); one-shot families (door, lever, reactions) have only enter.<side>
     pub ik: IkTargets,               // contact points in the object frame: hands (armrests, table edge, rungs, reins), feet (floor, stirrups), look
     pub reach: f32,                  // m: hand claims allowed within this radius while Occupied (a seat at a table); 0 = none
     pub occupancy: Occupancy,        // Pose (aligned, mover off) | Attach (rider follows a moving owner, (c))

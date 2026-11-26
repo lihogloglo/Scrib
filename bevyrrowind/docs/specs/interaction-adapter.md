@@ -1,6 +1,7 @@
 # Interaction adapter: Morrowind furniture, crates, beds, mounts and travel on `sf_interaction`
 
-Status: design 2026-11-11 (ROADMAP 3.11), revised 2026-11-26 (IN29); nothing built. Framework:
+Status: design 2026-11-11 (ROADMAP 3.11), revised 2026-11-26 (IN29); IN32a core built 2026-11-26 (`mw_interaction`:
+kinds, defs, activation table; not wired yet). Framework:
 [interaction.md](../../../superfargoth/docs/specs/interaction.md),
 [world rules](../../../superfargoth/docs/specs/interaction-world-rules.md),
 [destruction](../../../superfargoth/docs/specs/interaction-destruction.md); lane:
@@ -78,6 +79,25 @@ placements, 97 % at scale 1.00. Measured bands: seat 0.14 / 0.48 / 0.54 / 0.64 m
 - **Sitting needs no promotion**: slots are derived from the placement, the character attaches; the static stays in
   the static scene. Only moving or breaking a static promotes it (static-scene.md §1).
 - IN32's test: exact defs on synthetic records; def counts per kind printed on the install.
+
+### As built (IN32a, 2026-11-26)
+
+Bevy-free crate `bevyrrowind/crates/mw_interaction` (21 exact tests), nothing wired yet:
+- `furniture.rs`: `Kind`, `classify` (a copy of `mw_bake::census`'s; the census switches to `pub use` in IN32b).
+- `defs.rs`: `def_for(base, kind, &Measured { center, footprint, top, front: Facing }, &FurnitureParams)`. Slot frame =
+  root on the floor, +Z the way the user faces; `band` = `top`. Seat: places of `bench_seat_m` across the front, plus
+  the places between them for 2-5 places (slot `k` has mask bits `k - 1`, `k`), Front entrance (`seat.chair` /
+  `seat.bench`). Bed: `lie` (`bed.lie`, Front + Back) and an edge `sit` (`seat.bed_edge`), sharing bit 0. Table (4
+  edges) / counter (front, back): `lean` stations per `counter_spacing_m`, facing the top, entered from Back, `reach` to
+  the centre line (`counter.table` / `counter.bar`). Shelf, degenerate shapes, `sit` off: `None`.
+- `activation.rs`: `ROWS` (record class, condition, verb tag, prompt, default action, Classic, switch, availability);
+  `primary`/`offered` give today's `activatable` prompts exactly (tested), plus furniture sit/lie/lean; unbuilt actions
+  (search, pickpocket, creature talk, swing, bash, snuff/relight, sleep, browse) are `NotYet(<slice>)`, never offered.
+- `tunables.rs`: `mw.rules.interaction.sit` (bool) and `mw.interact.{bench_seat_m, approach_m, edge_seat_inset_m,
+  counter_spacing_m, counter_stand_m}` (`Guess`), read through `FurnitureParams`.
+- Left: IN32b, the bake fills `Measured` from census shapes (front side, footprint centre) and prints def counts per
+  kind on the install; IN32c, the shell registers `TUNABLES`, indexes defs and registers the offered rows as default
+  verbs (replacing `activatable`'s verb strings). Hand IK targets and adverts are not set yet.
 
 ## World rules mapping (IN41, IN38, IN19)
 

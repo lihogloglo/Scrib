@@ -5587,6 +5587,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "mw_interaction"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.12",
+ "serde",
+ "sf_interaction",
+ "sf_records",
+ "sf_tunables",
+ "smallvec",
+]
+
+[[package]]
 name = "mw_mods"
 version = "0.1.0"
 dependencies = [

@@ -314,6 +314,7 @@ mw_exterior_bevy = { path = "bevyrrowind/crates/mw_exterior_bevy" }
 mw_game_core = { path = "bevyrrowind/crates/mw_game_core" }
 mw_graphs = { path = "bevyrrowind/crates/mw_graphs" }
 mw_install = { path = "bevyrrowind/crates/mw_install" }
+mw_interaction = { path = "bevyrrowind/crates/mw_interaction" }
 mw_mods = { path = "bevyrrowind/crates/mw_mods" }
 mw_nif = { path = "bevyrrowind/crates/mw_nif" }
 mw_physics = { path = "bevyrrowind/crates/mw_physics" }

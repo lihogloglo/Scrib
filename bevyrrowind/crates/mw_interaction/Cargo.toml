@@ -1,0 +1,23 @@
+[package]
+name = "mw_interaction"
+description = "Morrowind interaction adapter core on sf_interaction: census furniture kinds, InteractableDefs from measured furniture (seats, benches, beds, tables, counters), the per-record-class activation table and the adapter's tunables"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Bevy-free core (build-perf.md rule 1): in hakari's final-excludes.
+[dependencies]
+# Slot frames and approach points in the object's frame.
+glam.workspace = true
+serde.workspace = true
+# The def types this adapter fills.
+sf_interaction.workspace = true
+# `RecordId`: the def's base record.
+sf_records.workspace = true
+# `mw.rules.interaction.sit`, `mw.interact.*` declarations (Bevy-free).
+sf_tunables.workspace = true
+smallvec.workspace = true
+
+[lints]
+workspace = true

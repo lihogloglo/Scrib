@@ -96,6 +96,7 @@ workspace-members = [
     "mw_effects",
     "mw_graphs",
     "mw_install",
+    "mw_interaction",
     "mw_mods",
     "mw_nif",
     "mw_physics",
