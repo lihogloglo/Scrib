@@ -54,14 +54,14 @@ Chunk size is `ceil(N / (4 x cores))` (slot 1 = 4), so at N = 8 each agent is it
 
 **Measured (AN38a/b, 2026-11-26;** `mw_delirium/tests/tint_cost.rs`, release, 600 timed ticks, N agents in one loop on
 one thread; ledger physics.md "AN38a", "AN38b"; the full table, states A-G at N = 1-8:
-[history](archive/physics-tint-history.md)), ms per body per tick: G, the tint's path (whole-body pose follow with a
+[history](physics-tint-history.md)), ms per body per tick: G, the tint's path (whole-body pose follow with a
 pinned pelvis), 0.64-0.65, stands at 100 % pelvis height; C (balancer + followed upper body, the `Sway` option)
 0.63-0.66; F (pose follow with neither pin nor balancer) 0.83-0.86 and collapsed (pelvis 14 %); E (stagger-fall after a
 45 N s chest push) 0.56 standing, 1.1-1.2 once down. Cost is linear in N (no shared cost); p99 is 1.5-2x the median. A
 body on the ground costs about twice a standing one, hence the promotion rule in the provider contract.
 
 **Pose error (AN38c,** one body following a pose from the bind pose, no motion; degrees mean / max; numbers per state:
-[history](archive/physics-tint-history.md)): the tint's path G holds ~10 / ~20 on the upper body and 4.8 / 12.5 on the
+[history](physics-tint-history.md)): the tint's path G holds ~10 / ~20 on the upper body and 4.8 / 12.5 on the
 legs, steady from 0.5 s to 2 s (an undriven body: 19-20 / 47). So at strength 1 a tinted body is near the clip, not on
 it: the weight ramp, not the strength, makes the hand-back popless, and the standing offset is part of the look
 ANIM-14 (1) judges. The provider's stiffness trades it against give; AN40b prints it per kind on a walking clip.

@@ -50,7 +50,7 @@ you want", R8 §1.2):
 | `Sim` | the mover, from intent (springs or momentum) | follows (`Match`); render body corrected toward the capsule | locomotion, sneak, air |
 | `Warp` | the baked root track, warped onto a target, playhead from planned progress | `Progress` root mode | vault, mantle, ledge catch, climb up, ladder ends, sit, door, lever |
 | `Docked` | the mover, along an edge or ladder | `Progress` or cycle by edge distance | hang, shimmy, ladder climb |
-| `Clip` | the baked root track at the action clock, with turn-rate and lunge windows | `Progress` (seconds) | attacks, dodges, reactions, paired moves |
+| `Clip` | the baked root track at the action clock, with turn-rate and lunge windows, played through the move's `TimeWarp` (one rate, or per phase: combat.md "Moveset sheet") | `Progress` (seconds) | attacks, dodges, reactions, paired moves |
 | `Physics` | `sf_ragdoll` | `PoseInput` | knockdown, death, ragdoll victim |
 
 Gameplay never reads the evaluated pose. It reads **baked** data sampled on the action clock: root

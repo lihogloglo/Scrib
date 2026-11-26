@@ -97,6 +97,9 @@ Live sheet: `bevyrrowind/crates/mw_combat/data/movesets/sword_1h.ron`; the C1 sh
 - **Windows** are authored on the slot's first candidate clip; others bring their own (manifest `events`, text-key
   synthesis) or get the sheet windows scaled by length, with a warning. Startup/active/recovery derive from hit and cancel
   windows (R6 §12).
+- **Per-phase rate**: a move may carry phases (clip s, rate); the loader builds a piecewise `TimeWarp` (move time ↔
+  clip time) that root motion, slot progress and sweeps share (AN34; a content use: the Bevyrrowind adapter's
+  `combat-clips.md`).
 - **Hit row**: window, `mv` (motion value), `stamina` (charged when the window opens), `kind` (content tag), `tier` (reaction
   on a poise break, or always without a pool), `stop` (hit-stop hold, s), `guard_damage` (default `stamina`), `poise`,
   `damage` (typed split), `push`; flags `Unblockable | NoParry | Critical | Sweep | Thrust | Grab`; `source: Sweep | Cone`
@@ -337,7 +340,8 @@ Front, a missing tier to the next lower.
 - **Additive**: no state change; presentation kicks the graph's cosmetic `HitReact` springs (`sf_anim_bevy::Hit`). Guard
   hits at minimum (C2), armor-clamped hits (C3).
 - **Small / Medium / Large**: forced `Clip` moves, not cancellable (action.md category `Forced`), with their own root motion
-  (`root_scale` keeps the push short) and windows (`Cancel(Dodge)` late in Large for a roll-out).
+  (`root_scale` keeps the push short) and windows (`Cancel(Dodge)` late in Large for a roll-out). Each sheet entry is
+  `(slot, rate, free_s)`: the reaction's cancels open at `free_s` played (AN35).
 - **Knockdown / Death**: a forced move with `Owner::Physics`: `sf_action` emits `PhysicsTakeover { impulse, point }` and
   holds the move until the shell's hand-back; invulnerable while down, a roll-out window on the get-up. The content routes it
   to its ragdoll (Bevyrrowind: walkers' powered ragdoll or Delirium, combat-adapter.md).

@@ -157,3 +157,13 @@ Superseded by "Morrowind attack clips" once AN32a measured the clips (verbatim):
   `Hit(0)` window from `min hit` (or `hit` - 0.05 s) to `hit` + 0.05 s; `Charge` from `min attack` to `max attack`;
   `Cancel(Dodge)` from `large follow start` (else `follow start`); `Cancel(Move)` at `follow stop`; `Accept(all)` from
   `min attack`. One hit per attack (the original honours one hit key). The sheet's row numbers still apply.
+
+## Open questions answered (moved from combat-adapter.md 2026-11-26)
+
+1. Fists: Morrowind hand-to-hand hurts fatigue unless the victim is down (knockout brawls). Modern: health (ER), or
+   fatigue first (non-lethal brawls)? Changes what the player can do: owner. Until answered: health.
+   Answered 2026-11-26 (owner, decision 20): modern = health with a non-lethal tag (Q10 answered 2026-11-26); fatigue-first = Classic
+   only ("Health, stamina, fatigue").
+2. If AN32 shows daggers and longswords need distinct timings within `WeaponOneHand`, split the sheet by type (data).
+   Decided 2026-11-26 (AN32a): no split. Both share the one `WeaponOneHand` group and its keys; a split could only be
+   sheet rate data (ER daggers hit 0.1 s before straight swords), not different clips.

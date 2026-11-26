@@ -2068,3 +2068,11 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (specs-7, AN38d, one run): the tint provider steps tints and takeovers through Delirium's group step and
   takes agents from a pre-built pool (building one costs 5 ms); cap 2 -> 4 (Low 2), 1.61 ms median at N = 4. The
   split at 6 agents is a Delirium constant, not a setting; AN38e decides a cap of 8 (physics-tint.md "Performance").
+- 2026-11-26 (specs-7 spec, specs-8): Morrowind attack clips become two-slot moves (strike to `Hit`, then one follow
+  by Light / Heavy / Charged), windows cut from the text keys; a per-phase `TimeWarp` replaces the single rate in
+  `sf_action` / `sf_combat`; reaction entries are `(slot, rate, free_s)` (`bevyrrowind/docs/specs/combat-clips.md`).
+- 2026-11-26 (specs-8, AN32b): creature lunge threshold 1.5 -> 0.75 m, at most one `Charged` move per generated sheet
+  (12 rigs); a move without a `Hit` key hits at 0.5 of its span (Classic: at `Start`, as OpenMW); weapon bipeds use
+  the humanoid weapon sheets (combat-adapter.md "Creatures (C6f)", combat-clips.md "Creature attack clips").
+- 2026-11-26 (specs-8, meta): no patch in the pinned Delirium fork to move its 6-agent split: Delirium is adopted
+  from upstream as it is; a tint cap above 4 goes through a provider-side fan-out (AN38e; physics-tint.md).

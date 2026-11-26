@@ -282,8 +282,9 @@ is a constant in Delirium's data table, not a setting (history).
 its own shifted frame, as the test does), and **the cap is 4** (Low 2): 1.61 ms at N = 4 meets the median; its p99 is
 unsettled and N = 3, 5, 6, 7 are not timed; N = 5 is ~2.0 ms by the serial cost, at the limit. Past the split 8 agents
 cost less than 4, so a cap of 8 needs the counts 3-5 to split too: a provider-side fan-out (one task per agent on
-Bevy's `ComputeTaskPool`, each calling the agent's own step; no Delirium change) or a one-constant patch in our pinned
-fork. Neither is measured: AN38e times N = 3-7 grouped, the p99 at 4 again and the fan-out at 2-5; AN42 repeats the
+Bevy's `ComputeTaskPool`, each calling the agent's own step; no Delirium change). A one-constant patch in our pinned
+fork is not taken: Delirium is adopted from upstream as it is (owner policy; meta 2026-11-26). The fan-out is not
+measured: AN38e times N = 3-7 grouped, the p99 at 4 again and the fan-out at 2-5; AN42 repeats the
 cap in the game, where Delirium's pool shares the cores with Bevy's. Rule: the cap is the largest N with every count
 up to N inside both limits. Over budget: lower `cap`, then `step_divisor` 2; never delete the feature. Takeovers are
 never refused, so the cap only stops tints adding to them.
