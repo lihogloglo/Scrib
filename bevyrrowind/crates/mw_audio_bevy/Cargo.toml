@@ -27,6 +27,8 @@ mw_actors = { workspace = true, optional = true }
 mw_anim.workspace = true
 mw_audio.workspace = true
 mw_doors_bevy.workspace = true
+# Door sounds play on approved uses (IN32c2b).
+mw_interaction.workspace = true
 mw_rpg = { workspace = true, optional = true }
 # The walker greeting asks the voices for its Hello (MA4c2, mw_walkers_bevy::greeting).
 mw_walkers_bevy = { workspace = true, optional = true }
@@ -36,6 +38,7 @@ sf_audio.workspace = true
 sf_audio_bevy = { workspace = true, features = ["settings"] }
 sf_character_bevy = { workspace = true, optional = true }
 sf_controller_bevy.workspace = true
+sf_interaction_bevy.workspace = true
 sf_records.workspace = true
 sf_rpg = { workspace = true, optional = true }
 sf_script.workspace = true

@@ -187,7 +187,7 @@ other ordering kept. One verb rule, `mw_interaction::runs_default(DefaultAction,
 verb on a def'd chest or activator never opens it. `mw_player_bevy::activatable` takes its prompts from the rows
 (`primary(class, ..).prompt`; a light's `Carryable` is the only condition known there), names and tooltip rules
 unchanged. A script's `Activate` (`ScriptActivate`) now runs these defaults too (the contract; nothing writes it
-yet). Still on `ActivationOutcome`: `mw_scripts_bevy`'s dev `report`, and `mw_audio_bevy`'s door sounds (IN32c2b).
+yet). **IN32c2b:** `mw_audio_bevy`'s `door_sounds` and `swing_door_sounds` play on `UseApproved` with `runs_default(TravelDoor, verb)`, `.after(ActivationSystems::Default)`. Only `mw_scripts_bevy`'s dev `report` still reads `ActivationOutcome`.
 
 ## World rules mapping (IN41, IN38, IN19)
 

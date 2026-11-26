@@ -37,6 +37,7 @@ use bevy_math::Vec3;
 use bevy_time::{Real, Time};
 use bevy_transform::components::GlobalTransform;
 use mw_audio::{Footwear, MusicMood};
+use mw_interaction::{DefaultAction, runs_default};
 use sf_audio::{FootstepMap, Foot, StrideTimer};
 use sf_audio_bevy::{AudioBank, AudioCues, LoopEmitter, Music, PlaySound, SfAudioPlugin, SoundAt, SpatialVoice, Voice};
 use sf_anim_bevy::AnimEvent;
@@ -98,7 +99,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, vfs: &Vfs) {
         .insert_resource(AudioCues(sounds.cues))
         .insert_resource(music)
         .insert_resource(MwAudio { doors: sounds.doors, footsteps: sounds.footsteps })
-        .add_message::<sf_script_bevy::ActivationOutcome>()
+        .add_message::<sf_interaction_bevy::UseApproved>()
         .init_resource::<CombatMusic>()
         .init_resource::<Mood>()
         .add_systems(PostStartup, move |spawners: Option<ResMut<PlacementSpawners>>| hook_emitters(spawners, &emitters))
@@ -107,7 +108,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, vfs: &Vfs) {
             (
                 attach_listener,
                 music_mood,
-                door_sounds.after(sf_script_bevy::ScriptSlot::Update),
+                door_sounds.after(sf_interaction_bevy::ActivationSystems::Default),
                 add_footsteps,
                 anim_footsteps,
                 footsteps,
@@ -124,7 +125,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, vfs: &Vfs) {
                 Update,
                 (
                     boots_footwear.after(add_footsteps).before(anim_footsteps).before(footsteps),
-                    swing_door_sounds.after(sf_script_bevy::ScriptSlot::Update),
+                    swing_door_sounds.after(sf_interaction_bevy::ActivationSystems::Default),
                 )
                     .before(sf_audio_bevy::AudioSystems),
             );
@@ -154,7 +155,7 @@ fn music_mood(time: Res<Time<Real>>, combat: Res<CombatMusic>, mut mood: ResMut<
 
 /// The open sound of a load door the player activated (swinging doors: [`swing_door_sounds`]).
 fn door_sounds(
-    mut outcomes: MessageReader<sf_script_bevy::ActivationOutcome>,
+    mut approved: MessageReader<sf_interaction_bevy::UseApproved>,
     placements: Option<Res<sf_script_bevy::ScriptPlacements>>,
     links: Option<Res<DoorLinks>>,
     audio: Res<MwAudio>,
@@ -162,7 +163,7 @@ fn door_sounds(
     mut play: MessageWriter<PlaySound>,
 ) {
     let (Some(placements), Some(links)) = (placements, links) else { return };
-    for o in outcomes.read().filter(|o| !o.handled && o.activation.actor == sf_script_bevy::PLAYER) {
+    for o in approved.read().filter(|o| o.activation.actor == sf_script_bevy::PLAYER && runs_default(DefaultAction::TravelDoor, o.verb)) {
         let Some(door) = placements.get(o.activation.target) else { continue };
         let Some(open) = audio.doors.get(&RecordId::new(&door.record)).and_then(|s| s.open.clone()) else { continue };
         if !is_load_door(&links, o.activation.target) {
@@ -369,7 +370,7 @@ struct SwingDoors(std::collections::HashSet<sf_script::Handle>);
 #[cfg(feature = "dev")]
 #[allow(clippy::needless_pass_by_value)]
 fn swing_door_sounds(
-    mut outcomes: MessageReader<sf_script_bevy::ActivationOutcome>,
+    mut approved: MessageReader<sf_interaction_bevy::UseApproved>,
     placements: Option<Res<sf_script_bevy::ScriptPlacements>>,
     links: Option<Res<DoorLinks>>,
     audio: Res<MwAudio>,
@@ -378,7 +379,7 @@ fn swing_door_sounds(
     mut play: MessageWriter<PlaySound>,
 ) {
     let (Some(placements), Some(links)) = (placements, links) else { return };
-    for o in outcomes.read().filter(|o| !o.handled && o.activation.actor == sf_script_bevy::PLAYER) {
+    for o in approved.read().filter(|o| o.activation.actor == sf_script_bevy::PLAYER && runs_default(DefaultAction::TravelDoor, o.verb)) {
         let target = o.activation.target;
         let Some(door) = placements.get(target) else { continue };
         let Some(sounds) = audio.doors.get(&RecordId::new(&door.record)) else { continue };
