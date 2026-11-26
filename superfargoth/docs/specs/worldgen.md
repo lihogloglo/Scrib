@@ -128,9 +128,11 @@ game data ──adapter──> guides ──stage graph──> products ──Te
    the nearest-seam distance transform (it jumps at kinks). The unrestored field and the blend weight are cached, so
    retuning the collar width doesn't re-run erosion. Avoid template or mirror continuation and per-operator
    footprints: all were rejected with evidence.
-5. **Hydrology:** flow accumulation → rivers and lakes as `sf_water` bodies at their own heights; wetness and
-   moisture fields. Stream power never makes meanders or braids, so rivers get their own centreline stage
-   (meander simulation, Paris 2023) before they are carved.
+5. **Hydrology** ([worldgen-hydrology.md](worldgen-hydrology.md), WG-W1): Magna Urbis's water chain
+   (`condition_and_water`, conditioning `none`) on the anchor-composited ground, kept places as routing walls,
+   `h' = h + delta·(1 - w)`; meanders, braids and lakes come from that chain (no separate centreline stage).
+   Products: carved heights, `water.json` (lakes, rivers with widths, levels and end records, read as `sf_water`
+   bodies), `flow_area.f32`; audited wet/dry, cached by input hash.
 
 **Irregularity is designed in (WG-R4):** uniform rock and uplift run to a strict steady state self-organise into
 evenly spaced ridges and valleys (Perron et al. 2009), the "motherboard" look the owner rejected. The layout enters
@@ -160,6 +162,10 @@ height; runs start noisy and stop at a finite time, not at strict equilibrium.
    terrain (per ~1.8 m cell: slope, elevation, relief, curvature, layer), Bernoulli draws with exponential-race
    ordering, poses replayed in the terrain frame, objects sized by bounding box, a failed placement means absence;
    per-region libraries with an explicit fallback.
+9. **Wilderness sites** ([sites.md](sites.md), WG-P/V/NM): a site table (data) drives Magna Urbis `Terrain::place` in
+   `list` mode (kept towns by `position`, generated hamlets, farms, activity and remote sites) in `scrib-worldgen`;
+   Scrib reads `sites.json` v2 (`sf_worldgen::sites`), floods reachability on the final ground (`sf_worldgen::reach`,
+   46 deg), stamps pads, clears flora; sites become static content like anchors. Caves: `rockgen.md` RG-7.
 
 **Stage rules (WG-R3):** no stage creates or removes water except hydrology. Every stage runs a wet/dry audit (no
 new or dried water is a test), and every mask is rebuilt from the current field, never reused from an earlier stage
@@ -282,6 +288,8 @@ authority, budgets, storage.
 - **WG-6** curvature drop on terrain, water, statics, far field, far shadow map; R a tunable. Visual check.
 - **WG-7** view distance at scale: far shadow reach, water skirt, aerial perspective; measured ceiling first (perf).
 
+- **WG-W1** hydrology stage in the default chain ([worldgen-hydrology.md](worldgen-hydrology.md), slices W1a-W1g).
+  Test: wet/dry audit 0, anchor interiors bitwise, Red Mountain crater within 5 m, same hash twice.
 - **WG-8** anchors: clustering, footprints, stamps with transition bands, the anchor transform query. Test:
   stamped heights equal the source inside footprints bit for bit; the transform round-trips. Owner look arms: the
   boundary-condition band vs the harmonic-only baseline.
@@ -289,6 +297,10 @@ authority, budgets, storage.
 **Nature:** **WG-N1** material fields → terrain layers through the adapter's mapping · **WG-N2** scatter rules
 fitted to the source's own placement statistics, streamed like statics (HLOD/impostors via `sf_lod`) · **WG-N3**
 groundcover hook (ROADMAP Groundcover).
+
+**Sites:** **WG-P0** spec [sites.md](sites.md) (done 2026-11-26) · **WG-P1a-e** MU site rules, `sites.json` v2, roads
+access, reader, waystations · **WG-V1/V1b** reachability, clearings · **WG-P2** pads · **WG-P3a/b** layout, site mod ·
+**WG-NM1/2** names, map places. Rows and order: `sites.md` "Build rows".
 
 **Generic proof:** **WG-G1** a world from a sketch alone (painted regions + strokes: a fjord coast and a tepuy
 plateau) as a framework example, with no game data.

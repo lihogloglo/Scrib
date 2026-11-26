@@ -129,8 +129,9 @@ Pipeline (each step a deterministic product in the guide folder; positions never
    own static index / scene / far field. **Flora** (WG-X5): per region, the source's own flora models and their
    density per m² of land, scattered on the 10× land (slope, height, clumping noise, seed), counts raised in steps.
 
-Known limits accepted for the first look: rivers inside lifted towns run dry (Balmora's Odai; water bodies at their own
-height are WG-A5); roads exist only inside footprints; door destinations, travel and scripts are not remapped yet
+Known limits accepted for the first look: the Odai and other source rivers at sea level are arms of the sea at 10x
+(HC-1); generated rivers route round kept towns (`../../../superfargoth/docs/specs/worldgen-hydrology.md`, WG-W1;
+recipe `bevyrrowind/worldgen/water-x10.toml`); roads exist only inside footprints; door destinations, travel and scripts are not remapped yet
 (WG-A3b); Solstheim is scaled too.
 
 **Owner verdict at the end of 2026-11-19** (x10s, flora up to full density 7.2 M): still empty and 26 fps; no proper
@@ -153,6 +154,9 @@ target/worldgen/x10v/s55 --out target/worldgen/x10s` and `worldgen-layers --guid
 - Sharp landforms (cliffs, scarps, block fields): `../../../docs/research/terrain-sharp-features-2026-11-19.md` (§7
   addendum 2026-11-20); owner 2026-11-20: aggressive dramatic cliffs and escarpments are welcome, keep generation fast
   for quick A/B iteration; also harvest dropped `terrain_rock_*` footprints as a cliff/outcrop steering mask.
+- **Wilderness sites** (`../../../superfargoth/docs/specs/sites.md`): rows in `bevyrrowind/worldgen/sites.toml`,
+  Morrowind templates and the remote block in `bevyrrowind/worldgen/mu-packs/sites.json`; kits from `worldgen-kit`
+  on named anchors; classes from WG-E1b, else region ids.
 
 **Stamp format v1** (guide folder, optional): `stamps.json` = `{ "format": 1, "stamps": [{ "name", "origin_m": [x, y]
 (sample (0, 0), guide frame, row 0 = north), "dims": [w, h], "spacing_m", "offset": <f32 index into stamps.f32> }] }`;
