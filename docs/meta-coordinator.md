@@ -58,8 +58,10 @@ The working rules are still `CONTRIBUTING.md`; this page only says how the coord
 
 ## Owner checks
 
-- **Batch them.** Collect checks that are ready and launch them one after another in one sitting, not one at a time
-  across the day.
+- **Once a day (owner 2026-11-26).** One "let's look at all this" sitting per day, not a launch per finished slice.
+  A slice that is done but not visually validated is committed and goes on the to-check list (its `visual-checks`
+  entry, status "awaiting owner"); the lane moves on. Meta keeps the day's list in `.sessions/meta.md` and, at the
+  sitting, builds one dev exe and launches the scenes one after another. No dev build just for an owner check.
 - **Ask yes/no questions about circumscribed things:** "Walk up to Socucius: does his head follow you without a
   snap? yes/no". Two to five questions per scene, each naming where to stand and what to watch. No open-ended "how
   does it look".

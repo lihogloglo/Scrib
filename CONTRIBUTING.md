@@ -139,8 +139,9 @@ anywhere in Bevy's dependency closure (`superfargoth/docs/build-perf.md` "Featur
   `trace`, `tracy`), a Bevy nobody else shares, and links GPL-3.0-only Delirium code. Use an opt-in only when your
   task needs it (each is its own Bevy). No dev-dependency asks for an opt-in Bevy feature; pass it on the command
   line instead (`--features bevy/file_watcher`).
-- **During a slice:** `test -p <your crates>` and `clippy -p <your crates> --all-targets -- -D warnings`
-  (pedantic is on in `[workspace.lints]`); filter output to errors and warnings
+- **During a slice:** `test -p <your crates>` only. Lint runs on CI, not the laptop (owner 2026-11-26): every
+  `ci_push.sh` runs `clippy --workspace --all-targets -- -D warnings` (pedantic is on in `[workspace.lints]`) in
+  ~7 min; fix what it reports and push again. Filter output to errors and warnings
   (`2>&1 | grep -E "^(error|warning)" -A6`). Spec-only sessions shouldn't build at all.
 - **Before a PR, CI runs the gate (owner 2026-11-26):** `bash bevyrrowind/tools/ci_push.sh <name> <your paths>`
   pushes HEAD plus your paths to branch `ci/<name>` (no commit on main, shared index untouched; a worktree pushes its
