@@ -202,6 +202,21 @@ are Offered; without conditions the door's primary row is still the travel row, 
 prompt stay "Open". `runs_default(_, open)` is true for both door actions: `mw_doors_bevy` acts only on a door in
 `DoorLinks`, the framework's door default only on one registered in `Doors`.
 
+### As built (IN33c2a, 2026-11-26)
+
+`mw_interaction_bevy::DoorHook` wraps the Door class's placement spawner (with the script and physics hooks; every
+hook forwards the spawn context, so their order is free). A **swing door** is a Door placement that is not the exit
+of a travel door in `DoorLinks` (a door whose destination names no interior is not in `DoorLinks` and swings).
+At spawn its visuals go under a pivot entity, `DoorPivot { worldspace, id, origin, doorway }` (the item pivot
+pattern of `sf_physics_bevy`: the pivot holds the placement's translation and rotation, the scale stays on the
+visuals, respawned LOD levels stay under it); `DoorPivots` maps placement to pivot. In R0 the hook writes
+`IndexChange::Insert` with `door_def(base, doorway)` (`doorway` = the cooked model's bounds centre times the scale;
+not gated by the sit switch), lists the placement in `KinematicPlacements` (its collider drains in as a Kinematic
+body), sends `DoorRest` when the placement overlay holds a decodable `door` state blob, and keeps the door in
+`SwingDoors` (worldspace and the closed `WorldTransform` at full precision). Leaving R0 removes the index entry and
+the kinematic listing; nothing is written to the overlay there. Log line per activated cell: `interact: N swing doors
+indexed in <worldspace> cell (x, y, z)`.
+
 ## World rules mapping (IN41, IN38, IN19)
 
 **Material rows** (`sf.interact.material` + a pattern table in `mw_interaction`, checked against the install at cook,

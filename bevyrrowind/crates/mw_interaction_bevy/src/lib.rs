@@ -12,6 +12,10 @@
 //!   as owner) when a placement with a def enters R0, and `IndexChange::Remove` (`OwnerUnloaded`)
 //!   when it leaves (also on a discard). `mw.rules.interaction.sit` off (Classic) indexes no
 //!   furniture; flipping it live removes or re-inserts the resident furniture.
+//! - **Doors** ([`door`]): a hook on the Door class spawns a swing door's (not a travel-door exit)
+//!   visuals under a [`DoorPivot`] and, in R0, indexes it with `mw_interaction::door_def`, lists
+//!   its body as kinematic and restores its saved rest state (`DoorRest`); the shell's `Doors`
+//!   registers and swings it. Log: `interact: N swing doors indexed in <worldspace> cell (x, y, z)`.
 //! - **Player user** ([`input`]): the player body gets an `InteractionUser` (`PLAYER`, the live
 //!   `interact.claim.priority_player`, no tags), so the seat default (`IN2b2`) seats it.
 //! - **Focus**: the focus ray's raw first hit (`mw_player_bevy::Focus::hit`) is the player's one
@@ -29,10 +33,13 @@
 //!
 //! [`FocusState::command`]: sf_interaction_bevy::FocusState::command
 
+pub mod door;
 pub mod index;
 pub mod input;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_door;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -49,6 +56,7 @@ use sf_interaction_bevy::{InteractionPlugin, InteractionSystems};
 use sf_records::RecordId;
 use sf_tunables_bevy::{TunablesAppExt, tunable_changed};
 
+pub use door::{DoorHook, DoorPivot, DoorPivots, SwingDoor, SwingDoors};
 pub use index::{ResidentFurniture, SitSwitch};
 pub use input::furniture_prompt;
 
@@ -104,10 +112,14 @@ pub fn add_with_defs(app: &mut App, defs: FurnitureDefs) {
         .insert_resource(SitSwitch(sit))
         .init_resource::<ResidentFurniture>()
         .init_resource::<index::IndexLog>()
+        .init_resource::<DoorPivots>()
+        .init_resource::<SwingDoors>()
+        .init_resource::<door::SwingDoorLog>()
         .init_resource::<Focus>()
         .init_resource::<UsePresses>()
-        .add_systems(PostStartup, index::hook_spawners)
-        .add_systems(Update, (index::sync_sit.run_if(tunable_changed(sit)), index::log_indexed, input::player_user))
+        .add_observer(door::forget_pivot)
+        .add_systems(PostStartup, (index::hook_spawners, door::hook_spawners))
+        .add_systems(Update, (index::sync_sit.run_if(tunable_changed(sit)), index::log_indexed, door::log_indexed, input::player_user))
         .add_systems(Update, input::prompt.in_set(FocusUpdate).after(mw_player_bevy::FocusRay))
         .add_systems(FixedUpdate, input::candidates.after(InteractionSystems::Apply).before(InteractionSystems::Focus))
         .add_systems(FixedUpdate, input::commands.after(InteractionSystems::Focus).before(InteractionSystems::Activate));

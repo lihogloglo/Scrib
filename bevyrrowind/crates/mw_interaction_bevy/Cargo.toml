@@ -11,8 +11,14 @@ publish = false
 bevy_app = { workspace = true, features = ["std"] }
 # `AssetServer` / `UntypedHandle`: the wrapped spawner's `prepare`.
 bevy_asset.workspace = true
+# `Visibility` of a swing door's pivot.
+bevy_camera.workspace = true
 bevy_ecs = { workspace = true, features = ["std"] }
 bevy_log.workspace = true
+# `Vec3`: a swing door's doorway.
+bevy_math = { workspace = true, features = ["std"] }
+# `Transform` of a swing door's pivot.
+bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 # `decode_interact_defs`, the `mw.interact.defs` product (IN32b2).
 mw_bake.workspace = true
 # `PlayerBody`, `HOST_KEY`.
@@ -28,6 +34,8 @@ sf_bake.workspace = true
 sf_coords.workspace = true
 sf_interaction.workspace = true
 sf_interaction_bevy.workspace = true
+# `KinematicPlacements`: a swing door's body is kinematic.
+sf_physics_bevy.workspace = true
 sf_records.workspace = true
 # `PLAYER`, `ScriptPlacements`.
 sf_script_bevy.workspace = true

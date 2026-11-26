@@ -39,7 +39,7 @@ fn sit() -> TagId {
 }
 
 /// A spawner that does nothing (the wrapped class's own).
-struct Nothing;
+pub(crate) struct Nothing;
 
 impl PlacementSpawner for Nothing {
     fn spawn(&self, _: &mut World, _: &SpawnCx<'_>, _: &IndexedPlacement) -> u32 {
@@ -114,7 +114,7 @@ fn defs() -> FurnitureDefs {
     ]))
 }
 
-fn app() -> App {
+pub(crate) fn app() -> App {
     let mut app = App::new();
     app.insert_resource(Scripts::new(ScriptRuntime::default()))
         .add_plugins((TunablesPlugin, ScriptsPlugin))
@@ -131,7 +131,7 @@ fn app() -> App {
     app
 }
 
-fn placement(id: PlacementId, record: &str, pos: DVec3, rotation: Quat) -> IndexedPlacement {
+pub(crate) fn placement(id: PlacementId, record: &str, pos: DVec3, rotation: Quat) -> IndexedPlacement {
     IndexedPlacement {
         placement: Placement {
             id,
@@ -159,11 +159,11 @@ fn residency(app: &mut App, placement: &IndexedPlacement, on: bool) {
     }
 }
 
-fn cell() -> glam::IVec3 {
+pub(crate) fn cell() -> glam::IVec3 {
     glam::IVec3::new(1, -2, 0)
 }
 
-fn tick(app: &mut App, n: usize) {
+pub(crate) fn tick(app: &mut App, n: usize) {
     for _ in 0..n {
         app.world_mut().run_schedule(FixedUpdate);
     }

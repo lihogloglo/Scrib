@@ -60,7 +60,7 @@ pub(crate) struct IndexLog(BTreeMap<(String, [i32; 3]), u32>);
 /// The index frame of a placement: its world transform narrowed to f32 metres (the action body's
 /// space, `sf_interaction_bevy::seat`). The scale is not applied: defs are measured on the model
 /// at scale 1.
-fn frame_of(t: &WorldTransform) -> Frame {
+pub(crate) fn frame_of(t: &WorldTransform) -> Frame {
     Frame { translation: t.pos.to_f64().as_vec3(), rotation: t.rotation }
 }
 
