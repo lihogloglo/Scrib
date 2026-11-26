@@ -232,7 +232,8 @@ late chunk shows the heightfield (which is always there) instead of a hole.
 
 - **Scatter** (`sf_worldgen::scatter`, `Species { size_m, group }`): a rock species gains `class: ClassId` and a size
   law (b exponent, d_min, d_max); a placement's `(seed, scale)` selects `(variant, scale)` from the class library.
-  Talus fans (density below a steep face along the fall line) are a scatter rule fed by the cliff mask.
+  Talus fans (density below a steep face along the fall line) are a scatter rule fed by the cliff mask
+  (specced: `worldgen-scatter.md` Rocks, WG-E3b).
 - **Cliff mask** (`sf_worldgen::cliffs`, `cliff_mask.f32`): read by the band finder alongside slope; the same mask
   drives `P_CLIFF` in the terrain shader, so mesh bands and shaded rock agree.
 - **Heights**: the CPU twin of the runtime height function (`sf_worldgen::tiles`), never a different height source.
@@ -282,7 +283,8 @@ rock placement: scree fans below faces instead of rocks in lines along them); cl
   player. Perf A/B (`perf suite --arm`, untraced, hitches per minute + p99) before it defaults on.
 - **RG-7: cave mouths**: capsule graph carve + terrain hole + collar. **RG-8: hero formations.**
 - **RG-A1 (adapter, `mw_worldgen`):** rock types (basalt, ash tuff, red mountain scoria...), size laws, texture
-  layers from the mounted packs, scatter species mapping, cave-mouth sites from the game's cave doors.
+  layers from the mounted packs, scatter species mapping (mapping: WG-E3f,
+  `worldgen-scatter.md` Rocks), cave-mouth sites from the game's cave doors.
 
 ## Open questions
 
