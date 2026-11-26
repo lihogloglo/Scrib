@@ -88,7 +88,7 @@ formula), no ambushes, exploration-only reveal; operators are replaced here too 
 | TV1 | `sf_travel` core: networks, stops, operators, `RideState`, `TravelRoute.arrive` (per-route landing pose), ETA, skip math (instant = skip at boarding), saves | `sf_travel` | TV0 | exact: arrival tick, skip ms, round trip |
 | TV5 | Networks from records, every provider kind (travel-adapter.md: `mw.travel.kinds` table, stop keys, synthesized operator templates, real-install count test) (widened 2026-11-25, was striders); operators registered with TV26 | `mw_rpg` | TV1, TV0c | exact synthetic; log counts per kind |
 | A4 | Instant travel, every preset: price, hours (Classic formula, Modern route time), fade, followers, `GetPCTraveling` | `mw_rpg(_bevy)` | A1, A3, TV5 | exact; owner PUI-SV5 + TV-1 (a trip per kind) |
-| TV10 | `TravelCost` rule + gates for services and teleport effects (travel while hunted: owner Q, travel-adapter.md open questions) | `sf_travel`, `sf_rpg` | TV1 | exact per gate |
+| TV10 | `TravelCost` rule + gates for services and teleport effects (no paid trips while hunted in Modern, meta 2026-11-26; Recall/Interventions never blocked) | `sf_travel`, `sf_rpg` | TV1 | exact per gate |
 | TV26 | Operator replacement: vacancy, out-of-view spawn after the delay, orphan-stop check | `sf_travel`, `mw_rpg` | TV5 | exact; log 0 orphan stops on game data |
 | TV14 | `RecallAnchor` (saved) + nearest-tagged-place query (interior tagged places checked before doors) | `sf_travel` | TV1 | exact; round trip |
 | TV15 | Mark, Recall, Divine/Almsivi Intervention on TV14 + TV10 | effects adapter | TV14, E-slices | exact per effect |

@@ -168,7 +168,7 @@ Per-caller gate profiles (travel.md "`TravelCost` and gates"), record `mw.travel
 | Gate | Paid travel | Recall / Interventions | Morrowind source |
 |---|---|---|---|
 | `TeleportBlocked` | off | on (`sTeleportDisabled`) | world flag `TELE`, set by `DisableTeleporting` / `EnableTeleporting` (`spelleffects.cpp` 476-525) |
-| `HostilesAlerted` | Modern on, Classic off (open question 2) | off | none in vanilla |
+| `HostilesAlerted` | Modern on, Classic off (meta 2026-11-26) | off | none in vanilla |
 | `OperatorAbsent`, `CannotAfford` (row disabled) | on | n/a | slot status; `travelwindow.cpp` 48-100 |
 | `Adapter(mw.travel.no_mark)` / `(no_marker)` | n/a | Recall with no mark / no marker found = refuse | `spelleffects.cpp` 476-525 |
 
@@ -216,8 +216,8 @@ Fare options stay in services-adapter "Options".
 | Trip time | route time (profile speed x time scale) | `mw.travel.time.classic` hours | owner 2026-11-25 |
 | Skip counts as sleep | on | on | `rest(hours, true)` |
 | Operator replacement | on | on | owner Q4 |
-| Paid travel blocked while hostiles alerted | on | off | open question 2 |
-| Teleport spells blocked while hostiles alerted | off | off | open question 2 |
+| Paid travel blocked while hostiles alerted | on | off | meta 2026-11-26 |
+| Teleport spells blocked while hostiles alerted | off | off | meta 2026-11-26 |
 | Intervention metric | `Euclid2d` | `CellRing` | `worldimp.cpp` 3247-3330 |
 | Ambushes on rides (Stage 5) | on | off | owner Q1 |
 | Travel anywhere discovered (TV16) | off | off | owner 2026-11-25 |
@@ -292,10 +292,10 @@ Framework requests (decided from the data; **landed in travel.md 2026-11-26**, "
    `nearest_place` testing tagged places in each visited interior before following its doors (`worldimp.cpp`
    3191-3245).
 
-Owner (scope; each with a recommended answer):
+Decided by the industry standard (meta 2026-11-26; were owner questions):
 
-2. **Modern: can you take a paid trip while enemies are hunting you?** Recommended: no in Modern (Elden Ring and
+2. **Modern: can you take a paid trip while enemies are hunting you?** Decided: no in Modern (Elden Ring and
    Witcher block it), yes in Classic; Recall and Interventions are never blocked by enemies in either preset (they
    are Morrowind's escape magic).
 3. **A replacement operator: same race and sex as the dead one, a new face, named after the class ("Caravaner")?**
-   Recommended: yes.
+   Decided: yes.
