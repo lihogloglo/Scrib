@@ -248,7 +248,24 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
   slots or groundcover (2026-11-11 also seen with the static scene off). The `sf_scene_bevy` shift test only covers X shifts.
   Next: owner flies down/up across 384 m and 128 m and says whether clusters jump at the crossings; then the same in
   `sc-noscene`; then a vertical-shift test in `sf_scene_bevy` residency_tests (and groundcover if scene-off repeats).
-- Status: known bug, not diagnosed (narrowed 2026-11-19: GPU-placed, tied to vertical origin shifts). Next step: a diagnosis slice.
+- 2026-11-26 (world-bugs): cause found for the 2026-11-19 sighting (static scene on): a streamed-out cell never wrote its
+  batch slots inactive and `batch_ranges` lent the freed holes to the neighbour range, so stale slots kept drawing with the
+  neighbour's mesh and no shift rewrote them (+256 m after a +Y shift). Fixed headlessly (F2, ledger statics 2026-11-26).
+  The 2026-11-11 `sc-noscene` sighting ran the precombine (Mesh3d, no scene, no groundcover): not explained, stays open.
+- Check (awaiting owner): `scene ghostfence-far`, fly up past 384 m and back down past 128 m, then along the coast ~1 km.
+  Q1: anything (rocks, trees, structures) hanging in the sky after a climb or a descent? Q2: any shape that is the wrong mesh
+  for its place (a rock where a tree stood) where cells streamed out? Proof: log has `origin shift` lines while climbing.
+- Status: fix awaiting owner (2026-11-19 cause); 2026-11-11 precombine sighting open.
+
+### RO-24: Exterior statics drawn inside interiors (ROADMAP 1.29, owner report 2026-11-26)
+- Cause: static-scene batches on render layer 0 (every camera), so the exterior scene drew indoors; fixed by per-worldspace
+  layers and slot frames (world-bugs F1a/F1b, ledger statics 2026-11-26). Kind: game location.
+- Run: `scene wk-balmora`, walk into "Balmora, Karlirah's house" (and one more interior), stay ~30 s, come back out.
+- Q1: inside, any rock, wall or tree that is not part of the room? Q2: back outside, is every building and rock where it was?
+  Q3 (lamp shadows, F1a side effect; `scene hi-balmora-night`): do lamps now cast shadows from scene statics (walls, rocks), and
+  does it look right? (ms not measured yet: a `perf suite` arm on balmora_walk_night if the look is kept.)
+  Proof: log line `worldspace look: interior balmora, karlirah's house` then `parked @exterior`.
+- Status: awaiting owner (2026-11-26).
 
 ### RO-19: Very short shadow flickers here and there (owner report 2026-11-11)
 - Balmora 14:00, same in sc-scene and sc-noscene: brief, subtle flickers, the owner thinks shadows (maybe fog).

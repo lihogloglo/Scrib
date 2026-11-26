@@ -216,8 +216,9 @@ SH-13 | known bug; owner 2026-11-15: shadow code changed since, may be stale, re
 SH-14 | known bug; owner 2026-11-15: shadow code changed since, may be stale, re-check | [shadows](visual-checks/shadows.md) | Contact-shadow bands at object edges
 GF-1 | partial (2026-11-19 run 2: far fence visible, much darker than the rest from afar, tweak later; sky objects are RO-18) | [rendering](visual-checks/rendering.md) | Ghostfence appears complete, never late
 DL-4 | known bug | [rendering](visual-checks/rendering.md) | Rug-edge black bands under RT
-RO-18 | known bug (reproduced 2026-11-19 in ghostfence-far: not entities, not far field; tied to vertical origin shifts) | [rendering](visual-checks/rendering.md) | Grass and foliage floating in the sky, swapping as a batch every ~200 m (2026-11-11)
+RO-18 | awaiting owner (2026-11-26: 2026-11-19 cause fixed, released scene slots kept drawing; 2026-11-11 precombine sighting open) | [rendering](visual-checks/rendering.md) | Grass and foliage floating in the sky, swapping as a batch every ~200 m (2026-11-11)
 RO-19 | known bug; owner 2026-11-15: shadow code changed since, may be stale, re-check | [rendering](visual-checks/rendering.md) | Very short shadow flickers in Balmora (2026-11-11)
+RO-24 | awaiting owner (2026-11-26) | [rendering](visual-checks/rendering.md) | Exterior statics drawn inside interiors (ROADMAP 1.29) + lamp shadows from scene statics
 RO-22 | awaiting owner | [rendering](visual-checks/rendering.md) | Near/far handoff band: no gaps or doubles with GPU-culled statics, A/B `--off cpuculltag` (perf-push P3, 2026-11-12)
 PH-12 | known bug | [physics](visual-checks/physics.md) | Walkable hole in the Census Office floor (again 2026-10-30)
 PH-13 | known bug | [physics](visual-checks/physics.md) | Player and NPCs drop onto the ground when a cell loads (2026-10-30)

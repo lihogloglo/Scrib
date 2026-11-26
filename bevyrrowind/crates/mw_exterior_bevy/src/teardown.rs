@@ -8,7 +8,9 @@
 //!   scaffold, the offscreen render's UI camera and image) carry `DespawnOnExit(WorldAlive)` at
 //!   spawn; the water's ocean and pool go through `mw_environment_bevy::water::despawn_world`.
 //! - **Resources.** Those holding world `Entity`s or per-world state get fresh values:
-//!   `Streaming` (same config), `WorldspaceRegistry` (empty, layers from 1 again),
+//!   `Streaming` (same config), `WorldspaceRegistry` (empty, layers from 1 again), the static
+//!   scene (`sf_scene_bevy::reset_scene`: its batches are not under the roots, and its cells
+//!   would stay committed, since replacing `Streaming` streams nothing out),
 //!   `ActiveWorldspace` and the player's start (as the app built them), `WorldOverlay`,
 //!   `FadeTransition`, the player's mode (no body), `RestoreBody`, `ArrivalSpot`, `Focus`; and
 //!   `Settled` is removed, so the next world settles again.
@@ -55,6 +57,8 @@ fn tear_down(world: &mut World) {
 
     let config = world.resource::<Streaming>().config().clone();
     world.insert_resource(Streaming::new(config));
+    // With `Streaming` replaced, no cell streams out through the scene hook: reset the scene too.
+    sf_scene_bevy::reset_scene(world);
     world.insert_resource(WorldspaceRegistry::default());
     world.insert_resource(WorldOverlay::default());
     world.insert_resource(FadeTransition::default());
@@ -104,7 +108,11 @@ mod tests {
             .init_resource::<mw_player_bevy::PlayerStart>()
             .init_resource::<mw_player_bevy::RestoreBody>()
             .init_resource::<mw_player_bevy::ArrivalSpot>()
-            .init_resource::<mw_player_bevy::Focus>();
+            .init_resource::<mw_player_bevy::Focus>()
+            // The static scene's per-run state, as `ScenePlugin` adds it (F3).
+            .init_resource::<sf_scene_bevy::SceneSpaces>()
+            .init_resource::<sf_scene_bevy::SceneInbox>()
+            .init_resource::<sf_scene_bevy::SceneUploads>();
         crate::phase::add(&mut app, true);
         test_world_setup(&mut app);
         add(&mut app);
@@ -145,12 +153,17 @@ mod tests {
             assert!(app.world().resource::<WorldspaceRegistry>().iter().count() > 0, "round {round}: a world");
             // A stale body from the first world must not survive into the next.
             app.world_mut().resource_mut::<PlayerMode>().body = Some(Entity::PLACEHOLDER);
+            // F3: a scene batch (top-level, not under a root) and its queued zero-fill.
+            let batch = app.world_mut().spawn(sf_scene_bevy::SceneBatch { space: 0, batch: 0 }).id();
+            let fill = sf_scene_bevy::BatchZeroFill { space: 0, batch: 0, entity: batch, slots: 1 };
+            app.world_mut().resource_mut::<sf_scene_bevy::SceneUploads>().zero_fills.push(fill);
             go(&mut app, AppPhase::Frontend);
             app.update();
             assert_eq!(entities(&mut app), frontend, "round {round}: back to the front end's entities");
             assert_eq!(cameras(&mut app), 0);
             assert_eq!(app.world().resource::<WorldspaceRegistry>().iter().count(), 0, "round {round}: registry empty");
             assert!(app.world().resource::<PlayerMode>().body.is_none(), "round {round}: no stale body");
+            assert!(app.world().resource::<sf_scene_bevy::SceneUploads>().zero_fills.is_empty(), "round {round}: scene reset");
         }
     }
 }

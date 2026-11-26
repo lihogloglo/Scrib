@@ -18,7 +18,9 @@
 //! floating origin at upload; when the origin moves,
 //! [`rewrite_on_origin_shift`](crate::shift::rewrite_on_origin_shift) queues
 //! every resident cell's slots again in the new frame, in the shift frame, and
-//! the stable run sort makes that later write win. The per-space scene buffer
+//! the stable run sort makes that later write win. **Stream-out** writes every slot the cell
+//! held inactive ([`inactive_instance`]) the same way, so a freed slot never keeps drawing its
+//! last instance in a stale frame (RO-18). The per-space scene buffer
 //! (`CellPlan::scene_bytes`, write 1) is B4b.
 
 use std::ops::Range;
@@ -68,6 +70,15 @@ pub fn gpu_instance(rows: [[f32; 4]; 3], offset: Vec3, active: bool) -> GpuMeshI
         tag: 0,
         pad: [0; 2],
     }
+}
+
+/// What a freed slot gets when its cell streams out (`CellRelease::freed_blocks`): all zero, the
+/// bytes of a batch's zero fill, so `is_active = 0` (and a zero transform besides). Written as an
+/// ordinary slot write, not a ranged fill: [`publish_scene`] publishes fills before writes, and a
+/// release must land after any write queued earlier the same frame (a commit, a shift's rewrite).
+/// Consecutive freed slots coalesce into one `write_buffer` like any run ([`slot_runs`]).
+pub fn inactive_instance() -> GpuMeshInstance {
+    GpuMeshInstance { world_from_local: [Vec4::ZERO; 3], is_active: 0, tag: 0, pad: [0; 2] }
 }
 
 /// The GPU bytes of `instances`, back to back (64 B each, `is_active` at 48).

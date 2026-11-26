@@ -130,7 +130,15 @@ impl Plugin for GroundcoverGamePlugin {
         app.add_plugins((GroundcoverPlugin, TerrainGroundPlugin, BladesPlugin))
             .insert_resource(GroundcoverInputs { off: false, table })
             .add_systems(Startup, setup)
-            .add_systems(Update, (poll_build, load_models, batch_layers, press_demand))
+            .add_systems(Update, (poll_build, load_models, press_demand))
+            // After the batches and blade fields spawn (both `Drive` sets), before visibility: never a frame on a stale layer.
+            .add_systems(
+                PostUpdate,
+                batch_layers
+                    .after(sf_groundcover_bevy::GroundcoverSystems::Drive)
+                    .after(sf_groundcover_bevy::blades::BladeSystems::Drive)
+                    .before(bevy::camera::visibility::VisibilitySystems::CheckVisibility),
+            )
             .add_observer(viewer_on)
             .add_observer(viewer_off);
     }
@@ -565,15 +573,39 @@ fn model_frame(world: &World, mut e: Entity) -> Transform {
 /// New mesh batches and blade fields without a render layer yet.
 type NewUnlayered = (Or<(Added<GroundcoverBatch>, Added<BladeBlock>)>, Without<RenderLayers>);
 
-/// Groundcover (mesh batches and blade fields) draws in the exterior's view only (as the terrain patches).
+/// Every mesh batch and blade field, with its current layers.
+type Groundcover<'a> = (Entity, Option<&'a RenderLayers>);
+type AnyGroundcover = Or<(With<GroundcoverBatch>, With<BladeBlock>)>;
+
+/// Groundcover (mesh batches and blade fields) draws in the exterior's view only (as the terrain patches): the
+/// exterior's CURRENT content layer (`WorldspaceLayers::content`), or no layer while the exterior is not registered.
+/// A new entity takes it when added; when the [`WorldspaceRegistry`] changes (or goes away) every one is re-set,
+/// since a world teardown replaces the registry and a released pair is recycled to another worldspace
+/// (`WorldspaceRegistry::release_in`): a field that kept its spawn-time layer would draw there. Same rule as the
+/// static scene's `sf_scene_bevy::residency::sync_batch_layers`.
 fn batch_layers(
     mut commands: Commands,
     registry: Option<Res<WorldspaceRegistry>>,
-    batches: Query<Entity, NewUnlayered>,
+    mut had_registry: Local<bool>,
+    new: Query<Entity, NewUnlayered>,
+    all: Query<Groundcover, AnyGroundcover>,
 ) {
-    let Some(entry) = registry.and_then(|r| r.get(&ids::exterior())) else { return };
-    for e in &batches {
-        commands.entity(e).try_insert(RenderLayers::layer(entry.layer));
+    let want = registry
+        .as_ref()
+        .and_then(|r| r.get(&ids::exterior()))
+        .map_or_else(RenderLayers::none, |e| e.layers().content());
+    let resync = registry.as_ref().map_or(*had_registry, Res::is_changed);
+    *had_registry = registry.is_some();
+    if resync {
+        for (e, layers) in &all {
+            if layers != Some(&want) {
+                commands.entity(e).try_insert(want.clone());
+            }
+        }
+    } else {
+        for e in &new {
+            commands.entity(e).try_insert(want.clone());
+        }
     }
 }
 
@@ -930,5 +962,61 @@ mod tests {
         world.run_system_once(setup).unwrap();
         assert!(!world.contains_resource::<GroundcoverBuild>());
         assert!(!world.contains_resource::<GroundcoverSource>());
+    }
+
+    /// The exterior's current content layer, or `RenderLayers::none()` while it is not registered.
+    fn exterior_content(world: &World) -> RenderLayers {
+        world
+            .get_resource::<WorldspaceRegistry>()
+            .and_then(|r| r.get(&ids::exterior()))
+            .map_or_else(RenderLayers::none, |e| e.layers().content())
+    }
+
+    /// Groundcover follows the exterior's CURRENT layer pair: a world teardown replaces the registry and a released
+    /// pair is recycled, so a batch or blade field that kept its spawn-time layer would draw in another worldspace.
+    #[test]
+    fn groundcover_follows_the_exterior_layer() {
+        let mut world = World::new();
+        let mut schedule = Schedule::default();
+        schedule.add_systems(batch_layers);
+        world.insert_resource(WorldspaceRegistry::default());
+        let first = WorldspaceRegistry::ensure_in(&mut world, &ids::exterior());
+        let batch = world.spawn(GroundcoverBatch { model: "m".to_owned(), casting: false }).id();
+        let block = world
+            .spawn(BladeBlock {
+                key: sf_groundcover_bevy::blades::BlockKey { x: 0, z: 0 },
+                species: sf_groundcover::SpeciesIndex(0),
+                centre: [0.0, 0.0],
+                base_y: 0.0,
+            })
+            .id();
+        schedule.run(&mut world);
+        let want = first.layers().content();
+        assert_eq!(world.get::<RenderLayers>(batch), Some(&want), "a new batch takes the exterior's layer");
+        assert_eq!(world.get::<RenderLayers>(block), Some(&want), "a new blade field takes the exterior's layer");
+
+        // Teardown: a fresh registry where another worldspace took the first pair, the exterior the next one.
+        world.insert_resource(WorldspaceRegistry::default());
+        WorldspaceRegistry::ensure_in(&mut world, &WorldspaceId::new("elsewhere"));
+        let second = WorldspaceRegistry::ensure_in(&mut world, &ids::exterior());
+        assert_ne!(second.layer, first.layer, "the exterior moved to another pair");
+        schedule.run(&mut world);
+        let want = exterior_content(&world);
+        assert_eq!(want, second.layers().content());
+        assert_eq!(world.get::<RenderLayers>(batch), Some(&want), "the batch follows the exterior's new pair");
+        assert_eq!(world.get::<RenderLayers>(block), Some(&want), "the blade field follows the exterior's new pair");
+
+        // The exterior is not registered: groundcover goes to no layer (never a stale one, never layer 0).
+        world.insert_resource(WorldspaceRegistry::default());
+        WorldspaceRegistry::ensure_in(&mut world, &WorldspaceId::new("elsewhere"));
+        schedule.run(&mut world);
+        assert_eq!(world.get::<RenderLayers>(batch), Some(&RenderLayers::none()), "no exterior: the batch draws nowhere");
+        assert_eq!(world.get::<RenderLayers>(block), Some(&RenderLayers::none()), "no exterior: the blade field draws nowhere");
+
+        // Registered again: back on its (new) pair.
+        let third = WorldspaceRegistry::ensure_in(&mut world, &ids::exterior());
+        schedule.run(&mut world);
+        assert_eq!(world.get::<RenderLayers>(batch), Some(&third.layers().content()));
+        assert_eq!(world.get::<RenderLayers>(block), Some(&third.layers().content()));
     }
 }

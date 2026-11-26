@@ -39,6 +39,7 @@ use std::time::Instant;
 
 use bevy_asset::{AssetId, AssetServer, Assets, Handle, LoadState, UntypedHandle};
 use bevy_asset::{AssetLoadError, io::AssetReaderError};
+use bevy_camera::visibility::RenderLayers;
 use bevy_ecs::prelude::*;
 use bevy_math::{IVec3, Vec3};
 use bevy_mesh::Mesh;
@@ -55,12 +56,13 @@ use sf_scene::{
 };
 use sf_world::{PlacementId, WorldspaceId};
 use sf_world_bevy::matclass::FoldRules;
-use sf_world_bevy::{CellScene, ModelMaterials, SceneCellCx, Streaming, WorldOrigin, WorldOverlay};
+use sf_world_bevy::{CellScene, ModelMaterials, SceneCellCx, Streaming, WorldOrigin, WorldOverlay, WorldspaceRegistry};
 
 use crate::chains::{
     ChainAssets, ChainMaterials, MaterialMaker, ProductState, chain_assets, load_product, product_state,
 };
 use crate::slabs::{CellSlabs, ChainIds, ChainSlabTable};
+use crate::shift::OriginFrames;
 use crate::upload::{BatchSlotWrite, SLOT_BYTES, gpu_instance};
 use crate::{SceneConfig, SceneSupport, SceneTableAsset};
 
@@ -111,10 +113,20 @@ pub struct SpaceState {
     /// table's cell-local id (`plan.covered` through `SceneCellCx::indexed`): how
     /// [`PromotePlacement`] reaches `SceneSpace::promote`. Dropped with the table.
     pub covered: HashMap<IVec3, HashMap<PlacementId, sf_scene::PlacementId>>,
+    /// The floating-origin cell every slot of this space is placed relative to
+    /// (render space: `GlobalTransform` is relative to `sf_world_bevy::WorldOrigin`'s cell
+    /// while this worldspace is the active one). **Invariant:** every slot write of the space
+    /// (commit, promotion, origin-shift rewrite) goes through [`queue_slot_writes`] in this
+    /// frame, never in `WorldOrigin` directly, so the space's slots never mix two frames, even
+    /// while another worldspace is active (door look-through, shadows, a second camera read
+    /// them). Set at creation ([`crate::shift::OriginFrames::frame_for`]); only
+    /// [`crate::shift::rewrite_on_origin_shift`] moves it, rewriting every resident slot.
+    frame: IVec3,
 }
 
 impl SpaceState {
-    pub fn new(config: SpaceConfig) -> Self {
+    /// A space with no cell, its slots to be placed in `frame` ([`Self::frame`]).
+    pub fn new(config: SpaceConfig, frame: IVec3) -> Self {
         Self {
             space: SceneSpace::new(config),
             chains: Vec::new(),
@@ -122,7 +134,18 @@ impl SpaceState {
             loading: HashMap::new(),
             tables: HashMap::new(),
             covered: HashMap::new(),
+            frame,
         }
+    }
+
+    /// The floating-origin cell every slot of this space is placed relative to.
+    pub fn frame(&self) -> IVec3 {
+        self.frame
+    }
+
+    /// Moves the space to `frame`: the caller rewrites every resident slot in it (`shift`).
+    pub(crate) fn set_frame(&mut self, frame: IVec3) {
+        self.frame = frame;
     }
 
     /// The assets of the chain at `slot`, if it is resident.
@@ -245,7 +268,9 @@ pub struct BatchZeroFill {
 #[derive(Resource, Default)]
 pub struct SceneUploads {
     pub cells: Vec<CellUpload>,
-    /// One per `CellPlan::writes`, in plan order.
+    /// Slot writes in the order they were made, so a later write to one slot wins: a commit's
+    /// `CellPlan::writes` in plan order, promotions, origin-shift rewrites and the inactive
+    /// writes of a streamed-out cell's slots ([`queue_release_writes`]).
     pub writes: Vec<BatchSlotWrite>,
     pub zero_fills: Vec<BatchZeroFill>,
 }
@@ -255,6 +280,46 @@ pub fn tick_frame(mut frame: ResMut<SceneFrame>, mut spaces: ResMut<SceneSpaces>
     frame.0 += 1;
     for state in spaces.0.values_mut() {
         state.space.advance(frame.0);
+    }
+}
+
+/// Leaving the world: the teardown entry point (call it from the app's world teardown, next to
+/// the `Streaming` reset). Streaming is replaced there without streaming its cells out, so
+/// [`CellScene::release`] never runs: without this every cell resident at quit stays committed,
+/// and the next run finds the same cells resident (`plan_in` `Err(Resident)`, so they fall back
+/// to entities and draw twice) with the old run's batches still drawing.
+///
+/// - **Entities.** Every [`SceneBatch`] entity goes. The render world drops its batch (its
+///   reservation, output buffer and materialization job) at the next extract, which keeps only
+///   live entities (`bevy_pbr` `gpu_instance_batch` `extract_gpu_batched_meshes` and
+///   `prepare_gpu_batched_mesh_reservations`); `extract_scene_uploads` drops render-side writes
+///   to dead entities.
+/// - **Per-run resources** get fresh values: [`SceneSpaces`] (every cell, chain asset and table
+///   handle), [`SceneInbox`], the queued [`SceneUploads`], [`OriginFrames`] and
+///   [`ChainMaterials`]; [`ChainSlabTable`] is marked dirty, so the next [`poll_cell_loads`]
+///   drops the answers nothing wants any more (its `tracking` switch stays).
+/// - **Kept:** the configuration ([`SceneConfig`], [`SceneLoadBudget`], [`SceneSupport`]), the
+///   monotonic [`SceneFrame`], and `ReportedCells` (its next diff reports the old cells gone, so
+///   the cached shadows recapture).
+///
+/// Without the scene plugin (no [`SceneSpaces`]) there is nothing to reset.
+pub fn reset_scene(world: &mut World) {
+    if !world.contains_resource::<SceneSpaces>() {
+        return;
+    }
+    let batches: Vec<Entity> = world.query_filtered::<Entity, With<SceneBatch>>().iter(world).collect();
+    for entity in batches {
+        world.despawn(entity);
+    }
+    world.insert_resource(SceneSpaces::default());
+    if let Some(inbox) = world.get_resource::<SceneInbox>() {
+        inbox.lock().clear();
+    }
+    world.insert_resource(SceneUploads::default());
+    world.insert_resource(OriginFrames::default());
+    world.insert_resource(ChainMaterials::default());
+    if let Some(mut slabs) = world.get_resource_mut::<ChainSlabTable>() {
+        slabs.dirty = true;
     }
 }
 
@@ -275,13 +340,57 @@ pub fn despawn_empty_batches(frame: Res<SceneFrame>, mut spaces: ResMut<SceneSpa
     }
 }
 
+/// The render layers of `worldspace`'s batches: its content layer
+/// (`WorldspaceLayers::content`), drawn by its cameras and shadowed by its own lights (lamps
+/// `[world, shadow]`, sun and moon `[0, world, shadow]`). A worldspace with no root (not loaded,
+/// released, or no registry) gets no layer, so its batches draw nowhere until it has one: never
+/// layer 0, which every worldspace's camera sees.
+fn batch_layers(world: &World, worldspace: &WorldspaceId) -> RenderLayers {
+    world
+        .get_resource::<WorldspaceRegistry>()
+        .and_then(|r| r.get(worldspace))
+        .map_or_else(RenderLayers::none, |e| e.layers().content())
+}
+
+/// `PostUpdate`, before visibility, when the [`WorldspaceRegistry`] changed: every batch takes its
+/// worldspace's current layers ([`batch_layers`]). A worldspace's pair belongs to its loaded
+/// lifetime (`WorldspaceRegistry::release_in` recycles it), so a batch must never keep a layer its
+/// worldspace no longer owns: released, its batches go to no layer; loaded again (maybe on another
+/// pair), they take the new one. Spawned batches get theirs in [`ensure_batches`].
+pub fn sync_batch_layers(world: &mut World) {
+    let mut updates = Vec::new();
+    {
+        let spaces = world.resource::<SceneSpaces>();
+        for (worldspace, state) in &spaces.0 {
+            let want = batch_layers(world, worldspace);
+            for entity in state.batches.iter().flatten().map(|b| b.entity) {
+                if world.get::<RenderLayers>(entity) != Some(&want) {
+                    updates.push((entity, want.clone()));
+                }
+            }
+        }
+    }
+    for (entity, layers) in updates {
+        if let Ok(mut e) = world.get_entity_mut(entity) {
+            e.insert(layers);
+        }
+    }
+}
+
 /// Makes sure every batch of `batches` has its entity (B3 brief §4.3 step 5):
 /// the batch's own capacity (its class's, `SpaceConfig::capacity_of_key`), no
-/// range yet, no `Mesh3d`, no `NoCpuCulling`, no `NotShadowCaster`, and a
-/// zero-fill of its whole capacity queued. Returns the batches it spawned.
-fn ensure_batches(world: &mut World, state: &mut SpaceState, batches: &[(BatchId, BatchKey)]) -> Vec<BatchId> {
+/// range yet, no `Mesh3d`, no `NoCpuCulling`, no `NotShadowCaster`, its
+/// worldspace's layers ([`batch_layers`]), and a zero-fill of its whole
+/// capacity queued. Returns the batches it spawned.
+fn ensure_batches(
+    world: &mut World,
+    worldspace: &WorldspaceId,
+    state: &mut SpaceState,
+    batches: &[(BatchId, BatchKey)],
+) -> Vec<BatchId> {
     let config = state.space.config();
     let frame = world.resource::<SceneFrame>().0;
+    let layers = batch_layers(world, worldspace);
     let mut spawned = Vec::new();
     for &(batch, _) in batches {
         let i = batch as usize;
@@ -298,6 +407,7 @@ fn ensure_batches(world: &mut World, state: &mut SpaceState, batches: &[(BatchId
                 // Re-pointed with `mesh` by `rebuild_ranges`: the first range's chain's material.
                 MeshMaterial3d::<StandardMaterial>(Handle::default()),
                 SceneBatch { space: config.space, batch },
+                layers.clone(),
             ))
             .id();
         // Empty until its ranges are rebuilt.
@@ -411,7 +521,7 @@ struct Cx<'a> {
 /// `Update`, after `StreamingSystems::Drive`: picks up acquired cells and moves
 /// every undecided one through the gate, planning it when it clears (§4.3
 /// steps 1-4). Several phases may pass in one frame.
-#[allow(clippy::too_many_arguments)] // one system, fourteen resources
+#[allow(clippy::too_many_arguments)] // one system, fifteen parameters
 pub fn poll_cell_loads(
     asset_server: Res<AssetServer>,
     tables: Res<Assets<SceneTableAsset>>,
@@ -420,6 +530,7 @@ pub fn poll_cell_loads(
     frame: Res<SceneFrame>,
     inbox: Res<SceneInbox>,
     mut spaces: ResMut<SceneSpaces>,
+    (origin, origin_frames): (Option<Res<WorldOrigin>>, Res<OriginFrames>),
     mut slabs: ResMut<ChainSlabTable>,
     counters: Option<Res<DiagCounters>>,
     mut materials: Option<ResMut<Assets<StandardMaterial>>>,
@@ -441,8 +552,9 @@ pub fn poll_cell_loads(
     let acquired = std::mem::take(&mut *inbox.lock());
     for (worldspace, cell, table) in acquired {
         let next = SpaceId::try_from(spaces.0.len()).unwrap_or(SpaceId::MAX);
-        let state =
-            spaces.0.entry(worldspace).or_insert_with(|| SpaceState::new(SpaceConfig { space: next, ..config.space }));
+        let state = spaces.0.entry(worldspace).or_insert_with_key(|ws| {
+            SpaceState::new(SpaceConfig { space: next, ..config.space }, origin_frames.frame_for(ws, origin.as_deref()))
+        });
         // A second acquire of a cell still loading keeps the first load.
         state.loading.entry(cell).or_insert(CellLoad { table, phase: LoadPhase::Table });
     }
@@ -682,24 +794,25 @@ fn plan(
 }
 
 /// A committed cell's `plan_writes` resolved for the render world (B4a): each
-/// batch's entity, and the instance's table row placed in render space, the
-/// frame of the floating origin's cell `frame` (`sf_world_bevy::WorldOrigin`:
-/// `GlobalTransform` is relative to it). A write with no batch entity or no
-/// table row is a bug, dropped with an error. An origin shift re-queues every
-/// resident cell through here in the new frame (`shift` module).
+/// batch's entity, and the instance's table row placed in render space, in the
+/// space's own frame ([`SpaceState::frame`]: the floating origin's cell it was
+/// last drawn from, `sf_world_bevy::WorldOrigin`; `GlobalTransform` is relative
+/// to it). The only way a table row is written: commit, promotion and the origin
+/// shift's rewrite (`shift` module, after moving the frame) all go through here;
+/// stream-out's inactive writes need no row ([`queue_release_writes`]).
+/// A write with no batch entity or no table row is a bug, dropped with an error.
 pub(crate) fn queue_slot_writes(
     tables: &Assets<SceneTableAsset>,
     state: &SpaceState,
     cell: IVec3,
     plan_writes: &[SlotWrite],
-    frame: IVec3,
 ) -> Vec<BatchSlotWrite> {
     let view = state.tables.get(&cell).and_then(|t| tables.get(t)).and_then(|a| a.view().ok());
     let Some(view) = view else {
         log::error!("sf_scene_bevy: cell {cell}'s table went away before its batch slots were written");
         return Vec::new();
     };
-    let offset = sf_scene::cell_offset(view.origin_cell(), WorldPos::new(frame, Vec3::ZERO));
+    let offset = sf_scene::cell_offset(view.origin_cell(), WorldPos::new(state.frame, Vec3::ZERO));
     let mut out = Vec::with_capacity(plan_writes.len());
     for w in plan_writes {
         let entity = state.batches.get(w.batch as usize).copied().flatten().map(|b| b.entity);
@@ -713,6 +826,27 @@ pub(crate) fn queue_slot_writes(
             slot: w.slot,
             instance: gpu_instance(row.transform, offset, w.active),
         });
+    }
+    out
+}
+
+/// The inactive writes of every slot of `freed` (`CellRelease::freed_blocks`), one per slot,
+/// all zero ([`crate::upload::inactive_instance`]): a streamed-out cell's slots stop drawing at
+/// once instead of keeping their last instance under a neighbour's range, or the whole of an
+/// emptied batch, in the frame they were last written (RO-18). Queued after everything the
+/// cell wrote; the slots wait out the frames in flight before reuse, so a later cell's writes
+/// to them come after these. Frame-free, so an origin shift has nothing to rewrite. A block with
+/// no batch entity is a bug, dropped with an error.
+pub(crate) fn queue_release_writes(state: &SpaceState, cell: IVec3, freed: &[(BatchId, SlotRange)]) -> Vec<BatchSlotWrite> {
+    let inactive = crate::upload::inactive_instance();
+    let mut out = Vec::with_capacity(freed.iter().map(|(_, r)| r.len as usize).sum());
+    for &(batch, range) in freed {
+        let Some(entity) = state.batches.get(batch as usize).copied().flatten().map(|b| b.entity) else {
+            log::error!("sf_scene_bevy: cell {cell}: freed block {range:?} of batch {batch} has no batch entity; not cleared");
+            continue;
+        };
+        let entity = MainEntity::from(entity);
+        out.extend((range.start..range.end()).map(|slot| BatchSlotWrite { entity, batch, slot, instance: inactive }));
     }
     out
 }
@@ -738,10 +872,8 @@ pub fn apply_promotions(
     mut promotions: MessageReader<PromotePlacement>,
     mut spaces: ResMut<SceneSpaces>,
     tables: Res<Assets<SceneTableAsset>>,
-    origin: Option<Res<WorldOrigin>>,
     mut uploads: ResMut<SceneUploads>,
 ) {
-    let frame = origin.map_or(IVec3::ZERO, |o| o.cell);
     for m in promotions.read() {
         let Some(state) = spaces.0.get_mut(&m.worldspace) else {
             log::debug!("sf_scene_bevy: promotion of {:?} in {}: no scene there", m.placement, m.worldspace);
@@ -768,7 +900,7 @@ pub fn apply_promotions(
             }
         };
         if !writes.is_empty() {
-            uploads.writes.extend(queue_slot_writes(&tables, state, m.cell, &writes, frame));
+            uploads.writes.extend(queue_slot_writes(&tables, state, m.cell, &writes));
         }
     }
 }
@@ -930,22 +1062,25 @@ impl CellScene for SceneHook {
                 );
             }
             // Spawned with no range first (step 5), then every changed list rebuilt (step 8).
-            let mut changed = ensure_batches(world, state, &plan.batches);
+            let mut changed = ensure_batches(world, cx.worldspace, state, &plan.batches);
             changed.extend_from_slice(&plan.ranges);
             changed.sort_unstable();
             changed.dedup();
             rebuild_ranges(world, state, changed);
             // After `ensure_batches`: every batch of the plan has its entity now.
-            let frame = world.get_resource::<WorldOrigin>().map_or(IVec3::ZERO, |o| o.cell);
-            let writes = queue_slot_writes(world.resource::<Assets<SceneTableAsset>>(), state, cx.cell, &slot_writes, frame);
+            // In the space's own frame, not the active worldspace's origin (RO-18: a cell of an
+            // exterior committing while an interior is active).
+            let writes = queue_slot_writes(world.resource::<Assets<SceneTableAsset>>(), state, cx.cell, &slot_writes);
             world.resource_mut::<SceneUploads>().writes.extend(writes);
             (plan.scene_bytes.len() as u64).saturating_add(slot_writes.len() as u64 * SLOT_BYTES)
         })
     }
 
-    /// Idempotent: a planned cell gives its plan back (`cancel_in`), a resident
-    /// one streams out (`plan_out`), a fallen-back or unknown one only drops
-    /// its handles. The batches whose lists changed are rebuilt; one left
+    /// Idempotent: a planned cell gives its plan back (`cancel_in`: its slots
+    /// were never written, so they still hold their last inactive write), a
+    /// resident one streams out (`plan_out`) and queues every slot it held
+    /// inactive ([`queue_release_writes`]), a fallen-back or unknown one only
+    /// drops its handles. The batches whose lists changed are rebuilt; one left
     /// empty is despawned by [`despawn_empty_batches`] after the frames in
     /// flight.
     fn release(&self, world: &mut World, worldspace: &WorldspaceId, cell: IVec3) {
@@ -969,6 +1104,8 @@ impl CellScene for SceneHook {
                 match state.space.plan_out(cell) {
                     Ok(released) => {
                         rebuild_ranges(world, state, released.ranges.iter().copied());
+                        let clears = queue_release_writes(state, cell, &released.freed_blocks);
+                        world.resource_mut::<SceneUploads>().writes.extend(clears);
                         for slot in released.freed_chains {
                             if let Some(entry) = state.chains.get_mut(slot as usize) {
                                 *entry = None;

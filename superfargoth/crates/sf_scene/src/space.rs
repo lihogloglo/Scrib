@@ -29,7 +29,9 @@
 //! list makes the batch fall back to drawing one range for the whole capacity, which would draw
 //! one chain's geometry for every instance in the batch, so the producer must never emit one. The
 //! free slots between two live blocks are merged into the preceding range (the leading gap into
-//! the following one) and are left `is_active = 0`, so they draw nothing.
+//! the following one) and their last write is `is_active = 0` (never written past the batch's
+//! zero fill, or written inactive when their cell streamed out: [`CellRelease::freed_blocks`]),
+//! so they draw nothing.
 //!
 //! **First fit, measured.** The plan's §4.4 reasoned that a segregated size-class allocator
 //! ([`crate::alloc::ClassAllocator`]) would hold the high-water mark down. A4 measured the
@@ -222,6 +224,11 @@ pub struct CellRelease {
     pub freed_chains: Vec<ChainSlot>,
     /// Batches whose range list changed.
     pub ranges: Vec<BatchId>,
+    /// Every batch block the cell held, `(batch, slots)`: the Bevy half writes these slots
+    /// inactive now, so the free slots [`SceneSpace::batch_ranges`] merges into a neighbour's
+    /// range (or an emptied batch draws whole) draw nothing (RO-18). The slots wait out the
+    /// frames in flight before reuse, so a later cell's writes land after these.
+    pub freed_blocks: Vec<(BatchId, SlotRange)>,
 }
 
 /// What a space keeps about one resident cell.
@@ -671,7 +678,8 @@ impl SceneSpace {
         if residency.scene.len > 0 {
             self.release_scene(residency.scene);
         }
-        Ok(CellRelease { scene: residency.scene, freed_chains, ranges })
+        let freed_blocks = residency.blocks.iter().map(|&(id, range, ..)| (id, range)).collect();
+        Ok(CellRelease { scene: residency.scene, freed_chains, ranges, freed_blocks })
     }
 
     /// Promotes one placement of a resident cell to the entity path (§7): its slots stay
@@ -730,12 +738,15 @@ impl SceneSpace {
     ///
     /// One range per live block, in slot order. The free slots between two blocks are **merged
     /// into the preceding range** (and the leading gap into the following one), rather than given
-    /// filler ranges: there is no mesh to name in a hole, and those slots are never written
-    /// active, so they draw nothing.
+    /// filler ranges: there is no mesh to name in a hole. They draw nothing because every free
+    /// slot's last write is inactive: a slot never allocated still holds the batch's zero fill, a
+    /// slot a cell held is written inactive when it streams out ([`CellRelease::freed_blocks`]),
+    /// and a cancelled plan's slots were never written (RO-18: before that release write, a freed
+    /// slot kept its last active instance and drew with its neighbour's mesh).
     ///
     /// Empty when the batch holds nothing: an empty range list is valid and means exactly
     /// upstream behaviour (the whole batch draws its own mesh), which for a batch with no active
-    /// slot draws nothing.
+    /// slot (the invariant above) draws nothing.
     #[must_use]
     pub fn batch_ranges(&self, batch: BatchId) -> Vec<RangeSpec> {
         let Some(b) = self.batches.get(batch as usize) else { return Vec::new() };
@@ -1258,6 +1269,10 @@ mod tests {
         assert_eq!(release.scene, SlotRange { start: 0, len: 4 });
         assert_eq!(release.freed_chains, [0, 1]);
         assert_eq!(release.ranges, [0, 1]);
+        // Every block the cell held, for the Bevy half to write inactive (RO-18).
+        let held: Vec<(BatchId, SlotRange)> = plan.blocks.iter().map(|&(b, r, ..)| (b, r)).collect();
+        assert_eq!(release.freed_blocks, held);
+        assert_eq!(release.freed_blocks.iter().map(|(_, r)| r.len).sum::<u32>(), 4, "one slot per instance");
         assert_eq!(s.resident(IVec3::ZERO), None);
         // Everything released waits the frames in flight, and the batches now hold nothing.
         let stats = s.stats();
@@ -1801,7 +1816,10 @@ mod tests {
         s.commit_in(IVec3::ZERO, &plan);
         assert_eq!(s.stats().scene.live_slots, 0);
         let release = s.plan_out(IVec3::ZERO).unwrap();
-        assert_eq!(release, CellRelease { scene: SlotRange { start: 0, len: 0 }, freed_chains: vec![], ranges: vec![] });
+        assert_eq!(
+            release,
+            CellRelease { scene: SlotRange { start: 0, len: 0 }, freed_chains: vec![], ranges: vec![], freed_blocks: vec![] }
+        );
     }
 
     /// A config whose opaque batches hold 3 slots and masked ones 1, the rest 64.

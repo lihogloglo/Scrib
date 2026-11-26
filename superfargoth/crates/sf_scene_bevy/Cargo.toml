@@ -16,6 +16,8 @@ license.workspace = true
 bevy_app = { workspace = true, features = ["std"] }
 # Asset, AssetApp, AssetLoader: the `.sfscene` cell table.
 bevy_asset.workspace = true
+# RenderLayers: a batch draws only in its own worldspace (`sync_batch_layers`).
+bevy_camera.workspace = true
 # Resource: SceneConfig.
 bevy_ecs = { workspace = true, features = ["std"] }
 # IVec3 of the streaming seam.

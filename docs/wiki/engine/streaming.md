@@ -67,7 +67,7 @@ hooks, `lod_live`, `persist_actor_stats` (saves), teardown.
 ## Bevy features used
 
 `big_space` + `FloatingOrigin`; `VisibilityRange`; `RenderLayers` (world plus shadow-only layer per worldspace,
-`worldspace.rs:45`); `NoCpuCulling`. Bevy's `RenderAssetBytesPerFrame` limiter is off (`lib.rs:157`: a deferred upload left
+`worldspace.rs:45`); top-level entities outside the roots (static-scene batches `sf_scene_bevy` `sync_batch_layers`, groundcover `mw_exterior_bevy/src/groundcover.rs` `batch_layers`, terrain patches `mw_doors_bevy` `terrain_layers`) re-take their worldspace's current layer on every `WorldspaceRegistry` change, none while it is unregistered); `NoCpuCulling`. Bevy's `RenderAssetBytesPerFrame` limiter is off (`lib.rs:157`: a deferred upload left
 stale instance offsets in 0.20).
 
 ## Switches and counters

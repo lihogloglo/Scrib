@@ -47,10 +47,10 @@ pub use chains::{ChainAssets, ChainMaterials};
 pub use gauges::publish_scene_gauges;
 pub use residency::{
     BatchEntity, BatchZeroFill, CellLoad, CellUpload, LoadPhase, PromotePlacement, SLAB_WAIT_FRAMES, SceneBatch, SceneFrame, SceneHook, SceneLoadBudget,
-    SceneInbox, SceneSpaces, SceneUploads, SpaceState, apply_promotions, despawn_empty_batches, poll_cell_loads, tick_frame,
+    SceneInbox, SceneSpaces, SceneUploads, SpaceState, apply_promotions, despawn_empty_batches, poll_cell_loads, reset_scene, sync_batch_layers, tick_frame,
 };
 pub use shadows::{ReportedCells, report_shadow_casters};
-pub use shift::rewrite_on_origin_shift;
+pub use shift::{OriginFrames, rewrite_on_origin_shift};
 pub use slabs::{
     ChainIds, ChainSlabTable, MeshSlabIds, Pending, chain_slabs_pending, extract_chain_slabs, invalidate_chain_slabs,
 };
@@ -62,6 +62,7 @@ use std::sync::Arc;
 
 use bevy_app::{App, First, Last, Plugin, PostUpdate, Update};
 use bevy_asset::AssetApp;
+use bevy_camera::visibility::VisibilitySystems;
 use bevy_ecs::prelude::*;
 use bevy_pbr::gpu_instance_batch::{GpuInstanceBatchReservations, GpuInstanceBatchSystems};
 use bevy_render::batching::gpu_preprocessing::GpuPreprocessingSupport;
@@ -71,7 +72,7 @@ use sf_diag_bevy::DiagCounters;
 use sf_scene::{CELLS_EXT, CELLS_STEP, CHAINS_EXT, CHAINS_STEP, SpaceConfig};
 use sf_shadow_cache_bevy::ShadowCacheSystems;
 use sf_world::WorldspaceId;
-use sf_world_bevy::{SceneCells, StreamingSystems, WorldOriginSystems};
+use sf_world_bevy::{SceneCells, StreamingSystems, WorldOriginSystems, WorldspaceRegistry};
 
 /// Settings of the static scene (one per app).
 ///
@@ -172,6 +173,7 @@ impl Plugin for ScenePlugin {
             .init_resource::<ChainSlabTable>()
             .init_resource::<ChainMaterials>()
             .init_resource::<SceneUploads>()
+            .init_resource::<OriginFrames>()
             .configure_sets(
                 Update,
                 (
@@ -184,6 +186,13 @@ impl Plugin for ScenePlugin {
             .add_systems(Update, poll_cell_loads.in_set(SceneSystems::Residency))
             .add_systems(Update, apply_promotions.in_set(SceneSystems::Promote))
             .add_systems(PostUpdate, rewrite_on_origin_shift.after(WorldOriginSystems))
+            // A batch draws only in its own worldspace, on the pair that worldspace holds now.
+            .add_systems(
+                PostUpdate,
+                sync_batch_layers
+                    .run_if(resource_exists_and_changed::<WorldspaceRegistry>)
+                    .before(VisibilitySystems::CheckVisibility),
+            )
             // Fix 5: the cached lamp shadows recapture where batch slots changed (`shadows`).
             .init_resource::<ReportedCells>()
             .add_systems(PostUpdate, report_shadow_casters.after(WorldOriginSystems).before(ShadowCacheSystems))

@@ -1414,3 +1414,455 @@ fn cell_loads_are_time_sliced_but_always_progress() {
     planned(&mut f, a);
     planned(&mut f, b);
 }
+
+// -- world bugs repro (D2: interior rocks, RO-18 floating statics) -------------------------------
+
+/// The second worldspace of the world-bugs repros (an interior entered from the fixture's).
+fn interior() -> WorldspaceId {
+    WorldspaceId::new("interior")
+}
+
+/// The offset a frame at grid cell `frame` puts a cell origin at `origin_cell` (cell edge
+/// [`sf_coords::GRID_CELL`]), computed here, independently of `sf_scene::cell_offset`.
+fn frame_offset(origin_cell: IVec3, frame: IVec3) -> Vec3 {
+    (origin_cell - frame).as_vec3() * sf_coords::GRID_CELL
+}
+
+/// The offset `write` placed its table `row` at: its translation lanes minus the row's.
+fn placed_offset(row: [[f32; 4]; 3], write: &BatchSlotWrite) -> Vec3 {
+    let t = write.instance.world_from_local;
+    Vec3::new(t[0].w - row[0][3], t[1].w - row[1][3], t[2].w - row[2][3])
+}
+
+/// The cell's table origin and its plan writes' table rows, in plan order.
+fn plan_rows(f: &Fixture, cell: IVec3, plan: &CellPlan) -> (IVec3, Vec<[[f32; 4]; 3]>) {
+    let world = f.app.world();
+    let view = world.resource::<Assets<SceneTableAsset>>().get(&f.state().tables[&cell]).unwrap().view().unwrap();
+    let rows = plan.writes.iter().map(|w| view.instance(w.index as usize).unwrap().transform).collect();
+    (view.origin_cell(), rows)
+}
+
+/// Whether `entity` is hidden by its own `Visibility` or an inherited one (walks `ChildOf`).
+fn hidden_in_tree(world: &World, mut entity: Entity) -> bool {
+    loop {
+        match world.get::<Visibility>(entity) {
+            Some(Visibility::Hidden) => return true,
+            Some(Visibility::Visible) => return false,
+            _ => {}
+        }
+        match world.get::<ChildOf>(entity) {
+            Some(parent) => entity = parent.parent(),
+            None => return false,
+        }
+    }
+}
+
+/// Every `SceneBatch` entity with its render layers (none = layer 0, Bevy's default).
+fn scene_batch_layers(f: &mut Fixture) -> Vec<(Entity, bevy::camera::visibility::RenderLayers)> {
+    let world = f.app.world_mut();
+    world
+        .query_filtered::<(Entity, Option<&bevy::camera::visibility::RenderLayers>), With<SceneBatch>>()
+        .iter(world)
+        .map(|(e, l)| (e, l.cloned().unwrap_or_default()))
+        .collect()
+}
+
+/// Repro of bug 1 (entering an interior from Balmora showed exterior rocks that are not part of
+/// the cell): a committed cell of worldspace A, then worldspace B active. No `SceneBatch` of A
+/// may be drawn by a camera of B (`WorldspaceLayers::camera`, `[0, B's world layer]`): it carries
+/// layers that miss B's camera, or it is hidden. Batches are spawned with no `RenderLayers`
+/// (layer 0, which every worldspace camera sees) and not under A's root, so parking A
+/// (`sf_world_bevy` `park.rs`, which hides the root's subtree) cannot hide them. Back in A, they
+/// are drawn by A's camera again.
+#[test]
+fn scene_batches_of_a_worldspace_are_not_drawn_by_another_worldspaces_camera() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    let cell = f.cell;
+    stream_cell_in(&mut f, cell);
+    let a = WorldspaceRegistry::ensure_in(f.app.world_mut(), &ws());
+    let b = WorldspaceRegistry::ensure_in(f.app.world_mut(), &interior());
+    f.app.insert_resource(ActiveWorldspace(Some(interior())));
+    for _ in 0..3 {
+        f.app.update();
+    }
+    let batches = scene_batch_layers(&mut f);
+    assert!(!batches.is_empty(), "A's committed cell has batch entities");
+    let b_camera = b.layers().camera();
+    for (entity, layers) in &batches {
+        let hidden = hidden_in_tree(f.app.world(), *entity);
+        assert!(
+            hidden || !layers.intersects(&b_camera),
+            "A's batch {entity:?} is drawn by B's camera: layers {layers:?}, B's camera {b_camera:?}, A's content {:?}, hidden {hidden}",
+            a.layers().content()
+        );
+    }
+
+    f.app.insert_resource(ActiveWorldspace(Some(ws())));
+    for _ in 0..3 {
+        f.app.update();
+    }
+    let a_camera = a.layers().camera();
+    for (entity, layers) in scene_batch_layers(&mut f) {
+        assert!(
+            !hidden_in_tree(f.app.world(), entity) && layers.intersects(&a_camera),
+            "back in A, A's batch {entity:?} is drawn by A's camera: layers {layers:?}, A's camera {a_camera:?}"
+        );
+    }
+}
+
+/// A worldspace's layer pair belongs to its loaded lifetime (`WorldspaceRegistry::release_in`
+/// recycles it, first in first out): once A's root is released, A's batches keep no layer, so the
+/// worldspace that takes A's pair next never draws them; loaded again, A's batches take A's new pair.
+#[test]
+fn scene_batches_never_keep_a_released_worldspaces_layers() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    let cell = f.cell;
+    stream_cell_in(&mut f, cell);
+    let a = WorldspaceRegistry::ensure_in(f.app.world_mut(), &ws());
+    f.app.update();
+    let batches = scene_batch_layers(&mut f);
+    assert!(!batches.is_empty(), "A's committed cell has batch entities");
+    assert!(batches.iter().all(|(_, l)| *l == a.layers().content()), "A's batches on A's content layer: {batches:?}");
+
+    assert!(WorldspaceRegistry::release_in(f.app.world_mut(), &ws()), "nothing under A's root");
+    let b = WorldspaceRegistry::ensure_in(f.app.world_mut(), &interior());
+    assert_eq!(b.layer, a.layer, "B takes A's released pair");
+    f.app.insert_resource(ActiveWorldspace(Some(interior())));
+    f.app.update();
+    let now = f.app.world().resource::<WorldspaceRegistry>().get(&ws());
+    for (entity, layers) in scene_batch_layers(&mut f) {
+        assert!(!layers.intersects(&b.layers().camera()), "A's batch {entity:?} drawn by B on A's old pair: {layers:?}");
+        let want = now.map_or_else(bevy::camera::visibility::RenderLayers::none, |e| e.layers().content());
+        assert_eq!(layers, want, "A's batch {entity:?} follows A's current registry entry {now:?}");
+    }
+
+    let a2 = WorldspaceRegistry::ensure_in(f.app.world_mut(), &ws());
+    f.app.insert_resource(ActiveWorldspace(Some(ws())));
+    f.app.update();
+    for (entity, layers) in scene_batch_layers(&mut f) {
+        assert_eq!(layers, a2.layers().content(), "A's batch {entity:?} on A's new pair");
+    }
+}
+
+/// Repro of the cross-worldspace half of RO-18 (and bug 1's placement): worldspace B is active
+/// with its origin at `(5, 0, -3)`, A was last drawn with its origin at `(2, 1, 0)`, and a cell of
+/// A streams in. Its slots must be in A's frame, `(2, 1, 0)`.
+///
+/// Why A's last origin: `shift.rs` `rewrite_on_origin_shift` rewrites only the origin's
+/// worldspace, so while B is active A's resident slots stay in the frame A was last drawn in;
+/// on the return to A, `update_world_origin` sets `WorldOrigin` to A's grid's floating-origin
+/// cell and the worldspace change rewrites every resident slot of A there. A's last origin is
+/// that cell while A's camera has not moved, so it is the one frame every slot of A agrees on.
+/// Commit writes in the space's own frame (`SpaceState::frame`, started from
+/// `shift::OriginFrames`), never in the active worldspace's origin. The returns to A are checked
+/// too: at A's last origin nothing is rewritten, one cell further every slot is.
+#[test]
+fn a_cell_planned_while_another_worldspace_is_active_is_written_in_its_own_frame() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    let cell = f.cell;
+    let (a_frame, b_frame) = (IVec3::new(2, 1, 0), IVec3::new(5, 0, -3));
+    f.app.insert_resource(sf_world_bevy::WorldOrigin::new(Some(ws()), a_frame));
+    f.app.update();
+    f.app.insert_resource(ActiveWorldspace(Some(interior())));
+    f.app.insert_resource(sf_world_bevy::WorldOrigin::new(Some(interior()), b_frame));
+    f.app.update();
+    f.app.world_mut().resource_mut::<SceneUploads>().writes.clear();
+
+    let plan = stream_cell_in(&mut f, cell);
+    let (origin_cell, rows) = plan_rows(&f, cell, &plan);
+    let writes = f.app.world().resource::<SceneUploads>().writes.clone();
+    assert_eq!(writes.len(), plan.writes.len(), "one write per plan write");
+    let want = frame_offset(origin_cell, a_frame);
+    for (got, row) in writes.iter().zip(&rows) {
+        assert_eq!(
+            placed_offset(*row, got),
+            want,
+            "slot {} of batch {} placed in B's frame {b_frame} (offset {}), not A's {a_frame} (offset {want})",
+            got.slot,
+            got.batch,
+            frame_offset(origin_cell, b_frame)
+        );
+    }
+
+    // Back in A at its last origin: the slots are already in A's frame, nothing is rewritten.
+    f.app.world_mut().resource_mut::<SceneUploads>().writes.clear();
+    f.app.insert_resource(ActiveWorldspace(Some(ws())));
+    f.app.insert_resource(sf_world_bevy::WorldOrigin::new(Some(ws()), a_frame));
+    f.app.update();
+    assert!(f.app.world().resource::<SceneUploads>().writes.is_empty(), "the return to A's own frame rewrites nothing");
+
+    // To B and back to A one cell further: the worldspace change rewrites every slot there.
+    f.app.insert_resource(ActiveWorldspace(Some(interior())));
+    f.app.insert_resource(sf_world_bevy::WorldOrigin::new(Some(interior()), b_frame));
+    f.app.update();
+    assert!(f.app.world().resource::<SceneUploads>().writes.is_empty(), "B's origin leaves A's slots alone");
+    let moved = a_frame + IVec3::X;
+    f.app.insert_resource(ActiveWorldspace(Some(ws())));
+    f.app.insert_resource(sf_world_bevy::WorldOrigin::new(Some(ws()), moved));
+    f.app.update();
+    let writes = f.app.world().resource::<SceneUploads>().writes.clone();
+    assert_eq!(writes.len(), plan.writes.len(), "the return to A elsewhere rewrites every slot");
+    let want = frame_offset(origin_cell, moved);
+    for (got, row) in writes.iter().zip(&rows) {
+        assert_eq!(placed_offset(*row, got), want, "the return to A rewrites slot {} in A's new frame {moved}", got.slot);
+    }
+}
+
+/// [`an_origin_shift_rewrites_every_resident_slot_in_the_new_frame`] for each origin of
+/// `frames` in turn: every shift re-queues one write per resident slot, at the offset of the
+/// new frame (checked against [`frame_offset`], not `cell_offset`).
+fn shifts_rewrite_in_the_new_frame(frames: &[IVec3]) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    let cell = f.cell;
+    let plan = stream_cell_in(&mut f, cell);
+    f.app.update();
+    let (origin_cell, rows) = plan_rows(&f, cell, &plan);
+    for &frame in frames {
+        f.app.world_mut().resource_mut::<SceneUploads>().writes.clear();
+        f.app.insert_resource(sf_world_bevy::WorldOrigin::new(Some(ws()), frame));
+        f.app.update();
+        let world = f.app.world();
+        let writes = &world.resource::<SceneUploads>().writes;
+        assert_eq!(writes.len(), plan.writes.len(), "shift to {frame}: one write per resident slot");
+        let want = frame_offset(origin_cell, frame);
+        for ((got, row), w) in writes.iter().zip(&rows).zip(&plan.writes) {
+            assert_eq!((got.batch, got.slot, got.active()), (w.batch, w.slot, w.active));
+            assert_eq!(placed_offset(*row, got), want, "shift to {frame}: slot {} of batch {}", got.slot, got.batch);
+        }
+    }
+}
+
+/// RO-18 (statics float after an upward origin shift): a Y shift up, a second one up and one
+/// below the start rewrite every resident slot in the new frame.
+#[test]
+fn a_vertical_origin_shift_rewrites_every_resident_slot_in_the_new_frame() {
+    shifts_rewrite_in_the_new_frame(&[IVec3::Y, IVec3::new(0, 2, 0), IVec3::NEG_Y]);
+}
+
+/// RO-18: the same with X, Y and Z shifted at once, then back to the start.
+#[test]
+fn a_diagonal_origin_shift_rewrites_every_resident_slot_in_the_new_frame() {
+    shifts_rewrite_in_the_new_frame(&[IVec3::new(1, 1, 1), IVec3::new(-1, 2, 3), IVec3::ZERO]);
+}
+
+/// The write the publish leaves in each slot of `cell` (the last one per `(entity, slot)` after
+/// `upload::slot_runs`' stable sort) is at `frame`'s offset.
+fn assert_last_writes_in(f: &Fixture, cell: IVec3, plan: &CellPlan, frame: IVec3, case: &str) {
+    let mut writes = f.app.world().resource::<SceneUploads>().writes.clone();
+    slot_runs(&mut writes);
+    let last: BTreeMap<(MainEntity, u32), BatchSlotWrite> = writes.into_iter().map(|w| ((w.entity, w.slot), w)).collect();
+    let (origin_cell, rows) = plan_rows(f, cell, plan);
+    let want = frame_offset(origin_cell, frame);
+    let state = f.state();
+    for (w, row) in plan.writes.iter().zip(&rows) {
+        let entity = MainEntity::from(state.batches[w.batch as usize].expect("a committed batch has its entity").entity);
+        let got = last.get(&(entity, w.slot)).unwrap_or_else(|| panic!("{case}: slot {} of batch {} never written", w.slot, w.batch));
+        assert_eq!(placed_offset(*row, got), want, "{case}: slot {} of batch {} ends in frame {frame}'s offset", w.slot, w.batch);
+    }
+}
+
+/// RO-18 ordering: an upward origin shift (Y) while a cell is mid-load (waiting on its slabs),
+/// then one in the same frame as a commit, in both orders (commit then the `PostUpdate` rewrite,
+/// as the streaming `Update` and `rewrite_on_origin_shift` run; and the origin moved before the
+/// commit reads it). The last queued write of every slot of the cell is in the new frame.
+#[test]
+fn a_shift_between_plan_and_commit_leaves_no_slot_in_the_old_frame() {
+    let up = IVec3::Y;
+    // Mid-load: the shift lands while the cell waits on its slabs.
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+        f.app.world_mut().resource_mut::<ChainSlabTable>().tracking = true;
+        let cell = f.cell;
+        assert!(SceneHook.acquire(f.app.world(), &ws(), cell).is_some());
+        waits_for_slabs(&mut f, cell);
+        f.app.insert_resource(sf_world_bevy::WorldOrigin::new(Some(ws()), up));
+        f.app.update();
+        answer_slabs(&mut f, |_| 0);
+        let plan = planned(&mut f, cell);
+        assert!(commit(&mut f, cell) > 0);
+        f.app.update();
+        assert_last_writes_in(&f, cell, &plan, up, "shift while waiting on slabs");
+    }
+    // Same frame, commit first: written in the old frame, then the shift's rewrite.
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+        let cell = f.cell;
+        f.app.update();
+        assert!(SceneHook.acquire(f.app.world(), &ws(), cell).is_some());
+        let plan = planned(&mut f, cell);
+        assert!(commit(&mut f, cell) > 0);
+        f.app.insert_resource(sf_world_bevy::WorldOrigin::new(Some(ws()), up));
+        f.app.update();
+        assert_last_writes_in(&f, cell, &plan, up, "commit, then the shift in the same frame");
+    }
+    // Same frame, shift first: the commit reads the moved origin, then the rewrite runs.
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+        let cell = f.cell;
+        f.app.update();
+        assert!(SceneHook.acquire(f.app.world(), &ws(), cell).is_some());
+        let plan = planned(&mut f, cell);
+        f.app.insert_resource(sf_world_bevy::WorldOrigin::new(Some(ws()), up));
+        assert!(commit(&mut f, cell) > 0);
+        f.app.update();
+        assert_last_writes_in(&f, cell, &plan, up, "the shift, then the commit in the same frame");
+    }
+}
+
+// -- release (RO-18, F2) ----------------------------------------------------------
+
+/// What the publish leaves in every slot ever written: the last queued write per
+/// `(entity, slot)`, after `upload::slot_runs`' stable sort (a later write to one slot wins).
+fn last_writes(f: &Fixture) -> BTreeMap<(MainEntity, u32), BatchSlotWrite> {
+    let mut writes = f.app.world().resource::<SceneUploads>().writes.clone();
+    slot_runs(&mut writes);
+    writes.into_iter().map(|w| ((w.entity, w.slot), w)).collect()
+}
+
+/// Every `(batch entity, slot)` of the blocks `blocks` names (a plan's or a residency's).
+fn block_slots(f: &Fixture, blocks: &[(BatchId, sf_scene::SlotRange, sf_scene::ChainSlot, u8)]) -> HashSet<(MainEntity, u32)> {
+    let state = f.state();
+    blocks
+        .iter()
+        .flat_map(|&(batch, range, ..)| {
+            let entity = MainEntity::from(state.batches[batch as usize].expect("a live batch has its entity").entity);
+            (range.start..range.end()).map(move |slot| (entity, slot))
+        })
+        .collect()
+}
+
+/// Every `(batch entity, slot)` a resident cell holds.
+fn resident_slots(f: &Fixture) -> HashSet<(MainEntity, u32)> {
+    let blocks: Vec<_> = f.state().space.cells().flat_map(|(_, r)| r.blocks.clone()).collect();
+    block_slots(f, &blocks)
+}
+
+/// F2 test 1: two cells share a batch; streaming one out leaves the last queued write of every
+/// slot it held inactive, and queues nothing for the other cell's slots.
+#[test]
+fn a_released_cells_slots_are_written_inactive() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    let cell = f.cell;
+    let twin = cell + IVec3::Z;
+    let first = stream_cell_in(&mut f, cell);
+    post_twin(&mut f, cell, twin);
+    let second = planned(&mut f, twin);
+    assert!(commit(&mut f, twin) > 0);
+    assert!(second.batches.iter().any(|b| first.batches.contains(b)), "the twin shares a batch");
+    let released = block_slots(&f, &first.blocks);
+    let kept = block_slots(&f, &second.blocks);
+    assert!(released.is_disjoint(&kept));
+    let before = last_writes(&f);
+    let queued = f.app.world().resource::<SceneUploads>().writes.len();
+
+    SceneHook.release(f.app.world_mut(), &ws(), cell);
+
+    let new = &f.app.world().resource::<SceneUploads>().writes[queued..];
+    assert!(new.iter().all(|w| !kept.contains(&(w.entity, w.slot))), "the twin's slots are not touched");
+    let last = last_writes(&f);
+    let stale: Vec<_> = released.iter().filter(|k| last.get(k).is_none_or(BatchSlotWrite::active)).collect();
+    assert!(stale.is_empty(), "{} of {} released slots still draw: {stale:?}", stale.len(), released.len());
+    for k in &kept {
+        assert_eq!(last.get(k).map(BatchSlotWrite::active), before.get(k).map(BatchSlotWrite::active), "slot {k:?} kept");
+    }
+}
+
+/// F2 test 2 (RO-18): a cell streams out, then the origin moves up one cell: every slot whose
+/// last queued write draws belongs to a resident cell, so nothing is left in the old frame.
+#[test]
+fn no_stale_slot_draws_after_a_release_and_a_vertical_shift() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    let cell = f.cell;
+    let twin = cell + IVec3::Z;
+    stream_cell_in(&mut f, cell);
+    post_twin(&mut f, cell, twin);
+    planned(&mut f, twin);
+    assert!(commit(&mut f, twin) > 0);
+    f.app.update();
+
+    SceneHook.release(f.app.world_mut(), &ws(), cell);
+    let old = f.app.world().get_resource::<sf_world_bevy::WorldOrigin>().map_or(IVec3::ZERO, |o| o.cell);
+    f.app.insert_resource(sf_world_bevy::WorldOrigin::new(Some(ws()), old + IVec3::Y));
+    f.app.update();
+    assert_eq!(f.counters().get("scene/shift/rewrites"), Some(&1.0), "the shift rewrote the resident cell");
+
+    let resident = resident_slots(&f);
+    assert!(!resident.is_empty());
+    let stale: Vec<_> = last_writes(&f).into_iter().filter(|(k, w)| w.active() && !resident.contains(k)).map(|(k, _)| k).collect();
+    assert!(stale.is_empty(), "{} active slots belong to no resident cell: {stale:?}", stale.len());
+}
+
+/// F2 test 3: the last cell of a batch streams out (its range list goes empty, so the batch
+/// would draw its whole capacity with its own mesh): no slot of it is left active.
+#[test]
+fn an_emptied_batch_keeps_no_active_slot() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    let cell = f.cell;
+    let plan = stream_cell_in(&mut f, cell);
+    let held = block_slots(&f, &plan.blocks);
+
+    SceneHook.release(f.app.world_mut(), &ws(), cell);
+
+    for &(b, _) in &plan.batches {
+        assert!(f.state().space.batch_ranges(b).is_empty(), "batch {b} emptied");
+    }
+    let last = last_writes(&f);
+    assert!(held.iter().all(|k| last.contains_key(k)));
+    let active: Vec<_> = last.iter().filter(|(_, w)| w.active()).map(|(k, _)| *k).collect();
+    assert!(active.is_empty(), "{} slots of emptied batches still draw: {active:?}", active.len());
+}
+
+fn scene_batches(f: &mut Fixture) -> HashSet<Entity> {
+    let world = f.app.world_mut();
+    world.query_filtered::<Entity, With<SceneBatch>>().iter(world).collect()
+}
+
+/// Commits `cell` and its twin (`post_twin`: the same table under another cell id).
+fn stream_two_cells_in(f: &mut Fixture, cell: IVec3, twin: IVec3) {
+    stream_cell_in(f, cell);
+    post_twin(f, cell, twin);
+    planned(f, twin);
+    assert!(commit(f, twin) > 0);
+    let state = f.state();
+    assert!(state.space.resident(cell).is_some() && state.space.resident(twin).is_some());
+    assert_eq!(state.space.stats().cells, 2);
+}
+
+/// F3: leaving the world (`reset_scene`, the game's teardown) drops every committed cell and
+/// every batch entity, so the next run streams the same cells in through the scene again
+/// instead of finding them resident (`plan_in` `Err(Resident)`: fallen back, drawn twice).
+#[test]
+fn reset_scene_forgets_the_old_run_and_the_same_cells_plan_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a), true, 4096);
+    let (cell, twin) = (f.cell, f.cell + IVec3::Z);
+    stream_two_cells_in(&mut f, cell, twin);
+    assert!(!scene_batches(&mut f).is_empty());
+
+    reset_scene(f.app.world_mut());
+
+    assert!(scene_batches(&mut f).is_empty(), "no batch entity of the old run is left");
+    assert!(f.app.world().resource::<SceneSpaces>().0.is_empty(), "no space of the old run is left");
+    assert!(f.app.world().resource::<SceneInbox>().lock().is_empty());
+    let uploads = f.app.world().resource::<SceneUploads>();
+    assert!(uploads.writes.is_empty() && uploads.zero_fills.is_empty(), "no write to a despawned batch stays queued");
+    assert!(f.app.world().resource::<ChainMaterials>().0.is_empty(), "the old run's materials are let go");
+    f.app.update();
+
+    // The new run: the same cells plan (`planned` panics on a fallback) and commit through the scene.
+    stream_two_cells_in(&mut f, cell, twin);
+    let state = f.state();
+    let live: HashSet<Entity> = state.batches.iter().flatten().map(|b| b.entity).collect();
+    assert!(!live.is_empty());
+    assert_eq!(scene_batches(&mut f), live, "only the new run's batches exist");
+}

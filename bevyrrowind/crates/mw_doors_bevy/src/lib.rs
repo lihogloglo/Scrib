@@ -124,7 +124,13 @@ pub fn add(app: &mut App, world: WorldLinks, use_door: u32) {
         // with the other side's atmosphere and environment light (the
         // crossing flash, portal3: luma 21 -> 177 -> 38 walking in at noon).
         .add_systems(Update, (worldspace_look, sync_free_camera).after(StreamingSystems::Transition).before(sf_sky_bevy::SkySystems::Apply))
-        .add_systems(PostUpdate, terrain_layers);
+        // After the terrain spawns its patches, before visibility: never a frame on a stale layer.
+        .add_systems(
+            PostUpdate,
+            terrain_layers
+                .after(sf_terrain_bevy::TerrainSystems::Update)
+                .before(bevy_camera::visibility::VisibilitySystems::CheckVisibility),
+        );
 }
 
 /// The nearest link end in front of `here` (looking along `forward`; `None`:
@@ -382,15 +388,35 @@ pub fn worldspace_look(
     info!("worldspace look: {}", ws.as_str());
 }
 
-/// Terrain patches draw in the exterior's view only.
+/// Terrain patches draw in the exterior's view only: the exterior's CURRENT content layer
+/// (`WorldspaceLayers::content`), or no layer while the exterior is not registered. A new patch takes
+/// it when added; when the [`WorldspaceRegistry`] changes (or goes away) every patch is re-set, since
+/// patches are free entities that outlive a world teardown (which installs a fresh registry) and a
+/// released pair is recycled to another worldspace (`WorldspaceRegistry::release_in`). Same rule as
+/// the groundcover's `mw_exterior_bevy::groundcover::batch_layers`.
 fn terrain_layers(
     mut commands: Commands,
-    registry: Res<WorldspaceRegistry>,
-    patches: Query<Entity, (Added<TerrainPatch>, Without<RenderLayers>)>,
+    registry: Option<Res<WorldspaceRegistry>>,
+    mut had_registry: Local<bool>,
+    new: Query<Entity, (Added<TerrainPatch>, Without<RenderLayers>)>,
+    all: Query<(Entity, Option<&RenderLayers>), With<TerrainPatch>>,
 ) {
-    let Some(entry) = registry.get(&mw_world::ids::exterior()) else { return };
-    for e in &patches {
-        commands.entity(e).try_insert(RenderLayers::layer(entry.layer));
+    let want = registry
+        .as_ref()
+        .and_then(|r| r.get(&mw_world::ids::exterior()))
+        .map_or_else(RenderLayers::none, |e| e.layers().content());
+    let resync = registry.as_ref().map_or(*had_registry, Res::is_changed);
+    *had_registry = registry.is_some();
+    if resync {
+        for (e, layers) in &all {
+            if layers != Some(&want) {
+                commands.entity(e).try_insert(want.clone());
+            }
+        }
+    } else {
+        for e in &new {
+            commands.entity(e).try_insert(want.clone());
+        }
     }
 }
 
@@ -485,5 +511,57 @@ mod tests {
         // Same heading as the marker's own forward when it is level.
         let marker = mw_world::convert::world_transform([0.0; 3], [0.0, 0.0, 1.0], 1.0);
         assert!(close(arrival_rotation(marker.rotation) * Vec3::NEG_Z, marker.rotation * Vec3::NEG_Z));
+    }
+
+    /// Terrain patches carry the exterior's CURRENT content layer: a replaced registry (a world
+    /// teardown) that puts the exterior on another pair moves them, no exterior means no layer, and
+    /// registering it again brings them back; a patch spawned later takes the current layer.
+    #[test]
+    fn terrain_patches_follow_the_exteriors_layer() {
+        use sf_terrain_bevy::sf_terrain::cdlod::NodeKey;
+        let patch = |x: i64| TerrainPatch(NodeKey { lod: 0, x, z: 0, quadrant: None });
+        let registry = |others: &[&str]| {
+            let mut world = World::new();
+            world.init_resource::<WorldspaceRegistry>();
+            for id in others {
+                WorldspaceRegistry::ensure_in(&mut world, &WorldspaceId::new(id));
+            }
+            WorldspaceRegistry::ensure_in(&mut world, &mw_world::ids::exterior());
+            world.remove_resource::<WorldspaceRegistry>().unwrap()
+        };
+        let mut app = App::new();
+        app.add_systems(PostUpdate, terrain_layers);
+        let first = registry(&[]);
+        let first_layer = first.get(&mw_world::ids::exterior()).unwrap().layers().content();
+        app.insert_resource(first);
+        let a = app.world_mut().spawn(patch(0)).id();
+        let b = app.world_mut().spawn(patch(1)).id();
+        app.update();
+        let layers = |app: &App, e: Entity| app.world().get::<RenderLayers>(e).cloned();
+        assert_eq!(layers(&app, a), Some(first_layer.clone()), "a new patch takes the exterior's layer");
+
+        // A fresh world: another worldspace takes the first pair, the exterior the second.
+        let second = registry(&["hall"]);
+        let second_layer = second.get(&mw_world::ids::exterior()).unwrap().layers().content();
+        assert_ne!(first_layer, second_layer);
+        app.insert_resource(second);
+        app.update();
+        assert_eq!(layers(&app, a), Some(second_layer.clone()), "a surviving patch kept the old pair's layer");
+        assert_eq!(layers(&app, b), Some(second_layer.clone()));
+
+        // No world: nothing draws the terrain.
+        app.world_mut().remove_resource::<WorldspaceRegistry>();
+        app.update();
+        assert_eq!(layers(&app, a), Some(RenderLayers::none()), "no exterior, yet the patch kept a layer");
+        let c = app.world_mut().spawn(patch(2)).id();
+        app.update();
+        assert_eq!(layers(&app, c), Some(RenderLayers::none()), "a patch spawned with no exterior");
+
+        // The exterior again, on the first pair.
+        app.insert_resource(registry(&[]));
+        app.update();
+        for e in [a, b, c] {
+            assert_eq!(layers(&app, e), Some(first_layer.clone()), "the patches came back to the exterior");
+        }
     }
 }
