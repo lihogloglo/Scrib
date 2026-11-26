@@ -48,6 +48,7 @@ events.on("activated", function(e)
     s.last_record = world.record(e.target)
     s.by_player = e.actor == world.player()
     s.loaded = world.is_loaded(e.target)
+    s.verb = e.verb or -1
     local x, y, z = world.position(e.target)
     s.x = x
     timers.after(0.25, "ding", { h = e.target })
@@ -146,10 +147,10 @@ fn frame(app: &mut App) {
 #[test]
 fn activation_reaches_the_target_and_handled_suppresses_the_default() {
     let mut app = app();
-    app.world_mut().resource_mut::<Pending>().0.push(Activated { target: CHEST, actor: PLAYER });
+    app.world_mut().resource_mut::<Pending>().0.push(Activated { target: CHEST, actor: PLAYER, verb: None });
     frame(&mut app);
     let seen = app.world().resource::<Seen>();
-    assert_eq!(seen.outcomes, vec![ActivationOutcome { activation: Activated { target: CHEST, actor: PLAYER }, handled: true }]);
+    assert_eq!(seen.outcomes, vec![ActivationOutcome { activation: Activated { target: CHEST, actor: PLAYER, verb: None }, handled: true }]);
     let scripts = app.world().resource::<Scripts>();
     assert_eq!(text(scripts, "alpha", "last_record").as_deref(), Some("chest"));
     assert_eq!(number(scripts, "alpha", "x"), Some(3.0));
@@ -158,7 +159,7 @@ fn activation_reaches_the_target_and_handled_suppresses_the_default() {
     assert_eq!(storage_value(ctx, "loaded"), Some(StateValue::Bool(true)));
 
     // A door: alpha doesn't claim it, so the default action runs.
-    app.world_mut().resource_mut::<Pending>().0.push(Activated { target: DOOR, actor: PLAYER });
+    app.world_mut().resource_mut::<Pending>().0.push(Activated { target: DOOR, actor: PLAYER, verb: None });
     frame(&mut app);
     let seen = app.world().resource::<Seen>();
     assert_eq!(seen.outcomes.len(), 2);
@@ -167,9 +168,22 @@ fn activation_reaches_the_target_and_handled_suppresses_the_default() {
 }
 
 #[test]
+fn the_payload_carries_the_verb_or_nil_for_the_primary_use() {
+    let mut app = app();
+    app.world_mut().resource_mut::<Pending>().0.push(Activated { target: DOOR, actor: PLAYER, verb: Some(7) });
+    frame(&mut app);
+    assert_eq!(number(app.world().resource::<Scripts>(), "alpha", "verb"), Some(7.0));
+    app.world_mut().resource_mut::<Pending>().0.push(Activated { target: DOOR, actor: PLAYER, verb: None });
+    frame(&mut app);
+    assert_eq!(number(app.world().resource::<Scripts>(), "alpha", "verb"), Some(-1.0));
+    let seen = app.world().resource::<Seen>();
+    assert_eq!(seen.outcomes[0].activation.verb, Some(7));
+}
+
+#[test]
 fn handlers_run_in_their_slots_and_timers_fire_with_world_access() {
     let mut app = app();
-    app.world_mut().resource_mut::<Pending>().0.push(Activated { target: CHEST, actor: PLAYER });
+    app.world_mut().resource_mut::<Pending>().0.push(Activated { target: CHEST, actor: PLAYER, verb: None });
     frame(&mut app); // update slot: "u"; the activation schedules "ding" in 0.25 s
     app.world_mut().write_message(ScriptFact::input_action("jump", true));
     frame(&mut app); // input slot: "i", then update slot: "u"
@@ -198,7 +212,7 @@ fn handlers_run_in_their_slots_and_timers_fire_with_world_access() {
 fn faults_suspend_one_context_and_surface_as_diagnostics() {
     let mut app = app();
     for _ in 0..4 {
-        app.world_mut().resource_mut::<Pending>().0.push(Activated { target: CHEST, actor: PLAYER });
+        app.world_mut().resource_mut::<Pending>().0.push(Activated { target: CHEST, actor: PLAYER, verb: None });
         frame(&mut app);
     }
     let scripts = app.world().resource::<Scripts>();
@@ -236,7 +250,7 @@ fn world_access_fails_outside_a_slot() {
 #[test]
 fn changed_script_reloads_its_context_with_state_kept() {
     let mut app = app();
-    app.world_mut().resource_mut::<Pending>().0.push(Activated { target: CHEST, actor: PLAYER });
+    app.world_mut().resource_mut::<Pending>().0.push(Activated { target: CHEST, actor: PLAYER, verb: None });
     frame(&mut app);
     assert_eq!(number(app.world().resource::<Scripts>(), "alpha", "activations"), Some(1.0));
 
@@ -255,7 +269,7 @@ fn changed_script_reloads_its_context_with_state_kept() {
     assert_eq!(number(&scripts, "alpha", "activations"), Some(1.0), "storage kept");
 
     // Handlers registered by the new code still fire.
-    app.world_mut().resource_mut::<Pending>().0.push(Activated { target: CHEST, actor: PLAYER });
+    app.world_mut().resource_mut::<Pending>().0.push(Activated { target: CHEST, actor: PLAYER, verb: None });
     frame(&mut app);
     assert_eq!(number(app.world().resource::<Scripts>(), "alpha", "activations"), Some(2.0));
 }

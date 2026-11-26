@@ -61,12 +61,25 @@ impl ScriptSlot {
 
 /// An actor activated a placement (the player's activate key on the crosshair target, an AI
 /// using a door). Offered to scripts in the `Update` slot as event `"activated"` with payload
-/// `{ target = Handle, actor = Handle }`; a handler returning `"handled"` suppresses the default.
+/// `{ target = Handle, actor = Handle, verb = number | nil }`; a handler returning `"handled"`
+/// suppresses the default.
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Activated {
     pub target: Handle,
     /// [`PLAYER`] for the player.
     pub actor: Handle,
+    /// The use chosen, as the raw value of the interaction lane's verb tag (`TagId.0`; this crate
+    /// names no interaction types). `None` = the target's primary use.
+    pub verb: Option<u32>,
+}
+
+impl Activated {
+    /// The script payload: `{ actor, target, verb }` (`verb` nil for the primary use).
+    #[must_use]
+    pub fn payload(&self) -> StateValue {
+        let verb = self.verb.map_or(StateValue::Nil, |v| StateValue::Number(f64::from(v)));
+        table([("target", StateValue::Handle(self.target)), ("actor", StateValue::Handle(self.actor)), ("verb", verb)])
+    }
 }
 
 /// Written after the `Update` slot for every [`Activated`]: default actions run when
@@ -354,8 +367,7 @@ fn update_slot(world: &mut World, readers: &mut UpdateReaders) {
         s.runtime.run_loads();
         for o in &mut outcomes {
             let a = o.activation;
-            let payload = table([("target", StateValue::Handle(a.target)), ("actor", StateValue::Handle(a.actor))]);
-            o.handled = s.runtime.activate(a.target, payload).handled;
+            o.handled = s.runtime.activate(a.target, a.payload()).handled;
         }
         dispatch_facts(s, facts);
         s.runtime.update(dt);

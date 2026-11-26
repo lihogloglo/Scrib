@@ -1,6 +1,6 @@
 [package]
 name = "sf_interaction_bevy"
-description = "Bevy shell for sf_interaction (interaction.md): hosts the Claims table and the slot PointIndex on the fixed tick (request messages applied as one sorted batch, leases, InteractionEvent messages) and binds the interact.* tunables live; focus and activation follow in IN31b"
+description = "Bevy shell for sf_interaction (interaction.md): hosts the Claims table and the slot PointIndex on the fixed tick (request messages applied as one sorted batch, leases, InteractionEvent messages) and binds the interact.* tunables live; the activation pipeline (ActivateCommand -> Activated -> scripts -> gates -> UseApproved/UseRefused); focus follows in IN31b2"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,6 +13,8 @@ bevy_ecs = { workspace = true, features = ["std"] }
 # `Time<Fixed>`: the tick rate leases count in.
 bevy_time = { workspace = true, features = ["std"] }
 sf_interaction.workspace = true
+# `Activated` / `ActivationOutcome` / `ScriptSlot`: the activation pipeline runs through the scripts.
+sf_script_bevy.workspace = true
 sf_tunables.workspace = true
 sf_tunables_bevy.workspace = true
 # `PlacementId`: what index changes name.

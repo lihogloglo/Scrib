@@ -110,7 +110,7 @@ fn frame(app: &mut App) {
 }
 
 fn activate(app: &mut App, target: Handle) {
-    app.world_mut().resource_mut::<Pending>().0.push(Activated { target, actor: PLAYER });
+    app.world_mut().resource_mut::<Pending>().0.push(Activated { target, actor: PLAYER, verb: None });
     frame(app);
 }
 

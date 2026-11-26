@@ -8444,6 +8444,7 @@ dependencies = [
  "sf_ids",
  "sf_interaction",
  "sf_records",
+ "sf_script_bevy",
  "sf_tunables",
  "sf_tunables_bevy",
  "sf_world",

@@ -278,6 +278,29 @@ impl Claims {
         self.queues.get(&slot).map_or(&[], |q| q.tickets.as_slice())
     }
 
+    /// The slots of `placement` that have a claim or a queue ticket, in `SlotRef` order (hand
+    /// claims aren't slot holds).
+    pub fn held_slots(&self, placement: PlacementId) -> impl Iterator<Item = SlotRef> + '_ {
+        let range = SlotRef { placement, slot: 0 }..=SlotRef { placement, slot: u8::MAX };
+        let mut claimed = self.by_slot.range(range.clone()).map(|(s, _)| *s).peekable();
+        let mut queued =
+            self.queues.range(range).filter(|(_, q)| !q.tickets.is_empty()).map(|(s, _)| *s).peekable();
+        // Merge of two sorted runs, each slot once.
+        std::iter::from_fn(move || match (claimed.peek().copied(), queued.peek().copied()) {
+            (Some(c), Some(q)) => {
+                if c <= q {
+                    claimed.next();
+                }
+                if q <= c {
+                    queued.next();
+                }
+                Some(c.min(q))
+            }
+            (Some(_), None) => claimed.next(),
+            (None, _) => queued.next(),
+        })
+    }
+
     #[must_use]
     pub fn hands(&self, user: UserKey) -> &[PlacementId] {
         self.hands.get(&user).map_or(&[], SmallVec::as_slice)

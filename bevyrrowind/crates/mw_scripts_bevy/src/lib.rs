@@ -351,7 +351,7 @@ fn activate(
     }
     if let Some(f) = &focus.target {
         info!("activate: {} ({}, {:.1} m, handle {:032x})", f.name, f.record, f.distance, f.handle.0);
-        out.write(Activated { target: f.handle, actor: PLAYER });
+        out.write(Activated { target: f.handle, actor: PLAYER, verb: None });
         return;
     }
     let (true, Some(player)) = (automatic, placements.player.as_ref()) else { return };

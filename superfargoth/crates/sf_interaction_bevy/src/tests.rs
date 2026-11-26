@@ -1,6 +1,8 @@
 //! `IN31a` headless tests: same-tick claims resolve alike whatever the send order, a Reserved lease
 //! expires after `lease_s` of fixed ticks and promotes the queue head, index removal invalidates,
-//! a live `interact.claim.lease_s` change reaches the claim table, def defaults = struct defaults.
+//! a live `interact.claim.lease_s` change reaches the claim table, def defaults = struct defaults;
+//! an owner's moves add up from where it was claimed (`OwnerMoved`), a re-insert ends holds on the
+//! slots it switches off (`SlotDisabled`).
 
 use sf_ids::{ActorKey, PlayerKey};
 use sf_interaction::{
@@ -235,4 +237,134 @@ fn def_defaults_are_the_struct_defaults() {
     }
     let app = app();
     assert_eq!(app.world().resource::<InteractionSettings>().0, d);
+}
+
+// --- Owner moves and re-inserts ---------------------------------------------------------------
+
+/// An object frame `x` m along X, turned `yaw_deg` about Y.
+fn at(x: f32, yaw_deg: f32) -> Frame {
+    let mut f = Frame::default();
+    f.translation.x = x;
+    let half = yaw_deg.to_radians() / 2.0;
+    f.rotation.y = half.sin();
+    f.rotation.w = half.cos();
+    f
+}
+
+fn move_chair(app: &mut App, object: Frame) {
+    app.world_mut().write_message(IndexChange::Move { placement: CHAIR, object });
+    fixed(app, 1);
+}
+
+/// A two-seat bench at `object`, its `disabled` slots off.
+fn insert_bench(app: &mut App, object: Frame, disabled: &[u8]) {
+    let mut def = (*chair()).clone();
+    def.slots.push(def.slots[0].clone());
+    app.world_mut().write_message(IndexChange::Insert {
+        placement: CHAIR,
+        def: Arc::new(def),
+        object,
+        owner: Entity::PLACEHOLDER,
+        disabled: disabled.iter().copied().collect(),
+    });
+}
+
+fn claim(app: &mut App, user: UserKey, slot: u8) {
+    let op = Op::Claim { slot: SlotRef { placement: CHAIR, slot }, terms: terms(None), tags: SmallVec::new() };
+    app.world_mut().write_message(ClaimRequest(Request { user, priority: 20, op }));
+}
+
+fn claim_of(app: &App, slot: u8) -> Option<UserKey> {
+    app.world().resource::<InteractionClaims>().0.claim_on(SlotRef { placement: CHAIR, slot }).map(|c| c.user)
+}
+
+/// The tick's events since `from`, as (user, slot, kind).
+fn events_since(app: &App, from: usize) -> Vec<(UserKey, u8, EventKind)> {
+    seen(app).events[from..].iter().map(|e| (e.user, e.slot.slot, e.kind)).collect()
+}
+
+#[test]
+fn owner_moves_add_up_from_where_it_was_claimed() {
+    let mut app = app();
+    insert_chair(&mut app);
+    app.world_mut().write_message(request(actor(1), 20, false, Some(2)));
+    app.world_mut().write_message(request(actor(2), 20, true, Some(2)));
+    fixed(&mut app, 1);
+    assert_eq!(holder(&app), Some(actor(1)));
+    assert_eq!(app.world().resource::<InteractionClaims>().0.queue(SEAT).len(), 1);
+    assert_eq!(app.world().resource::<InteractionFrames>().anchor(CHAIR), Some(&Frame::default()));
+    let mark = seen(&app).events.len();
+    // 0.1 m per tick: each step within the 0.25 m tolerance, the third adds up past it.
+    move_chair(&mut app, at(0.1, 0.0));
+    move_chair(&mut app, at(0.2, 0.0));
+    assert_eq!(holder(&app), Some(actor(1)), "within tolerance of the claim's frame");
+    assert!(events_since(&app, mark).is_empty());
+    move_chair(&mut app, at(0.3, 0.0));
+    let moved = EventKind::Invalidated(InvalidReason::OwnerMoved);
+    assert_eq!(events_since(&app, mark), vec![(actor(2), 0, moved), (actor(1), 0, moved)]);
+    assert_eq!(holder(&app), None);
+    assert!(app.world().resource::<InteractionClaims>().0.queue(SEAT).is_empty());
+    assert_eq!(app.world().resource::<InteractionFrames>().anchor(CHAIR), None);
+    // A fresh claim is measured from where the chair is now.
+    app.world_mut().write_message(request(actor(3), 20, false, None));
+    fixed(&mut app, 1);
+    assert_eq!(holder(&app), Some(actor(3)));
+    let mark = seen(&app).events.len();
+    move_chair(&mut app, at(0.5, 0.0));
+    assert_eq!(holder(&app), Some(actor(3)), "0.2 m from the new claim's frame");
+    assert!(events_since(&app, mark).is_empty());
+    move_chair(&mut app, at(0.6, 0.0));
+    assert_eq!(events_since(&app, mark), vec![(actor(3), 0, moved)]);
+}
+
+#[test]
+fn a_turn_beyond_the_tolerance_invalidates_without_moving() {
+    let mut app = app();
+    insert_chair(&mut app);
+    app.world_mut().write_message(request(actor(1), 20, false, None));
+    fixed(&mut app, 1);
+    let mark = seen(&app).events.len();
+    move_chair(&mut app, at(0.0, 15.0));
+    assert_eq!(holder(&app), Some(actor(1)), "15 deg is within the 20 deg tolerance");
+    move_chair(&mut app, at(0.0, 25.0));
+    assert_eq!(events_since(&app, mark), vec![(actor(1), 0, EventKind::Invalidated(InvalidReason::OwnerMoved))]);
+}
+
+#[test]
+fn a_reinsert_ends_holds_on_the_slots_it_switches_off() {
+    let mut app = app();
+    insert_bench(&mut app, Frame::default(), &[]);
+    claim(&mut app, actor(1), 0);
+    claim(&mut app, actor(2), 1);
+    fixed(&mut app, 1);
+    assert_eq!((claim_of(&app, 0), claim_of(&app, 1)), (Some(actor(1)), Some(actor(2))));
+    // Slot 0 switched off by the adapter: its claim ends, slot 1's stays.
+    let mark = seen(&app).events.len();
+    insert_bench(&mut app, Frame::default(), &[0]);
+    fixed(&mut app, 1);
+    let disabled = EventKind::Invalidated(InvalidReason::SlotDisabled);
+    assert_eq!(events_since(&app, mark), vec![(actor(1), 0, disabled)]);
+    assert_eq!((claim_of(&app, 0), claim_of(&app, 1)), (None, Some(actor(2))));
+    let index = &app.world().resource::<InteractionIndex>().0;
+    assert!(index.get(SlotRef { placement: CHAIR, slot: 0 }).is_none());
+    // A re-insert elsewhere is a move.
+    let mark = seen(&app).events.len();
+    insert_bench(&mut app, at(1.0, 0.0), &[]);
+    fixed(&mut app, 1);
+    assert_eq!(events_since(&app, mark), vec![(actor(2), 1, EventKind::Invalidated(InvalidReason::OwnerMoved))]);
+    // A def without slot 1 ends its claim.
+    claim(&mut app, actor(3), 1);
+    fixed(&mut app, 1);
+    assert_eq!(claim_of(&app, 1), Some(actor(3)));
+    let mark = seen(&app).events.len();
+    app.world_mut().write_message(IndexChange::Insert {
+        placement: CHAIR,
+        def: chair(),
+        object: at(1.0, 0.0),
+        owner: Entity::PLACEHOLDER,
+        disabled: SmallVec::new(),
+    });
+    fixed(&mut app, 1);
+    assert_eq!(events_since(&app, mark), vec![(actor(3), 1, disabled)]);
+    assert_eq!(app.world().resource::<InteractionFrames>().anchor(CHAIR), None);
 }

@@ -5,12 +5,18 @@
 //!   [`InteractionTick`], then applies the tick's messages in this order:
 //!   1. [`IndexChange`]s (inserts, moves, removals of placed objects; the game's cell loading sends
 //!      them, IN32), sorted by placement (send order kept per placement). A removal also ends every
-//!      claim on the object with its reason (`OwnerUnloaded` for a cell unload).
+//!      claim on the object with its reason (`OwnerUnloaded` for a cell unload). A re-insert of an
+//!      indexed object ends the holds on slots it disables or no longer has (`SlotDisabled`). A
+//!      move, or a re-insert elsewhere, of a held object is measured from its anchor in
+//!      [`InteractionFrames`] (where it was when its first hold was granted, so a slow drift adds
+//!      up) and goes to [`Claims::owner_moved`] (`OwnerMoved` beyond the move tolerances).
 //!   2. [`InvalidateClaims`], sorted by subject then reason, so send order never matters.
 //!   3. [`ClaimRequest`]s as one [`Claims::apply_batch`] (the core sorts it by priority, `UserKey`,
 //!      request index). A `Claim` or `Enqueue` on a slot that isn't in the index is refused with
 //!      `Refusal::Disabled` without reaching the core (the object isn't resident).
-//!   4. [`Claims::tick`] (lease expiry and queue promotion).
+//!   4. [`Claims::tick`] (lease expiry and queue promotion). Then each object the tick's events
+//!      touched is anchored at its current frame if it is newly held, or loses its anchor if it no
+//!      longer is.
 //!
 //!   Out: one [`ClaimAnswered`] per request (in send order) and one [`ClaimChanged`] per core
 //!   [`InteractionEvent`] (in the core's order).
@@ -21,24 +27,39 @@
 //! - Hosts order their request writers `.before(InteractionSystems::Apply)` and their event readers
 //!   `.after(...)` in `FixedUpdate`.
 //!
-//! Not here: focus, `rank_verbs` and activation (`IN31b`); game wiring (`IN32`).
+//! - Activation (`IN31b1`, [`activate`] module docs): [`ActivateCommand`] validated in
+//!   [`InteractionSystems::Activate`] (after `Apply`) into `sf_script_bevy::Activated`; after the
+//!   script slot, [`ActivationSystems`] runs the gates and writes [`UseApproved`] / [`UseRefused`].
+//!   Needs `sf_script_bevy::ScriptsPlugin` (the scripts answer every `Activated`).
+//!
+//! Not here: focus and the hold list (`IN31b2`); game wiring (`IN32`).
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use bevy_app::{App, FixedUpdate, Plugin};
+use bevy_app::{App, FixedUpdate, Plugin, Update};
 use bevy_ecs::prelude::*;
 use bevy_time::{Fixed, Time};
 use sf_interaction::{
     Claims, Frame, Granted, InteractParams, InteractableDef, InteractionEvent, InvalidReason, Op, PointIndex,
     Refusal, Request, SlotRef, Subject, Tick,
 };
+use sf_script_bevy::{Activated, ActivationOutcome, ScriptSlot};
 use sf_tunables::{AnyDef, Def, Lifetime, Net, Scope, Source, Unit, def};
 use sf_tunables_bevy::TunablesAppExt;
 use sf_world::PlacementId;
 use smallvec::SmallVec;
 
+pub mod activate;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_activate;
+
+pub use activate::{
+    ActivateCommand, ActivationSystems, InteractionDefs, InteractionStateTags, PendingUse, PendingUses, ScriptActivate,
+    UseApproved, UseRefused,
+};
 
 // --- Tunables ---------------------------------------------------------------------------------
 
@@ -139,6 +160,56 @@ pub struct InteractionClaims(pub Claims);
 #[derive(Resource, Clone, Debug, Default)]
 pub struct InteractionIndex(pub PointIndex<Entity>);
 
+/// Where each indexed object is (world), and where each held one was when its first hold (claim or
+/// queue ticket) was granted: `OwnerMoved` is measured from that anchor, not frame to frame.
+#[derive(Resource, Clone, Debug, Default)]
+pub struct InteractionFrames {
+    current: BTreeMap<PlacementId, Frame>,
+    anchors: BTreeMap<PlacementId, Frame>,
+}
+
+impl InteractionFrames {
+    /// The object's frame as last inserted or moved, while it is indexed.
+    #[must_use]
+    pub fn current(&self, placement: PlacementId) -> Option<&Frame> {
+        self.current.get(&placement)
+    }
+
+    /// Where the object was when its first current hold was granted, while it has one.
+    #[must_use]
+    pub fn anchor(&self, placement: PlacementId) -> Option<&Frame> {
+        self.anchors.get(&placement)
+    }
+
+    /// The object went to `object`: the claims test their tolerances against the anchor, and an
+    /// invalidation drops it.
+    fn moved(&mut self, claims: &mut Claims, placement: PlacementId, object: &Frame, now: Tick) {
+        let Some(slot) = self.current.get_mut(&placement) else { return };
+        *slot = *object;
+        if let Some(anchor) = self.anchors.get(&placement) {
+            let moved_m = anchor.translation.distance(object.translation);
+            let turned_deg = anchor.rotation.angle_between(object.rotation).to_degrees();
+            if claims.owner_moved(placement, moved_m, turned_deg, now) {
+                self.anchors.remove(&placement);
+            }
+        }
+    }
+
+    /// Anchors the objects of this tick's events that are newly held, drops those no longer held.
+    fn reconcile(&mut self, claims: &Claims) {
+        let mut touched: Vec<PlacementId> = claims.events().iter().map(|e| e.slot.placement).collect();
+        touched.sort_unstable();
+        touched.dedup();
+        for placement in touched {
+            if claims.held_slots(placement).next().is_none() {
+                self.anchors.remove(&placement);
+            } else if let Some(frame) = self.current.get(&placement) {
+                self.anchors.entry(placement).or_insert(*frame);
+            }
+        }
+    }
+}
+
 /// The fixed tick claims count in: advanced once per `FixedUpdate` run, before the tick's batch.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct InteractionTick(pub Tick);
@@ -213,6 +284,8 @@ pub struct ClaimAnswered {
 pub enum InteractionSystems {
     /// Settings sync, index changes, invalidations, the batch, leases; events out.
     Apply,
+    /// [`ActivateCommand`]s validated against this tick's claims; `Activated` out.
+    Activate,
 }
 
 /// Hosts [`InteractionClaims`] and [`InteractionIndex`] on the fixed tick and binds [`TUNABLES`]
@@ -240,13 +313,33 @@ impl Plugin for InteractionPlugin {
         app.init_resource::<InteractionSettings>()
             .init_resource::<InteractionClaims>()
             .init_resource::<InteractionIndex>()
+            .init_resource::<InteractionFrames>()
             .init_resource::<InteractionTick>()
             .add_message::<ClaimRequest>()
             .add_message::<InvalidateClaims>()
             .add_message::<IndexChange>()
             .add_message::<ClaimChanged>()
             .add_message::<ClaimAnswered>()
-            .add_systems(FixedUpdate, (sync_params, step).chain().in_set(InteractionSystems::Apply));
+            .init_resource::<InteractionDefs>()
+            .init_resource::<InteractionStateTags>()
+            .init_resource::<PendingUses>()
+            .add_message::<ActivateCommand>()
+            .add_message::<ScriptActivate>()
+            .add_message::<UseApproved>()
+            .add_message::<UseRefused>()
+            .add_message::<Activated>()
+            .add_message::<ActivationOutcome>()
+            .configure_sets(FixedUpdate, (InteractionSystems::Apply, InteractionSystems::Activate).chain())
+            .configure_sets(
+                Update,
+                (ActivationSystems::Collect, ActivationSystems::Gates, ActivationSystems::Default)
+                    .chain()
+                    .after(ScriptSlot::Update),
+            )
+            .add_systems(FixedUpdate, (sync_params, step).chain().in_set(InteractionSystems::Apply))
+            .add_systems(FixedUpdate, activate::activate.in_set(InteractionSystems::Activate))
+            .add_systems(Update, activate::collect.in_set(ActivationSystems::Collect))
+            .add_systems(Update, activate::finish.in_set(ActivationSystems::Default));
         bind!(app, PRIORITY_AMBIENT, |p, v| p.priority_ambient = to_u8(v));
         bind!(app, PRIORITY_SCHEDULE, |p, v| p.priority_schedule = to_u8(v));
         bind!(app, PRIORITY_QUEST, |p, v| p.priority_quest = to_u8(v));
@@ -321,6 +414,8 @@ fn step(
     mut tick: ResMut<InteractionTick>,
     mut claims: ResMut<InteractionClaims>,
     mut index: ResMut<InteractionIndex>,
+    mut frames: ResMut<InteractionFrames>,
+    mut defs: ResMut<InteractionDefs>,
     mut index_in: MessageReader<IndexChange>,
     mut invalidate_in: MessageReader<InvalidateClaims>,
     mut requests_in: MessageReader<ClaimRequest>,
@@ -338,13 +433,28 @@ fn step(
     for change in edits {
         match change {
             IndexChange::Insert { placement, def, object, owner, disabled } => {
+                // A re-insert: holds on slots it switches off or drops end, then it counts as a move.
+                let off: Vec<SlotRef> = claims
+                    .held_slots(*placement)
+                    .filter(|s| disabled.contains(&s.slot) || usize::from(s.slot) >= def.slots.len())
+                    .collect();
+                for slot in off {
+                    claims.invalidate(Subject::Slot(slot), InvalidReason::SlotDisabled, now);
+                }
+                frames.moved(claims, *placement, object, now);
+                frames.current.insert(*placement, *object);
                 index.insert_placement(*placement, def, object, owner, |i| !disabled.contains(&i));
+                defs.0.insert(*placement, Arc::clone(def));
             }
             IndexChange::Move { placement, object } => {
+                frames.moved(claims, *placement, object, now);
                 index.move_placement(*placement, object);
             }
             IndexChange::Remove { placement, reason } => {
+                frames.current.remove(placement);
+                frames.anchors.remove(placement);
                 index.remove_placement(*placement);
+                defs.0.remove(placement);
                 claims.invalidate(Subject::Owner(*placement), *reason, now);
             }
         }
@@ -370,8 +480,9 @@ fn step(
         results[i] = result;
     }
 
-    // 4. Leases.
+    // 4. Leases; then the anchors follow the holds the tick changed.
     claims.tick(now);
+    frames.reconcile(claims);
 
     answered.write_batch(
         requests.into_iter().zip(results).map(|(request, result)| ClaimAnswered { tick: now, request, result }),
