@@ -2,7 +2,7 @@
   "about": "Per-crate ratchet of tools/tunables-census.mjs --check: a crate's T count may only go down. Rewrite with --update-baseline only when counts went down (a migration slice).",
   "totals": {
     "rows": 2858,
-    "T": 1227,
+    "T": 1226,
     "C": 1136,
     "?": 494
   },
@@ -78,7 +78,7 @@
       ]
     },
     "mw_audio": {
-      "T": 8,
+      "T": 7,
       "?": 1,
       "C": 0,
       "tunables": [
@@ -88,7 +88,6 @@
         "src/lib.rs RangeScale.max_mult",
         "src/lib.rs RangeScale.min_mult",
         "src/lib.rs UNIT_M",
-        "src/voice.rs VoiceRules.greet_duration_s",
         "src/voice.rs VoiceRules.idle_odds"
       ]
     },

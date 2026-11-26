@@ -5087,6 +5087,7 @@ dependencies = [
  "mw_audio",
  "mw_doors_bevy",
  "mw_rpg",
+ "mw_walkers_bevy",
  "mw_world",
  "sf_anim_bevy",
  "sf_audio",

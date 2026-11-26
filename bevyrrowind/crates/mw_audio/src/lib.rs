@@ -14,8 +14,8 @@
 //! - Footsteps: vanilla picks the sound by the boots' armour weight class ([`Footwear`]).
 //! - Music: `Music/Explore` and `Music/Battle` as playlists, listed through the VFS so mods add
 //!   tracks ([`playlists`]); the battle rule is [`MusicMood`].
-//! - NPC voices ([`voice`]): voice INFOs picked with `mw_rpg`'s filters, greetings and idle
-//!   chatter timing, the lip-sync envelope; every INFO sound is a Voice-bus cue.
+//! - NPC voices ([`voice`]): voice INFOs picked with `mw_rpg`'s filters, idle chatter
+//!   timing (the greeting is the walkers', `mw_walkers_bevy::greeting`), the lip-sync envelope; every INFO sound is a Voice-bus cue.
 
 use std::collections::HashMap;
 

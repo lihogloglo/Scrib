@@ -9,7 +9,7 @@ publish = false
 [features]
 # NPC voices, boots-weighted footsteps, swinging-door sounds: dev builds until the owner hears
 # them (visual-checks AU-3..AU-5); the app's `dev` turns it on.
-dev = ["dep:bevy_tasks", "dep:mw_actors", "dep:mw_rpg", "dep:sf_character_bevy", "dep:sf_rpg", "dep:tes3"]
+dev = ["dep:bevy_tasks", "dep:mw_actors", "dep:mw_rpg", "dep:mw_walkers_bevy", "dep:sf_character_bevy", "dep:sf_rpg", "dep:tes3"]
 
 [dependencies]
 # Sub-crates, as the framework's plugin crates take them (superfargoth ARCHITECTURE §8b rule 6).
@@ -28,6 +28,8 @@ mw_anim.workspace = true
 mw_audio.workspace = true
 mw_doors_bevy.workspace = true
 mw_rpg = { workspace = true, optional = true }
+# The walker greeting asks the voices for its Hello (MA4c2, mw_walkers_bevy::greeting).
+mw_walkers_bevy = { workspace = true, optional = true }
 mw_world.workspace = true
 sf_anim_bevy.workspace = true
 sf_audio.workspace = true

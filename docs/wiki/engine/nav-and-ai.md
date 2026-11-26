@@ -60,6 +60,12 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   listeners by `WorldGraph::path_distance` through doors and into other worldspaces, closed doors + `closed_door_m`,
   `hearing.rs` `PortalPaths`; tier 1 straight line in its space; no `NavWorldGraph`: straight line, same space only). A walker whose strongest entry is Searching stops wandering and searches (`search.rs`: LKP, look,
   widening rings) while the band is held, until the ttl gives up, then decays and wanders again.
+- **Greeting** (MA4c2, 2026-11-26; `mw_walkers_bevy/src/greeting.rs`): every awake AI actor steps `mw_ai`'s OpenMW
+  greeting machine (`greeting_step`, MA4c1) on the fixed tick in `GreetSystems` (`add` `greeting.rs:215`): Decide
+  (`:255`, after `ReactionSystems::React`; asks for the Hello when a greeting starts), the voices' answer
+  (`mw_audio_bevy` `say_hellos`, dev only), Apply (`:336`, before `drive_directives`), Hold (`:374`, after
+  `ReactionSystems::Apply`: stand + facing). While it holds, the wander and a `GoTo` pause (`walkers.rs` drive,
+  `directive_drive.rs`). No voice answer (non-dev builds): the greeting goes Done, no turn.
 - **Worldspace graph** (MA21, 2026-11-26; `mw_exterior_bevy/src/nav_links.rs`, added next to `mw_doors_bevy::add`):
   `NavWorldGraphPlugin` over `DoorLinks`; each link end's approach point is the PGRD node nearest its arrival, in front
   of the door plane and within `mw.nav.door_approach_m` (4 m), else the arrival (vanilla: 77% of 3656 ends from PGRD);

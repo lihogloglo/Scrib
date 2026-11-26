@@ -7,20 +7,21 @@
 //!   topic's priority order) is the line, its `SNAM` sound field the file ([`select`],
 //!   [`select_greeting`]). Every INFO sound is a bank entry and a one-variant cue on the Voice
 //!   bus ([`voice_cue`], [`add_voices`]) with the voice range settings.
-//! - **When** ([`VoiceDirector`], pure): "Hello" once on approach within the NPC's AI `Hello`
-//!   times `iGreetDistanceMultiplier` units, re-armed only after the player leaves
-//!   `fGreetDistanceReset` units; for `iGreetDuration` seconds after it the NPC is "greeting"
-//!   (the host turns them to the player). Idle chatter on a timer from `fVoiceIdleOdds`, only
-//!   while idle, aware of the player and within [`VoiceRules::idle_range_m`]. One line per actor
-//!   at a time ([`VoiceDirector::begin`]): a bark while one plays is dropped, as in the original.
+//! - **When** ([`VoiceDirector`], pure): idle chatter on a timer from `fVoiceIdleOdds`, only
+//!   while idle, aware of the player, within [`VoiceRules::idle_range_m`] and not greeting. The
+//!   greeting (when to say Hello, the turn to the player, the re-arm distance) is not here: it is
+//!   the walkers' `OpenMW` greeting machine (`mw_walkers_bevy::greeting`, `MA4c2`), which asks the
+//!   host for the Hello line ([`select`] with [`VoiceTopic::Hello`]) and tells it whether a
+//!   greeting is in progress ([`VoiceSense::greeting`]). One line per actor at a time
+//!   ([`VoiceDirector::begin`]): a bark while one plays is dropped, as in the original.
 //!   Combat and crime barks (Attack, Hit, Flee, Thief, Intruder, Alarm) are host requests: the
 //!   Phase 3 combat and crime systems call [`VoiceDirector::begin`] then [`select`].
 //! - **Lip-sync hook** ([`Envelope`]): the playing line's loudness (RMS per 50 ms window,
 //!   normalised to its loudest window), sampled at the playback time; the app puts the value on
 //!   the speaker as a component for the face animation to read.
 //!
-//! Behaviour reference: `OpenMW` (`DialogueManager::say`, `Actors::updateGreetingState`,
-//! `AiWander::playIdleDialogueRandomly`, `Sound_Loudness`) and the game settings' vanilla values.
+//! Behaviour reference: `OpenMW` (`DialogueManager::say`, `AiWander::playIdleDialogueRandomly`,
+//! `Sound_Loudness`) and the game settings' vanilla values.
 
 use std::collections::HashMap;
 
@@ -213,15 +214,9 @@ pub fn ducking() -> Vec<DuckRule> {
     vec![DuckRule { trigger: DuckTrigger::Bus(Bus::Voice), target: Bus::Music, depth_db: 8.0, attack_s: 0.25, release_s: 1.0 }]
 }
 
-/// When NPCs speak on their own (metres and seconds).
+/// When NPCs chatter on their own (metres).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct VoiceRules {
-    /// Hello distance per AI `Hello` point (`iGreetDistanceMultiplier`, 6 units).
-    pub greet_m_per_hello: f32,
-    /// The player must go this far before the NPC greets again (`fGreetDistanceReset`, 512 units).
-    pub greet_reset_m: f32,
-    /// How long the NPC keeps facing the player after a greeting (`iGreetDuration`, 4 s).
-    pub greet_duration_s: f32,
     /// `fVoiceIdleOdds` (vanilla 10).
     pub idle_odds: f32,
     /// Idle lines only within this distance of the player (3000 units, `OpenMW`'s choice).
@@ -232,9 +227,6 @@ impl Default for VoiceRules {
     /// The `Morrowind.esm` values.
     fn default() -> Self {
         Self {
-            greet_m_per_hello: 6.0 * UNIT_M,
-            greet_reset_m: 512.0 * UNIT_M,
-            greet_duration_s: 4.0,
             idle_odds: 10.0,
             idle_range_m: 3000.0 * UNIT_M,
         }
@@ -245,17 +237,9 @@ impl VoiceRules {
     pub fn from_db(db: &RecordDb) -> Self {
         let d = Self::default();
         Self {
-            greet_m_per_hello: gmst(db, "iGreetDistanceMultiplier", 6.0) * UNIT_M,
-            greet_reset_m: gmst(db, "fGreetDistanceReset", 512.0) * UNIT_M,
-            greet_duration_s: gmst(db, "iGreetDuration", 4.0),
             idle_odds: gmst(db, "fVoiceIdleOdds", d.idle_odds),
             idle_range_m: d.idle_range_m,
         }
-    }
-
-    /// Greeting distance for an AI `Hello` value (0 never greets).
-    pub fn hello_m(&self, hello: i16) -> f32 {
-        f32::from(hello.max(0)) * self.greet_m_per_hello
     }
 
     /// Idle lines per second for an idle NPC in range. The original rolled `fVoiceIdleOdds` in
@@ -268,35 +252,23 @@ impl VoiceRules {
 
 /// What the host knows about one loaded actor this frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[allow(clippy::struct_excessive_bools, reason = "independent facts the host reads about one actor")]
 pub struct VoiceSense {
     pub actor: ActorKey,
     /// Distance to the nearest player, metres.
     pub distance_m: f32,
-    /// AI `Hello` (0..100).
-    pub hello: i16,
     /// Perceives the player: line of sight, not sneaking unseen, not invisible.
     pub aware: bool,
     /// Free to talk on its own: alive, not in combat, a conversation or a scripted scene.
     pub free: bool,
     /// Standing idle (idle chatter only then; walkers between pathgrid points are not).
     pub idle: bool,
-}
-
-/// The greeting state of one actor.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub enum Greet {
-    /// Will greet on approach.
-    #[default]
-    Ready,
-    /// Greeted; facing the player for the remaining seconds.
-    Greeting(f32),
-    /// Greeted; waits for the player to leave the reset distance.
-    Done,
+    /// Greeting the player (Hello said, facing them): no idle chatter.
+    pub greeting: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 struct ActorVoice {
-    greet: Greet,
     speaking: bool,
 }
 
@@ -307,8 +279,7 @@ pub struct VoiceRequest {
     pub topic: VoiceTopic,
 }
 
-/// Per-actor voice state: greetings, idle chatter, one line at a time. Pure; not saved (the
-/// original resets greetings with the cell too).
+/// Per-actor voice state: idle chatter, one line at a time. Pure; not saved.
 #[derive(Clone, Debug)]
 pub struct VoiceDirector {
     pub rules: VoiceRules,
@@ -321,32 +292,19 @@ impl VoiceDirector {
         Self { rules, actors: HashMap::new(), rng: Rng::new(seed) }
     }
 
-    /// Advances by `dt` over this frame's loaded actors and returns the lines to start (Hello on
-    /// approach before idle chatter). Actors missing from `actors` are forgotten.
+    /// Advances by `dt` over this frame's loaded actors and returns the idle lines to start.
+    /// Only speaking actors keep state.
     pub fn update(&mut self, dt: f32, actors: &[VoiceSense]) -> Vec<VoiceRequest> {
         let dt = dt.max(0.0);
-        self.actors.retain(|k, v| v.speaking || actors.iter().any(|a| a.actor == *k));
+        self.actors.retain(|_, v| v.speaking);
         let idle_p = 1.0 - (-self.rules.idle_rate() * dt).exp();
         let mut out = Vec::new();
         for sense in actors {
-            let rules = self.rules;
-            let state = self.actors.entry(sense.actor).or_default();
-            state.greet = match state.greet {
-                Greet::Greeting(left) if left - dt > 0.0 => Greet::Greeting(left - dt),
-                Greet::Greeting(_) => Greet::Done,
-                Greet::Done if sense.distance_m > rules.greet_reset_m => Greet::Ready,
-                g => g,
-            };
-            if state.speaking || !sense.free {
+            if self.speaking(sense.actor) || !sense.free || sense.greeting {
                 continue;
             }
-            if state.greet == Greet::Ready && sense.aware && sense.distance_m <= rules.hello_m(sense.hello) {
-                state.greet = Greet::Greeting(rules.greet_duration_s);
-                out.push(VoiceRequest { actor: sense.actor, topic: VoiceTopic::Hello });
-                continue;
-            }
-            let chatty = sense.idle && sense.aware && sense.distance_m < rules.idle_range_m;
-            if chatty && !matches!(state.greet, Greet::Greeting(_)) && self.rng.unit() < idle_p {
+            let chatty = sense.idle && sense.aware && sense.distance_m < self.rules.idle_range_m;
+            if chatty && self.rng.unit() < idle_p {
                 out.push(VoiceRequest { actor: sense.actor, topic: VoiceTopic::Idle });
             }
         }
@@ -368,10 +326,6 @@ impl VoiceDirector {
 
     pub fn speaking(&self, actor: ActorKey) -> bool {
         self.actors.get(&actor).is_some_and(|s| s.speaking)
-    }
-
-    pub fn greet(&self, actor: ActorKey) -> Greet {
-        self.actors.get(&actor).map_or(Greet::Ready, |s| s.greet)
     }
 }
 

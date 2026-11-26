@@ -255,6 +255,40 @@ pub fn add(app: &mut App, db: &Arc<RecordDb>) {
     app.add_systems(PostUpdate, track_heads.in_set(AnimSystems::Probe).after(ControllerSystems::Feed));
 }
 
+// --- The player facts NPCs read (shared with `crate::greeting`) -------------------------------
+
+/// The host player as NPCs perceive it.
+const HOST: PerceptTarget = PerceptTarget::Player(HOST_KEY);
+
+/// The host player's Invisibility and Chameleon magnitudes from its sheet (0 without a table, a
+/// host sheet, or the stat): what [`HeadTrackRules::magically_hidden`] reads.
+pub(crate) fn host_hidden_magnitudes<'a>(
+    table: Option<&StatTableRes>,
+    mut sheets: impl Iterator<Item = (&'a PlayerCharacter, &'a Stats)>,
+) -> (f32, f32) {
+    let sheet = sheets.find(|(c, _)| c.key == HOST_KEY).map(|(_, s)| s);
+    let (Some(t), Some(sheet)) = (table, sheet) else { return (0.0, 0.0) };
+    let read = sheet.view(&t.0);
+    let magnitude = |key: &str| t.0.find(key).map_or(0.0, |i| read.modified(i));
+    (magnitude(INVISIBILITY), magnitude(crate::visibility::CHAMELEON))
+}
+
+/// The sight clock's tick and sight period in ticks, which [`seen_player`] reads.
+pub(crate) fn sight_window(clock: Option<&AiPerceptClock>, perception: Option<&AiPerceptionSettings>) -> Option<(u64, u32)> {
+    clock.zip(perception).map(|(c, s)| (c.tick, s.budget.sight_period_ticks(c.tick_s)))
+}
+
+/// "Seen" (`getLOS` and `awarenessCheck`): the NPC's sight contact with the host player within the
+/// last two sight periods (module docs).
+pub(crate) fn seen_player(awareness: Option<&AiAwareness>, window: Option<(u64, u32)>) -> bool {
+    awareness.zip(window).is_some_and(|(a, (tick, ticks))| seen_recently(&a.0, HOST, tick, ticks))
+}
+
+/// In combat or pursuit with the host player: the Alerted band toward it (module docs).
+pub(crate) fn engaged_with_player(awareness: Option<&AiAwareness>) -> bool {
+    awareness.is_some_and(|a| a.0.band(HOST) == AwarenessBand::Alerted)
+}
+
 /// The host player as a candidate: its feet, its drawn head, dead, hidden magnitudes.
 struct PlayerHead {
     feet: WorldPos,
@@ -281,13 +315,7 @@ fn track_heads(
 ) {
     let player = players.iter().next().map(|(body, transform, p, dead)| {
         let feet = body.frame_origin.offset(transform.translation);
-        let (mut invisibility, mut chameleon) = (0.0, 0.0);
-        let sheet = sheets.iter().find(|(c, _)| c.key == HOST_KEY).map(|(_, s)| s);
-        if let (Some(t), Some(sheet)) = (table.as_deref(), sheet) {
-            let read = sheet.view(&t.0);
-            invisibility = t.0.find(INVISIBILITY).map_or(0.0, |i| read.modified(i));
-            chameleon = t.0.find(crate::visibility::CHAMELEON).map_or(0.0, |i| read.modified(i));
-        }
+        let (invisibility, chameleon) = host_hidden_magnitudes(table.as_deref(), sheets.iter());
         PlayerHead { feet, head: feet.offset(Vec3::Y * p.head_m), dead, invisibility, chameleon }
     });
     // `Actors::update`: the timer wraps at the refresh, and the frame it reads 0 refreshes.
@@ -296,9 +324,8 @@ fn track_heads(
     }
     let refresh = state.timer_s == 0.0;
     state.timer_s += time.delta_secs();
-    let target = PerceptTarget::Player(HOST_KEY);
     if refresh {
-        let period = clock.as_deref().zip(perception.as_deref()).map(|(c, s)| (c.tick, s.budget.sight_period_ticks(c.tick_s)));
+        let period = sight_window(clock.as_deref(), perception.as_deref());
         let HeadTrackState { tracking, logged, .. } = &mut *state;
         tracking.clear();
         let mut awake = 0;
@@ -308,14 +335,12 @@ fn track_heads(
                     continue;
                 }
                 awake += 1;
-                let seen = awareness
-                    .zip(period)
-                    .is_some_and(|(a, (tick, ticks))| seen_recently(&a.0, target, tick, ticks));
+                let seen = seen_player(awareness, period);
                 let npc = Tracker {
                     frame: mover.drawn_frame(),
                     knocked_down,
                     interior: lights.as_deref().zip(space).is_some_and(|(l, s)| l.interiors.contains_key(&s.0)),
-                    engaged: awareness.is_some_and(|a| a.0.band(target) == AwarenessBand::Alerted),
+                    engaged: engaged_with_player(awareness),
                 };
                 let candidate = HeadCandidate {
                     feet: p.feet,

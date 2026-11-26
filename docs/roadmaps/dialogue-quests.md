@@ -74,7 +74,7 @@ them; activators, doors, shrines and start scripts work.
 
 | ID | Deliverable | Crates | Depends | Verify |
 |---|---|---|---|---|
-| DQ-1 | Spec: rewrite scripting-adapter "Decision", "Instances, scheduling, state", M5 table for the interpreter (spec slice) | docs | – | doc review; doccheck |
+| DQ-1 | Spec: rewrite scripting-adapter "Decision", "Instances, scheduling, state", M5 table for the interpreter (spec slice) | docs | – | **done 2026-11-25** (scripting-adapter.md rewrite, §5 "done DQ-1") |
 | DQ-2 | Coverage report over scripts + results by family and status (extends `vanilla_corpus_interprets`) | `mw_script` | DQ-1 | **done 2026-11-25:** 62.8 % bound (results 84.9 %) |
 | DQ-3 | Main-quest trace test (decision 3) | `mw_rpg`, `mw_rpg_bevy` | DQ-1 | **done 2026-11-25:** 9 of 355 stages (A1_/A2_/B_/C_); `DQ3_QUEST=<id>` explains one quest |
 | DQ-3b | New game without chargen applies the chargen captain's "duties" result (journal `A1_1` 1, Caius' package, gold), not only its topics (`mw_rpg_bevy/src/dialogue.rs:522` `skip_chargen`) | `mw_rpg_bevy` | DQ-3 | **done 2026-11-25** (DQ-3 9 → 12 of 355; A1_1 now stops at 18: a Caius INFO gated on `a2_2_6thhouse >= 5` shadows it, already at 49 in the trace: bot or filter question, next DQ-3c) |

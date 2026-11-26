@@ -21,13 +21,16 @@ is an event and an `info!` line.
   (range bytes in metres via `fAudio*` GMSTs); `SNDG` creature cues `<creature>/<kind>`; door sounds; loop emitters
   from lights with a sound and the vanilla `PlayLoopSound3D` activator idiom (`loop_script`, a named scaffold until
   the script runtime plays them); footsteps by boots weight class; `Music/Explore` and `Music/Battle` playlists via
-  the VFS; NPC voices (`voice.rs`): INFO selection, greeting and idle timing, lip-sync envelope.
+  the VFS; NPC voices (`voice.rs`): INFO selection, idle chatter timing (quiet while a greeting is in progress),
+  lip-sync envelope. The greeting itself (when to say Hello, stop, turn) is the walkers'
+  (`mw_walkers_bevy/src/greeting.rs`, MA4c2), not `voice.rs`.
 - **Game glue** (`mw_audio_bevy::add`, `lib.rs:79`, called at `mw_exterior_bevy/src/exterior.rs:226`): listener on the
   door-using camera; door open sound travels with the player through a load; `LoopEmitter` children spawned with the
   cell's near level and unloaded with it (`emitter_census` logs counts); explore/battle music; footsteps from clip
   `SoundGen` text keys (graph `footstep` events), else a `StrideTimer`.
-- **Dev-feature only** (`mw_audio_bevy` `dev`, `VoicePlugin` `lib.rs:487`): NPC voices (Hello, idle chatter, `SayVoice`,
-  `LipSync`), NPC boots, swinging door sounds. Gated until the owner hears them (visual-checks AU-3..AU-5).
+- **Dev-feature only** (`mw_audio_bevy` `dev`, `VoicePlugin` `lib.rs:492`): NPC voices (the Hello the walker greeting asks
+  for, answered by `say_hellos` `lib.rs:547` on the fixed tick; idle chatter, `SayVoice`, `LipSync`), NPC boots,
+  swinging door sounds. Without them no NPC greets (nobody can say Hello). Gated until the owner hears them (visual-checks AU-3..AU-5).
 
 ## Bevy features used
 `bevy_audio` (default features off in the workspace, `Cargo.toml:24`), `SpatialListener`, messages for audio events.

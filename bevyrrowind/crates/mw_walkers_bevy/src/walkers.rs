@@ -754,6 +754,7 @@ fn drive(
             Option<&mut NavCorridor>,
             &Reaction,
             Option<&crate::directive_drive::DirectiveDrive>,
+            Option<&crate::greeting::Greeting>,
         ),
         Without<Dormant>,
     >,
@@ -778,12 +779,16 @@ fn drive(
         mut corridor,
         reaction,
         directive,
+        greeting,
     ) in &mut walkers
     {
         let walker = &mut *walker;
-        if reaction.owns() || directive.is_some_and(crate::directive_drive::DirectiveDrive::owns) {
-            // AI8i: the reaction drives the actor (MA2d2: or a directive's walk, a `GoTo`); the
-            // wander stays paused where it was.
+        if reaction.owns()
+            || directive.is_some_and(crate::directive_drive::DirectiveDrive::owns)
+            || greeting.is_some_and(crate::greeting::Greeting::holds)
+        {
+            // AI8i: the reaction drives the actor (MA2d2: or a directive's walk, a `GoTo`; MA4c2:
+            // or a greeting holds it still); the wander stays paused where it was.
             walker.held_intent = None;
             continue;
         }
@@ -1051,6 +1056,7 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest, p
         warn!("walkers: {refused} perception records refused (out of range)");
     }
     add_drive(app, vocab);
+    crate::greeting::insert_records(app, &db);
     let idle_mult = gmst_float(&db, "fIdleChanceMultiplier", mw_ai::wander::IDLE_CHANCE_MULTIPLIER);
     app.insert_resource(GroundOnPhysics(physics))
         .insert_resource(ControllerSettings {
@@ -1167,6 +1173,8 @@ fn add_drive(app: &mut App, vocab: Arc<WanderVocabulary>) {
     )
     .add_systems(Update, report_modes);
     crate::reaction::add(app);
+    // MA4c2: NPCs greet the player (decide before the routines, the stand after the corridor).
+    crate::greeting::add(app);
     // The drive reads `AiExecSettings` without `AiExecPlugin` (it steps its own runners): bind
     // the `ai.exec.*` tunables here unless the plugin already does.
     if !app.is_plugin_added::<AiExecPlugin>() {
@@ -1763,3 +1771,7 @@ mod directive_drive_tests;
 #[cfg(test)]
 #[path = "script_ai_tests.rs"]
 mod script_ai_tests;
+
+#[cfg(test)]
+#[path = "greeting_tests.rs"]
+mod greeting_tests;

@@ -78,7 +78,7 @@ Gaps kept on purpose: no global alarm state; no open-ended NPC goals that can br
 5. **Choose** (AI20). Noticing feeds a `Notice` drive: considerations over severity, relation to the owner (self,
    kin, employer, faction, stranger, guard), culprit known and who, disposition, fear, role, directive floor (content
    wins unless the reaction beats it). `ConcernRules` (records) map `(kind, relation, culprit_known)` to a response
-   ladder, cheapest first: `Ignore` → `Glance` (look-at, idle) → `Bark` (a `BarkCue`; line and rate limits: [dialogue-rules.md](dialogue-rules.md) "Barks") → `Investigate` (go, look,
+   ladder, cheapest first: `Ignore` → `Glance` (look-at, idle) → `Bark` (rate-limited) → `Investigate` (go, look,
    search N s, return) → `Confront` (dialogue demand: "put that back") → `Report` (run to a guard or bell; interruptible;
    on arrival an `OffenceObserved`) → `Tidy` → `Flee`. Heavy rungs are directives on the stack, so saves and tiers
    already cover them.

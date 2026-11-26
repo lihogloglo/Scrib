@@ -10,7 +10,7 @@ use sf_rpg::{ActorKey, ConversationCtx, PlayerId};
 use tes3::esp::{Dialogue, DialogueInfo, DialogueType2, Filter, FilterComparison, FilterType, FilterValue, Sex};
 
 use crate::voice::{
-    Envelope, Greet, VoiceDirector, VoiceRequest, VoiceRules, VoiceSense, VoiceTopic, add_voices, ducking, select,
+    Envelope, VoiceDirector, VoiceRequest, VoiceRules, VoiceSense, VoiceTopic, add_voices, ducking, select,
     select_greeting, voice_attenuation, voice_cue,
 };
 use crate::{UNIT_M, build};
@@ -217,58 +217,39 @@ fn speech_ducks_music_only() {
 
 const NPC: ActorKey = ActorKey(1);
 
-fn sense(distance_m: f32) -> VoiceSense {
-    VoiceSense { actor: NPC, distance_m, hello: 30, aware: true, free: true, idle: false }
+/// An idle NPC in range, aware of the player, free to talk.
+fn idle(i: u128) -> VoiceSense {
+    VoiceSense { actor: ActorKey(i), distance_m: 20.0, aware: true, free: true, idle: true, greeting: false }
 }
 
-fn hellos(d: &mut VoiceDirector, dt: f32, s: VoiceSense) -> usize {
-    d.update(dt, &[s]).iter().filter(|r| r.topic == VoiceTopic::Hello).count()
+/// A director whose idle chatter fires every frame (`fVoiceIdleOdds` huge).
+fn chatty() -> VoiceDirector {
+    VoiceDirector::new(VoiceRules { idle_odds: 1.0e9, ..VoiceRules::default() }, 1)
 }
 
+/// `MA4c2`: the director voices no greeting of its own (the walkers' greeting machine asks for the
+/// Hello) and keeps quiet while a greeting is in progress.
 #[test]
-fn hello_on_approach_once_until_the_player_leaves() {
-    let rules = VoiceRules::default();
-    // Hello 30 x 6 units = 2.57 m; reset at 512 units = 7.3 m.
-    assert!((rules.hello_m(30) - 2.571).abs() < 1e-3 && (rules.greet_reset_m - 7.315).abs() < 1e-3);
-    let mut d = VoiceDirector::new(rules, 1);
-    assert_eq!(hellos(&mut d, 0.1, sense(4.0)), 0);
-    assert_eq!(d.update(0.1, &[sense(2.0)]), vec![VoiceRequest { actor: NPC, topic: VoiceTopic::Hello }]);
-    assert!(matches!(d.greet(NPC), Greet::Greeting(_)));
-    // Standing there (or stepping just outside the hello range): no second greeting.
-    for _ in 0..100 {
-        assert_eq!(hellos(&mut d, 0.1, sense(3.0)), 0);
-    }
-    assert_eq!(d.greet(NPC), Greet::Done);
-    assert_eq!(hellos(&mut d, 0.1, sense(7.0)), 0);
-    assert_eq!(hellos(&mut d, 0.1, sense(2.0)), 0);
-    // Leave past the reset distance, come back: greeted again.
-    assert_eq!(hellos(&mut d, 0.1, sense(8.0)), 0);
-    assert_eq!(d.greet(NPC), Greet::Ready);
-    assert_eq!(hellos(&mut d, 0.1, sense(2.0)), 1);
-}
-
-#[test]
-fn no_hello_unaware_busy_or_with_hello_zero() {
-    let mut d = VoiceDirector::new(VoiceRules::default(), 1);
-    assert_eq!(hellos(&mut d, 0.1, VoiceSense { aware: false, ..sense(1.0) }), 0);
-    assert_eq!(hellos(&mut d, 0.1, VoiceSense { free: false, ..sense(1.0) }), 0);
-    assert_eq!(hellos(&mut d, 0.1, VoiceSense { hello: 0, ..sense(0.1) }), 0);
-    // Still ready: the first chance it gets, it greets.
-    assert_eq!(hellos(&mut d, 0.1, sense(1.0)), 1);
+fn no_hello_of_its_own_and_no_chatter_while_greeting() {
+    let mut d = chatty();
+    let walking_up = VoiceSense { idle: false, distance_m: 1.0, ..idle(1) };
+    assert!((0..100).all(|_| d.update(0.1, &[walking_up]).is_empty()), "no Hello on approach");
+    let greeting = VoiceSense { greeting: true, ..idle(1) };
+    assert!((0..100).all(|_| d.update(0.1, &[greeting]).is_empty()), "no idle line while greeting");
+    assert_eq!(d.update(0.1, &[idle(1)]), vec![VoiceRequest { actor: NPC, topic: VoiceTopic::Idle }]);
 }
 
 #[test]
 fn one_line_per_actor_at_a_time() {
-    let mut d = VoiceDirector::new(VoiceRules::default(), 1);
+    let mut d = chatty();
     assert!(d.begin(NPC));
     assert!(!d.begin(NPC), "a second bark while the first plays is dropped");
     assert!(d.speaking(NPC));
-    // Speaking: no greeting is requested, and the greeting stays pending.
-    assert_eq!(hellos(&mut d, 0.1, sense(1.0)), 0);
-    assert_eq!(d.greet(NPC), Greet::Ready);
+    // Speaking: no idle line is requested.
+    assert!(d.update(0.1, &[idle(1)]).is_empty());
     d.end(NPC);
     assert!(!d.speaking(NPC) && d.begin(ActorKey(2)), "other actors are independent");
-    assert_eq!(hellos(&mut d, 0.1, sense(1.0)), 1);
+    assert_eq!(d.update(0.1, &[idle(1)]).len(), 1);
     assert!(d.begin(NPC));
 }
 
@@ -277,7 +258,6 @@ fn idle_chatter_follows_the_vanilla_rate() {
     let rules = VoiceRules::default();
     assert!((rules.idle_rate() - 0.006).abs() < 1e-6);
     let mut d = VoiceDirector::new(rules, 42);
-    let idle = |i: u128| VoiceSense { actor: ActorKey(i), distance_m: 20.0, hello: 0, aware: true, free: true, idle: true };
     let crowd: Vec<VoiceSense> = (0..100).map(idle).collect();
     let mut lines = 0;
     for _ in 0..1000 {
@@ -285,12 +265,13 @@ fn idle_chatter_follows_the_vanilla_rate() {
     }
     // 100 actors x 100 s x 0.006/s = 60 expected (Poisson, sd ~7.7).
     assert!((35..=85).contains(&lines), "{lines}");
-    // Walking, out of range, unseen or busy actors never chatter.
+    // Walking, out of range, unseen, busy or greeting actors never chatter.
     for s in [
         VoiceSense { idle: false, ..idle(0) },
         VoiceSense { distance_m: 50.0, ..idle(0) },
         VoiceSense { aware: false, ..idle(0) },
         VoiceSense { free: false, ..idle(0) },
+        VoiceSense { greeting: true, ..idle(0) },
     ] {
         let mut d = VoiceDirector::new(rules, 42);
         assert!((0..10_000).all(|_| d.update(0.1, &[s]).is_empty()), "{s:?}");
@@ -298,14 +279,14 @@ fn idle_chatter_follows_the_vanilla_rate() {
 }
 
 #[test]
-fn absent_actors_are_forgotten_unless_speaking() {
+fn a_playing_line_outlives_its_actors_absence() {
     let mut d = VoiceDirector::new(VoiceRules::default(), 1);
-    assert_eq!(hellos(&mut d, 0.1, sense(1.0)), 1);
-    d.update(0.1, &[]);
-    assert_eq!(d.greet(NPC), Greet::Ready, "unloaded: greets again next time");
     assert!(d.begin(NPC));
     d.update(0.1, &[]);
     assert!(d.speaking(NPC), "a playing line outlives its actor's absence until the host ends it");
+    d.end(NPC);
+    d.update(0.1, &[]);
+    assert!(!d.speaking(NPC));
 }
 
 fn tone(amplitude: f32, seconds: f32, rate: u32, channels: u16) -> Vec<f32> {

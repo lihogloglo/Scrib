@@ -17,9 +17,11 @@
 //!   emitters above); the `AmbienceLayers` "cell" bed table for the modern preset is a follow-up.
 //!
 //! Dev builds only (`dev` feature) until the owner hears them (visual-checks.md AU-3..AU-5):
-//! - NPC voices ([`voices`]): Hello on approach, idle chatter, [`voices::SayVoice`] for the
-//!   Phase 3 combat and crime barks, one line per NPC, on the Voice bus (speech ducks music),
-//!   and the [`voices::LipSync`] loudness on the speaker.
+//! - NPC voices ([`voices`]): the Hello the walkers' greeting asks for
+//!   (`mw_walkers_bevy::greeting`), idle chatter, [`voices::SayVoice`] for the Phase 3 combat and
+//!   crime barks, one line per NPC, on the Voice bus (speech ducks music), and the
+//!   [`voices::LipSync`] loudness on the speaker. Without this plugin nobody can say Hello, so no
+//!   NPC greets (`OpenMW`: a greeting whose `say` fails goes straight to Done).
 //! - Boots: an NPC's footsteps follow the boots it wears (`mw_actors` auto-equip, weight class).
 //! - Swinging doors: activating a non-load door plays its open, then its close sound, at the door.
 
@@ -397,12 +399,18 @@ fn swing_door_sounds(
 
 /// NPC voices (`mw_audio::voice`): who speaks when, the line's voice on the speaker, its
 /// loudness for lip-sync.
+///
+/// **Hello** (`MA4c2`): the walkers' greeting machine (`mw_walkers_bevy::greeting`) decides when an
+/// NPC greets; [`say_hellos`] answers its request on the fixed tick between
+/// `GreetSystems::Decide` and `GreetSystems::Apply` (`OpenMW`'s `DialogueManager::say(actor,
+/// "hello")`: refused while the NPC already speaks or when no voiced Hello INFO passes its
+/// filters). The [`Greeting`] in progress also keeps the director's idle chatter quiet.
 #[cfg(feature = "dev")]
 pub mod voices {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use bevy_app::{App, Plugin, Update};
+    use bevy_app::{App, FixedUpdate, Plugin, Update};
     use bevy_asset::{AssetServer, Assets, Handle};
     use bevy_audio::{AudioSink, AudioSinkPlayback, AudioSource, Decodable, Source, SpatialAudioSink, SpatialListener};
     use bevy_ecs::prelude::*;
@@ -413,6 +421,7 @@ pub mod voices {
     use bevy_transform::components::GlobalTransform;
     use mw_audio::voice::{BarkView, ENVELOPE_HZ, Envelope, VoiceDirector, VoiceRules, VoiceSense, VoiceTopic, ducking, select};
     use mw_rpg::{ActorFacts, GlobalNumber, MwDialogue};
+    use mw_walkers_bevy::greeting::{GreetSystems, Greeting, HelloAsk};
     use sf_audio_bevy::{AudioBank, AudioDucking, AudioSystems, CueInstance, PlaySound, SoundAt};
     use sf_character_bevy::Character;
     use sf_records::{RecordDb, RecordId};
@@ -439,7 +448,6 @@ pub mod voices {
     #[derive(Component, Debug)]
     pub struct Speaker {
         facts: ActorFacts,
-        hello: i16,
         disposition: i32,
         last: Option<Vec3>,
         speed_mps: f32,
@@ -510,7 +518,8 @@ pub mod voices {
             .insert_resource(Director(VoiceDirector::new(rules, 0x5eed)))
             .init_resource::<Envelopes>()
             .add_message::<SayVoice>()
-            .add_systems(Update, (add_speakers, npc_voices, track_lines, end_lines, envelopes).chain().before(AudioSystems));
+            .add_systems(Update, (add_speakers, npc_voices, track_lines, end_lines, envelopes).chain().before(AudioSystems))
+            .add_systems(FixedUpdate, say_hellos.after(GreetSystems::Decide).before(GreetSystems::Apply));
         }
     }
 
@@ -525,7 +534,6 @@ pub mod voices {
             let Some(npc) = content.db.get::<tes3::esp::Npc>(id) else { continue };
             commands.entity(e).try_insert(Speaker {
                 facts: ActorFacts::from_npc(&content.db, npc, ""),
-                hello: npc.ai_data.hello,
                 disposition: i32::from(npc.data.disposition),
                 last: None,
                 speed_mps: 0.0,
@@ -533,7 +541,63 @@ pub mod voices {
         }
     }
 
-    /// Greetings and idle chatter from the director, plus [`SayVoice`] requests, become lines.
+    /// Answers the walkers' Hello requests (module docs): the line plays, or the request is
+    /// refused.
+    #[allow(clippy::needless_pass_by_value)]
+    fn say_hellos(
+        content: Res<VoiceContent>,
+        bank: Res<AudioBank>,
+        mut director: ResMut<Director>,
+        mut greetings: Query<(Entity, &mut Greeting, Option<&Speaker>)>,
+        mut play: MessageWriter<PlaySound>,
+        mut commands: Commands,
+    ) {
+        for (e, mut greeting, speaker) in &mut greetings {
+            if greeting.hello != HelloAsk::Asked {
+                continue;
+            }
+            let said = speaker.is_some_and(|s| say(&content, &bank, &mut director, e, s, VoiceTopic::Hello, &mut play, &mut commands));
+            greeting.answer_hello(said);
+        }
+    }
+
+    /// Says `topic` as `e` if it has a voiced line for it and is not speaking: starts the line on
+    /// the Voice bus and marks the speaker [`Speaking`]. `false`: nothing plays.
+    #[allow(clippy::too_many_arguments)]
+    fn say(
+        content: &VoiceContent,
+        bank: &AudioBank,
+        director: &mut Director,
+        e: Entity,
+        speaker: &Speaker,
+        topic: VoiceTopic,
+        play: &mut MessageWriter<PlaySound>,
+        commands: &mut Commands,
+    ) -> bool {
+        let view = BarkView {
+            records: &content.db,
+            speaker: speaker.facts.clone(),
+            player: &content.player,
+            globals: &content.globals,
+            disposition: speaker.disposition,
+        };
+        let ctx = ConversationCtx { player: PlayerId::HOST, speaker: key(e), speaker_base: speaker.facts.id.clone(), choice: None };
+        let Some(line) = select(&content.dialogue, &view, &ctx, topic) else { return false };
+        let Some(file) = bank.0.get(&line.cue) else { return false };
+        if !director.0.begin(key(e)) {
+            return false;
+        }
+        // Subtitles wait for the message box (ROADMAP 2.2 U4); the log shows them.
+        debug!("audio: {} says {:?}: {}", speaker.facts.id.as_str(), topic, line.subtitle);
+        play.write(PlaySound { cue: line.cue.clone(), at: SoundAt::Entity(e) });
+        commands.entity(e).try_insert((
+            Speaking { cue: line.cue, path: file.path.clone(), elapsed: 0.0, heard: false },
+            LipSync::default(),
+        ));
+        true
+    }
+
+    /// Idle chatter from the director, plus [`SayVoice`] requests, become lines.
     #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
     fn npc_voices(
         time: Res<Time>,
@@ -542,14 +606,14 @@ pub mod voices {
         mut director: ResMut<Director>,
         mut says: MessageReader<SayVoice>,
         listener: Query<&GlobalTransform, With<SpatialListener>>,
-        mut speakers: Query<(Entity, &mut Speaker, &GlobalTransform)>,
+        mut speakers: Query<(Entity, &mut Speaker, &GlobalTransform, Option<&Greeting>)>,
         mut play: MessageWriter<PlaySound>,
         mut commands: Commands,
     ) {
         let dt = time.delta_secs();
         let Some(ear) = listener.iter().next().map(GlobalTransform::translation) else { return };
         let mut senses = Vec::new();
-        for (e, mut s, global) in &mut speakers {
+        for (e, mut s, global, greeting) in &mut speakers {
             let pos = global.translation();
             if let Some(last) = s.last.replace(pos)
                 && dt > 0.0
@@ -562,37 +626,18 @@ pub mod voices {
             senses.push(VoiceSense {
                 actor: key(e),
                 distance_m: (pos + Vec3::Y * EYE_M).distance(ear),
-                hello: s.hello,
                 aware: true,
                 free: true,
                 idle: s.speed_mps < IDLE_SPEED_MPS,
+                greeting: greeting.is_some_and(Greeting::in_progress),
             });
         }
         let by_key: HashMap<ActorKey, Entity> = speakers.iter().map(|(e, ..)| (key(e), e)).collect();
         let wanted = director.0.update(dt, &senses).into_iter().filter_map(|r| by_key.get(&r.actor).map(|e| (*e, r.topic)));
         let asked: Vec<(Entity, VoiceTopic)> = says.read().map(|s| (s.actor, s.topic)).collect();
         for (e, topic) in wanted.chain(asked) {
-            let Ok((_, speaker, _)) = speakers.get(e) else { continue };
-            let view = BarkView {
-                records: &content.db,
-                speaker: speaker.facts.clone(),
-                player: &content.player,
-                globals: &content.globals,
-                disposition: speaker.disposition,
-            };
-            let ctx = ConversationCtx { player: PlayerId::HOST, speaker: key(e), speaker_base: speaker.facts.id.clone(), choice: None };
-            let Some(line) = select(&content.dialogue, &view, &ctx, topic) else { continue };
-            let Some(file) = bank.0.get(&line.cue) else { continue };
-            if !director.0.begin(key(e)) {
-                continue;
-            }
-            // Subtitles wait for the message box (ROADMAP 2.2 U4); the log shows them.
-            debug!("audio: {} says {:?}: {}", speaker.facts.id.as_str(), topic, line.subtitle);
-            play.write(PlaySound { cue: line.cue.clone(), at: SoundAt::Entity(e) });
-            commands.entity(e).try_insert((
-                Speaking { cue: line.cue, path: file.path.clone(), elapsed: 0.0, heard: false },
-                LipSync::default(),
-            ));
+            let Ok((_, speaker, ..)) = speakers.get(e) else { continue };
+            say(&content, &bank, &mut director, e, speaker, topic, &mut play, &mut commands);
         }
     }
 
@@ -697,6 +742,8 @@ mod tests {
         Armor, ArmorData, ArmorType, Dialogue, DialogueInfo, DialogueType2, FixedString, Npc, NpcData, NpcStats,
     };
 
+    use mw_walkers_bevy::greeting::{Greeting, GreetingState, HelloAsk};
+
     use super::voices::{Director, LipSync, SayVoice, Speaking, VoicePlugin};
     use super::*;
 
@@ -713,7 +760,7 @@ mod tests {
         (mw_rpg::response_id(topic, info), i)
     }
 
-    /// A Dunmer with a Hello and an Attack line, wearing light boots; a heavy-booted Nord.
+    /// A Dunmer with a Hello, an Attack and an Idle line, wearing light boots; a heavy-booted Nord.
     fn db() -> Arc<RecordDb> {
         let mut db = RecordDb::new();
         db.register::<Dialogue>("DIAL").unwrap();
@@ -721,10 +768,14 @@ mod tests {
         db.register::<Npc>("NPC_").unwrap();
         db.register::<Armor>("ARMO").unwrap();
         let esm = db.add_source("Test.esm", &[]);
-        for (topic, kind) in [("hello", DialogueType2::Voice), ("attack", DialogueType2::Voice)] {
+        for (topic, kind) in [("hello", DialogueType2::Voice), ("attack", DialogueType2::Voice), ("idle", DialogueType2::Voice)] {
             db.define(esm, id(topic), Dialogue { id: topic.into(), dialogue_type: kind, ..Dialogue::default() }).unwrap();
         }
-        for (key, i) in [info("hello", "h1", "dark elf", "Vo\\d\\m\\Hlo_test.mp3"), info("attack", "a1", "", "Vo\\d\\m\\Atk_test.mp3")] {
+        for (key, i) in [
+            info("hello", "h1", "dark elf", "Vo\\d\\m\\Hlo_test.mp3"),
+            info("attack", "a1", "", "Vo\\d\\m\\Atk_test.mp3"),
+            info("idle", "i1", "dark elf", "Vo\\d\\m\\Idl_test.mp3"),
+        ] {
             db.define(esm, key, i).unwrap();
         }
         for (boots, weight) in [("light_boots", 5.0), ("heavy_boots", 20.0)] {
@@ -760,9 +811,20 @@ mod tests {
         app
     }
 
+    /// A placed NPC with the walkers' greeting component (idle: no greeting yet).
     fn npc(app: &mut App, record: &str, at: Vec3) -> Entity {
         let character = Character::Record { kind: "npc".into(), id: id(record), state: CharacterState::default() };
-        app.world_mut().spawn((character, Transform::from_translation(at), GlobalTransform::from_translation(at))).id()
+        let placed = (Transform::from_translation(at), GlobalTransform::from_translation(at));
+        app.world_mut().spawn((character, placed, Greeting::default())).id()
+    }
+
+    /// What the walkers' Decide does when a greeting starts: ask for the Hello.
+    fn ask_hello(app: &mut App, e: Entity) {
+        app.world_mut().get_mut::<Greeting>(e).expect("a greeting").hello = HelloAsk::Asked;
+    }
+
+    fn answer(app: &App, e: Entity) -> HelloAsk {
+        app.world().get::<Greeting>(e).expect("a greeting").hello
     }
 
     fn voice_cues(app: &mut App) -> Vec<(RecordId, Bus)> {
@@ -777,25 +839,32 @@ mod tests {
     use sf_rpg::ActorKey;
 
     #[test]
-    fn hello_on_approach_plays_on_the_voice_bus_one_line_at_a_time() {
+    fn a_greetings_hello_plays_on_the_voice_bus_once_one_line_at_a_time() {
         let db = db();
         let mut app = app(&db);
-        let far = npc(&mut app, "dunmer", Vec3::new(10.0, 0.0, 0.0));
+        let quiet = npc(&mut app, "dunmer", Vec3::new(1.0, 0.0, 0.0));
         let near = npc(&mut app, "dunmer", Vec3::new(2.0, 0.0, 0.0));
         app.update();
         app.update();
-        assert_eq!(voice_cues(&mut app), vec![(id(HELLO), Bus::Voice)]);
+        // No Hello of the voices' own: only an asked greeting speaks.
+        assert!(voice_cues(&mut app).is_empty() && app.world().get::<Speaking>(quiet).is_none());
+        ask_hello(&mut app, near);
+        app.update();
+        assert_eq!(voice_cues(&mut app), vec![(id(HELLO), Bus::Voice)], "the Hello plays once");
+        assert_eq!(answer(&app, near), HelloAsk::Said);
         assert!(app.world().get::<Speaking>(near).is_some() && app.world().get::<LipSync>(near).is_some());
-        assert!(app.world().get::<Speaking>(far).is_none());
         // The line's voice is the speaker's child; speech ducks the music.
         let voice = app.world_mut().query::<(Entity, &CueInstance, &ChildOf)>().iter(app.world()).find(|(_, c, p)| c.0 == id(HELLO) && p.parent() == near).map(|(e, ..)| e).expect("a voice under the speaker");
         for _ in 0..3 {
             app.update();
         }
+        assert!(voice_cues(&mut app).is_empty(), "said once, not again");
         assert!(app.world().resource::<AudioMixer>().0.bus_gain(Bus::Music) < 0.5);
-        // A combat bark while the greeting plays is dropped.
+        // A busy speaker refuses a Hello; a combat bark while the greeting plays is dropped.
+        ask_hello(&mut app, near);
         app.world_mut().write_message(SayVoice { actor: near, topic: VoiceTopic::Attack });
         app.update();
+        assert_eq!(answer(&app, near), HelloAsk::Refused);
         assert!(voice_cues(&mut app).is_empty());
         // The voice ends: the line ends, the next bark plays.
         app.world_mut().despawn(voice);
@@ -804,11 +873,30 @@ mod tests {
         app.world_mut().write_message(SayVoice { actor: near, topic: VoiceTopic::Attack });
         app.update();
         assert_eq!(voice_cues(&mut app), vec![(id("voice/vo/d/m/atk_test.mp3"), Bus::Voice)]);
-        // No Hello line for a Nord: the greeting passes in silence.
+        // No Hello line for a Nord: refused, the greeting passes in silence.
         let nord = npc(&mut app, "nord", Vec3::new(0.0, 0.0, 2.0));
         app.update();
+        ask_hello(&mut app, nord);
         app.update();
+        assert_eq!(answer(&app, nord), HelloAsk::Refused);
         assert!(voice_cues(&mut app).is_empty() && app.world().get::<Speaking>(nord).is_none());
+    }
+
+    #[test]
+    fn idle_chatter_waits_while_greeting() {
+        let db = db();
+        let mut app = app(&db);
+        // Chatter every frame, so only the greeting can keep it quiet.
+        app.world_mut().resource_mut::<Director>().0.rules.idle_odds = 1.0e9;
+        let near = npc(&mut app, "dunmer", Vec3::new(2.0, 0.0, 0.0));
+        app.world_mut().get_mut::<Greeting>(near).unwrap().greet.state = GreetingState::InProgress;
+        for _ in 0..5 {
+            app.update();
+        }
+        assert!(voice_cues(&mut app).is_empty(), "no idle line while greeting");
+        app.world_mut().get_mut::<Greeting>(near).unwrap().greet.state = GreetingState::Done;
+        app.update();
+        assert_eq!(voice_cues(&mut app), vec![(id("voice/vo/d/m/idl_test.mp3"), Bus::Voice)]);
     }
 
     #[test]
@@ -817,6 +905,7 @@ mod tests {
         let mut app = app(&db);
         let near = npc(&mut app, "dunmer", Vec3::new(2.0, 0.0, 0.0));
         app.update();
+        ask_hello(&mut app, near);
         app.update();
         assert!(speaking(&app, near));
         app.world_mut().entity_mut(near).despawn();

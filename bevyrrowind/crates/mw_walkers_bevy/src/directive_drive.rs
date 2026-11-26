@@ -283,6 +283,7 @@ pub(crate) fn drive_directives(
             &mut MoveIntent,
             Option<&mut Avoider>,
             Option<&Character>,
+            Option<&crate::greeting::Greeting>,
         ),
     )>,
 ) {
@@ -299,7 +300,7 @@ pub(crate) fn drive_directives(
     let policy = Renewing::default();
     for (
         (entity, actor, mover, space, mut drive, mut extras, dormant),
-        (reaction, mut walker, mut nav, mut intent, avoider, character),
+        (reaction, mut walker, mut nav, mut intent, avoider, character, greeting),
     ) in &mut actors
     {
         let Some(stack) = store.get_mut(actor.0) else {
@@ -359,8 +360,9 @@ pub(crate) fn drive_directives(
                 // The paused wander's held stand must not overwrite this walk.
                 w.release_held_intent();
             }
-            if reaction.is_some_and(Reaction::owns) {
-                // The reaction drives; the walk restarts from wherever it hands back.
+            if reaction.is_some_and(Reaction::owns) || greeting.is_some_and(crate::greeting::Greeting::holds) {
+                // The reaction drives (MA4c2: or a greeting holds the actor still); the walk
+                // restarts from wherever it hands back.
                 g.running = false;
                 g.near_s = 0.0;
                 continue;

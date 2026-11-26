@@ -48,9 +48,6 @@ Response order (PNAM/NNAM linked lists across plugins) was left to this system (
 
 ## Filter evaluation (`MwDialogueRules::accepts`)
 
-As built; DQ-24 compiles these checks to rules ("Rule compilation (DQ-24) and Voice barks (DQ-25)" below) and keeps
-`accepts` as the equivalence test's oracle.
-
 All checks must pass; cheap rejects first (OpenMW `Filter::testActor`, `testPlayer`,
 `testSelectStructs`, `testDisposition` order):
 
@@ -182,77 +179,6 @@ Maps journal topics onto the framework quest model (`superfargoth/docs/specs/que
 - **Test (real install, exact):** `MS_FargothRing` lists as "Fargoth's Ring", `Active` after index 10 with entry 10
   as its objective, `Done` after 100 (`QSTF`); quest-book group count equals the distinct `QSTN` names among started
   quests; one `QSTR` quest from the data reopens its finished group members.
-
-## Rule compilation (DQ-24) and Voice barks (DQ-25)
-
-Maps INFO filters onto the framework rule database (`superfargoth/docs/specs/dialogue-rules.md`). Behaviour from
-OpenMW `apps/openmw/mwdialogue/filter.cpp` (`testActor` :83, `testPlayer` :166, `testSelectStructs` :209,
-`testDisposition` :218, `list` :736-786) and `dialoguemanagerimp.cpp` (greeting :168-175, topic list :352-358,
-service refusal :597-603, `say` :625-664) at 4e718b50.
-
-- **Where.** `mw_rpg::compile` at `MwDialogue::from_records` (`mw_rpg/src/db.rs:103`), after `order_infos`
-  (`db.rs:223`). Rule id = the response key (`<topic>\u{1f}<info id>`), `line` = (topic, response).
-- **Concepts.** Topic and Persuasion DIAL -> `Concept::Topic(id)`; `Greeting 0..9` -> one `Concept::Greeting`, index
-  running across the ten topics in order (the same pick as `select_greeting`'s `find_map`, `dialogue.rs:93`); Voice
-  -> `Named(bark.*)` (table below); `Service Refusal` also -> `Named("mw.service_refusal")` with the inverted
-  disposition test; Journal -> none.
-- **Priority** = `PRIORITY_CONTENT - index` in OpenMW INFO order: every INFO its own tier, so specificity and the
-  seeded pick never apply and the first passing INFO wins, as `list(.., searchAll = false)` returns. No `once`,
-  cooldown or writes: classic dialogue writes no rule memory.
-- **Criteria** (stored in OpenMW's test order: actor, player, select structs, disposition):
-
-| INFO field / SCVR | Criterion | On `Missing` |
-|---|---|---|
-| speaker id (`ONAM`) | `speaker.id is X` (also files the rule in the speaker sub-bucket) | fail |
-| no speaker id | `speaker.npc = 1` (creatures fail INFOs that don't name them) | fail |
-| race / class / faction (`RNAM` `CNAM` `FNAM`) | `speaker.race/class/faction is X` | pass (creature) |
-| speaker rank (≠ -1) | `speaker.rank >= r` (NPC without faction: -1) | pass (creature) |
-| sex | `speaker.female = 0/1` | pass (creature) |
-| player faction (`DNAM`) + rank | `player.faction.<f>.rank >= r` | fail (not a member) |
-| player rank, no `DNAM` | `mw.pc_rank_speaker_faction >= r` | fail |
-| cell (`ANAM`, the player's cell, prefix) | `mw.player_cell_prefix.<s> = 1` | - |
-| Function | `mw.fn.<function>` compare (unbound: 0, recorded in `neutral_functions` as today) | - |
-| Function `Choice` | `event.choice` compare | fail (no choice pending) |
-| Global / Local / NotLocal | `world.var.<id>` compare / `speaker.var.<id>` compare / `speaker.var.<id> absent` | pass / fail / - |
-| Journal / Item / Dead | `quest.<id>.stage` / `player.item.<id>` / `world.dead.<id>` compare | - |
-| NotId / NotFaction / NotClass / NotRace | `speaker.id/faction/class/race isnot X` | pass |
-| NotCell (speaker's cell, prefix) | `mw.speaker_cell_prefix.<s> = 0` | - |
-| disposition | `speaker.disposition >= d`, **soft** | pass (creature) |
-| disposition, service refusal bucket | `speaker.disposition < d`, not soft; none when d = 0 | pass (creature) |
-
-- **Facts impl.** `MwFacts` over the existing `MwView` (`mw_rpg/src/filter.rs:105`): each key answers from the call
-  `passes_*` makes today (`filter.rs:161-312`), so equivalence holds by construction; `mw.*` keys resolve through
-  `FactResolver`.
-- **Refusals.** `fallback(ctx, topic, near_miss)`: near miss on a Conversation topic -> `Best` on `Topic("info
-  refusal")` (no fallback for greetings, `startDialogue` :175). `service_refusal` (`filter.rs:190`) -> `Best` on
-  `mw.service_refusal` with `event.choice` = the service type. Topic list and link learning (`speaker_answers`,
-  `filter.rs:151`) -> `Exists`, or a near miss with a fallback.
-- **Equivalence test (DQ-24a, real install, exact):** every NPC and creature base of the three ESMs as speaker x player
-  states (new game, DQ-3 trace snapshots, factions joined, choices 1-9 pending) x every Conversation topic, the
-  greeting, Voice topics and service refusal: the rule pick and `near_miss` equal `accepts` + `fallback`. Prints rule
-  and criteria counts and µs per query by bucket (measurement).
-
-**Voice barks.** DIAL type Voice (Morrowind.esm 8, Tribunal 4, Bloodmoon 5; "Data" above). OpenMW's `say` searches the
-topic with `Filter(actor, choice 0, talkedToPlayer)` and no Info Refusal, refuses while the actor already speaks,
-for NPCs swimming and for knocked-down actors, shows the subtitle, plays the INFO sound and runs its result script as
-the actor (:625-664). As built: `mw_audio/src/voice.rs` `select` (first INFO through `MwDialogueRules`, no choice
-pending) and `VoiceDirector::begin` (one line per actor). DQ-25b: `select` becomes a `Best` query with
-`event.choice = 0` (OpenMW; the test counts INFOs whose pick changes), the voice INFO's result script runs as the
-speaker, and `VoiceDirector` stays the one-line gate behind `sf_rpg::barks`.
-
-| Voice DIAL | Concept | OpenMW trigger (4e718b50) | Our emitter |
-|---|---|---|---|
-| Hello | `bark.greet` | greeting machine, `mwmechanics/actors.cpp:549` | `mw_walkers_bevy` greeting (MA4c2) |
-| Idle | `bark.idle` | `fVoiceIdleOdds`, 3000 units, LOS, `actors.cpp:440-452` | `mw_audio` `VoiceDirector` idle timer |
-| Attack | `bark.attack` | combat start, `aicombat.cpp:693`, `mechanicsmanagerimp.cpp:1690`, `:1752` | AI30 combat cue |
-| Hit | `bark.hit` | `iVoiceHitOdds` on damage, `mwclass/npc.cpp:776`; `combat.cpp:802`; `actors.cpp:1829` | combat hit event (DQ-12) |
-| Flee | `bark.flee` | `aicombat.cpp:274`, `:353` | AI Flee drive cue |
-| Thief | `bark.thief` | each witness of theft or pickpocket, `mechanicsmanagerimp.cpp:1182` | crime `OffenceDef.say` (theft, pickpocket) |
-| Intruder | `bark.intruder` | trespass witness with Alarm ≥ 100, `mechanicsmanagerimp.cpp:1326` | crime `OffenceDef.say` (trespass) |
-| Alarm | `bark.alarm` | never said by OpenMW | Classic none; Modern a Report rung (rule pack) |
-
-Classic keeps OpenMW's triggers and gates (`barks.*` Classic values: no dedupe, cap or gaps; no pre-empt). Modern adds
-dedupe, caps and rule packs as data; compiled Voice rules are the same in both.
 
 ## Co-op
 

@@ -73,3 +73,15 @@ Log: `ai: N wanderers on navmesh, M on pathgrid fallback (since start: X navmesh
 - Weights are Guess tunables `crime.stealth.*`, live since LW4b2 (e.g. `--set crime.stealth.crouched_concealment=60`). Morrowind's sneak skill formula is MA5.
 - Status: owner 2026-11-25 "seems to work but no guard is ever moving": Curious/Suspicious reactions never built (AI8h1/h2), search guard didn't search (AI47c diagnosis). AI8h2 + AI8i done 2026-11-25: re-check: a guard at Curious turns to face you, at Suspicious walks ~3 m toward where he saw you and stands facing it, then walks back to his post when the band drops.
 - Verdict owner 2026-11-26: OK ("when they are suspicious they step toward me, look around and walk back"). Alerted guards stand still: expected, Alerted response = AI29 (warn, pursue) and combat (MA4d, MA10).
+
+### AI-13: NPCs greet the player (MA4c2, 2026-11-26)
+- Kind: game, dev build (voices on: they are dev-only). `owner_launch.sh view "Seyda Neen" --hour 12 --sound`, F11 drops
+  the player (the free camera is never greeted). Wandering NPCs around the lighthouse and the docks.
+- Proof log line: `greeting: N greeted (M without a voice)` (first greeting, then each time the total doubles; M > 0 is
+  an NPC with no voiced Hello, e.g. most creatures).
+- Q1: walk up to a wandering NPC (within ~2.5 m for a typical Hello 30): does it stop, turn its body to face you and say a
+  greeting? yes/no
+- Q2: stay near it, step around it within ~7 m: does it NOT greet a second time, and walk on after ~4 s? yes/no
+- Q3: walk ~8 m away and come back: does it greet again? yes/no
+- Q4: approach one from behind: does it turn around smoothly (no snap)? yes/no
+- Status: awaiting owner.

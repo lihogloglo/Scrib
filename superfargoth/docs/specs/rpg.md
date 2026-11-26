@@ -3,14 +3,13 @@
 Status: **spec + core implemented** (rpg-core slice 1, 2026-10-21: modules `ids`, `item`, `equip`,
 `quest`, `link`, `dialogue`, `state`; 19 unit tests incl. postcard round trips; stack split/merge
 commands 2026-10-22 for the inventory screen, ui.md U5, 21 tests).
-**Challenges ARCHITECTURE §5.3** ("dialogue graph"): dialogue is a rule database (facts, criteria, most specific
-wins; [dialogue-rules.md](dialogue-rules.md), DQ-22) plus authored scenes later (DQ-34), with a session state
-machine, not one graph (Research below). Adapter: Bevyrrowind
+**Challenges ARCHITECTURE §5.3** ("dialogue graph"): dialogue is a condition-filtered response
+database with a session state machine, not a graph (Research below). Adapter: Bevyrrowind
 `docs/specs/rpg-adapter.md` (`mw_rpg`). Roadmap: Phase 2.4.
 
 <!-- agent-summary -->
 > **Agent summary (2026-10-26).** Status: spec plus core built (`sf_rpg` modules `ids`, `item`, `equip`, `quest`, `link`, `dialogue`, `state`; stack split/merge). ROADMAP 2.4 [~] (next: HUD). Visual checks: DJ-1 confirmed with follow-up, IV-1 partial. Designed, not built: see "Open questions" (journal snapshot vs re-render).
-> Crates / key types: `sf_rpg` (Bevy-free), `sf_ids` (`PlayerId`), adapter `mw_rpg` (bevyrrowind `docs/specs/rpg-adapter.md`). Decisions that matter: dialogue lines are picked by a rule database (dialogue-rules.md: highest priority, then most specific, then least recent, then seeded; Morrowind INFO order compiles to priority so classic picks are unchanged), not a graph ("Dialogue", "Research"); state changes only via `RpgCommand` returning `RpgEvent`s ("Commands and events"); no clock or RNG inside `sf_rpg`, no `Entity` ("Co-op").
+> Crates / key types: `sf_rpg` (Bevy-free), `sf_ids` (`PlayerId`), adapter `mw_rpg` (bevyrrowind `docs/specs/rpg-adapter.md`). Decisions that matter: dialogue is a condition-filtered response database, first passing response wins, not a graph ("Dialogue", "Research"); state changes only via `RpgCommand` returning `RpgEvent`s ("Commands and events"); no clock or RNG inside `sf_rpg`, no `Entity` ("Co-op").
 > Read next: "Data model" for types; "Dialogue" for the session machine; "Adapter hooks" for content packs.
 <!-- /agent-summary -->
 
@@ -34,11 +33,8 @@ Out of scope here: stats/skills/magic/factions (M7, separate spec), barter, cont
   Pattern Matching"). Dialogue is a table: per topic an ordered list of responses, each with
   conditions on speaker, player and world; the engine picks one. Bethesda picks the **first**
   response whose conditions all pass (authored order is priority); Valve picks the
-  **most specific** (most criteria matched). Both are one rule database ranked by priority then
-  specificity (dialogue-rules.md, DQ-22, 2026-11-26): Bethesda's order becomes priority, Valve's
-  count becomes specificity, and one engine also serves barks, reactive lines and quick replies.
-  ARCHITECTURE §5.3 challenged again: rules for selection plus authored scenes (Yarn-like, DQ-34)
-  for linear writing, not one graph.
+  **most specific** (most criteria matched). Ordering by specificity at load reduces Valve's rule
+  to first-match, so first-match over an adapter-ordered list covers both.
 - *Authored graphs* (Yarn Spinner, Ink, Dialogue System for Unity, articy). Conversations are
   node graphs with jumps and inline commands. Good for linear writing; they don't model "any NPC,
   any time, ask about any known topic" without a database layer on top.
@@ -190,37 +186,29 @@ directly. Events carry the stable ids (`Holder`, quest, topic), never entities.
 ### Database
 
 `DialogueDb` (built by the adapter at load, not saved):
-- `topics: IndexMap<RecordId, TopicEntry { kind: TopicKind, name: String }>` (names, kinds, links) and
-  `rules: RuleDb` (dialogue-rules.md "Rules"): each topic is `Concept::Topic(id)`, all greetings one
-  `Concept::Greeting`, barks `Concept::Named`. As built until DQ-24b: `TopicEntry.responses: Vec<RecordId>` in
-  priority order and `greetings: Vec<RecordId>` (`dialogue.rs:29`, `:38`).
+- `topics: IndexMap<RecordId, TopicEntry { kind: TopicKind, name: String, responses: Vec<RecordId> }>`;
+  `responses` are in **priority order** (the adapter resolves load order and specificity).
 - `TopicKind`: `Conversation` (listed and linkable), `Greeting`, `Service` (persuasion and
   service replies: admire, bribe, refusal), `Bark` (voice, outside the session).
+- `greetings: Vec<RecordId>`: greeting topics in evaluation order.
 
 ### Adapter hook
 
-Session-facing contract (DQ-24b; selection itself is dialogue-rules.md "Selection"):
-
 ```text
-trait DialogueRules: Facts {                       // Facts: dialogue-rules.md "Facts"
-    fn render(&self, ctx: &ConversationCtx, line: &LineRef) -> String;
-    /// A line when nothing under `topic` passed; `near_miss` = a rule failed only on soft
-    /// criteria (Morrowind: disposition -> Info Refusal). Such a topic still counts in
-    /// `available_topics`. Not for greetings.
-    fn fallback(&self, ctx: &ConversationCtx, topic: &RecordId, near_miss: bool) -> Option<LineRef>;
-    fn voice(&self, line: &LineRef) -> Option<RecordId> { None }   // a voice cue (barks, DQ-25)
+trait DialogueRules {
+    fn accepts(&self, ctx: &ConversationCtx, topic: &RecordId, response: &RecordId) -> bool;
+    fn render(&self, ctx: &ConversationCtx, topic: &RecordId, response: &RecordId) -> String;
+    /// Default None. A (topic, response) to show when nothing under `topic` is accepted
+    /// (a refusal line); such a topic still counts in `available_topics`. Not for greetings.
+    fn fallback(&self, ctx: &ConversationCtx, topic: &RecordId) -> Option<(RecordId, RecordId)>;
 }
 ```
 
 `ConversationCtx { player: PlayerId, speaker: ActorKey, speaker_base: RecordId, choice:
-Option<i32> }` becomes the query's `QueryCtx` plus `event.choice` and `event.topic`. The adapter's facts
-read world and character state (quests, inventories, globals, its own NPC state); `sf_rpg` ranks. `render`
-expands text macros. Selection: `ask(topic)` = `Best` on `Concept::Topic(topic)`; `open` = `Best` on
-`Concept::Greeting`; `available_topics` = `Exists` per known topic (or a near miss with a fallback). Session
-steps take `SelectEnv { tick, memory: &DialogueMemory }` and emit `DialogueOutput::Fired(rule)` when the
-pick needs `RpgCommand::RuleFired` (once, cooldown, writes, tie group). As built until DQ-24b: `accepts(ctx,
-topic, response) -> bool` and the first accepted response in list order (`dialogue.rs:88-97`, `:112`);
-afterwards the Morrowind `accepts` survives only as DQ-24's test oracle.
+Option<i32> }`. The adapter's implementation holds read access to world and character state
+(quests, inventories, globals, its own NPC state) for its filters; `sf_rpg` only orders the
+search. `render` expands text macros. Selection: **the first response in the topic's list that
+`accepts`**; greetings: the first accepted response across `greetings` in order.
 
 ### Session state machine
 
@@ -260,8 +248,7 @@ topics are ASCII; revisit for localised packs).
 | Hook | Supplies |
 |---|---|
 | `DialogueDb` builder | topics, kinds, names, ordered responses, greeting order |
-| `DialogueRules` + `Facts` | fact values for rule criteria, text macros (`render`), refusal fallback, voice cue |
-| rule compiler | the pack's filter format as `Rule`s (Morrowind INFO, rpg-adapter "Rule compilation") |
+| `DialogueRules` | filter evaluation (`accepts`) and text macros (`render`) |
 | `EquipRules` + `SlotTable` | slot set, item placement, whole-stack rule |
 | `LinkRules` | word-boundary policy for topic links |
 | attribute keys | what per-instance data exists (`Attrs` keys) |
@@ -281,7 +268,7 @@ state; the tracked quest and `JournalSeen` are per player and never feed gamepla
 Unit tests per module: stack merge identity (attrs, float bits), remove order and failure
 atomicity, split, equip/displace/whole-stack/merge-back, quest flags, journal ordering and
 queries, topic learning idempotence, linker (longest match, boundaries, overlap, case), session
-greeting order/selection/choice re-ask/goodbye/claim (rule selection tests: dialogue-rules.md "Tests"), postcard round-trips of every saved type.
+greeting order/first-match/choice re-ask/goodbye/claim, postcard round-trips of every saved type.
 
 ## Open questions
 
