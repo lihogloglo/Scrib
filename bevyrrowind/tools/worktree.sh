@@ -59,7 +59,9 @@ case "$1" in
         for link in target bevyrrowind/target superfargoth/target; do unjunction "$dir/$link"; done
         git -C "$main" worktree remove "$dir"
         rm -rf "${tgt_root:?}/$name"
-        echo "worktree: removed $dir and its build folder; the branch is kept (git branch -d wt/$name when merged)"
+        # clippy/check build in <target>-check (cargo_turn.sh check lane).
+        rm -rf "${tgt_root:?}/${name:?}-check"
+        echo "worktree: removed $dir and its build folders; the branch is kept (git branch -d wt/$name when merged)"
         ;;
     *) sed -n '2,15p' "$0"; exit 2 ;;
 esac

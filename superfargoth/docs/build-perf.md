@@ -146,6 +146,12 @@ one `test --workspace` with nothing to compile still ran 290 s. Three changes, r
   cargo.exe or bevyrrowind.exe needs its command line; waiters poll every 1 s. Overhead per command 1.9 s -> 0.45 s.
   Edit `cargo_turn.sh` on a copy and `mv` it in: bash reads a running script by offset, so an in-place edit can
   derail commands already queued.
+- **Check lane** (idle-1 L2): `clippy`/`check` build check-mode units (rmeta only), which share nothing with test or
+  build units but took the same target-dir lock, so a 5 s clippy waited behind a test build (54 min/day) and tests
+  behind clippy (18 min/day). They now build in `<target>-check` (`C:\cargo-target\scrib-check`, a worktree's
+  `<name>-check`) in queue lane `c`, beside lane `b`; lanes merge while the owner plays. Not for sf_dlss, a checkout
+  without a target junction, or a caller-set `CARGO_TARGET_DIR`. Same fix as rust-analyzer's `cargo.targetDir`; the
+  proper one, cargo's `-Zfine-grain-locking` (cargo#16155), is still unstable on 1.98.1.
 
 ### Machine setup (Windows)
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs cargo in turn: a first-come, first-served queue shared by every session, then cargo at BelowNormal
 # priority (CONTRIBUTING.md "Building"). The queue is `<repo>/.sessions/build-queue/`, one ticket per waiting
-# or running command; the oldest ticket builds. Builds outside the queue (other projects, a bare cargo) still
+# or running command; the oldest ticket of each lane builds: lane c = clippy/check (own target dir, see "Check
+# lane" below), lane b = everything else. Builds outside the queue (other projects, a bare cargo) still
 # hold everyone: the slot is also busy while any rustc.exe runs, or any cargo.exe other than one that only runs a
 # finished program (`cargo run` / `cargo dev`, e.g. a game left open; owner 2026-10-26).
 #
@@ -74,8 +75,13 @@ procs() {
 }
 has_exe() { grep -qiE "[\\\\/]($1)(\\.exe)?\$" <<< "$2"; } # <name regex> <procs output>
 
-busy() {
-    local p; p="$(procs)"
+# The owner's private game copy (%TEMP%\bw-owner-*) is running. Either separator: a process started from bash
+# (owner_launch.sh) is listed with its MSYS path.
+owner_on() { grep -qiE '[\\/]bw-owner-' <<< "$1"; } # <procs output>
+owner_playing() { owner_on "$(procs)"; }
+
+busy() { # [procs output] [1 = the other lane runs a ticket, so its rustc/cargo are expected: only a headless game holds]
+    local p="${1:-$(procs)}"
     # A headless game subcommand (a bake, a census) is real work even when started by `cargo run`, and a `--bench`
     # run must not share the CPU: both hold the slot. Same headless list as owner_launch.sh game_open(); a game
     # window doesn't hold it.
@@ -83,6 +89,7 @@ busy() {
         powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='bevyrrowind.exe'\" | ForEach-Object { \$_.CommandLine }" 2>/dev/null \
             | tr -d '\r' | grep -qE '[[:space:]](bake|info|mods|census|clip-preview --export|--bench)([[:space:]]|$)' && return 0
     fi
+    [ "${2:-0}" = 1 ] && return 1
     # rustdoc.exe compiles and links doctests; a test run that has to recompile shows up as rustc.exe.
     has_exe 'rustc|rustdoc' "$p" && return 0
     has_exe cargo "$p" || return 1
@@ -104,6 +111,11 @@ live_tickets() {
         if kill -0 "$pid" 2>/dev/null; then echo "${t##*/}"; else rm -f "$t"; fi
     done | sort
 }
+# A ticket's lane: `c` (check lane: clippy/check in their own target dir) or `b` (everything else; also tickets from
+# before the lanes, named without one).
+lane_of() { case "${1%-*}" in *-c) echo c ;; *) echo b ;; esac; }
+# <live tickets> <lane>: that lane's tickets, oldest first.
+in_lane() { printf '%s\n' "$1" | awk -v l="$2" 'NF { if ((($0 ~ /-c-[0-9]+$/) ? "c" : "b") == l) print }'; }
 
 if [ "$1" = "--queue" ]; then
     now=$(date +%s)
@@ -112,16 +124,12 @@ if [ "$1" = "--queue" ]; then
         n=$((n + 1))
         since=$(( now - ${t%%.*} ))
         state="waiting"; grep -q '^running ' "$queue/$t" && state="RUNNING since $(grep '^running ' "$queue/$t" | cut -d' ' -f2)"
-        printf '%2d  %4ds  %-22s %s\n' "$n" "$since" "$state" "$(head -1 "$queue/$t")"
+        printf '%2d  %s  %4ds  %-22s %s\n' "$n" "$(lane_of "$t")" "$since" "$state" "$(head -1 "$queue/$t")"
     done
     [ $n = 0 ] && echo "queue empty"
     if busy && ! grep -qs '^running ' "$queue"/* ; then echo "(a build outside the queue is running)"; fi
     exit 0
 fi
-
-# Ticket: <epoch seconds>.<nanoseconds>-<shell pid>, holding the command and where it came from.
-ticket="$queue/$(date +%s.%N)-$$"
-printf '%s  [%s]\n' "cargo $*" "$PWD" > "$ticket"
 
 # Log state: times in ms; t_run stays empty until cargo starts (a command cancelled while waiting logs run "-").
 queued_at="$(date '+%F %T')"; all_args="$*"
@@ -129,6 +137,29 @@ t_q=$(ms); last=$t_q; reason=""; w_queue=0; w_busy=0; w_freeze=0; t_run=""; errl
 sub=""
 for a in "$@"; do case "$a" in -*|+*) ;; *) sub="$a"; break ;; esac; done
 for a in "$@"; do case "$a" in --) break ;; -q|--quiet) quiet=1 ;; esac; done
+
+# Check lane (idle-1 L2, 2026-11-26): `clippy` and `check` build check-mode units (rmeta only), which share nothing
+# with test/build units but took the same target-dir lock, so a 5 s clippy waited for a test build. They now build
+# in `<target>-check` (beside the checkout's target junction, e.g. C:\cargo-target\scrib-check) and queue in lane
+# `c`, running beside lane `b` (everything else); each lane is first-come, first-served. Only for the checkout's
+# own workspace with a `target` junction, and never when the caller set CARGO_TARGET_DIR: otherwise one lane, as
+# before. rust-analyzer's `cargo.targetDir` setting is the same fix for the same lock.
+lane=b; check_target=""
+if [ -z "${CARGO_TARGET_DIR:-}" ] && { [ "$sub" = clippy ] || [ "$sub" = check ]; }; then
+    ws="$PWD"
+    while [ "$ws" != / ] && [ "$ws" != . ] && ! grep -qs '^\[workspace\]' "$ws/Cargo.toml"; do ws="$(dirname "$ws")"; done
+    top="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)"
+    if [ -n "$top" ] && [ "$(cd "$ws" 2>/dev/null && pwd -W)" = "$(cd "$top" && pwd -W)" ]; then
+        real="$(readlink -f "$top/target" 2>/dev/null)"
+        if [ -n "$real" ] && [ "$real" != "$(readlink -f "$top")/target" ]; then
+            check_target="$(cygpath -m "$real")-check"; lane=c
+        fi
+    fi
+fi
+
+# Ticket: <epoch seconds>.<nanoseconds>-<lane>-<shell pid>, holding the command and where it came from.
+ticket="$queue/$(date +%s.%N)-$lane-$$"
+printf '%s  [%s]\n' "cargo $*" "$PWD" > "$ticket"
 
 write_log() {
     local rc="$1" end wait run units="-" bevy="-"
@@ -168,18 +199,26 @@ while :; do
         freeze) w_freeze=$((w_freeze + now - last)) ;;
     esac
     last=$now
-    first="$(live_tickets | head -1)"
-    if [ "$first" = "${ticket##*/}" ]; then
+    all="$(live_tickets)"; mine="$(in_lane "$all" $lane)"; me="${ticket##*/}"
+    first="$(head -1 <<< "$mine")"
+    if [ "$first" = "$me" ]; then
+        # The other lane's running ticket is expected to compile beside this one, except while the owner plays:
+        # then the lanes merge (one build at a time, as before L2).
+        p="$(procs)"; exempt=0
+        for t in $all; do
+            [ "$(lane_of "$t")" != $lane ] && grep -qs '^running ' "$queue/$t" && exempt=1
+        done
+        [ $exempt = 1 ] && owner_on "$p" && exempt=0
         if [ -f "$freeze" ] && [ -z "$SCRIB_BUILD_FREEZE_OK" ]; then
             msg="build freeze ($(head -1 "$freeze"))"; reason=freeze
-        elif busy; then
+        elif busy "$p" $exempt; then
             msg="next in line, waiting for the running build"; reason=busy
         else
             break
         fi
     else
-        pos=$(live_tickets | grep -nxF "${ticket##*/}" | cut -d: -f1)
-        msg="queued #$pos behind: $(head -1 "$queue/$first" 2>/dev/null)"; reason=queue
+        pos=$(grep -nxF "$me" <<< "$mine" | cut -d: -f1)
+        msg="queued #$pos in lane $lane behind: $(head -1 "$queue/$first" 2>/dev/null)"; reason=queue
     fi
     if [ "$msg" != "$shown" ]; then echo "cargo_turn: $msg" >&2; shown="$msg"; fi
     # Handoff latency: a waiter sees the ticket ahead go within ~1 s (was 3 s). Waiting on a build outside the queue
@@ -187,15 +226,12 @@ while :; do
     if [ "$reason" = busy ]; then sleep 2; else sleep 1; fi
 done
 echo "running $(date +%H:%M:%S)" >> "$ticket"
+[ -n "$check_target" ] && export CARGO_TARGET_DIR="$check_target"
 # Build freeze: while .sessions/BUILD-FREEZE exists, only commands run with SCRIB_BUILD_FREEZE_OK=1 leave the
 # queue (handled above); everyone else waits in line. The file says why.
 
 # Thread cap only while the owner plays (owner 2026-11-11): a `-j N` / `--jobs N` before `--` is kept only when a
 # private owner copy (%TEMP%\bw-owner-*) is running; otherwise cargo uses every core (BelowNormal keeps the desktop smooth).
-owner_playing() {
-    # Either separator: a process started from bash (owner_launch.sh) is listed with its MSYS path.
-    procs | grep -qiE '[\\/]bw-owner-'
-}
 if owner_playing; then
     capped=1
 else

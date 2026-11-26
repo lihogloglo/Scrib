@@ -134,7 +134,8 @@ anywhere in Bevy's dependency closure (`superfargoth/docs/build-perf.md` "Featur
   so a long test run no longer holds everyone (`--doc` and `--no-run` stay one phase).
 - **These share one Bevy:** `test -p <any crate>`, `test --workspace`, `build -p bevyrrowind` (and the same with
   `--release`, one Bevy per profile). `cargo dev` (the `dev` feature) is a second Bevy by design, and clippy
-  keeps a check-mode one per feature set. Each is cached once; switching between them rebuilds nothing.
+  keeps a check-mode one per feature set, in its own target dir (`<target>-check`): `cargo_turn.sh` runs clippy/check
+  in a second lane beside tests and builds. Each is cached once; switching between them rebuilds nothing.
 - **Never `--all-features`:** it turns on every opt-in of the app at once (`dev`, `solari`, `dlss`, `delirium`,
   `trace`, `tracy`), a Bevy nobody else shares, and links GPL-3.0-only Delirium code. Use an opt-in only when your
   task needs it (each is its own Bevy). No dev-dependency asks for an opt-in Bevy feature; pass it on the command
