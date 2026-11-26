@@ -355,6 +355,9 @@ slices append their detail there and keep a few lines here.
   (Chlorophyll F17). (3) Near trees cast through a shadow LOD (2.74 ms as full meshes). (4) The impostor draws with a
   masked prepass and a main pass that neither discards nor overdraws (depth-equal), on a trimmed hull. Open: (3) and
   (4) are not priced by an arm; the look of far tree shadows from a proxy is the owner's to judge.
+  Code-read 2026-11-26: (4) needs no Bevy patch, `Material::specialize` reaches the main pass depth state; it
+  needs `@invariant` positions and no `frag_depth` in the camera prepass
+  ([research note, part 3](../research/far-vegetation-fill-2026-11-26.md)).
 - **Render-thread CPU per slot** (BW-2, dev profile, not conclusive): render busy rose 0.5 ms at 10⁵ slots and
   2.3 ms at 10⁶ (model ≤ 0.2 ms). Needs a release run.
 - **Meshlets for T2 only.** The canopy is opaque, which is the case where Bevy meshlets work. Re-check at BW-7: the DX12

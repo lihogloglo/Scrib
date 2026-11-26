@@ -25,3 +25,56 @@ Not verified at all: Far Cry 5 and Ghost Recon Wildlands vegetation talks, Speed
 - c. No hashed or stochastic alpha test found in `bevy_pbr` (grep of shaders and `material.rs`; absence not exhaustively proven). `AlphaMode::AlphaToCoverage` (`bevy_material-0.20.0/src/alpha.rs:47`) needs MSAA; with `Msaa::Off` it falls back to plain Mask discard (`material.rs:810-812`; `pbr_functions.wesl:109-114`).
 - d. Yes. `unlit` only sets a material flag (`pbr_material.rs:1122`); shadow casting depends on `NotShadowCaster` and the material's shadow settings, not on `unlit`. Mask discard still runs in the shadow pass for an unlit material.
 - e. Only all or nothing. `NotShadowCaster` (`bevy_light-0.20.0/src/lib.rs:264`) is filtered in the visibility systems and the instance batching (`gpu_instance_batch/mod.rs:1054`); I found no per-cascade mask. Casters are tested against every cascade frustum (project wiki `docs/wiki/bevy/render-and-visibility.md:40`). A per-cascade cut would need a patch in the vendored `bevy_pbr`. `CascadeShadowConfig` bounds only set cascade ranges.
+
+## Part 3: can a material give a masked prepass and a depth-equal, non-discarding main pass? (bigworld-5, 2026-11-26)
+
+Code-read only (vendored `bevy_pbr` 0.20, paths under `superfargoth/vendor/bevy_pbr/src/`); nothing built, nothing
+measured. **Answer: yes, through `Material::specialize`; no patch to the vendored `bevy_pbr`.**
+
+- **The hook sees the finished descriptor of both pipelines.** `Material::specialize(pipeline, descriptor, layout, key)`
+  (`material.rs:301`) is stored as `user_specialize` and called last, after `MeshPipeline::specialize`, on the main
+  pass descriptor (`material.rs:687-689`) and on the prepass descriptor (`prepass/mod.rs:400-407`), which shadow
+  views share. `StandardMaterial::specialize` itself edits `descriptor.primitive.cull_mode` and
+  `descriptor.depth_stencil.bias` there (`pbr_material.rs:1627, 1642`), so changing the depth-stencil state in the
+  hook is the path Bevy uses, not a reach into private state (rule 4 does not apply).
+- **Main pass.** Stock state is `depth_write_enabled: true`, `depth_compare: GreaterEqual` for opaque and mask
+  (`render/mesh.rs:3897-3903, 4114-4117`). The hook can set `depth_compare = Equal` and `depth_write_enabled =
+  false`. `MAY_DISCARD` in the main pass is only a shader def (`render/mesh.rs:3993`): a material with its own
+  fragment shader discards only if that shader does, so "non-discarding" is our shader's choice. `AlphaMode::Mask`
+  still routes the item to the alpha-mask phases (`material.rs:1909`; prepass `prepass/mod.rs:1284-1291`).
+- **Prepass.** A `Mask` material with its own `prepass_fragment_shader` keeps a fragment stage
+  (`prepass/mod.rs:647-652`), so the mask-only prepass is a shader we write (alpha fetch, discard, motion vector).
+  On the DLSS-path camera the motion-vector target needs a fragment stage for every material anyway.
+- **Telling the pipelines apart.** The key cannot: prepass keys and shadow keys both carry `DEPTH_PREPASS`
+  (`prepass/mod.rs:1003`, `precache.rs:239`), as does the main pass key of a view that has a depth prepass
+  (`render/mesh.rs:445-447`). The descriptor can: prepass and shadow descriptors carry the `PREPASS_PIPELINE` def
+  and the label `prepass_pipeline` (`prepass/mod.rs:447, 724`); the main one is `opaque_mesh_pipeline`
+  (`render/mesh.rs:3897`). Rule for the hook: switch to `Equal` only when the descriptor is not a prepass one and
+  `key.mesh_key` has `DEPTH_PREPASS`. A view without a depth prepass keeps the stock state, and the fragment shader
+  keeps its discard under `@if(!DEPTH_PREPASS)` (the def reaches the main shader, `render/mesh.rs:3910-3912`).
+- **Conditions for the equal test to hold.**
+  1. Both vertex stages give bit-identical clip positions: the same expressions and `@invariant` on the position
+     output. Bevy's own shaders have no `@invariant` (grep of `bevy_pbr`); ours already do it for this reason
+     (`sf_lod_bevy/src/shaders/impostor.wesl:24`, `impostor_prepass.wesl:5-6, 17`; terrain the same), so naga and
+     the WESL front end accept it.
+  2. The prepass writes the rasterised depth. A per-pixel `frag_depth` (impostor depth offset) breaks it: the main
+     pass would have to write the same value, which turns early Z off and shades every masked-out fragment again.
+     Today's `ImpostorMaterial` writes `frag_depth` only for emulated unclipped depth in shadow views
+     (`impostor_prepass.wesl:73, 92`), so its camera prepass qualifies. BW-4's "depth" (spec "Slices") must stay
+     out of `frag_depth` on the camera path, or the equal test is lost.
+  3. The mesh is in the prepass of every view where the main pass tests `Equal`: `enable_prepass()` true (the only
+     skip, `prepass/mod.rs:1204`) and forward rendering.
+  4. Fade by dither discards in the prepass only; the main pass then fails the equal test on those pixels by
+     itself.
+- **Not traced:** with `OcclusionCulling`, whether the main pass can draw an instance that neither the early nor
+  the late prepass drew. With `Equal` such an instance would be missing for that frame (stock draws it). Check in
+  the first slice that builds this (a counter, not a picture).
+- **Existing code this applies to.** `ImpostorMaterial` (`sf_lod_bevy/src/materials.rs:60-97`) already overrides
+  `specialize` (vertex layout only) and still discards in the main pass (`impostor.wesl:64`) against
+  `GreaterEqual`: it is the stock double alpha test. The change there, or in BW-4's slot impostor material, is a
+  few lines in the hook and one `@if` around the discard.
+- **Upstream:** one search of bevyengine/bevy issues and PRs found none for an equal-depth main pass after a depth
+  prepass; not exhaustive.
+- **Cost expectation, unchanged and unmeasured:** BW-2b's `stand/cards.opaque` main span (0.16 ms against 2.73 ms
+  masked) is the proxy for the main pass; the masked prepass stays near 1.0 ms. A bench arm prices it (queue
+  slice (c), on meta's go).

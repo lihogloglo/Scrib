@@ -53,6 +53,13 @@ visibility: [render-and-visibility.md](render-and-visibility.md).
   bind group per material (:2821).
 - Bind groups themselves are created in `PrepareBindGroups`: `prepare_material_bind_groups` then
   `write_material_bind_group_buffers` (:528-546, 2697).
+- `Material::specialize` (`material.rs:301`) is called last, with the finished descriptor, for the main pass
+  (`material.rs:687`) and for the prepass and shadow pipelines (`prepass/mod.rs:400`); `StandardMaterial` sets cull
+  mode and depth bias there (`pbr_material.rs:1627, 1642`). So a material may change depth compare and depth write
+  per pipeline; tell the two apart by the `PREPASS_PIPELINE` def or the label, not by the key (prepass, shadow and
+  main keys can all carry `DEPTH_PREPASS`). Stock main pass: `GreaterEqual` with depth write, and a `Mask` material
+  discards again (`render/mesh.rs:4116-4117`). An equal-depth main pass needs `@invariant` positions in both vertex
+  stages and no `frag_depth` (`superfargoth/docs/research/far-vegetation-fill-2026-11-26.md` part 3).
 - Pipeline keys: shadow views (`specialize_shadows`, `render/light.rs:3405`) and the prepass
   (`specialize_prepass_material_meshes`, `prepass/mod.rs:1317`) both call `properties.prepass_specialize`; the
   key is `ErasedMaterialPipelineKey { mesh_key, material_key, type_id }`, the material key being the whole
