@@ -1998,6 +1998,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (owner, build-speed): the pre-PR gate runs in GitHub Actions (Windows runners, `ci.yml`), not on the laptop;
   sessions push a `ci/<name>` snapshot (`tools/ci_push.sh`) or a `wt/<name>` worktree branch. Worktrees always get their
   own target folder (cargo would reuse another checkout's builds). `cargo test` holds the queue only while compiling.
+- 2026-11-26 (owner, ai): no escalation ladder (Radiant AI lesson). Offence options are scored only for actors whose role or
+  temperament allows them; a failed lawful option never raises them; hunger/fatigue/weather never feed offence or combat
+  options (`ai.md` "Drives"). Resources stay smart-object activities (no consumed food, no economy).
 - 2026-11-26 (owner, combat): `docs/roadmaps/combat.md` adopted: parry window + riposte in both views; symmetric ER poise
   (replaces "every hit staggers"); slowed walk drawing/casting, big spells root; melee spares allies, projectiles/AoE/fire
   hit anyone, co-op FF off; short warped finishers, no cutscenes; status buildup in framework, Morrowind ships none.
@@ -2009,3 +2012,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   view-aware AI (fragile in co-op): fairness = audio telegraphs, hit-direction indicator, token cap (`docs/roadmaps/combat.md` 19).
 - 2026-11-26 (owner, nav): runtime nav tiles are always built off the frame: missing ones at a loading screen or on workers
   ahead of streaming; a changed tile rebuilds async while the old one serves until the swap; never a stall.
+- 2026-11-26 (nav, NV0b1, from roadmap decision 3): the HPA* "coarse graph" is replaced by a per-worldspace route graph
+  (`sf_nav::route_graph`, bake step `nav.routes`, costs in walk metres, own deterministic A*; `nav.coarse` deleted in NV12d);
+  cross-space journeys are one A* over route graphs + `WorldGraph` door hops (nav.md "Route graph").

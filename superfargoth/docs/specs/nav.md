@@ -17,7 +17,7 @@ Sources: `../research/npc-ai-2026-11-08.md` §4, §5.2-5.3, §7.4 (approved); `.
 > navmesh per worldspace, agent class and nav region, baked once by `sf_bake` (`nav.tiles`); two classes (humanoid, large).
 > Doorways are baked door polygons switched at runtime by area/flags; prop carving (TileCache) is opt-in later (owner:
 > patches are not "baking during play"). Tiles stream with a fixed nav ring around gameplay anchors. Routing:
-> worldspace graph (door links) → per-space coarse graph → Detour over resident tiles → corridor → our ORCA (+ navmesh
+> worldspace graph (door links) → per-space route graph (NV12) → Detour over resident tiles → corridor → our ORCA (+ navmesh
 > wall lines), on the fixed tick (NV7a). Backend behind `NavBackend`: `navmesh-rs` (NV0 verdict).
 > Read next: "Data model", "Routing", "Streaming", "Build plan".
 <!-- /agent-summary -->
@@ -47,7 +47,7 @@ ZoneGraph; later if measured), navmesh authoring tools (data comes from the bake
 
 **Recast voxel navmesh generation + Detour tiled navmesh queries** (Mononen; used by UE, Unity, Godot, OpenMW),
 tiled and baked offline, with **TileCache** layers for runtime obstacles, **off-mesh connections** for links the
-mesh can't express, **hierarchical routing** (HPA*, Botea et al. 2004) above the tile level, and **path corridor +
+mesh can't express, a **road/route graph** above the navmesh ("Route graph"; HPA*, Botea et al. 2004, only on a measured need), and **path corridor +
 reciprocal velocity obstacles** for following and local avoidance (Detour `dtPathCorridor`; ORCA, van den Berg 2011).
 Deviation: we keep our own ORCA (`sf_controller::avoid`, deterministic, tested) instead of DetourCrowd's sampled
 avoidance, and take only `PathCorridor` and `LocalBoundary` from Detour.
@@ -64,6 +64,11 @@ avoidance, and take only `PathCorridor` and `LocalBoundary` from Detour.
 - Rejected (research §5.2): `rerecast` (no tiles; re-check at "update all"), `landmass` (glam 0.30 + `dodgy_2d`, no
   dynamic obstacles; its islands idea becomes nav regions), `vleue_navigator`/`polyanya` (2D/layered),
   `oxidized_navigation` (archived), `bevy_northstar`/flow-field crates (grids). `petgraph` covers the graphs.
+- **Route graph (NV12, checked 2026-11-26):** Bevy 0.20 has no graph search (no A*/Dijkstra in any `bevy_*` 0.20 crate;
+  `bevy_math` curves are Bevy-side, `sf_nav` is Bevy-free). `petgraph` 0.8.3 (MIT OR Apache-2.0, maintained, in the
+  workspace) and `pathfinding` (MIT OR Apache-2.0; `Ord` costs, so f64 needs a wrapper) were rejected for this query:
+  both fix their own tie-break, neither seeds a search mid-edge or ends at a virtual goal without mutating the graph.
+  Own ~100-line A* in the NV11b pattern (`world_graph.rs` `Open`: `total_cmp` + index tie-break), CSR-style arrays.
 - Our own: the thin glue (types, trait, graphs, query service, streaming, debug draw); no Recast/Detour rewrite.
 
 ## Data model
@@ -89,8 +94,9 @@ adapter's `AreaTable` (`sf.nav.area`), `PolyFlags` (WALK, SWIM, DOOR, JUMP, AVOI
   128 voxels per side (19.2 m); `large` cs ≈ 0.5 m (`cs ≈ radius / 2`).
 - **Off-mesh links** (bake, per worldspace): pathgrid edges the mesh misses, authored jumps, drops, ladders, ledges
   (`sf_interaction` or adapter data), door approach links.
-- **Coarse graph** (bake, per worldspace and class): HPA* nodes at tile borders, region borders, door approach points,
-  named anchors; walking-cost edges. KB to low MB; always resident.
+- **Route graph** (bake, per worldspace, class mask per edge; replaces the HPA* "coarse graph", NV12): junctions,
+  anchors and door approach nodes, polyline edges with walk-metre costs. ≤ 1.5 MiB Vvardenfell; always resident.
+  "Route graph".
 - **Worldspace graph** (`WorldGraph`, built at load from `DoorLink`s + the coarse graphs): nodes are worldspaces,
   edges are link ends with an approach point on each side, walking cost through, and flags (`Seamless`, `FadeOnly`,
   `OneWay`); dynamic door state (open, locked) comes from the host each tick.
@@ -131,7 +137,7 @@ adapter test without Recast. Queries the AI calls (all take the actor's worldspa
 | `request_path(PathQuery) -> RequestId` | `PathResult { status, waypoints: Vec<NavWaypoint>, links: Vec<NavLinkId \| LinkId>, cost }` at a later tick | worker, sliced |
 | `nearest(Location, class)` | `NavPoint` | inline (µs) |
 | `raycast(NavPoint, target)` | hit / clear (shortcuts, flee checks) | inline |
-| `route(Location, Location, class) -> Route` | worldspace hops + coarse legs + travel time; no tiles needed | inline (graph) |
+| `journey(Location, Location, rules) -> Journey` | door hops + route-graph walks + travel time; no tiles ("Route graph") | inline (graph) |
 | `portal_query::map / path_distance / line_of_sight` | below | inline |
 
 `Goal` covers `Point(Location)`, `Near { at, radius }` (follow, escort), `Away { from, min_dist }` (flee: search for
@@ -155,8 +161,8 @@ markers (seamless §4.2; it replaces OpenMW's scattered `positionFor` calls).
 - Step **`nav.tiles`**, subject `(worldspace, class, tile)`: input = the adapter's `NavGeometrySource` for the tile's
   bounds plus a border (Recast tile border), whose reads (cooked collision products, terrain heights, water level)
   are recorded as dynamic dependencies. A mod that moves one wall changes only the tiles whose inputs it touched.
-- Step **`nav.links`** per worldspace (off-mesh links, door approach points) and **`nav.coarse`** per (worldspace,
-  class) (border nodes and costs; depends on that worldspace's tile products).
+- Step **`nav.links`** per worldspace (off-mesh links, door approach points) and **`nav.routes`** per worldspace (the
+  route graph from the adapter's `RouteSource`; replaces the `nav.coarse` HPA* stub, "Route graph").
 - Parallel per tile (`sf_bake` execution); empty tiles (open sea, void) produce no object of their own (zero bytes:
   every empty tile shares the store's one empty object).
 - **Where** (NV4a): `sf_nav_bake`, a Bevy-free crate on `sf_bake` + `sf_nav`, backend-agnostic (the host passes a
@@ -192,7 +198,7 @@ The baked tiles are the base layer; the host patches them at runtime (owner deci
   R0 itself is fixed too (only R1-R3 scale; streaming.md fix in the decisions note). Per class: see "Agent classes".
 - Requests ride the streaming scheduler's per-frame budgets (streaming.md "Scheduler and budgets"); a tile is a bake
   store read and `add_tile`, no generation.
-- Coarse graphs and the `WorldGraph` are resident for every worldspace (small), so tier-1/0 actors and long routes
+- Route graphs and the `WorldGraph` are resident for every worldspace (small), so tier-1/0 actors and long routes
   never need tiles outside the ring.
 - Memory: ≤ 64 MiB of tiles on the Floor (NVM calibrates; OpenMW's 256 MiB cache is a ceiling, not a target).
 
@@ -201,8 +207,9 @@ The baked tiles are the base layer; the host patches them at runtime (owner deci
 Three levels, each only as detailed as the actor's tier needs (ai.md "Tiers"):
 1. **Worldspace graph**: which door links to take (A* on `WorldGraph`, cost = walking time, filtered by door state
    and the agent's keys or rules).
-2. **Coarse graph** inside each space: HPA* legs between border nodes; tier 0 stops here and uses its travel time.
-3. **Detour** over resident tiles from the agent to the next coarse node or the goal; sliced on the worker.
+2. **Route graph** inside each space ("Route graph"; one journey A* with level 1, NV12e): roads, paths and door
+   approach nodes; tier 0 stops here and advances along it by time.
+3. **Detour** over resident tiles from the agent to the next route point or the goal; sliced on the worker.
 
 Then **corridor** (`dtPathCorridor`: string pulling, `movePosition`, optimisation, repair when pushed off) → steer
 target → **ORCA** with navmesh wall segments → `LocomotionIntent` → mover.
@@ -210,7 +217,118 @@ target → **ORCA** with navmesh wall segments → `LocomotionIntent` → mover.
 **Query service** (core logic, worker execution in `sf_nav_bevy`): requests `(RequestId = (ActorKey, seq), class,
 from, goal, filter, priority, tick)` in a priority queue (combat and player-visible first) feed sliced jobs (node
 budget per slice, time budget per tick); results apply at the next tick boundary in `RequestId` order. Tiles not
-resident: `Partial` to the ring edge plus the coarse route. Tests use a synchronous inline mode.
+resident: `Partial` to the ring edge plus the route-graph journey. Tests use a synchronous inline mode.
+
+## Route graph (`sf_nav::route_graph`, NV12; spec NV0b1 2026-11-26)
+
+The coarse level for long walks and every tier-0 actor: a road/route graph per worldspace (nav roadmap decision 3:
+RDR2/GTA path nodes, UE ZoneGraph lanes; no shipped open world plans whole-world on navmesh). Tier 0 (ai.md AI10)
+stores a route and progress, never a position; promotion and `fast_forward` ask `position_at`. Class-agnostic geometry
+with a class mask; costs in **walk metres** (`cost_m`), time = `cost_m / speed_mps` of the traveller (Detour's cost
+model: length × area cost; per-class or per-actor speed applies at query time, nothing re-bakes).
+
+**Model.** `RouteGraph { worldspace, nodes, edges, points: Vec<Vec3>, cum_m: Vec<f32> }` (+ a load-built bucket index,
+`#[serde(skip)]`). `RouteNode { id: RouteNodeId, kind, pos: WorldPos }`, kind `Junction | End | Anchor(String)` (adapter
+settlement/landmark tag) `| Door { link: LinkId, side: LinkSide }`. `RouteEdge { id: RouteEdgeId, a: u32, b: u32, kind:
+EdgeKind (Road | Path | Street | Connector), two_way, classes: ClassMask, length_m: f32, cost_m: f32, points: Range<u32> }`;
+the polyline runs a → b as offsets from node `a` (f32; edges longer than `MAX_EDGE_M` = 4096 m are split, precision
+bound ≤ 0.5 mm), `cum_m` holds cumulative lengths per point for O(log k) lookup. Ids: blake3 64-bit like NV11a,
+`RouteNodeId` over tag `sf.route.node/1`, worldspace and key (`Door`: `LinkId` + side, so a retuned approach keeps its id;
+else position quantised to 1 cm, equal keys merge), `RouteEdgeId` over `sf.route.edge/1`, both node ids, kind and the
+1 cm-quantised points. Nodes and edges are sorted by id; dense indices follow that order.
+
+**Builder** (`RouteGraphBuilder`, pure, the only way in): `add_node(pos, kind) -> RouteNodeId`, `add_edge(a, b, kind,
+two_way, interior: &[WorldPos], cost_m: Option<f32>)` (`None` = polyline length), `add_door(link, side, pos)`,
+`build(&RouteBuildRules) -> (RouteGraph, RouteBuildStats)`. Input order never matters (shuffled input = identical postcard
+bytes). It merges equal keys, collapses degree-2 chains of one kind into one polyline (anchors and doors are kept; costs
+add), simplifies polylines (Douglas-Peucker, `simplify_m`), clamps `cost_m` to at least `length_m` (the traveller walks
+the polyline; keeps every partial edge ≥ its straight distance, so the heuristic stays consistent; counted), and joins each door to the nearest edge within
+`door_connect_m` by splitting that edge at the projection plus a `Connector` edge (beyond: isolated, counted).
+
+**Queries** (inline, no tiles):
+
+```rust
+pub struct TravelRules { pub speed_mps: f64, pub class: AgentClassId, pub kinds: EdgeKinds,
+    pub join_max_m: f64, pub offroad_cost_mul: f64, pub max_expansions: u32 }
+impl RouteGraph {
+    pub fn route(&self, from: &Location, to: &Location, r: &TravelRules) -> Result<RoutePath, RouteError>;
+    pub fn position_at(&self, path: &RoutePath, t_s: f64) -> RoutePose;
+    pub fn nearest_point(&self, at: &Location, r: &TravelRules, max_m: f64) -> Option<RoutePoint>;
+    pub fn anchor(&self, tag: &str) -> Option<RouteNodeId>;
+}
+pub struct RoutePath { pub worldspace: WorldspaceId, pub speed_mps: f64, pub kind: RouteKind /* Graph | Direct */,
+    pub legs: Vec<RouteLeg>, pub cost_m: f64 }               // duration_s() = cost_m / speed_mps
+pub enum RouteLeg { Straight { a: WorldPos, b: WorldPos, cost_m: f64 },
+    Edge { edge: RouteEdgeId, from_m: f32, to_m: f32, a: WorldPos, cost_m: f64 } } // to_m < from_m = reverse
+pub struct RoutePose { pub loc: Location, pub heading: Vec2 /* unit XZ */, pub leg: u16, pub done: bool }
+pub struct RoutePoint { pub edge: RouteEdgeId, pub along_m: f32, pub pos: WorldPos, pub dist_m: f64 }
+pub enum RouteError { WrongSpace, NoJoin(RouteEnd), Unreachable, Budget }
+```
+
+- **`route`**: each end joins at its `nearest_point` (≤ `join_max_m`, edge allowed for `class` and `kinds`) by a
+  straight leg costing distance × `offroad_cost_mul` (≥ 1). A* seeds both ends of the start edge (one-way: forward only)
+  and finishes through a virtual goal on the goal edge; same edge adds the along-edge candidate. Heuristic = straight
+  metres to the goal point (admissible and consistent given the length clamp and mul ≥ 1); a partial edge costs
+  `cost_m × piece / length_m`. Costs sum in f64 (edge costs
+  stored f32), no transcendental maths (`sqrt` is IEEE exact; heading is a vector, not an angle). Ties: open set by
+  `(f, node index)`, a parent changes only on a strictly lower `g`, adjacency sorted by `(neighbour, edge id)`. Direct
+  (one straight leg × `offroad_cost_mul`, `kind: Direct`) is a candidate when the ends are ≤ `join_max_m` apart: it
+  wins at cost ≤ the graph route or when an end has no join. Otherwise an end without a join is `NoJoin(From | To)`;
+  `Unreachable`: different components; `Budget`: past `max_expansions`. Missing graph for a space: the caller walks
+  straight (NV11b behaviour).
+- **`position_at`**: legs by cumulative cost (binary search), uniform pacing inside a leg (measured `cost_m` ≠
+  `length_m` slows the whole edge), point by `cum_m`; `t_s` clamps to `[0, duration]`, `done` at the end; heading = the
+  current segment's XZ direction (previous segment's on a zero-length one).
+- **`nearest_point`**: uniform XZ buckets (`grid_cell_m`), each segment listed in the buckets its AABB overlaps; ring
+  search outward, stopping once the ring's inner distance exceeds the best; O((max_m / cell)² + segments seen). Ties:
+  distance, then edge id, then `along_m` (result independent of bucket iteration order).
+
+**Journey across spaces** (`sf_nav::journey`, NV12e): one A* over the union of route graphs, each `Door` node joined to
+its link's far side by the `WorldGraph` traverse (NV11b times, door state and unlock rules); a space with no route graph
+(interiors) is a straight clique of its exits plus start/goal. Heuristic: straight metres / speed in the goal's space, 0
+elsewhere (NV11b rule). `Journey { legs: Vec<JourneyLeg> }`, `JourneyLeg::{ Walk(RoutePath), Door { link, side,
+traverse_s } }`, cost in seconds (walk metres / `speed_mps` + traverse), owned by `sf_nav`; it is `journey(...)` of
+"Interfaces" and supersedes `WorldRoute` for the AI.
+Detour joins only inside the ring (Routing level 3).
+
+**Bake.** Step **`nav.routes`** per worldspace replaces `nav.coarse`: input = the adapter's `RouteSource::route_input(cx,
+ws) -> RouteInput` (generic nodes, edges, kinds, door ends; reads recorded as dynamic dependencies, so a mod that edits a
+source re-bakes that space), output = postcard `RouteGraph` with `format: u16` (`ROUTE_GRAPH_FORMAT`, bump = rebuild).
+Sources: generated worlds' `roads.json` (NV12b, `sf_worldgen` reader; field layout confirmed there), Morrowind exterior
+pathgrid chains + door approaches (NV12c, `mw_bake`). NV12d measures each edge's Detour walk (reference class, area
+costs) into `cost_m`, clears the bit of a class whose walk fails, and deletes the HPA* stub (`CoarseGraph`, `nav.coarse`).
+
+**Tunables** (Guess unless noted; core `Default`s mirror them; runtime ones declared in `sf_nav_bevy`, bake ones in
+`sf_nav_bake`): `ai.nav.route.join_max_m` 250 m (0-2000), `ai.nav.route.offroad_cost_mul` 1.5 ratio (1-5; off-trail
+walking is slower, Naismith/Tobler), `ai.nav.route.max_expansions` 200000 count (1e3-1e6), `ai.nav.route.grid_cell_m`
+64 m (8-1024), `ai.nav.route.simplify_m` 0.25 m (0-5, bake), `ai.nav.route.door_connect_m` 60 m (0-500, bake).
+`MAX_EDGE_M` and the 1 cm quantum are formats (const).
+
+**Budgets** (to measure, NV12d/NVM): Vvardenfell ≤ 5k nodes, 6k edges, 60k points (≤ 1.5 MiB); 10x world ≤ 50k nodes,
+60k edges, 600k points (≤ 12 MiB resident, index included). `route` ≤ 0.2 ms cross-island on Vvardenfell and ≤ 2 ms
+worst on 10x (planned once per directive, worker-friendly); `nearest_point` ≤ 5 µs at 250 m; `position_at` ≤ 1 µs.
+
+**Net and saves.** Host-only for gameplay; clients may run it for compass routes (identical bake, presentation only).
+Pure functions of (graph, query), applied on the fixed tick. Tier 0 saves `RoutePath` (ids + leg start points) and
+elapsed travel seconds, never a live position; on load an edge id missing from the graph (mod changed a source)
+re-plans from the start of the leg reached.
+
+**Tests (NV12a, all exact, synthetic graphs):** shortest route on a square-plus-diagonal (node sequence, `cost_m` to 1e-9);
+equal-cost tie takes the lower node id, same answer from shuffled input; `Unreachable` across components; off-graph
+start/goal joins (Straight + partial Edge legs, off-road mul applied; past `join_max_m` → `NoJoin`); `Direct` when
+cheaper; same-edge forward and reverse, one-way refuses reverse; `position_at` at t ≤ 0, t = duration (`done`), mid
+polyline (1e-5 m, unit heading) and uniform pacing when `cost_m` ≠ `length_m`; `nearest_point` projection, equidistant
+tie → lower edge id, `None` past `max_m`, kind filter, equal to a linear scan on 1,000 seeded points; builder collapse
+(anchors and doors kept), merge, length clamp count, door split + `Connector`; golden `RouteNodeId`, shuffled input =
+identical postcard bytes; postcard + JSON round trip of `RouteGraph` and `RoutePath`; `Budget` at a tiny
+`max_expansions`; `#[ignore = "measurement: ..."]` 50k-node grid route µs.
+
+**Industry**: **Match** UE ZoneGraph (polyline lanes, lane location = lane + distance, nearest-lane query, tag filters
+≈ `EdgeKinds`, Mass LOD moving off-screen agents along lanes; [ZoneGraph API](https://dev.epicgames.com/documentation/unreal-engine/API/Plugins/ZoneGraph/FZoneGraphLaneLocation)),
+GTA V/RDR2 path-node networks for ambient travellers and GPS, Bethesda persistent actors advancing Travel packages
+unloaded and appearing along the path ([CK Persistence](https://ck.uesp.net/wiki/Persistence_(Creation_Kit))), KCD2
+LOD-unaware schedules (ai roadmap 13). **Differ** from HPA* (Botea 2004): authored/generated graph, not tile borders
+(kept only on a measured need). **Ahead** of OpenMW/Morrowind, where actors outside the processing range freeze.
 
 ## Crowds and avoidance (`sf_controller::avoid`)
 
@@ -250,7 +368,7 @@ print `n/a`.
 1: queries and obstacle updates apply on the fixed tick. 2: nothing reads input. 3: nav state is static data or
 derived from replicated state. 4: a query's result depends only on (tiles, obstacles, query); worker timing changes
 the tick it lands at most, never its content; host-only, so no replay is needed. 5: host-owned for gameplay. **Clients
-compute compass and quest-marker routes locally as presentation** (decisions (c)): `WorldGraph` + coarse graphs from
+compute compass and quest-marker routes locally as presentation** (decisions (c)): `WorldGraph` + route graphs from
 the identical bake (content fingerprint), door state as replicated in their interest set, the baked default beyond;
 a near-field breadcrumb may use tiles in the client's own ring. The host sends marker targets (`Location`), never
 routes; a dedicated server computes none; results never feed gameplay. 6: anchors per player, no singleton. 7:
@@ -272,11 +390,15 @@ These scale with the host's CPU tier (ai.md "Tiers and budget"), never with the 
 ## Industry comparison
 
 **Match** UE, Unity, Godot and OpenMW on Recast generation, agent classes as data, area costs and filters, runtime
-obstacles (door poly state, carving opt-in), off-mesh links, HPA*-style hierarchical routing, Detour corridor
+obstacles (door poly state, carving opt-in), off-mesh links, a coarse graph above the navmesh, Detour corridor
 following, RVO-family avoidance (ours ORCA, deterministic) and debug display. **Differ** from OpenMW on when it is
 built (baked per tile, mod-aware; nothing bakes during play); **ahead** of OpenMW across load doors (`WorldGraph`,
 fade links only unseen; Bethesda's out-of-view teleport). Full table and sources:
 [archive](archive/nav-history.md#industry-comparison-table-moved-from-navmd-at-nv4a).
+
+**Route graph (NV12):** coarse routing on a road/path graph with lane-location progress, as UE ZoneGraph + Mass LOD and
+GTA V/RDR2 path nodes, not tile-border HPA*; tier 0 advances by time (Bethesda unloaded Travel packages, KCD2), ahead
+of OpenMW, where actors outside the processing range freeze ("Route graph" Industry line).
 
 ## Build plan
 
@@ -295,7 +417,7 @@ One deliverable plus its test per slice; research and building are separate.
 | **NV9** links + areas | off-mesh links (jump, drop, ladder, pathgrid) and area costs per class | path takes the cheaper area; link traversal events in order |
 | **NV10** runtime patches | door poly state (area/flags); opt-in TileCache carving (`carves_nav`, at rest), rebuild budget | shut door raises cost with zero rebuilds, locked blocks except for an admitted agent; carve rebuilds per tick ≤ budget |
 | **NV11** worldspace graph (split a-d 2026-11-26, owner unparked: built headless before portals) | `LinkId` (a, done), `WorldGraph` (b), `portal_query` (c), Bevy resource built from `DoorLinks` (d1), hearing propagation through it (d2 = AI8c3) (supersedes seamless SI13) | exact routes on a synthetic 3-space graph; LOS through an open seamless opening, none through fade links |
-| **NV12** coarse graph | HPA* legs, travel time for tier 0 | coarse cost within the measured band of Detour path length on test levels |
+| **NV12** route graph (split a-f by NV0b1 2026-11-26; "Route graph") | a: `RouteGraph` core + builder (`sf_nav`, + `blake3` dep); b: `roads.json` source; c: Morrowind source (`mw_bake`); d: Detour-measured `cost_m`, `nav.coarse` deleted; e: `journey` over route graphs + `WorldGraph`; f: `sf_nav_bevy` resource `NavRouteGraphs` + `nav.routes` console | a: "Route graph" Tests; b: exact graph from a fixture; c: Balmora-Caldera route exists; d: cost within the Detour band; e: exact 3-space journey; f: headless load |
 | **NVM** measurement | Floor and High sweep: bake time and MiB per class, query and ORCA ms at 60 Hz (Balmora, Vivec canton, Census Office); stuck counts near props | owner runs; numbers into "Budgets"; class or carving revisits |
 
 Order: NV0 → NV1 → NV2 → NV3 → NV4a → NV4b → NV4c → NV6 → NV7a → NV8 (→ AI6) → NV5 → NV7b (DECISIONS 2026-11-17: NV5 and seamless SI3 no longer gate AI6) → NV9 → NV10 → NV11 → NV12; NVM

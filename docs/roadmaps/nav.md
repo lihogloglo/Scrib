@@ -85,7 +85,8 @@ Vvardenfell [5]. **Classic** uses the same navigation (OpenMW navigates by navme
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| NV0b | nav.md: Goal (non-goal removed), "Volumes" (field, water bodies, queries), "Runtime rebuild", NV12 "Route graph", stuck monitor | docs | - | doccheck |
+| NV0b | nav.md: Goal (non-goal removed), "Volumes" (field, water bodies, queries), "Runtime rebuild", stuck monitor | docs | - | doccheck |
+| NV0b1 | nav.md "Route graph" section (NV12 spec) (**done 2026-11-26**) | docs | - | doccheck |
 | NV0c | nav.md "Links": traversal contract (handoff event, failure cost), auto drop/jump envelopes, interaction slots | docs | NV0b | doccheck |
 | NV0d | ai-adapter.md "Navigation": PGRD road chains, water bodies, fliers/swimmers classes, PGRD fallback removal | docs | NV0b | doccheck |
 | NV-R1 | Research (Sonnet): `navmesh-rs` 0.2.6 changelog vs our patch; HZD field details; Detour tile rebuild cost at our cell size | research | - | note + ledger line |
@@ -135,10 +136,12 @@ Ends with: a pilgrim walks Balmora to Caldera; leave and come back, and she's fu
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| NV12a | `RouteGraph` core: nodes, edges with walk time, A*, position-at-time, nearest road point | `sf_nav` | NV0b | exact routes and positions |
-| NV12b | Generated-world source: `roads.json` → `RouteGraph` | `sf_nav_bake`, `sf_worldgen` reader | NV12a | exact graph from a fixture |
-| NV12c | Morrowind source: exterior pathgrid chains between settlements + door approach nodes | `mw_bake` | NV12a, MA21 | Balmora-Caldera route exists; cost within the Detour band |
-| NV12d | Bake-measured edge costs (Detour walk time per edge), `nav.coarse` stub retired | `sf_nav_bake` | NV12b or NV12c | cost within measured band |
+| NV12a | `RouteGraph` core + builder: nodes, polyline edges with walk-metre cost, A*, position-at-time, nearest road point (nav.md "Route graph") | `sf_nav` | NV0b1 | the spec's "Tests (NV12a)" list, all exact |
+| NV12b | Generated-world source: `roads.json` → `RouteInput` (field layout confirmed here) | `sf_nav_bake`, `sf_worldgen` reader | NV12a | exact node/edge/kind set from a fixture; postcard bytes stable |
+| NV12c | Morrowind source: exterior pathgrid chains between settlements + door approach nodes | `mw_bake` | NV12a, MA21 | Balmora → Caldera anchor route is `Graph`, not `Direct`; door nodes counted per space; node/edge/point counts printed vs "Budgets" |
+| NV12d | Bake-measured edge costs (Detour walk per edge into `cost_m`, class bit cleared on failure), `nav.coarse` + `CoarseGraph` deleted | `sf_nav_bake` | NV12b or NV12c | every `cost_m` ≥ `length_m`; failing class cleared on a synthetic wall; clamp count printed |
+| NV12e | `journey`: one A* over route graphs + `WorldGraph` door hops (interiors = straight clique) | `sf_nav` | NV12a | exact 3-space journey; locked door reroutes; ties by id |
+| NV12f | `NavRouteGraphs` resource from `nav.routes` products, `nav.routes` console | `sf_nav_bevy` | NV12a | headless load, counts logged |
 
 ### Stage 5: a world that changes (with interaction IN1, worldgen)
 

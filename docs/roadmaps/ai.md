@@ -47,7 +47,8 @@ both presets** (owner 2026-11-25): Classic keeps Morrowind's bounty sums, not th
    gameplay (net rule 3).
 4. **Living world before tactics** (research §3): thin day loop (AI9, AI10, AI12, AI14, AI11) and reactions before AI15;
    ai.md's "AI15 then AI14" is reversed. Schedules still wait for tier 0 and doors (ai.md decision (e)).
-5. **No needs system** (KCD2, RDR2): 2-3 considerations (tired at night, hungry at meals) bias smart-object picks.
+5. **No needs system** (KCD2, RDR2): 2-3 considerations (tired at night, hungry at meals) bias smart-object picks;
+   they never feed offence or combat options (ai.md "Drives": no escalation ladder, owner 2026-11-26).
    Weather/time are `WorldState` keys (`raining`, `storm`, `night`, `dark`) plus an `Ambient` concern kind.
 6. **One interrupt contract** in ai.md: which drive pre-empts which, how plans resume (`Library::holds`, `Pause`).
 7. **Barks: no own crate.** The dialogue lane's rule DB (DQ-23) picks lines, DQ-25 plays them; AI emits
@@ -115,10 +116,10 @@ Ends with: a Balmora guard spots a sneaking player in light, not in shadow, chec
 | AI8b1 | Sight maths core: gain terms, cone and range from `EffectivePerception`, stagger, ray queue with cap, cache rule | `sf_ai` | AI8g | **done 2026-11-25** (14 exact tests) |
 | AI8b2 | Sight system: grid prefilter, batched physics rays, profile/record registration, `ai.perception.*` binding | `sf_ai_bevy` | AI8b1 | **done 2026-11-25** (0.037 ms/tick, 48×4, fake LOS) |
 | MA14 | Sight wiring in the game: `AiSightPlugin::<Physics>`, `AiObserver` on NPCs, `Perceivable` on players, record load (forced checks on damage/notify = MA15) | `mw_walkers_bevy`, `mw_mods` | AI8b2 | **done 2026-11-25** (2 headless tests on real physics) |
-| MA15 | Forced sight checks (`SightTimer::force`) on damage taken and on `Notify` arrival | `mw_ai`, `mw_walkers_bevy` | MA14, MA10 (NPCs take no damage before it), AI8c (Notify arrives by hearing) | headless: hit from behind turns the NPC's check due this tick |
+| MA15 | Forced sight checks (`SightTimer::force`) on damage taken and on `Notify` arrival | `mw_ai`, `mw_walkers_bevy` | MA14, C17 (NPC/creature fighters: health from records, death via walkers ragdoll; NPCs take no damage before it), AI8c (Notify arrives by hearing) | headless: hit from behind turns the NPC's check due this tick |
 | AI8c1 | Hearing system: `NoiseEvent` message, listener prefilter by reach, `NoisePropagation` seam (default straight line + door penalty from the host, UE AIPerception), delivery as `HeardNoise` + `Notify` | `sf_ai_bevy` | AI8a, AI8e | **done 2026-11-25** (9 headless tests) |
 | AI8c2 | Player emitters in the game: gameplay stride footsteps by gait, landing (surface/gear seam ×1; NPC steps, action `noise: Loud` later) | `mw_walkers_bevy` | AI8c1 | **done 2026-11-25** (7 tests; run 12 m, sneak 2 m reach) |
-| AI8c3 | Propagation by `portal_query::path_distance` (doors counted): `NoisePropagation` over `NavWorldGraph` (NV11a-d1 done 2026-11-26) | `sf_ai_bevy`, `sf_nav` | AI8c1, NV11 | exact through a door |
+| AI8c3 | Propagation by `portal_query::path_distance` (doors counted): `NoisePropagation` over `NavWorldGraph` (NV11a-d1 done 2026-11-26) | `sf_ai_bevy`, `sf_nav` | AI8c1, NV11 | exact through a door; **done 2026-11-26**: `PortalPaths` default, cross-space listeners, `noise_max_hops` 3, 7 tests |
 | MA21 | Game adds `NavWorldGraphPlugin` over `DoorLinks`, approach points from pathgrid nodes in front of each door, seamless/fade flags from `world.doors`, door states from the door objects | `mw_walkers_bevy` or `mw_exterior_bevy` | NV11d1 | headless: Seyda Neen census door route; log line count |
 | AI8d1 | Light core: `VisibilityFactors`, pure `LightExposure` (sky term + strongest sources, LOS callback, roof ray), `darkness` term | `sf_ai` | AI8a | **done 2026-11-25** (14 exact tests) |
 | AI8d2 | Light system: one sample per player per tick, host source list + sky resource (until IN19 `Lit`), roof ray, feeds sight in place of `VISIBILITY_UNMODELLED` | `sf_ai_bevy` | AI8d1, MA14 | **done 2026-11-25** (9 headless tests; inert until a host inserts `AiLightInputs`) |

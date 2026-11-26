@@ -91,7 +91,9 @@ Read in this order, and only what your task needs:
 ## Design constraints
 
 - **Tie-breaker:** runs as fast as possible, looks as good as possible. Baking is acceptable only as a
-  one-time step under a few minutes; nothing bakes during play.
+  one-time step under a few minutes; nothing bakes during play. Exception (owner 2026-11-26): navmesh tiles that are
+  missing or whose ground changed, built once off the frame (loading screen, or worker threads ahead of streaming),
+  cached to disk; never a stall while playing.
 - **Frame target:** High preset, 1440p + DLSS Quality on an RTX 4060 laptop, ≤ 8.3 ms median (120 fps)
   and ≤ 11 ms p99 in exteriors (owner 2026-11-15; was 11 ms median). Raster must meet it; ray tracing (Solari)
   is an Ultra tier that may cost more. Perf work reports ms per preset.

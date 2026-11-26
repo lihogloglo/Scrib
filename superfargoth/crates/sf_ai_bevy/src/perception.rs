@@ -216,6 +216,10 @@ pub const CLOSED_DOOR_M: Def<f32> = gp(def!(float "ai.perception.closed_door_m" 
     .range(0.0, 50.0)
     .unit(Unit::Meters)
     .help("Path penalty per closed door between a noise and a listener (AI8c)"));
+/// Source: Guess. `OpenMW` hears only within the active cell group, so a couple of doors.
+pub const NOISE_MAX_HOPS: Def<u32> = gp_count(def!(count "ai.perception.noise_max_hops" = 3)
+    .range(0, 8)
+    .help("Most door links a noise crosses to reach a listener in another space (AI8c3)"));
 
 pub const LIGHT_SEARCH_M: Def<f32> = gp(def!(float "ai.perception.light_search_m" = 15.0)
     .range(1.0, 60.0)
@@ -285,6 +289,7 @@ pub const PERCEPTION_TUNABLES: &[&dyn AnyDef] = &[
     &NOTIFY_CONFIDENCE_MUL,
     &NOTIFY_MAX_HOPS,
     &CLOSED_DOOR_M,
+    &NOISE_MAX_HOPS,
     &LIGHT_SEARCH_M,
     &LIGHT_RAYS,
     &DARK_THRESHOLD,
@@ -366,6 +371,7 @@ pub fn add_perception_tunables(app: &mut App) {
     bind!(app, NOTIFY_CONFIDENCE_MUL, |s, v| s.awareness.notify_confidence_mul = v);
     bind!(app, NOTIFY_MAX_HOPS, |s, v| s.awareness.notify_max_hops = u8::try_from(v).unwrap_or(u8::MAX));
     bind!(app, CLOSED_DOOR_M, |s, v| s.hearing.closed_door_m = v);
+    bind!(app, NOISE_MAX_HOPS, |s, v| s.hearing.max_hops = v);
     bind!(app, LIGHT_SEARCH_M, |s, v| s.light.light_search_m = v);
     bind!(app, LIGHT_RAYS, |s, v| s.light.light_rays = v);
     bind!(app, DARK_THRESHOLD, |s, v| s.light.dark_threshold = v);

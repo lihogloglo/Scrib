@@ -21,7 +21,7 @@
 //!   ([`sight`]); components, tunables and record kinds in [`perception`]; light exposure (`AI8d2`)
 //!   from the host's [`AiLightInputs`] in [`light`]; the target's visibility from crime's
 //!   [`AiDetectionRules`] and its [`AiVisibilityFactors`] (`LW4b1`) in [`detection`]; hearing (`AI8c1`): [`NoiseEvent`]s to the
-//!   listeners' meters through the host's [`NoisePropagation`], in [`hearing`].
+//!   listeners' meters through the host's [`NoisePropagation`] (`AI8c3`: through doors by the [`sf_nav_bevy::NavWorldGraph`]), in [`hearing`].
 //! - Tiers (AI9b): [`AiAllocPlugin`] (added by [`AiPlugin`]) runs the `sf_ai` tier allocator on the
 //!   fixed tick over the simulated set and writes each actor's [`AiTier`] and [`AiAllocStats`];
 //!   the host writes [`AiInView`] and [`AiPin`]; tunables `sim.cpu_tier`, `ai.alloc.*` in [`alloc`].
@@ -74,7 +74,9 @@ pub use gizmos::AiGizmoVar;
 #[cfg(feature = "debug")]
 pub use perception_gizmos::{AiPerceptionGizmoVar, RecentNoise, RecentNoises};
 pub use detection::{AiDetectionRules, AiVisibilityFactors};
-pub use hearing::{AiWeatherMask, HearingConfig, NoiseEvent, NoisePath, NoisePaths, NoisePropagation, StraightLine};
+pub use hearing::{
+    AiWeatherMask, HearingConfig, NoiseEvent, NoisePath, NoisePaths, NoisePropagation, NoiseWorld, PortalPaths, StraightLine,
+};
 pub use light::{AiLightExposure, AiLightInputs};
 pub use perception::{
     AiAwareness, AiEffectivePerception, AiObserver, AiPerceptionProfile, AiPerceptionSettings, AiPerceptionStateDefs,
@@ -94,6 +96,8 @@ mod detection_tests;
 mod exec_tests;
 #[cfg(test)]
 mod hearing_tests;
+#[cfg(test)]
+mod hearing_door_tests;
 #[cfg(test)]
 mod light_tests;
 #[cfg(all(test, feature = "debug"))]

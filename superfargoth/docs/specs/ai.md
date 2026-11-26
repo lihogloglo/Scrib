@@ -110,6 +110,10 @@ Each consideration maps an input (threat distance, health ratio, a stat, disposi
 curve; a drive scores the compensated product (IAUS) times its weight. The running drive gets momentum and a minimum
 commit time; *Directive* has a floor so content wins unless a reaction clearly beats it. Morrowind's Hello, Fight,
 Flee and Alarm rules are adapter considerations.
+- **No escalation ladder** (owner 2026-11-26; Radiant AI's failure: a need with a ladder of means, pockets → steal →
+  kill). An offence option (take owned, loot, vandalise, attack) is scored only for actors whose role or temperament
+  allows it, on its own considerations. A lawful option failing or missing never raises an offence's score, and
+  comfort considerations (hunger, fatigue, weather) never feed offence or combat options: no option, nothing happens.
 - **As built (AI7):** `sf_ai::drive` — records, curves, `arbitrate`, `serving_for`, `ArbiterState`: [ai-as-built.md](ai-as-built.md) "AI7".
 
 ## Behaviours (HTN method library)
@@ -179,6 +183,11 @@ rate. Bands and `LastSeen` feed world-state keys and drives.
 - **Notify** (shared knowledge, no telepathy): a shout or alarm is a `NoiseEvent` carrying `Notify { about, lkp,
   confidence, hops }`; listeners who hear it get it at `tick + (path_distance / notify_speed_mps + notify_react_s)`,
   confidence × `notify_confidence_mul`, `hops ≤ notify_max_hops`; it raises at most to Searching.
+- **As built (AI8c3, 2026-11-26):** `sf_ai_bevy` `PortalPaths` (default `NoisePropagation`) asks `path_distance` over
+  `NavWorldGraph` (≤ `ai.perception.noise_max_hops` = 3 links; links not open in `NavDoorStates` are closed doors) for
+  tier-2 listeners, other worldspaces included; the straight-line prefilter runs only in the same space; no graph: other
+  spaces unheard. UE hearing is straight-line; this is room/portal propagation (Wwise rooms & portals, OpenMW `heard`).
+  A Notify's delay reads the heard distance (path + `closed_door_m` per shut door): a shout behind a shut door lands later.
 - **Asleep** (bed activity; night workers keep their schedule, owner 2026-11-25): no sight; only noise received at ≥
   `asleep_wake_m` wakes, as do Touch and Damage, then `groggy_s` of low alertness. Rain and storms scale sight range
   (`weather_sight_mul`) and mask noise (`weather_mask`); storms also send people to cover (AI27).

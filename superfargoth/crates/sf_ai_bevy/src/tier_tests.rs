@@ -9,9 +9,8 @@ use bevy_app::App;
 use glam::Vec3;
 use sf_ai::{NoiseKindId, SightTimer, Tier, due};
 use sf_controller_bevy::{MoveIntent, Mover};
-use sf_coords::WorldPos;
 use sf_ids::ActorKey;
-use sf_world::WorldspaceId;
+use sf_world::{Location, WorldspaceId};
 
 use super::*;
 use crate::exec::AiExecTick;
@@ -143,7 +142,7 @@ fn a_logical_listener_hears_nothing_a_full_one_hears() {
 struct Detour;
 
 impl NoisePaths for Detour {
-    fn distance(&self, _from: WorldPos, _to: WorldPos, _space: Option<&WorldspaceId>) -> Option<NoisePath> {
+    fn distance(&self, _from: &Location, _to: &Location, _world: &NoiseWorld<'_>) -> Option<NoisePath> {
         Some(NoisePath { path_m: 100.0, closed_doors: 0 })
     }
 }

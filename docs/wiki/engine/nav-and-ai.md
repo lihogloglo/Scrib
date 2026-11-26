@@ -56,8 +56,9 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
 - **Perception** (AI8, 2026-11-25; `sf_ai` perception/profile/sight/light/search, `sf_ai_bevy` sight.rs, light.rs,
   hearing.rs): walkers are `AiObserver`s, the player is `Perceivable` (`mw_walkers_bevy/src/sight.rs`); per fixed tick,
   before `ControllerSystems::Drive`: profiles resolve, light is sampled (`AiLightInputs` from `light_inputs.rs`: sky,
-  interior AMBI, LIGH lamps), sight rays batch under `max_rays_per_tick`, `NoiseEvent`s are heard (straight-line
-  propagation seam). A walker whose strongest entry is Searching stops wandering and searches (`search.rs`: LKP, look,
+  interior AMBI, LIGH lamps), sight rays batch under `max_rays_per_tick`, `NoiseEvent`s are heard (AI8c3: tier-2
+  listeners by `WorldGraph::path_distance` through doors and into other worldspaces, closed doors + `closed_door_m`,
+  `hearing.rs` `PortalPaths`; tier 1 straight line in its space; no `NavWorldGraph`: straight line, same space only). A walker whose strongest entry is Searching stops wandering and searches (`search.rs`: LKP, look,
   widening rings) while the band is held, until the ttl gives up, then decays and wanders again.
 
 ## Bevy features used

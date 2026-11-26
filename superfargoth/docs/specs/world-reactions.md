@@ -153,6 +153,7 @@ When a victim discovers an unwitnessed harm (culprit `Unknown`), they raise susp
 - A loose item (dropped, spilled, a body's weapon) carries a `take` slot (the player's pick-up uses the same point).
   NPCs claim it with a lease (IN0 claims). Adverts are drive inputs: `want_weapon` (unarmed fighter), `own_goods`
   (owner, displaced), `greed` (role flag), `evidence` (guards). The adapter decides roles; the framework names none.
+  Offences never stand in for a failed lawful option (ai.md "Drives": no escalation ladder).
 - **Ownership**: dropped items keep their owner (the player's dropped sword is still the player's); an unowned item
   becomes the taker's; taking an owned item is `Taken` plus an `OffenceAttempt` that needs a witness, like the player's.
   Items NPCs hold are ordinary inventory (owner answer 5).

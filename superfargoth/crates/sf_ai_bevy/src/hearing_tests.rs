@@ -11,7 +11,7 @@ use sf_ai::{HeardNoise, NoiseKindId, Notify, PerceptTarget, PerceptionProfile};
 use sf_controller_bevy::Mover;
 use sf_coords::WorldPos;
 use sf_ids::ActorKey;
-use sf_world::WorldspaceId;
+use sf_world::Location;
 
 use super::*;
 use crate::sight_tests::{EYE, PLAYER, app, level, observer, step, wpos};
@@ -73,8 +73,8 @@ fn heard_just_inside_reach_not_just_outside() {
 struct OneDoor;
 
 impl NoisePaths for OneDoor {
-    fn distance(&self, from: WorldPos, to: WorldPos, _space: Option<&WorldspaceId>) -> Option<NoisePath> {
-        Some(NoisePath { path_m: from.delta_f32(to).length(), closed_doors: 1 })
+    fn distance(&self, from: &Location, to: &Location, _world: &NoiseWorld<'_>) -> Option<NoisePath> {
+        Some(NoisePath { path_m: from.pos.delta_f32(to.pos).length(), closed_doors: 1 })
     }
 }
 
