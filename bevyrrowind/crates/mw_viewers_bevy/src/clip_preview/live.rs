@@ -5,7 +5,8 @@
 //! on the origin, so a clip with root travel replays from the mark instead of walking off. Mouse
 //! drag orbits the camera, the wheel zooms; an overlay shows the clip and its `.prov.json`.
 //! Y / N / M record keep / reject / maybe for the clip in `verdicts.toml` and advance
-//! ([`BrowseList::rate`]), Backspace clears it, U jumps to the next unrated clip.
+//! ([`BrowseList::rate`]), Backspace clears it, U jumps to the next unrated clip, Z undoes the
+//! session's last verdict action, newest first, in either review ([`BrowseList::undo`]).
 //! Cycle takes (`*.cycle.*`) cook through the loop cutter ([`cook::cook_report`]) and loop in the
 //! slot with no re-blend, so the seam shows as the game would play it; the overlay gives the cut's
 //! window and seam errors, and L switches between the cut loop and the raw take (A/B).
@@ -140,13 +141,14 @@ impl Browse {
         }
     }
 
-    /// Y / N / M / Backspace / U; `true` if the overlay needs a refresh.
+    /// Y / N / M / Backspace / U / Z; `true` if the overlay needs a refresh.
     fn verdict_keys(&mut self, keys: &ButtonInput<KeyCode>) -> bool {
         let pressed = [(KeyCode::KeyY, Some(Verdict::Keep)), (KeyCode::KeyN, Some(Verdict::Reject)), (KeyCode::KeyM, Some(Verdict::Maybe)), (KeyCode::Backspace, None)]
             .into_iter()
             .find(|(k, _)| keys.just_pressed(*k));
         let unrated = keys.just_pressed(KeyCode::KeyU);
-        if pressed.is_none() && !unrated {
+        let undo = keys.just_pressed(KeyCode::KeyZ);
+        if pressed.is_none() && !unrated && !undo {
             return false;
         }
         let verdicts = match self.verdicts.as_mut() {
@@ -163,6 +165,11 @@ impl Browse {
                 self.list.rate(verdicts, verdict).map(|()| format!("{id}: {}", verdict.as_str()))
             }
             Some((_, None)) => self.list.clear_rating(verdicts).map(|had| if had { format!("{id}: cleared") } else { format!("{id}: no verdict to clear") }),
+            // Z: the undone clip comes back under the cursor and replays.
+            None if undo => self.list.undo(verdicts).map(|undone| {
+                self.pending |= undone.is_some();
+                undo_text(undone)
+            }),
             None => {
                 self.pending = self.list.next_unrated(verdicts);
                 Ok(if self.pending { "next unrated".to_owned() } else { "every clip is rated".to_owned() })
@@ -223,9 +230,9 @@ impl Browse {
                     s.selected + 1,
                     if s.final_round() { "   (final: Y keep / M maybe)" } else { "   (N rejects down to 2, then Y / M)" }
                 ),
-                "1-4 / Left/Right: select take  N reject  Y keep  M maybe  Bksp clear  U next unrated   Up/Down: group   G: single clips",
+                "1-4 / Left/Right: select take  N reject  Y keep  M maybe  Bksp clear  Z undo  U next unrated   Up/Down: group   G: single clips",
             ),
-            None => (String::new(), "Y keep  N reject  M maybe  Bksp clear  U next unrated   G: group side by side   Left/Right: clip   Up/Down: activity"),
+            None => (String::new(), "Y keep  N reject  M maybe  Bksp clear  Z undo  U next unrated   G: group side by side   Left/Right: clip   Up/Down: activity"),
         };
         format!(
             "{group}{} ({}/{})   clip {}/{} of {} in all   {}\n{}   band: {}   {}\n{cut}prompt: {}\n{grade}verdict: {verdict}   activity: {tally}   all: {all}   {}\n\
@@ -311,6 +318,11 @@ fn cook_take(clip: &BrowseClip, source: &str, target: &HumanoidTarget, asset: &A
         })
         .map(Arc::new);
     (late, if cycle { cook::cut_text(report.as_ref()) } else { String::new() })
+}
+
+/// Z's message: the undone clip, or that the session's log is empty.
+fn undo_text(undone: Option<String>) -> String {
+    undone.map_or_else(|| "nothing to undo".to_owned(), |id| format!("{id}: undone"))
 }
 
 /// A take's clip time the row clock runs to: its end less the replay lead (never into the blend-out).
@@ -402,12 +414,14 @@ impl Browse {
         changed
     }
 
-    /// Y / N / M on the selected take, Backspace clears its verdict, U the next unrated clip's group.
+    /// Y / N / M on the selected take, Backspace clears its verdict, U the next unrated clip's group,
+    /// Z undoes the last verdict action (its take back on stage; [`Self::group_keys`] cooks it).
     fn group_verdict_keys(&mut self, keys: &ButtonInput<KeyCode>) -> bool {
         let rate = [(KeyCode::KeyY, Verdict::Keep), (KeyCode::KeyN, Verdict::Reject), (KeyCode::KeyM, Verdict::Maybe)].into_iter().find(|(k, _)| keys.just_pressed(*k)).map(|(_, v)| v);
         let clear = keys.just_pressed(KeyCode::Backspace);
         let unrated = keys.just_pressed(KeyCode::KeyU);
-        if rate.is_none() && !clear && !unrated {
+        let undo = keys.just_pressed(KeyCode::KeyZ);
+        if rate.is_none() && !clear && !unrated && !undo {
             return false;
         }
         let verdicts = match self.verdicts.as_mut() {
@@ -427,6 +441,8 @@ impl Browse {
             })
         } else if clear {
             self.list.clear_rating(verdicts).map(|had| if had { format!("{id}: cleared") } else { format!("{id}: no verdict to clear") })
+        } else if undo {
+            self.list.undo(verdicts).map(undo_text)
         } else if self.list.next_unrated(verdicts) {
             self.list.open_group(Some(verdicts));
             Ok("next unrated".to_owned())

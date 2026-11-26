@@ -147,7 +147,8 @@ the `from` pose to the `to` pose; the body keeps model + correction. Ends 0/0, w
 - `review.html` in the output folder: a grid of MP4s per activity/phase/band with id, prompt, seed; the owner writes
   verdicts in `verdicts.toml` (`id = "keep" | "maybe" | "reject" | "note: ..."`, id = the clip's file stem), which MG9
   (later) turns into sources.ron candidates. `clip-preview --browse` writes it in the browsed folder: Y keep, N reject,
-  M maybe (each advances), Backspace clear, U next unrated; sorted keys, existing entries kept, atomic save.
+  M maybe (each advances), Backspace clear, U next unrated, Z undo (the session's last verdict action, newest
+  first: the entry's exact previous value and the view come back; `BrowseList::undo`, AN46a); sorted keys, existing entries kept, atomic save.
 
 #### Browse review: diagnosis (AN9, 2026-11-26)
 
@@ -171,7 +172,8 @@ Nothing reads `grades.json` (gates `skate`/`jerk`/`turn_mag`, `mirror_candidate`
    (unrated, maybe, keep) and no ordering by metric. Fix: view filter and sort key (gate count, skate, jerk, prompt
    group), an "unrated only" mode as the default queue. **AG2** (sort, filter); the keep/maybe ranking = **AG3** score.
 4. **A mistaken key is hard to fix.** Y/N/M advance first, so Backspace clears the *next* clip (`browse.rs:174-190`);
-   the fix is Left, Backspace, Right. Fix: Z undoes the last verdict and returns to it. **New** (small, with AN10).
+   the fix is Left, Backspace, Right. Fix: Z undoes the last verdict and returns to it. **Built 2026-11-26** (AN46a: an undo log of
+   256 actions per session, single and group review; undo never switches the review mode).
 5. **Judging contact needs slow motion.** Skate and sliding feet are what rejects hinge on, yet there is no pause, frame
    step, speed or foot-contact marker; only a fixed loop. Fix: Space pause, `,` `.` step, `[` `]` speed, optional
    contact-lock markers from the grader. **New** (with AN10: sync control is shared).

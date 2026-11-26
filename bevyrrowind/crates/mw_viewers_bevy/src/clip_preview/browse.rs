@@ -58,6 +58,47 @@ pub struct BrowseList {
     pub view: View,
     /// Group review's stage (AN10); `None` in single-clip review.
     pub group: Option<GroupStage>,
+    /// The session's verdict actions Z takes back ([`BrowseList::undo`]).
+    pub undo: UndoLog,
+}
+
+/// Most verdict actions Z walks back through in one session; older ones drop off.
+pub const UNDO_CAPACITY: usize = 256;
+
+/// One verdict action Z can take back (a memento): the clip's previous `verdicts.toml` entry
+/// (any value, a note or a table too) and the view to put back.
+#[derive(Clone, Debug, PartialEq)]
+struct UndoEntry {
+    id: String,
+    before: Option<toml::Value>,
+    /// The cursor (activity, clip) and group review's stage when the action was made.
+    cursor: (usize, usize),
+    group: Option<GroupStage>,
+}
+
+/// The session's verdict actions (rate, rate a take, clear), newest last; never saved, capped at
+/// [`UNDO_CAPACITY`]. Navigation pushes nothing and keeps the log.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UndoLog {
+    entries: std::collections::VecDeque<UndoEntry>,
+}
+
+impl UndoLog {
+    fn push(&mut self, entry: UndoEntry) {
+        if self.entries.len() == UNDO_CAPACITY {
+            self.entries.pop_front();
+        }
+        self.entries.push_back(entry);
+    }
+
+    /// How many actions Z can take back.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 /// The verdict filter navigation follows (cycled all -> unrated -> maybe -> keep).
@@ -173,6 +214,7 @@ impl BrowseList {
             candidates_only: false,
             view: View::All,
             group: None,
+            undo: UndoLog::default(),
         })
     }
 
@@ -313,7 +355,9 @@ impl BrowseList {
     /// # Errors
     /// `verdicts.toml` couldn't be written (the verdict stays recorded in memory).
     pub fn rate(&mut self, verdicts: &mut Verdicts, verdict: Verdict) -> Result<(), String> {
-        verdicts.set(&self.current().id, verdict);
+        let id = self.current().id.clone();
+        self.undo.push(self.undo_entry(&id, verdicts));
+        verdicts.set(&id, verdict);
         self.advance_in(Some(verdicts));
         verdicts.save()
     }
@@ -322,12 +366,42 @@ impl BrowseList {
     ///
     /// # Errors
     /// `verdicts.toml` couldn't be written.
-    pub fn clear_rating(&self, verdicts: &mut Verdicts) -> Result<bool, String> {
-        if verdicts.clear(&self.current().id) {
+    pub fn clear_rating(&mut self, verdicts: &mut Verdicts) -> Result<bool, String> {
+        let id = self.current().id.clone();
+        let entry = self.undo_entry(&id, verdicts);
+        if verdicts.clear(&id) {
+            self.undo.push(entry);
             verdicts.save().map(|()| true)
         } else {
             Ok(false)
         }
+    }
+
+    /// The memento of an action on `id` about to be made: its entry now, the cursor and the stage.
+    fn undo_entry(&self, id: &str, verdicts: &Verdicts) -> UndoEntry {
+        UndoEntry { id: id.to_owned(), before: verdicts.value(id).cloned(), cursor: (self.activity, self.clip), group: self.group.clone() }
+    }
+
+    /// Z: take back the newest verdict action (rate, rate a take, clear): the clip's previous entry
+    /// comes back (or goes), the cursor returns to it, and the save follows. The review mode stays:
+    /// in group review the action's stage comes back (an action from single review opens the
+    /// clip's group), in single review the clip is shown on its own. `Ok(None)` if nothing is left
+    /// to undo.
+    ///
+    /// # Errors
+    /// `verdicts.toml` couldn't be written (the undo stays done in memory).
+    pub fn undo(&mut self, verdicts: &mut Verdicts) -> Result<Option<String>, String> {
+        let Some(entry) = self.undo.entries.pop_back() else { return Ok(None) };
+        verdicts.put(&entry.id, entry.before);
+        (self.activity, self.clip) = entry.cursor;
+        match (self.group.is_some(), entry.group) {
+            (true, Some(stage)) => self.group = Some(stage),
+            (true, None) => {
+                self.open_group(Some(verdicts));
+            }
+            (false, _) => self.group = None,
+        }
+        verdicts.save().map(|()| Some(entry.id))
     }
 
     /// The overlay's grade line for `clip`: gates, metrics, mirror flag, prompt group's
@@ -508,10 +582,13 @@ impl BrowseList {
     /// # Errors
     /// No group is on stage, or `verdicts.toml` couldn't be written (the verdict stays recorded in memory).
     pub fn rate_take(&mut self, verdicts: &mut Verdicts, verdict: Verdict) -> Result<GroupRated, String> {
-        let Some(stage) = self.group.as_mut() else { return Err("no group on stage".to_owned()) };
+        let Some(stage) = self.group.as_ref() else { return Err("no group on stage".to_owned()) };
         if verdict != Verdict::Reject && !stage.final_round() {
             return Ok(GroupRated::Refused);
         }
+        let id = stage.selected_take().clip.id.clone();
+        self.undo.push(self.undo_entry(&id, verdicts));
+        let Some(stage) = self.group.as_mut() else { return Err("no group on stage".to_owned()) };
         let take = stage.takes.remove(stage.selected);
         verdicts.set(&take.clip.id, verdict);
         let out = if stage.takes.is_empty() {
@@ -842,6 +919,19 @@ impl Verdicts {
     /// Remove `id`'s entry; `false` if it had none.
     pub fn clear(&mut self, id: &str) -> bool {
         self.entries.remove(id).is_some()
+    }
+
+    /// `id`'s entry as stored (any TOML value).
+    fn value(&self, id: &str) -> Option<&toml::Value> {
+        self.entries.get(id)
+    }
+
+    /// Put `id`'s entry back exactly (`None` removes it): undo's restore.
+    fn put(&mut self, id: &str, value: Option<toml::Value>) {
+        match value {
+            Some(v) => self.entries.insert(id.to_owned(), v),
+            None => self.entries.remove(id),
+        };
     }
 
     pub fn tally<'a>(&self, clips: impl IntoIterator<Item = &'a BrowseClip>) -> Tally {
@@ -1314,6 +1404,150 @@ mod tests {
         let got: Vec<_> = ["idle", "walk.f.act.g0.00", "walk.f.act.g0.01", "walk.f.act.g0.02", "walk.f.act.g1.00", "run.f.act.g0.00", "run.f.act.g0.01"].map(|id| saved.get(id).unwrap_or("-")).into();
         assert_eq!(got, ["maybe", "maybe", "keep", "reject", "reject", "keep", "reject"]);
         assert_eq!(saved, v);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_takes_back_a_rating_and_the_cursor() {
+        let dir = temp("undo-rate");
+        let mut l = list();
+        let mut v = Verdicts::load(&dir).unwrap();
+        l.rate(&mut v, Verdict::Keep).unwrap();
+        assert_eq!(l.current().id, "c");
+        assert_eq!(l.undo(&mut v), Ok(Some("top".to_owned())));
+        assert_eq!((v.get("top"), l.current().id.as_str(), l.undo.len()), (None, "top", 0));
+        assert_eq!(Verdicts::load(&dir).unwrap().get("top"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_restores_the_exact_previous_entry() {
+        let dir = temp("undo-value");
+        std::fs::write(dir.join(VERDICTS_FILE), "c = { by = \"owner\", n = 2 }\n").unwrap();
+        let mut l = list();
+        let mut v = Verdicts::load(&dir).unwrap();
+        let table = v.entries["c"].clone();
+        v.set("top", Verdict::Maybe);
+        l.rate(&mut v, Verdict::Reject).unwrap();
+        assert_eq!(l.undo(&mut v), Ok(Some("top".to_owned())));
+        assert_eq!(v.get("top"), Some("maybe"));
+        // A non-verdict value (a table) comes back as it was, in memory and in the file.
+        l.advance();
+        assert_eq!(l.current().id, "c");
+        l.rate(&mut v, Verdict::Keep).unwrap();
+        assert_eq!(v.get("c"), Some("keep"));
+        assert_eq!(l.undo(&mut v), Ok(Some("c".to_owned())));
+        assert_eq!(v.entries["c"], table);
+        assert_eq!(Verdicts::load(&dir).unwrap(), v);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_walks_back_newest_first_then_does_nothing() {
+        let dir = temp("undo-twice");
+        let mut l = list();
+        let mut v = Verdicts::load(&dir).unwrap();
+        l.rate(&mut v, Verdict::Keep).unwrap();
+        l.rate(&mut v, Verdict::Reject).unwrap();
+        assert_eq!(l.current().id, "a");
+        assert_eq!(l.undo(&mut v), Ok(Some("c".to_owned())));
+        assert_eq!((v.get("c"), v.get("top"), l.current().id.as_str()), (None, Some("keep"), "c"));
+        assert_eq!(l.undo(&mut v), Ok(Some("top".to_owned())));
+        assert_eq!((v.get("top"), l.current().id.as_str()), (None, "top"));
+        let (before_l, before_v) = (l.clone(), v.clone());
+        assert_eq!(l.undo(&mut v), Ok(None));
+        assert_eq!((l, v), (before_l, before_v));
+        // The log keeps the newest UNDO_CAPACITY actions.
+        let mut log = UndoLog::default();
+        for n in 0..=UNDO_CAPACITY {
+            log.push(UndoEntry { id: n.to_string(), before: None, cursor: (0, 0), group: None });
+        }
+        assert_eq!((log.len(), log.entries[0].id.as_str()), (UNDO_CAPACITY, "1"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_puts_a_rejected_take_back_on_stage() {
+        let dir = temp("undo-take");
+        let mut l = graded();
+        let mut v = Verdicts::load(&dir).unwrap();
+        l.view = View::Unrated;
+        l.step_activity(1);
+        assert!(l.open_group(Some(&v)));
+        assert!(l.select_take(1));
+        assert_eq!(l.rate_take(&mut v, Verdict::Keep), Ok(GroupRated::Refused));
+        assert!(l.undo.is_empty());
+        assert_eq!(l.rate_take(&mut v, Verdict::Reject), Ok(GroupRated::Removed));
+        assert_eq!(stage_ids(&l), [("walk.f.act.g0.01", 0), ("walk.f.act.g0.00", 2)]);
+        assert_eq!(l.undo(&mut v), Ok(Some("walk.f.act.g0.02".to_owned())));
+        assert_eq!(stage_ids(&l), [("walk.f.act.g0.01", 0), ("walk.f.act.g0.02", 1), ("walk.f.act.g0.00", 2)]);
+        assert_eq!((selected(&l), l.current().id.as_str()), ("walk.f.act.g0.02", "walk.f.act.g0.02"));
+        assert_eq!(v.get("walk.f.act.g0.02"), None);
+        assert_eq!(Verdicts::load(&dir).unwrap(), v);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_of_the_rating_that_opened_the_next_group_brings_the_last_take_back() {
+        let dir = temp("undo-opened");
+        let mut l = graded();
+        let mut v = Verdicts::load(&dir).unwrap();
+        l.view = View::Unrated;
+        l.step_activity(1);
+        assert!(l.open_group(Some(&v)));
+        assert!(l.select_take(1));
+        assert_eq!(l.rate_take(&mut v, Verdict::Reject), Ok(GroupRated::Removed));
+        assert_eq!(l.rate_take(&mut v, Verdict::Maybe), Ok(GroupRated::Removed));
+        assert_eq!(l.rate_take(&mut v, Verdict::Keep), Ok(GroupRated::Opened));
+        assert_eq!(l.rate_take(&mut v, Verdict::Reject), Ok(GroupRated::Opened));
+        assert_eq!(stage_ids(&l), [("run.f.act.g0.00", 0), ("run.f.act.g0.01", 1)]);
+        assert_eq!(l.undo(&mut v), Ok(Some("walk.f.act.g1.00".to_owned())));
+        assert_eq!(l.group.as_ref().unwrap().name, "walk.f.act.g1");
+        assert_eq!(stage_ids(&l), [("walk.f.act.g1.00", 0)]);
+        assert_eq!((selected(&l), l.current().id.as_str(), v.get("walk.f.act.g1.00")), ("walk.f.act.g1.00", "walk.f.act.g1.00", None));
+        // Once more: the first group's last take is back, its keep gone, the others' verdicts kept.
+        assert_eq!(l.undo(&mut v), Ok(Some("walk.f.act.g0.01".to_owned())));
+        assert_eq!(stage_ids(&l), [("walk.f.act.g0.01", 0)]);
+        assert_eq!((v.get("walk.f.act.g0.01"), v.get("walk.f.act.g0.00"), v.get("walk.f.act.g0.02")), (None, Some("maybe"), Some("reject")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_brings_back_a_cleared_verdict() {
+        let dir = temp("undo-clear");
+        let mut l = list();
+        let mut v = Verdicts::load(&dir).unwrap();
+        l.rate(&mut v, Verdict::Maybe).unwrap();
+        l.step_activity(-1);
+        assert!(l.clear_rating(&mut v).unwrap());
+        // Nothing to clear pushes nothing.
+        assert!(!l.clear_rating(&mut v).unwrap());
+        assert_eq!(l.undo.len(), 2);
+        l.step_activity(1);
+        assert_eq!(l.undo(&mut v), Ok(Some("top".to_owned())));
+        assert_eq!((v.get("top"), l.current().id.as_str()), (Some("maybe"), "top"));
+        assert_eq!(Verdicts::load(&dir).unwrap().get("top"), Some("maybe"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn undo_keeps_the_review_mode() {
+        let dir = temp("undo-mode");
+        let mut l = graded();
+        let mut v = Verdicts::load(&dir).unwrap();
+        l.step_activity(1);
+        assert_eq!(l.current().id, "walk.f.act.g0.01");
+        // Rated in single review, undone in group review: the clip's group opens on it.
+        l.rate(&mut v, Verdict::Keep).unwrap();
+        assert!(l.open_group(Some(&v)));
+        assert_eq!(l.undo(&mut v), Ok(Some("walk.f.act.g0.01".to_owned())));
+        assert_eq!(l.group.as_ref().unwrap().name, "walk.f.act.g0");
+        assert_eq!((selected(&l), l.current().id.as_str(), v.get("walk.f.act.g0.01")), ("walk.f.act.g0.01", "walk.f.act.g0.01", None));
+        // Rated in group review, undone in single review: the clip on its own.
+        assert_eq!(l.rate_take(&mut v, Verdict::Reject), Ok(GroupRated::Removed));
+        l.leave_group(Some(&v));
+        assert_eq!(l.undo(&mut v), Ok(Some("walk.f.act.g0.01".to_owned())));
+        assert_eq!((l.group.as_ref(), l.current().id.as_str(), v.get("walk.f.act.g0.01")), (None, "walk.f.act.g0.01", None));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
