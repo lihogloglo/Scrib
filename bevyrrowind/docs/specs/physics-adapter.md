@@ -140,7 +140,8 @@ action characters (the player, the dummy) get none, so they play the fallback.
   6/8, legs to 3; R§2).
 - **Cap and step:** `PhysicsBodies.takeovers` = live takeovers that still step (not settled corpses), every tick. Tints
   step in the same `FixedUpdate` loop; `DeliriumStats.step_us` sums both, plus a `tints` count. A `DeliriumReaction` on a
-  tinted root promotes it: the takeover reuses the built agent, else starts as today.
+  tinted root promotes it: the takeover reuses the built agent, else starts as today. A tinted agent on a balancer that
+  falls (`agent.fallen`) sends that `DeliriumReaction` itself the same tick (AN38b: a body on the ground costs twice).
 - **Bands (walkers' impacts, `HitRules`):** 1-10 N s `HitReact` (as today); 10 to `anim.tint.band.max_ns` a Stagger tint;
   from there to `certain_fall` (100) today's push takeover; above, push + knockdown. `HitRules::takeover` becomes the band
   top.

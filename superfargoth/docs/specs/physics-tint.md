@@ -13,8 +13,9 @@ Status (2026-11-26): spec (AN39), nothing built. Rows AN38-AN42 in `docs/roadmap
   bodies and `PhysicsPose`.
 - Gate: preset, capable, not held, tier <= A1, distance, cooldown, cap. The cap counts tints plus live takeovers;
   takeovers are never refused and preempt the lowest tint. Refused: the kind's fallback on the same tick; Classic: always.
-- Every number is a tunable, most `Guess` until AN38/AN42. Measured so far (AN38a): 0.86 ms per tinted body per tick, so
-  the cap is 2 (provisional); the provider must hold the pelvis, pose follow alone collapses ("Performance").
+- Every number is a tunable, most `Guess` until AN38/AN42. Measured (AN38a/b): 0.65 ms per pinned tinted body per tick,
+  so the cap is 2; the provider must hold the pelvis (pose follow alone collapses); a tint that falls is promoted to the
+  takeover ("Performance").
 
 ## Goal
 
@@ -42,7 +43,8 @@ and creatures (Open questions 2-3); wall contacts; physics state over the networ
 - **Tiers:** `AnimLod { tier, forced, significance, pixels }` (`sf_anim_bevy/src/lod.rs:111-133`); A1 runs feet but not
   `LookAt` (A0 only).
 - **Cost:** 0.50 ms/step (balance) and 0.78 ms/step (takeover) per body (ledger physics.md, 2026-11-19). Tint paths
-  (AN38a, 2026-11-26, ledger physics.md "AN38a"): pose follow 0.86 ms per body per tick, linear in N ("Performance").
+  (AN38a/b, 2026-11-26, ledger physics.md): pinned pose follow 0.65 ms per body per tick, linear in N; a body on the
+  ground costs twice a standing one ("Performance").
 
 ## Reuse check
 
@@ -144,7 +146,10 @@ send `Failed` on NaN or blow-up; every frame write the root's `PhysicsPose` (bod
 interpolated between steps, per-joint `weights` from the regions). It holds its simulated pelvis on the animated pelvis
 (required, see above), never moves the root or the mover, never sets `Held`. `Failed` comes from the provider's own check
 (NaN, a part below the floor, the pelvis off its target by more than the provider's limit): a balancer's "fallen" flag
-is not set on a pinned body (AN38a: it read false on a collapsed one). The framework owns the rest.
+is not set on a pinned body (AN38a: it read false on a collapsed one). **A fall is a promotion, never a tint:** when a
+tinted body that stands on a balancer (not pinned) goes down, the provider raises the game's takeover claim on that root
+the same tick (state table: Done(Promoted)), reusing the built bodies: a body on the ground costs twice a standing one
+(AN38b, 0.56 -> 1.1-1.2 ms) and a tint has no get-up. The framework owns the rest.
 
 ### States and transitions
 
@@ -155,7 +160,7 @@ is not set on a pinned body (AN38a: it read false on a collapsed one). The frame
 | Active | same kind again | stays Active: impulse re-applied, hold extended (total <= `max_s`) |
 | Active | other kind, higher priority | stays Active with the new profile, envelope restarted from the current sample |
 | Active | hold time over / `TintEndRequested` | Ending (Time / Recovered), release from the current weight |
-| Active, Ending | takeover claim on this root (knockdown, death, push band) | Done(Promoted): the takeover starts from the shown pose |
+| Active, Ending | takeover claim on this root (knockdown, death, push band, the provider on a fall) | Done(Promoted): the takeover starts from the shown pose |
 | Active, Ending | a takeover elsewhere over the cap (lowest score); a Large reaction on it | Ending over `preempt_release_s`, Done(Preempted / Interrupted) |
 | Active | tier A2; A3 or off-screen | Ending; Done(OffScreen) at once (not visible) |
 | any | root despawned or `Animator` removed (streaming unload) | Done(Unloaded); bodies dropped the same tick |
@@ -211,7 +216,7 @@ All `anim.tint.*`, in `TintSettings`/`TintSet`, live-editable; `Guess` until the
 | Name | Unit | Range | Default | Source / replaced by |
 |---|---|---|---|---|
 | `enabled` | bool | - | per preset | decision 10 (Classic off) |
-| `cap` | bodies | 0-16 | 2 | measured AN38a (0.86 ms per body, budget 2.0 ms per tick); provisional until AN38b times the pinned path, AN42 in game |
+| `cap` | bodies | 0-16 | 2 | measured AN38b (pinned 0.65 ms per body; N = 2 meets 2.0 ms median / 2.7 ms p99 per tick, N = 4 fails); AN42 checks it in game |
 | `max_tier` | tier | A0-A1 | A1 | decision 10 |
 | `gate.max_distance_m` | m | 0-40 | 15 | Guess (A0 range, animation.md); owner check |
 | `gate.distance_hysteresis_m` | m | 0-10 | 3 | Guess |
@@ -246,28 +251,32 @@ tunable). The seam is the request: classic rules may send none.
 
 Fixed 60 Hz under a 120 fps target: one tick per ~2 frames, one per worst frame (two on a catch-up).
 
-**Measured (AN38a, 2026-11-26;** `mw_delirium/tests/tint_cost.rs`, release, 60 warm-up + 600 timed ticks, N agents in one
-loop on one thread; ledger physics.md "AN38a"), median / p99 ms per tick:
+**Measured (AN38a/b, 2026-11-26;** `mw_delirium/tests/tint_cost.rs`, release, 60 warm-up + 600 timed ticks, N agents in
+one loop on one thread; ledger physics.md "AN38a", "AN38b"), median / p99 ms per tick:
 
-| State | N = 1 | N = 4 | N = 8 | ms per body | Stands after 2 s |
-|---|---|---|---|---|---|
-| A balancer (a takeover's standing phase) | 0.50 / 0.88 | 1.78 / 3.00 | 4.21 / 8.50 | 0.44-0.53 | yes |
-| B balancer + soft upper body | 0.67 / 0.98 | 2.73 / 4.52 | 5.47 / 8.63 | 0.67-0.68 | yes |
-| F whole-body pose follow, no balancer, no pin | 0.86 / 1.49 | 3.32 / 5.23 | 6.71 / 10.35 | 0.83-0.86 | no (pelvis 14 %) |
+| State | N = 1 | N = 2 | N = 4 | N = 8 | ms per body | At 2 s |
+|---|---|---|---|---|---|---|
+| A balancer (a takeover's standing phase) | 0.50 / 0.88 | - | 1.78 / 3.00 | 4.21 / 8.50 | 0.44-0.53 | stands |
+| B balancer + soft upper body | 0.67 / 0.98 | - | 2.73 / 4.52 | 5.47 / 8.63 | 0.67-0.68 | stands |
+| C balancer + followed upper body (`Sway` option) | 0.63 / 0.90 | 1.27 / 1.96 | 2.65 / 4.43 | 5.29 / 9.10 | 0.63-0.66 | stands |
+| D stumble after a 45 N s chest push | 0.54 / 0.89 | 1.04 / 1.57 | 2.05 / 3.13 | 4.10 / 6.37 | 0.51-0.54 | recovers, stands |
+| E stagger-fall after the same push | 1.17 / 1.90 | 2.24 / 3.34 | 4.54 / 7.68 | 8.59 / 13.60 | 1.1-1.2 down, 0.56 standing | fallen |
+| F whole-body pose follow, no balancer, no pin | 0.86 / 1.49 | - | 3.32 / 5.23 | 6.71 / 10.35 | 0.83-0.86 | collapsed (pelvis 14 %) |
+| **G = F + pinned pelvis (the tint's path)** | 0.65 / 1.04 | **1.28 / 2.13** | 2.54 / 3.62 | 5.19 / 8.79 | 0.64-0.65 | stands (100 %) |
 
-Cost is linear in N (no shared cost); p99 is 1.5-2x the median. The tint's own path is G (F + the pelvis constraint), not
-timed yet: F is its cost until AN38b.
+Cost is linear in N (no shared cost); p99 is 1.5-2x the median. The pin makes pose follow stand and is cheaper than F (F
+is a body collapsing onto the floor). A body on the ground costs about twice a standing one (E), hence the promotion
+rule in the provider contract. C at N = 4 once ran a slow phase (4.26 / 4.54).
 
 **Budget: tints + takeovers at the cap <= 2.0 ms median and <= 2.7 ms p99 per tick** (2.7 ms = the frame's p99 11 ms
-minus its median 8.3 ms; physics share, not the 25 us animation budget). At 0.86 ms per body: **cap 2 = 1.72 ms median**
-(p99 2.6-3.0 ms estimated from 1.3-1.5 ms per body, at the limit); cap 4 = 3.3 / 5.2 ms, 40 % of the frame, over; 8 =
-6.7 ms, never. So `cap` = 2 (Low 1), replacing the Guess of 4. **Provisional:** AN38b times G, C (balanced legs under a
-followed upper body, `Sway`), D and E, at N = 1, 2, 4; the cap is then the largest N whose G cost meets both limits, and
-AN42 confirms it in the game with takeovers mixed in. Takeovers are never refused, so the cap only stops tints adding to
-them: four takeovers alone cost 2.0-3.1 ms a tick today, cap or not.
+minus its median 8.3 ms; physics share, not the 25 us animation budget). **Cap 2 holds:** G at N = 2 is 1.28 / 2.13 ms
+(first 2 s 1.25 / 1.71), C 1.27 / 1.96; N = 3 is ~1.9 ms median by the linear cost with p99 over the limit; N = 4 fails
+(2.54 / 3.62); 8 never. So `cap` = 2 (Low 1), replacing the Guess of 4. AN42 checks it in the game with takeovers mixed
+in. Takeovers are never refused, so the cap only stops tints adding to them: four takeovers alone cost 2.0-3.1 ms a
+tick today, cap or not.
 
-**AN38 still to time** (b-d): the first-2-s median of C, D, E, G; whether the balancer overwrites the followed upper body
-(pose error); N = 8 as one grouped step; body construction and drop; pinned tracking error with no disturbance; the
+**AN38 still to time** (c, d): whether the balancer overwrites the followed upper body (pose error); N = 1-8 as one
+grouped step; body construction and drop; pinned tracking error with no disturbance; the
 impulse at which a push first takes a catch step (`band.max_ns`). Over budget: lower `cap`, then `step_divisor` 2; never
 delete the feature. A grouped or parallel step that cuts the per-body cost raises the cap by the same rule; it waits on
 the provider's thread-safety check (R§5).
@@ -296,7 +305,7 @@ better as a stagger than as today's full push takeover? (`band.max_ns` = 10 is t
 
 | ID | Deliverable + test | Crates | Depends | Verify |
 |---|---|---|---|---|
-| AN38 | measurement test (list in "Performance"); a (states A, B, F) done 39628390, b-d left | `mw_delirium` tests | - | `cargo test -p mw_delirium --release -- --ignored`; ledger |
+| AN38 | measurement test (list in "Performance"); a (A, B, F) 39628390 and b (C, D, E, G, N = 2) 37041235 done, c-d left | `mw_delirium` tests | - | `cargo test -p mw_delirium --release -- --ignored`; ledger |
 | AN40a | seam: types, `sample`, `TintBook`, plugin sets, `TintTarget`, fallback messages; exact tests with a fake provider | `sf_anim`, `sf_anim_bevy` | AN39 | `cargo test -p sf_anim -p sf_anim_bevy` (exact cap) |
 | AN40b | Delirium provider; step 1 the coexistence test; sanity tests | `mw_delirium`, `mw_delirium_bevy` | AN38, AN40a | `cargo test -p mw_delirium -p mw_delirium_bevy` (no NaN, floor, rest) |
 | AN41a | hit triggers: Medium tier and the impulse band -> `Stagger` | `mw_combat`, `mw_walkers_bevy` | AN40b, AN22 | `cargo test -p mw_combat -p mw_walkers_bevy` (exact) |

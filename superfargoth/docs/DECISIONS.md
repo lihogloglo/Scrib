@@ -2050,3 +2050,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   neutral walk becomes every woman's base class once it passes clip review (animation-style.md "Open questions").
 - 2026-11-26 (owner via meta-5, AN39): the player's own body gets no physics tint in third person before AN42 has
   measured cost and control feel (physics-tint.md "Open questions"); Large hits and creatures stay open.
+- 2026-11-26 (specs-6, AN38b): physics tint cap 2 is measured, no longer provisional (pinned body 0.65 ms; N = 2 =
+  1.28 / 2.13 ms median / p99 per tick, N = 4 fails). A tinted body that falls is promoted to the takeover the same tick,
+  never kept as a tint (on the ground it costs twice, and a tint has no get-up) (physics-tint.md "Performance").
