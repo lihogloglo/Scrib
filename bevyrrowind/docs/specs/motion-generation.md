@@ -244,7 +244,7 @@ link pieces and the locomotion graph, never part of a family.
 | Slot clip family | Generated pieces (mirrored side derived) | Hubs | Morrowind side |
 |---|---|---|---|
 | `seat.stool`, `seat.chair`, `seat.bench`, `seat.floor`, `seat.bed_edge` | `enter.front`, `enter.left` (`.right` mirrored), `loop` x2 (rest, fidget), `exit.front`, `exit.left` (`.right` mirrored) = 6 | enter `stand.idle` -> `sit.<seat>`; loop at `sit.<seat>`; exit back to `stand.idle` | 32 seat records, bands 0.14 / 0.48 / 0.54 / 0.64 m; bed edge from the bed records |
-| `bed.lie` | `enter.front`, `enter.back`, `loop` x2 (sleep, restless), `exit.front`, `exit.back` = 6 | `stand.idle` -> `lie.bed` -> `stand.idle` | 46 beds, bands 0.22 / 0.52 / 0.64 / 0.74 m (bedroll, bunk, hammock, bed) |
+| `bed.lie` | `enter.left` (`.right` mirrored), `loop` x2 (sleep, restless), `exit.left` (`.right` mirrored) = 4 + 2 mirrored; slot +Z = head, so the long sides are left/right; the side used is per placement (a wall blocks one: `EndPoseFree`), as for seats (interaction-3, 2026-11-26) | `stand.idle` -> `lie.bed` -> `stand.idle` | 46 beds, bands 0.22 / 0.52 / 0.64 / 0.74 m (bedroll, bunk, hammock, bed) |
 | `lean.wall` | `enter`, `loop` x2, `exit` = 4 (shoulder side mirrored) | `stand.idle` -> `lean.wall` -> `stand.idle` | no wall def in IN32: framework family, Morrowind spots need a cook rule |
 | `counter.table`, `counter.bar` (lean stations) | `enter`, `loop` x2, `exit` = 4 | `stand.idle` -> `lean.counter` -> `stand.idle` | 28 tables 0.84 / 0.98 m, 12 counters 0.94 m; stations by `counter_spacing_m` |
 | `door.push`, `door.pull` | `enter.front`, `enter.back` for hinge L (hinge R mirrored) = 2 per family | `stand.idle` -> `stand.idle` (stop, open, step through) | vanilla doors: hinge at the origin, 90 degrees, one way; travel doors are not slots |
@@ -288,7 +288,7 @@ and contact frames serve it as keyframes when AN44 picks it.
 
 **First batch, AN26: 36 generated pieces + 12 mirrored.** Stool, chair (2 bands), bench, floor = 5 family-bands x 6 = 30,
 plus the old chair at one band = 6; mirrored right-side enter/exit 2 x 6 family-bands = 12. At 8 seeds: 288 takes to
-grade. AN28 doors: 7 generated + 4 mirrored. AN30: beds 6 x 3 band groups = 18, lean wall 4, counter 4 x 2 bands = 8.
+grade. AN28 doors: 7 generated + 4 mirrored. AN30: beds 4 x 3 band groups = 12 (+ 6 mirrored), lean wall 4, counter 4 x 2 bands = 8.
 AN31: 16. Lever 2, ladder 6, workstation 5 come after.
 
 #### Hubs to seed (`recipes/hubs.toml`; the generation slices fill sources from kept takes)

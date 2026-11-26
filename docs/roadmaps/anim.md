@@ -114,7 +114,7 @@ P-IK4 + lean fix (PL-10) and the roll chain (CB-6), both 2026-11-25.
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
 | AN12 | Spec: profile, classes, modifiers, selection, LOD, budget | docs | - | doccheck |
-| AN13 | MotionBricks v0.2.0 spike: SOMA out, Injured presets, style by key pose, output licence, VRAM | research | - | note; ledger |
+| AN13 | MotionBricks v0.2.0 spike: SOMA out, Injured presets, style by key pose, output licence, VRAM | research | - | note; ledger | **done 2026-11-26** (`docs/research/anim-2026-11-26/motionbricks.md`: ends exact by construction (hubcheck 0.0 deg / 0.0 cm), stand->sit in one 1.67 s segment, slide p95 15-19 cm/s vs Kimodo 100-150; style presets = key poses; outputs free (Open Model Agreement), BONES sample poses never ship; cached TensorRT plan 1.5 s load, +384 MiB VRAM, 5-9 ms/segment) |
 | AN14 | Core: `MotionProfile`, class chooser over `gait_slot`, smoothing | `sf_anim_graph` | AN12 | exact lookup, fallback |
 | AN15 | Posture modifiers: hunch, slump, breathing, load offset, speed scale | `sf_anim_graph` | AN14 | exact at 0; sanity at 1 |
 | AN16 | Limp: hip drop, short stance, asymmetric timing, one side | `sf_anim_graph` | AN14 | exact side/phase; no added slide |
