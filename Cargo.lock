@@ -8590,6 +8590,7 @@ dependencies = [
  "serde_json",
  "sf_coords",
  "sf_ids",
+ "sf_tunables",
  "sf_world",
  "smallvec",
  "thiserror 2.0.21",

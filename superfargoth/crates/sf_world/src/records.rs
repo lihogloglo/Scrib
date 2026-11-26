@@ -278,10 +278,10 @@ impl DoorLink {
 pub struct LinkId(pub u64);
 
 /// Position quantum of [`LinkId`], meters (1 mm). Format, not a tunable.
-pub const LINK_ID_POS_STEP: f64 = 1.0e-3;
+pub const LINK_ID_POS_STEP: f64 = 1.0e-3; // tunables: const (id format: changing it changes every LinkId)
 /// Rotation quantum of [`LinkId`], per quaternion component. Format, not a
 /// tunable.
-pub const LINK_ID_ROT_STEP: f64 = 1.0e-4;
+pub const LINK_ID_ROT_STEP: f64 = 1.0e-4; // tunables: const (id format: changing it changes every LinkId)
 /// Domain tag, so a link id never equals another hash of the same bytes.
 const LINK_ID_DOMAIN: &[u8] = b"sf.door_link.id/1";
 

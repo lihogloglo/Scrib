@@ -90,7 +90,8 @@ pub use types::{
 };
 pub use world_graph::{
     DoorState, FADE_TRAVERSE_S, GraphExit, GraphLink, LinkFlags, LinkKind, LinkSide, RouteLeg,
-    RouteRules, SEAMLESS_TRAVERSE_S, TraverseTimes, WorldGraph, WorldRoute,
+    RouteRules, SEAMLESS_TRAVERSE_S, TUNABLES as TRAVERSE_TUNABLES, TraverseTimes, WorldGraph,
+    WorldRoute,
 };
 
 #[cfg(test)]

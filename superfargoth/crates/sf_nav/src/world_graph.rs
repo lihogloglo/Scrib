@@ -23,15 +23,33 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BinaryHeap, HashMap};
 
 use serde::{Deserialize, Serialize};
+use sf_tunables::{AnyDef, Def, Lifetime, Net, Scope, Source, Tunables, Unit, def};
 use sf_world::{DoorLink, LinkEnd, LinkId, Location, WorldspaceId};
 
-// tunables: const (Guess: open a hinged door, step through the gate, close it; bound from
-// ai.nav.* in the host adapter, NV11d)
-pub const SEAMLESS_TRAVERSE_S: f64 = 3.0;
+/// `ai.nav.traverse.seamless_s`: [`TraverseTimes::seamless_s`]. Guess: open a hinged door, step
+/// through the gate, close it.
+pub const SEAMLESS_TRAVERSE_S: Def<f64> = def!("ai.nav.traverse.seamless_s" = 3.0_f64)
+    .range(0.0, 30.0)
+    .unit(Unit::Seconds)
+    .help("Route cost of walking through a seamless door link (open, step through, close)")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .net(Net::Gameplay)
+    .lifetime(Lifetime::Live);
 
-// tunables: const (Guess: activate, fade out, arrive; Bethesda load-door teleport; bound from
-// ai.nav.* in the host adapter, NV11d)
-pub const FADE_TRAVERSE_S: f64 = 1.0;
+/// `ai.nav.traverse.fade_s`: [`TraverseTimes::fade_s`]. Guess: activate, fade out, arrive (a
+/// Bethesda-style load-door teleport).
+pub const FADE_TRAVERSE_S: Def<f64> = def!("ai.nav.traverse.fade_s" = 1.0_f64)
+    .range(0.0, 30.0)
+    .unit(Unit::Seconds)
+    .help("Route cost of taking a fade (load door) link: activate, fade out, arrive")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .net(Net::Gameplay)
+    .lifetime(Lifetime::Live);
+
+/// The worldspace graph's tunables, for the host to register (`NV11d` binds them).
+pub const TUNABLES: &[&dyn AnyDef] = &[&SEAMLESS_TRAVERSE_S, &FADE_TRAVERSE_S];
 
 bitflags::bitflags! {
     /// How a link may be crossed: the adapter's world rule (`world.doors`: pack default, per-door
@@ -105,11 +123,17 @@ pub struct TraverseTimes {
 
 impl Default for TraverseTimes {
     fn default() -> Self {
-        Self { seamless_s: SEAMLESS_TRAVERSE_S, fade_s: FADE_TRAVERSE_S }
+        Self { seamless_s: SEAMLESS_TRAVERSE_S.default_value(), fade_s: FADE_TRAVERSE_S.default_value() }
     }
 }
 
 impl TraverseTimes {
+    /// The traverse times from `t`: each registered tunable's effective value, else its default.
+    pub fn from_tunables(t: &Tunables) -> Self {
+        let read = |d: &Def<f64>| t.id_of(d).map_or(d.default_value(), |id| t.read(id));
+        Self { seamless_s: read(&SEAMLESS_TRAVERSE_S), fade_s: read(&FADE_TRAVERSE_S) }
+    }
+
     pub fn of(&self, kind: LinkKind) -> f64 {
         match kind {
             LinkKind::Seamless => self.seamless_s,

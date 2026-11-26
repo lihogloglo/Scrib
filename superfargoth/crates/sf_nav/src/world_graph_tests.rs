@@ -222,3 +222,20 @@ fn route_serde_round_trip() {
     let bytes = postcard::to_allocvec(&r).unwrap();
     assert_eq!(postcard::from_bytes::<crate::WorldRoute>(&bytes).unwrap(), r);
 }
+
+#[test]
+fn traverse_times_read_their_tunables() {
+    use sf_tunables::{SetBy, Tunables};
+
+    use crate::{FADE_TRAVERSE_S, TRAVERSE_TUNABLES};
+
+    let mut t = Tunables::default();
+    assert_eq!(TraverseTimes::from_tunables(&t), TraverseTimes::default());
+    t.register_all(TRAVERSE_TUNABLES).unwrap();
+    let id = t.id_of(&FADE_TRAVERSE_S).unwrap();
+    t.write(id, 2.5, SetBy::User).unwrap();
+    assert_eq!(
+        TraverseTimes::from_tunables(&t),
+        TraverseTimes { fade_s: 2.5, ..TraverseTimes::default() }
+    );
+}

@@ -19,6 +19,8 @@ serde.workspace = true
 sf_coords.workspace = true
 # `ActorKey` in the query service's `RequestId` (no `bevy` feature: stays Bevy-free).
 sf_ids.workspace = true
+# Declared tunables (traverse times, NV11b); Bevy-free.
+sf_tunables.workspace = true
 # `Location` and `WorldspaceId`.
 sf_world.workspace = true
 # `PortalPath::links` (portal_query).
