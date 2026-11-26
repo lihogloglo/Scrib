@@ -24,7 +24,7 @@ synthetic and app tests cover selection, timing and routing (`mw_audio` voice te
 ### AU-5: Swinging-door sounds (`cargo dev view "Seyda Neen, Census and Excise Office"`, any inner door)
 - Activate a non-load door: its open sound at the door; again: its close sound. The door itself does not move
   yet (the swing is a doors.rs follow-up), so the open/close order is the only state.
-- Owner 2026-10-30: inner doors show the use prompt but don't open (no swing) and play no sound. Status: rejected; superseded by IN-33 (2026-11-26, `interaction.md`): inner doors swing and play their sounds from the door shell's `DoorChanged`, the scaffold is deleted, the owner judges the sound there.
+- Owner 2026-10-30: inner doors show the use prompt but don't open (no swing) and play no sound. Status: rejected; superseded by IN-33 (2026-11-26, `interaction.md`): inner doors swing and play their sounds from the door shell's `DoorChanged`, the scaffold is deleted, the owner judges the sound there. Owner 2026-11-26, IN-33 q2: yes ("the sound of door worked"): confirmed through IN-33.
 
 ### AU-6: Third-person listener sits in the character's head, not the camera (owner report)
 - Kind: game location. Any scene in third person with sounds around (`scene door-balmora-guild`).
