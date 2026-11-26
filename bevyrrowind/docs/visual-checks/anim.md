@@ -72,7 +72,15 @@ ANIM-9 ones: judge the wiring (starts, lands, holds, leaves), not the takes. Que
 (4) Sit again from the chair's left side: does the sit-down start from where you stand (no spin to the front first)? yes/no
 Proof log: `player clips: N of M slot clips baked` in last.log, N and M both 48 higher than before (the 48 seat slots; N lower means the seat
 bake is missing: `bevyrrowind bake`).
-Status: awaiting owner (AN26c2 508a628a, 2026-11-26). Replaces IN-32 question (4) "E leaves you standing".
+Status: FAIL (owner 2026-11-26 sitting, exe 1c699df9, bake of 19:28): "sitting doesn't work, I tried on many different
+seats". Questions 1-4 not reached. Log `%TEMP%/bw-owner-2026-11-26-2003/last.log`: `player clips: 77 of 77 slot clips
+baked`, 15 furniture placements indexed, 12 x `activate: Sit (furn_com_rm_chair_03 | furn_com_r_chair_01 |
+furn_com_rm_bench_02, 0.9-2.1 m)`, each followed by `activation of <record>: default action`, then nothing: the use
+reaches the default action and the sit never starts. The seat path after it (`sf_interaction_bevy` `activate.rs`
+finish, `seat.rs` seat_requests / seat_offers / seat_events) has no log line and several silent exits (use refused,
+no def or pose slot, seat use already pending, claim refused, no free entrance, `SeatRefused`): which one is not
+known. Next: a headless repro in this cell + a log line per exit, then the fix (interaction crates). First or third
+person at the time: asked. Replaces IN-32 question (4) "E leaves you standing".
 
 ## ANIM-12: attacks and hit reactions on Morrowind clips (AN34 + AN35)
 `owner_launch.sh scene level-sparring` (synthetic greybox, muted; F11 player, F to draw). Not built yet: launch only after AN34 and AN35 are
