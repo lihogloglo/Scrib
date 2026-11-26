@@ -127,5 +127,5 @@ Log: `ai: N wanderers on navmesh, M on pathgrid fallback (since start: X navmesh
 - Q2: while you follow it, does it keep walking smoothly, with no jump or one-frame flicker anywhere along the
   road? (expected yes)
 - Q3: go back to where that NPC started: is there no second copy of it standing there? (expected yes)
-- Status: awaiting owner. Headless tests cover the swap on a hand-built cell tree; the test against the real
-  streaming runtime (AI10c3b3) is not written yet.
+- Status: awaiting owner. Headless: the swap on a hand-built cell tree (AI10c3b2) and one test against the real
+  streaming runtime (AI10c3b3: the body outlives its home cell, no twin when it reloads).

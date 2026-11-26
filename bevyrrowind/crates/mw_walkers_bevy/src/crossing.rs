@@ -211,3 +211,7 @@ pub(crate) fn report_rehomed(time: Res<Time>, mut stats: ResMut<CrossingStats>, 
 #[cfg(test)]
 #[path = "crossing_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "crossing_wiring_tests.rs"]
+mod wiring_tests;
