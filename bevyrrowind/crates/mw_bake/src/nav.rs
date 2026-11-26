@@ -28,6 +28,7 @@
 //! - **Links**: door approach points, the nearest pathgrid node to each door within
 //!   [`APPROACH_RADIUS`] (seamless research §4.11). Pathgrid edges as off-mesh links are NV9.
 
+pub mod routes;
 #[cfg(test)]
 mod tests;
 
@@ -842,6 +843,8 @@ pub struct NavReport {
     pub failures: Vec<(ProductKey, Arc<BakeError>)>,
     /// What the shared geometry decode did.
     pub geometry: GeometryStats,
+    /// The exterior route graph (`nav.routes`, `NV12c2`).
+    pub routes: routes::RouteReport,
 }
 
 impl std::fmt::Display for NavReport {
@@ -875,7 +878,8 @@ impl std::fmt::Display for NavReport {
             self.prepare,
             self.elapsed,
             self.failures.len()
-        )
+        )?;
+        writeln!(f, "{}", self.routes)
     }
 }
 
@@ -1008,6 +1012,7 @@ pub fn bake_nav(baker: &mut Baker, db: &RecordDb, models: &[String]) -> NavRepor
     }
     report.geometry = source.geometry_stats();
     source.release_geometry();
+    report.routes = routes::bake_routes(baker, db);
     report.elapsed = started.elapsed();
     report
 }

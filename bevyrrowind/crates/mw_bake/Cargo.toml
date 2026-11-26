@@ -53,6 +53,8 @@ sf_mods.workspace = true
 sf_nav.workspace = true
 sf_nav_bake.workspace = true
 sf_nav_recast.workspace = true
+# `nav::routes`: `mw.nav.route.join_m` (Bevy-free, already in the closure).
+sf_tunables.workspace = true
 # `body.cook` and `items.check` (physics-adapter.md "Items").
 sf_physics = { workspace = true, features = ["bake"] }
 # `ragdoll.cook` (physics-adapter.md "Ragdolls").

@@ -1,5 +1,6 @@
 //! Morrowind NPC AI adapter on `sf_ai` (`docs/specs/ai-adapter.md`), Bevy-free.
 //!
+//! - [`nav`]: door approach points (`MA21`), shared by the game and the route bake.
 //! - [`pathgrid`]: PGRD records as per-cell directed graphs in engine space
 //!   (meters, Y up), with nearest/within/A* queries.
 //! - [`wander`]: the `AI_W` package (distance, duration, Idle2–9 chances),
@@ -13,6 +14,7 @@
 //!   rating and flee decision (`MA4f`), the greeting state machine (`MA4c1`).
 
 pub mod methods;
+pub mod nav;
 pub mod packages;
 pub mod pathgrid;
 pub mod policy;

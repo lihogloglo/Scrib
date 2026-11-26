@@ -335,7 +335,7 @@ walking is slower, Naismith/Tobler), `ai.nav.route.max_expansions` 200000 count 
 64 m (8-1024), `ai.nav.route.simplify_m` 0.25 m (0-5, bake), `ai.nav.route.door_connect_m` 60 m (0-500, bake).
 `MAX_EDGE_M` and the 1 cm quantum are formats (const).
 
-**Budgets** (to measure, NV12d/NVM): Vvardenfell ≤ 5k nodes, 6k edges, 60k points (≤ 1.5 MiB); 10x world ≤ 50k nodes,
+**Budgets** (to measure, NV12d/NVM): Vvardenfell ≤ 10k nodes, 20k edges, 60k points (≤ 1.5 MiB; vanilla PGRDs measured 8.8k / 17.7k / 38k / 1.31 MiB, NV12c2; was a 5k / 6k Guess); 10x world ≤ 50k nodes,
 60k edges, 600k points (≤ 12 MiB resident, index included). `route` ≤ 0.2 ms cross-island on Vvardenfell and ≤ 2 ms
 worst on 10x (planned once per directive, worker-friendly); `nearest_point` ≤ 5 µs at 250 m; `position_at` ≤ 1 µs.
 
@@ -371,6 +371,10 @@ route 3.8 ms avg, 15 ms corner to corner (grid ties under a straight-line heuris
 -> Result<Option<RouteInput>, BakeError> }`; `RouteInput { nodes: (pos, RouteNodeKind), edges: (a, b node indices, kind, two_way, interior, cost_m), doors: (LinkId, side, pos) }` (in the bake
 crate, the builder stays the only way in); plan params = rules + format + the source's own; `None` = zero bytes, `decode_routes` reads it as `None` and errors on another format. Tunables
 `ai.nav.route.simplify_m` / `door_connect_m` declared there (`Lifetime::Bake`, `TUNABLES`, `route_build_rules(&Tunables)`); new dep `sf_tunables` (already in the closure).
+
+**As built (NV12c2, 2026-11-26):** Morrowind source `mw_bake::nav::routes` (ai-adapter.md "Route source"). Vvardenfell + Solstheim: 8794 nodes, 17712 edges, 37988 points, 1.31 MiB (nodes and edges
+over the 5k / 6k Guess, now the "Budgets" line: town pathgrids are dense meshes, not trees), 220 components; vanilla has exterior PGRDs only in settlements (148 of 1559 cells), so towns don't connect (Balmora → Caldera
+`Unreachable`) and inter-town edges come from NV12c3 (Detour walks on the navmesh between neighbouring components). Connected routes > 300 m: 0.13 ms avg, 0.67 ms worst (release).
 
 ## Volumes: fliers and swimmers (NV13; roadmap decision 2)
 

@@ -137,6 +137,10 @@ as-built paragraph are in [archive/ai-adapter-history.md](archive/ai-adapter-his
     "Budgets" (Vvardenfell ≤ 5k nodes, 6k edges, 60k points, ≤ 1.5 MiB), joins, one-way count, anchors (groups
     without one), door nodes (pathgrid vs arrival; joined vs isolated), component histogram, bake ms; asserts the
     Balmora → Caldera anchor route is `RouteKind::Graph`, not `Direct`.
+  - **As built (NV12c2, 2026-11-26):** `mw_bake::nav::routes` (`MwRouteSource`, `exterior_route_input`, `bake_routes`
+    called from `bake_nav`, `NavReport::routes`). The input is built once from the records; its postcard bytes plus
+    both tunables are plan params (rule 7, as `mw.nav.cell`), `route_input` reads nothing. `mw_ai::nav` holds
+    `approach_point` + `DOOR_APPROACH_M` (+ `sf_tunables` dep on mw_ai and mw_bake); door ends dedup by (`LinkId`, side).
 - **Reuse check**: Bevy has no navigation (nav roadmap decision 1); no crate builds road graphs from waypoint grids;
   `mw_ai::pathgrid` (PGRD → `petgraph`, exists) reads, `sf_nav::route_graph` (NV12a) merges, folds and simplifies.
   OpenMW is the behaviour reference above (per-cell graphs, pathgrid off-mesh links), not a design to copy.
