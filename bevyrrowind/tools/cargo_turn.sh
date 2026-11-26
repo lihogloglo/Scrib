@@ -64,17 +64,28 @@ if [ "$1" = "--stats" ]; then
     exit 0
 fi
 
+# Every Windows process's exe path, one per line. `ps -W` takes ~0.15 s where each tasklist took ~0.7 s and a
+# PowerShell CIM query ~0.9 s (idle-1 L1, 2026-11-26: the scans were ~2 s of every command's wait). PowerShell runs
+# only when a command line is needed (a cargo.exe or bevyrrowind.exe is present). Falls back to tasklist names.
+procs() {
+    local p
+    p="$(ps -W 2>/dev/null | awk 'NR > 1 { sub(/^ *([^ ]+ +){7}/, ""); print }' | tr -d '\r')"
+    if [ -n "$p" ]; then printf '%s\n' "$p"; else tasklist 2>/dev/null | awk '{ print "\\" $1 }' | tr -d '\r'; fi
+}
+has_exe() { grep -qiE "[\\\\/]($1)(\\.exe)?\$" <<< "$2"; } # <name regex> <procs output>
+
 busy() {
+    local p; p="$(procs)"
     # A headless game subcommand (a bake, a census) is real work even when started by `cargo run`, and a `--bench`
     # run must not share the CPU: both hold the slot. Same headless list as owner_launch.sh game_open(); a game
     # window doesn't hold it.
-    if tasklist 2>/dev/null | grep -qiE '^bevyrrowind\.exe'; then
+    if has_exe bevyrrowind "$p"; then
         powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='bevyrrowind.exe'\" | ForEach-Object { \$_.CommandLine }" 2>/dev/null \
             | tr -d '\r' | grep -qE '[[:space:]](bake|info|mods|census|clip-preview --export|--bench)([[:space:]]|$)' && return 0
     fi
     # rustdoc.exe compiles and links doctests; a test run that has to recompile shows up as rustc.exe.
-    tasklist 2>/dev/null | grep -qiE '^(rustc|rustdoc)\.exe' && return 0
-    tasklist 2>/dev/null | grep -qiE '^cargo\.exe' || return 1
+    has_exe 'rustc|rustdoc' "$p" && return 0
+    has_exe cargo "$p" || return 1
     # Each cargo.exe's subcommand: the first word after the exe path that isn't a flag or +toolchain. `test-run` is
     # this script's second phase of a `cargo test` (its binaries running, already built; see the end of the file).
     powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='cargo.exe'\" | ForEach-Object { \$_.CommandLine }" 2>/dev/null \
@@ -171,7 +182,9 @@ while :; do
         msg="queued #$pos behind: $(head -1 "$queue/$first" 2>/dev/null)"; reason=queue
     fi
     if [ "$msg" != "$shown" ]; then echo "cargo_turn: $msg" >&2; shown="$msg"; fi
-    sleep 3
+    # Handoff latency: a waiter sees the ticket ahead go within ~1 s (was 3 s). Waiting on a build outside the queue
+    # polls every 2 s, since each poll may cost a PowerShell query.
+    if [ "$reason" = busy ]; then sleep 2; else sleep 1; fi
 done
 echo "running $(date +%H:%M:%S)" >> "$ticket"
 # Build freeze: while .sessions/BUILD-FREEZE exists, only commands run with SCRIB_BUILD_FREEZE_OK=1 leave the
@@ -180,7 +193,8 @@ echo "running $(date +%H:%M:%S)" >> "$ticket"
 # Thread cap only while the owner plays (owner 2026-11-11): a `-j N` / `--jobs N` before `--` is kept only when a
 # private owner copy (%TEMP%\bw-owner-*) is running; otherwise cargo uses every core (BelowNormal keeps the desktop smooth).
 owner_playing() {
-    powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { \$_.ExecutablePath -like '*\\bw-owner-*' } | Select-Object -First 1 -ExpandProperty ProcessId" 2>/dev/null | grep -q '[0-9]'
+    # Either separator: a process started from bash (owner_launch.sh) is listed with its MSYS path.
+    procs | grep -qiE '[\\/]bw-owner-'
 }
 if owner_playing; then
     capped=1

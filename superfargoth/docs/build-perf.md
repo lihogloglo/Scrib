@@ -142,6 +142,10 @@ one `test --workspace` with nothing to compile still ran 290 s. Three changes, r
   freshness by mtime, so two checkouts would reuse each other's artifacts. Not adopted yet: sccache to share the
   registry crates between targets (the vendored Bevy patches are path crates, built incrementally, so uncacheable).
   Not adopted: cargo-nextest (process per test; several suites share one loaded fixture through statics).
+- **Cheap queue scans** (idle-1 L1): one `ps -W` (~0.12 s) lists every Windows process; PowerShell runs only when a
+  cargo.exe or bevyrrowind.exe needs its command line; waiters poll every 1 s. Overhead per command 1.9 s -> 0.45 s.
+  Edit `cargo_turn.sh` on a copy and `mv` it in: bash reads a running script by offset, so an in-place edit can
+  derail commands already queued.
 
 ### Machine setup (Windows)
 
