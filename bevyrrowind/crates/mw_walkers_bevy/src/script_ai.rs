@@ -30,7 +30,7 @@ use bevy_ecs::prelude::*;
 use bevy_log::{debug, info};
 use mw_ai::packages::{PackageCtx, PackageExtra, directive};
 use sf_ai::{DirectiveDone, DirectiveEnd, DirectiveId, DirectiveKind, DirectiveSource, DirectiveStack, GameTime};
-use sf_ai_bevy::{AiActor, AiDirectives};
+use sf_ai_bevy::{AiActor, AiDirectives, AiLogical};
 use sf_character_bevy::{Character, CharacterPlacement};
 use sf_controller_bevy::Mover;
 use sf_ids::ActorKey;
@@ -148,6 +148,7 @@ pub(crate) fn apply_script_pushes(
     mut pushes: MessageReader<ScriptAiPush>,
     store: Option<ResMut<AiDirectives>>,
     clock: Option<Res<GameClock>>,
+    mut logical: Option<ResMut<AiLogical>>,
     mut actors: Query<(
         Entity,
         &AiActor,
@@ -200,6 +201,10 @@ pub(crate) fn apply_script_pushes(
         };
         spec.source = DirectiveSource::Script;
         let id = stack.push(spec, now, &policy, &mut events);
+        if let Some(store) = logical.as_deref_mut() {
+            // AI10c2: a tier-0 actor takes the push up on the next tier-0 step.
+            store.wake(push.actor);
+        }
         follow_renewals(&policy, drive.as_deref_mut(), extras.as_mut(), stack);
         if let Some(mut extras) = extras {
             extras.0.retain(|(d, _)| stack.get(*d).is_some());

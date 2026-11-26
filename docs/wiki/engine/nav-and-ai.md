@@ -67,21 +67,31 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   HTN plans on its decide ticks only (AI9g, `mw_walkers_bevy/src/walkers.rs:840` `AiDecideGate::due` ->
   `ExecContext::decide`, gate in `sf_ai/src/exec.rs:659` `ensure_plan`): Full every `ai.alloc.full_decide_s` (0.15 s),
   Reduced every `ai.alloc.reduced_decide_s` (1 s); a walker whose step ran out stands until then. Operators and events
-  (dirty read key, failed precondition, failed walk) run every tick; untiered actors plan every tick; Logical walkers
-  stand (no planner) until AI10; the pathgrid fallback is not gated. `ai.tiers` prints the plans of the last second.
-  Tier 0 core (AI10a, `sf_ai/src/logical.rs`; not in game until AI10c): `LogicalState::step` jumps event to event
+  (dirty read key, failed precondition, failed walk) run every tick; untiered actors plan every tick; a tier-0 body
+  stands (below); the pathgrid fallback is not gated. `ai.tiers` prints the plans of the last second.
+  **Tier 0 in the game** (AI10c2, `mw_walkers_bevy/src/logical.rs:318` `add`, FixedUpdate, only with a `GameClock`):
+  Enter (`:377`) stores every `AiActor` body with a stack whose `AiTier` is `Logical` or that is `Dormant` (past the AI
+  radius, another worldspace, ground not loaded), not `Held`, at its body; Step (`:415`) runs the due states on
+  `WorldGraphEnv` (`NavWorldGraph` routes at the walker's walk speed, door states, straight legs until NV12f) with
+  `Renewing`, ends feed `AiRuns` and repeats move their extras/home (`:442`); Promote (`:485`) resolves the shell's
+  queue on `ViewsEnv` (the `AiViewer` frusta in the active worldspace, `NavMeshes` nearest) and moves each placed
+  body (position, zero velocity, `Mover::snap`, corridor goal cleared, wander re-chosen, `GoTo` restarted); a
+  placement in another worldspace puts the state back (AI10c3 moves bodies). A marked body stays rendered where it
+  stood: `drive` stands it first (`walkers.rs:809`), `drive_directives` skips it (`directive_drive.rs:318`); script
+  pushes and late packages `wake` it. Proof line `tier0: N logical, Q queued, P placed (X other-space)` (≤ 1/s).
+  Tier 0 core (AI10a, `sf_ai/src/logical.rs`): `LogicalState::step` jumps event to event
   (route arrival, `DirectiveStack::next_deadline`, `LogicalEnv::next_window_edge` hook), each served kind taken up
   through `LogicalTransitions::transition` (StayNear waits in place or walks home, GoTo/Escort walk and end
   `Completed` at the arrival minute, Follow stands at the leader's logical position, Use walks then holds, Fight holds,
   Custom registered; `validate` fails at load for an unregistered custom kind). Routes advance at walk speed in
   simulated seconds (game ms / `time_scale`), arrival fixed when the route is taken up. `fast_forward` = step + the
-  adapter's `FastForwardRules` (MA7). Promotion core (AI10b, `sf_ai/src/promote.rs`; not in game until AI10c):
+  adapter's `FastForwardRules` (MA7). Promotion core (AI10b, `sf_ai/src/promote.rs`):
   `PromoteQueue` holds every actor granted tier 1/2 still tier 0 (pins, then nearest player, then key), tries at most
   `per_tick` a tick, a waiter retried after `retry_s` (skips free, so seen waiters never starve unseen ones);
   `resolve_promotion` places at `position_at(t)` snapped, else back along its route (`backtrack_step_m` up to
   `backtrack_m`), else `PromoteEnv::approaches`, only where `PlayerViews::unseen`, else waits; a refused `Use` slot
   claim stands it there. `demote(body, now)` = a fresh `LogicalState`; the allocator alone grants demotion.
-  Shell (AI10c1, `sf_ai_bevy/src/logical.rs`; the game wires it in AI10c2): `AiLogical` holds the states by key, and
+  Shell (AI10c1, `sf_ai_bevy/src/logical.rs`; the game's systems above): `AiLogical` holds the states by key, and
   an actor is tier 0 in fact iff stored; its body carries `AiLogicalBody` (`demote_body`). FixedUpdate sets
   `AiLogicalSystems::{Hold, Step, Promote, Cleanup}`, after `AiAllocSystems::Allocate`, before sight and `Drive`: Hold
   pins a held body's `AiTier` to `Logical` and queues the allocator's tier-1/2 grants (its distance and pin); the

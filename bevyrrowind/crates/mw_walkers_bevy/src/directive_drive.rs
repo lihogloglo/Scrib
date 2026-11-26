@@ -44,6 +44,9 @@
 //! **Priority.** The perception reactions ([`crate::reaction`], which run first) keep priority:
 //! while one owns the actor this drive writes nothing (the stack still advances); when it hands
 //! back, a `GoTo` restarts its walk from where the reaction left the actor.
+//!
+//! **Tier 0** (`AI10c2`): an actor with `AiLogicalBody` is skipped whole (no advance): the tier-0
+//! step ([`crate::logical`]) runs its stack until it is promoted, then its `GoTo` restarts here.
 
 use std::collections::BTreeSet;
 
@@ -57,7 +60,7 @@ use mw_ai::packages::PackageExtra;
 use sf_ai::{
     DirectiveId, DirectiveKind, DirectiveStack, ExecConfig, ExecContext, ExecGait, FaceTarget, GameTime, NavCommand, OperatorKind,
 };
-use sf_ai_bevy::{AiActor, AiDirectives, AiExecSettings};
+use sf_ai_bevy::{AiActor, AiDirectives, AiExecSettings, AiLogicalBody};
 use sf_controller::LocomotionIntent;
 use sf_character_bevy::Character;
 use sf_controller_bevy::{Avoider, Dormant, MoveIntent, Mover, MoverMode};
@@ -198,6 +201,12 @@ impl DirectiveDrive {
         self.stands
     }
 
+    /// Drops the `GoTo` walk in progress: the next serve starts it again from where the actor
+    /// stands (a tier-0 promotion placed the body, [`crate::logical`]).
+    pub(crate) fn restart_walk(&mut self) {
+        self.goto = None;
+    }
+
     /// The home of the `StayNear` `id`, once it served.
     pub fn home(&self, id: DirectiveId) -> Option<WorldPos> {
         self.homes.iter().find(|(d, _)| *d == id).map(|&(_, p)| p)
@@ -275,7 +284,10 @@ pub(crate) fn drive_directives(
     mut commands: Commands,
     mut logged: Local<BTreeSet<&'static str>>,
     mut actors: Query<(
-        (Entity, &AiActor, &Mover, &ActorSpace, &mut DirectiveDrive, Option<&mut AiPackageExtras>, Has<Dormant>),
+        (
+            (Entity, &AiActor, &Mover, &ActorSpace, &mut DirectiveDrive, Option<&mut AiPackageExtras>, Has<Dormant>),
+            Has<AiLogicalBody>,
+        ),
         (
             Option<&Reaction>,
             Option<&mut Walker>,
@@ -299,10 +311,14 @@ pub(crate) fn drive_directives(
     let mut ran = Vec::new();
     let policy = Renewing::default();
     for (
-        (entity, actor, mover, space, mut drive, mut extras, dormant),
+        ((entity, actor, mover, space, mut drive, mut extras, dormant), logical),
         (reaction, mut walker, mut nav, mut intent, avoider, character, greeting),
     ) in &mut actors
     {
+        if logical {
+            // AI10c2: tier 0 in fact; the tier-0 step advances its stack (`crate::logical`), never twice.
+            continue;
+        }
         let Some(stack) = store.get_mut(actor.0) else {
             continue;
         };

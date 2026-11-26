@@ -196,3 +196,304 @@ fn snap_lands_on_the_navmesh() {
     let bare = ViewsEnv { nav: None, ..env };
     assert!(bare.snap(&at).is_none(), "no navmesh");
 }
+
+// --- In the game (AI10c2b): the systems on the walkers' fixed-tick harness ---------------------
+
+mod game {
+    use bevy_app::{App, FixedUpdate};
+    use bevy_ecs::prelude::*;
+    use bevy_math::{DVec3, Quat, Vec3};
+    use bevy_time::Time;
+    use mw_ai::MorrowindPolicy;
+    use mw_ai::packages::PackageExtra;
+    use sf_ai::{
+        DirectiveDone, DirectiveEnd, DirectiveId, DirectiveKind, DirectiveSource, DirectiveSpec, DirectiveStack, DirectiveStatus,
+        GameTime, Tier, TierCaps,
+    };
+    use sf_ai_bevy::{AiActor, AiAllocSettings, AiAllocSystems, AiDirectives, AiLogical, AiLogicalBody, AiLogicalSystems, AiTier};
+    use sf_controller_bevy::{Dormant, Mover};
+    use sf_coords::WorldPos;
+    use sf_ids::{ActorKey, GameInstant};
+    use sf_nav_bevy::NavWorldGraph;
+    use sf_sky_bevy::GameClock;
+    use sf_world::{Location, WorldspaceId};
+    use sf_world_bevy::ActiveWorldspace;
+
+    use crate::directive_drive::DirectiveDrive;
+    use crate::directives::AiPackageExtras;
+    use crate::in_view::{AiViewer, View};
+    use crate::logical::{Tier0Counts, Tier0Tick, proof_line};
+    use crate::walkers::Walker;
+    use crate::walkers::test_harness::{app_with, spawn_wanderer};
+
+    const BIG: TierCaps = TierCaps { full: 64, reduced: 64 };
+    /// The harness's fixed ticks per second.
+    const HZ: usize = 60;
+
+    fn ws() -> WorldspaceId {
+        WorldspaceId::new("nav_room")
+    }
+
+    fn at(x: f64, z: f64) -> WorldPos {
+        WorldPos::from_f64(DVec3::new(x, 0.0, z))
+    }
+
+    fn planar(a: WorldPos, b: WorldPos) -> f32 {
+        a.delta_f32(b).with_y(0.0).length()
+    }
+
+    /// Every tier-0 directive end, with the instant of the tick it was stepped on.
+    #[derive(Resource, Default)]
+    struct Ends(Vec<(DirectiveDone, GameInstant)>);
+
+    /// The clock on the fixed tick (the sky plugin's job in the game): x30.
+    #[allow(clippy::needless_pass_by_value)]
+    fn advance_clock(time: Res<Time>, mut clock: ResMut<GameClock>) {
+        clock.advance(time.delta());
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn collect_ends(tick: Res<Tier0Tick>, clock: Res<GameClock>, mut ends: ResMut<Ends>) {
+        ends.0.extend(tick.events.iter().map(|e| (e.clone(), clock.now)));
+    }
+
+    /// The walkers' harness with the game clock, an empty worldspace graph (straight walks in one
+    /// worldspace), the room as the active worldspace and `caps`.
+    fn game(caps: TierCaps) -> App {
+        let mut app = app_with(|app| {
+            app.insert_resource(GameClock::default())
+                .insert_resource(NavWorldGraph::default())
+                .insert_resource(ActiveWorldspace(Some(ws())))
+                .init_resource::<Ends>()
+                .add_systems(
+                    FixedUpdate,
+                    (
+                        advance_clock.before(AiAllocSystems::Allocate),
+                        collect_ends.after(AiLogicalSystems::Step).before(AiLogicalSystems::Promote),
+                    ),
+                );
+        });
+        app.world_mut().resource_mut::<AiAllocSettings>().set_caps(caps);
+        app
+    }
+
+    /// A wanderer at `home` as `attach` makes it, its stack seeded as `seed_directives` does:
+    /// `before` (record order), then the record wander. Returns the entity and the ids.
+    fn actor(app: &mut App, key: u128, home: WorldPos, before: Vec<DirectiveKind>) -> (Entity, Vec<DirectiveId>) {
+        let e = spawn_wanderer(app, &ws(), home, key, 11);
+        let wander = app.world().get::<Walker>(e).unwrap().driver.planner.wander;
+        let now = app.world().get_resource::<GameClock>().map_or_else(GameTime::default, |c| GameTime::from(c.now));
+        let mut stack = DirectiveStack::new(ActorKey(key), now);
+        let mut events = Vec::new();
+        let mut ids: Vec<_> = before
+            .into_iter()
+            .map(|k| stack.push(DirectiveSpec::new(k, DirectiveSource::Record), now, &MorrowindPolicy, &mut events))
+            .collect();
+        let kind = DirectiveKind::StayNear { home: Location::new(ws(), home), radius: wander.distance };
+        let stay = stack.push(DirectiveSpec::new(kind, DirectiveSource::Record).repeating(), now, &MorrowindPolicy, &mut events);
+        ids.push(stay);
+        app.world_mut().resource_mut::<AiDirectives>().insert(stack);
+        app.world_mut().entity_mut(e).insert((
+            AiActor(ActorKey(key)),
+            AiPackageExtras(vec![(stay, PackageExtra::Wander(wander))]),
+            DirectiveDrive::default(),
+        ));
+        (e, ids)
+    }
+
+    fn go_to(x: f64, z: f64) -> DirectiveKind {
+        DirectiveKind::GoTo(Location::new(ws(), at(x, z)))
+    }
+
+    fn stored(app: &App, key: u128) -> bool {
+        app.world().resource::<AiLogical>().contains(ActorKey(key))
+    }
+
+    fn position(app: &App, e: Entity) -> WorldPos {
+        app.world().get::<Mover>(e).unwrap().loco.position
+    }
+
+    fn status(app: &App, key: u128, id: DirectiveId) -> DirectiveStatus {
+        app.world().resource::<AiDirectives>().get(ActorKey(key)).expect("a stack").status(id)
+    }
+
+    fn now(app: &App) -> GameInstant {
+        app.world().resource::<GameClock>().now
+    }
+
+    /// Tier invariance in the game: the same 20 m `GoTo`, walked by a Full walker over the navmesh
+    /// and by a stored one on the world graph, ends `Completed` within one game minute.
+    #[test]
+    fn a_full_walker_and_a_stored_one_complete_the_same_go_to_within_a_game_minute() {
+        let mut app = game(BIG);
+        let (full, full_ids) = actor(&mut app, 1, at(10.0, 10.0), vec![go_to(30.0, 10.0)]);
+        let (logical, logical_ids) = actor(&mut app, 2, at(10.0, 30.0), vec![go_to(30.0, 30.0)]);
+        app.world_mut().entity_mut(logical).insert(Dormant);
+        let mut full_end = None;
+        for _ in 0..(40 * HZ) {
+            app.update();
+            if full_end.is_none() && status(&app, 1, full_ids[0]) == DirectiveStatus::Ended {
+                full_end = Some(now(&app));
+            }
+            if full_end.is_some() && status(&app, 2, logical_ids[0]) == DirectiveStatus::Ended {
+                break;
+            }
+        }
+        assert!(stored(&app, 2) && !stored(&app, 1));
+        assert!(app.world().entity(logical).contains::<AiLogicalBody>());
+        let full_end = full_end.expect("the Full walker never arrived");
+        assert_eq!(app.world().get::<DirectiveDrive>(full).unwrap().stats.goto_finished, 1, "the Full walk arrived");
+        let ends: Vec<_> = app.world().resource::<Ends>().0.iter().filter(|(e, _)| e.id == logical_ids[0]).cloned().collect();
+        assert_eq!(ends.len(), 1, "{ends:?}");
+        let (end, stepped_at) = &ends[0];
+        assert_eq!((end.actor, end.end), (ActorKey(2), DirectiveEnd::Completed));
+        let gap_ms = full_end.0.abs_diff(stepped_at.0);
+        println!("AI10c2b: Full arrived at {} ms, tier 0 at {} ms, {gap_ms} ms apart", full_end.0, stepped_at.0);
+        assert!(gap_ms <= 60_000, "{gap_ms} game ms apart");
+        assert!(app.world().resource::<crate::script_ai::AiRuns>().get(ActorKey(2)).done, "GetAIPackageDone at tier 0");
+        assert!(planar(position(&app, logical), at(10.0, 30.0)) < 1e-3, "the dormant body moved");
+    }
+
+    /// A viewer at (20, 1.6, 45) looking down -Z over the room's middle band.
+    fn viewer(app: &mut App) {
+        let eye = WorldPos::from_f64(DVec3::new(20.0, 1.6, 45.0));
+        app.world_mut().spawn(AiViewer(View { eye, rotation: Quat::IDENTITY, fov_y: 1.0, aspect: 1.5 }));
+    }
+
+    #[test]
+    fn a_dormant_walker_enters_then_is_promoted_awake_and_unseen() {
+        let mut app = game(BIG);
+        let (e, _) = actor(&mut app, 3, at(20.0, 20.0), Vec::new());
+        app.world_mut().entity_mut(e).insert(Dormant);
+        app.update();
+        app.update();
+        assert!(stored(&app, 3), "a dormant walker with a stack is tier 0");
+        assert!(app.world().entity(e).contains::<AiLogicalBody>());
+        app.world_mut().entity_mut(e).remove::<Dormant>();
+        for _ in 0..10 {
+            app.update();
+        }
+        assert!(!stored(&app, 3), "awake and unseen: promoted");
+        assert!(!app.world().entity(e).contains::<AiLogicalBody>());
+        assert_eq!(app.world().get::<AiTier>(e).map(|t| t.tier), Some(Tier::Full), "the allocated tier");
+        assert!(planar(position(&app, e), at(20.0, 20.0)) < 0.5, "a waiter is placed on its body");
+        assert!(app.world().resource::<Tier0Tick>().counts.placed >= 1);
+    }
+
+    #[test]
+    fn awake_at_a_seen_spot_away_from_its_body_it_stays_stored_and_the_body_stays() {
+        let mut app = game(BIG);
+        viewer(&mut app);
+        let start = at(10.0, 20.0);
+        let (e, _) = actor(&mut app, 4, start, vec![go_to(30.0, 20.0)]);
+        app.world_mut().entity_mut(e).insert(Dormant);
+        app.update();
+        app.update();
+        assert!(stored(&app, 4));
+        // 240 game s at x30 = 8 s of walking at 1.5 m/s: its state stands 12 m on, in view.
+        app.world_mut().resource_mut::<GameClock>().skip(240_000);
+        app.world_mut().entity_mut(e).remove::<Dormant>();
+        for _ in 0..30 {
+            app.update();
+            assert!(stored(&app, 4), "promoted into view");
+            assert!(planar(position(&app, e), start) < 0.05, "the body moved");
+        }
+        assert_eq!(app.world().resource::<Tier0Tick>().counts.queued, 1, "it waits in the queue");
+        assert!(app.world().entity(e).contains::<AiLogicalBody>());
+    }
+
+    /// Where key 5's body stood right after this tick's placement, with its velocity.
+    #[derive(Resource, Default)]
+    struct Placed(Option<(Location, WorldPos, Vec3)>);
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn record_placed(tick: Res<Tier0Tick>, bodies: Query<(&AiActor, &Mover)>, mut placed: ResMut<Placed>) {
+        let Some((_, to)) = tick.placements.iter().find(|(k, _)| *k == ActorKey(5)) else { return };
+        if let Some((_, m)) = bodies.iter().find(|(a, _)| a.0 == ActorKey(5)) {
+            placed.0 = Some((to.clone(), m.loco.position, m.loco.motion.velocity));
+        }
+    }
+
+    #[test]
+    fn placement_moves_the_body_and_it_walks_on_from_there() {
+        let mut app = game(BIG);
+        app.init_resource::<Placed>()
+            .add_systems(FixedUpdate, record_placed.after(AiLogicalSystems::Promote).before(AiLogicalSystems::Cleanup));
+        let start = at(10.0, 20.0);
+        let goal = at(30.0, 20.0);
+        let (e, ids) = actor(&mut app, 5, start, vec![go_to(30.0, 20.0)]);
+        app.world_mut().entity_mut(e).insert(Dormant);
+        app.update();
+        app.update();
+        assert!(stored(&app, 5));
+        app.world_mut().resource_mut::<GameClock>().skip(240_000);
+        app.world_mut().entity_mut(e).remove::<Dormant>();
+        for _ in 0..10 {
+            app.update();
+            if !stored(&app, 5) {
+                break;
+            }
+        }
+        assert!(!stored(&app, 5), "unseen: promoted");
+        let (to, body, velocity) = app.world().resource::<Placed>().0.clone().expect("placed");
+        assert_eq!(to.worldspace, ws());
+        assert_eq!(body, to.pos, "the body stands on the snapped point");
+        assert_eq!(velocity, Vec3::ZERO);
+        let along = planar(to.pos, start);
+        assert!((11.0..=13.5).contains(&along), "placed {along} m along");
+        // It walks on from there: never back toward the start, and on toward the goal.
+        let mut last = planar(position(&app, e), goal);
+        for tick in 0..(4 * HZ) {
+            app.update();
+            let d = planar(position(&app, e), goal);
+            assert!(d.is_finite() && d <= last + 0.05, "tick {tick}: walked back ({d} m > {last} m from the goal)");
+            assert!(planar(position(&app, e), start) >= along - 0.3, "tick {tick}: back toward the old spot");
+            last = d;
+        }
+        assert!(last < planar(to.pos, goal) - 1.0, "it never walked on ({last} m left)");
+        assert_eq!(status(&app, 5, ids[0]), DirectiveStatus::Serving);
+        assert!(app.world().get::<DirectiveDrive>(e).unwrap().owns(), "the GoTo walks it");
+    }
+
+    /// Caps 0: an awake walker the allocator puts at tier 0 enters the store; its `GoTo` ends once,
+    /// from the tier-0 step, while `drive_directives` never walks it and its body stands.
+    #[test]
+    fn drive_directives_leaves_a_stored_stack_to_the_tier_zero_step() {
+        let mut app = game(TierCaps { full: 0, reduced: 0 });
+        let start = at(10.0, 20.0);
+        let (e, ids) = actor(&mut app, 6, start, vec![go_to(30.0, 20.0)]);
+        for _ in 0..(20 * HZ) {
+            app.update();
+            if status(&app, 6, ids[0]) == DirectiveStatus::Ended {
+                break;
+            }
+            assert!(planar(position(&app, e), start) < 0.05, "the stored body walked");
+        }
+        assert_eq!(status(&app, 6, ids[0]), DirectiveStatus::Ended);
+        assert!(stored(&app, 6));
+        let ends: Vec<_> = app.world().resource::<Ends>().0.iter().map(|(d, _)| (d.actor, d.id, d.end)).collect();
+        assert_eq!(ends, [(ActorKey(6), ids[0], DirectiveEnd::Completed)], "one end, the tier-0 step's");
+        let drive = app.world().get::<DirectiveDrive>(e).unwrap();
+        assert_eq!((drive.stats.goto_started, drive.stats.goto_finished), (0, 0), "drive_directives walked it");
+        assert_eq!(status(&app, 6, ids[1]), DirectiveStatus::Serving, "the wander is the next top");
+    }
+
+    #[test]
+    fn no_game_clock_no_tier_zero() {
+        let mut app = app_with(|_| {});
+        let (e, _) = actor(&mut app, 7, at(20.0, 20.0), Vec::new());
+        app.world_mut().entity_mut(e).insert(Dormant);
+        for _ in 0..10 {
+            app.update();
+        }
+        assert!(app.world().resource::<AiLogical>().is_empty());
+        assert!(!app.world().entity(e).contains::<AiLogicalBody>());
+    }
+
+    #[test]
+    fn the_proof_line() {
+        let line = proof_line(Tier0Counts { logical: 12, queued: 2, placed: 5, other_space: 1 });
+        println!("{line}");
+        assert_eq!(line, "tier0: 12 logical, 2 queued, 5 placed (1 other-space)");
+    }
+}

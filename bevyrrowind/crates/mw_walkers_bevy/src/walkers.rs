@@ -50,7 +50,7 @@ use sf_ai::{
     ExecConfig, ExecContext, NavCommand, NavMoveState, Tier, TraceEntry,
 };
 use sf_ai_bevy::{
-    AiActor, AiDecideGate, AiExecPlugin, AiExecSettings, AiExecTick, AiLibrary, AiPlugin, AiTier, AiTraces,
+    AiActor, AiDecideGate, AiExecPlugin, AiExecSettings, AiExecTick, AiLibrary, AiLogicalBody, AiPlugin, AiTier, AiTraces,
     add_exec_tunables, to_controller_gait,
 };
 use sf_anim_bevy::{AnimLod, AnimStats, Animator};
@@ -733,9 +733,10 @@ pub(crate) fn clear_corridor_goal(nav: &mut NavCorridor, queries: Option<&mut Na
 /// `ai.alloc.reduced_decide_s`, staggered; every tick before the first allocation), passed as
 /// [`ExecContext::decide`]: a walker whose step ran out stands until its next decide tick, while
 /// the running operator (steering, idle timers) and events (a dirty key, a failed precondition, a
-/// failed walk) run every tick. Gaps: a tier-0 (Logical) walker stands where it is (no planner) until
-/// `AI10` gives tier 0 its state machine (removal path: AI10 replaces this stand); the pathgrid
-/// fallback (`WanderDriver::update_fallback`, off the navmesh) still chooses every tick, as before.
+/// failed walk) run every tick. A tier-0 body ([`AiLogicalBody`], `AI10c2`: its state steps in
+/// [`crate::logical`]) stands where it is, before anything else drives it, until its promotion
+/// places it; so does a `Logical` walker outside the store (no stack, no game clock). Gap: the
+/// pathgrid fallback (`WanderDriver::update_fallback`, off the navmesh) still chooses every tick.
 #[allow(
     clippy::needless_pass_by_value,
     clippy::too_many_arguments,
@@ -764,7 +765,7 @@ fn drive(
             &Reaction,
             Option<&crate::directive_drive::DirectiveDrive>,
             Option<&crate::greeting::Greeting>,
-            Option<&AiTier>,
+            (Option<&AiTier>, Has<AiLogicalBody>),
         ),
         Without<Dormant>,
     >,
@@ -791,25 +792,29 @@ fn drive(
         reaction,
         directive,
         greeting,
-        tier,
+        (tier, logical),
     ) in &mut walkers
     {
         let walker = &mut *walker;
-        if reaction.owns()
-            || directive.is_some_and(crate::directive_drive::DirectiveDrive::owns)
-            || greeting.is_some_and(crate::greeting::Greeting::holds)
+        if !logical
+            && (reaction.owns()
+                || directive.is_some_and(crate::directive_drive::DirectiveDrive::owns)
+                || greeting.is_some_and(crate::greeting::Greeting::holds))
         {
             // AI8i: the reaction drives the actor (MA2d2: or a directive's walk, a `GoTo`; MA4c2:
             // or a greeting holds it still); the wander stays paused where it was.
             walker.held_intent = None;
             continue;
         }
-        if directive.is_some_and(crate::directive_drive::DirectiveDrive::stands)
+        if logical
+            || directive.is_some_and(crate::directive_drive::DirectiveDrive::stands)
             || tier.is_some_and(|t| t.tier == Tier::Logical)
         {
-            // MA2d4: no package left on its stack (`OpenMW`: an empty `AiSequence` runs
-            // nothing): it stands where it is, facing where it faces. AI9g: so does a tier-0
-            // walker (no planner) until AI10's tier-0 state machine replaces this stand.
+            // AI10c2: a tier-0 body stands, whatever drove it before (its state walks in
+            // `crate::logical` until its promotion places it). MA2d4: no package left on its
+            // stack (`OpenMW`: an empty `AiSequence` runs nothing): it stands where it is, facing
+            // where it faces; so does a `Logical` walker the store does not hold (no stack, no
+            // game clock).
             if let Some(nav) = corridor.as_deref_mut() {
                 clear_corridor_goal(nav, queries.as_deref_mut());
             }
@@ -1192,6 +1197,8 @@ fn add_drive(app: &mut App, vocab: Arc<WanderVocabulary>) {
         ),
     )
     .add_systems(Update, report_modes);
+    // AI10c2: tier 0 in the game (enter the store, step, promote and place the bodies).
+    crate::logical::add(app);
     crate::reaction::add(app);
     // MA4c2: NPCs greet the player (decide before the routines, the stand after the corridor).
     crate::greeting::add(app);
@@ -1775,6 +1782,25 @@ mod tests {
 #[cfg(test)]
 #[path = "drive_tests.rs"]
 mod drive_tests;
+
+/// The drive tests' harness for the tier-0 tests (`crate::logical`): the game's fixed-tick drive
+/// over a flat 40 m navmesh room in `nav_room` ([`drive_tests::app_with`]) and a wanderer as
+/// `attach` makes it ([`drive_tests::spawn_wanderer`]).
+#[cfg(test)]
+pub(crate) mod test_harness {
+    use bevy_app::App;
+    use bevy_ecs::entity::Entity;
+    use sf_coords::WorldPos;
+    use sf_world::WorldspaceId;
+
+    pub(crate) fn app_with(extra: impl FnOnce(&mut App)) -> App {
+        super::drive_tests::app_with(extra)
+    }
+
+    pub(crate) fn spawn_wanderer(app: &mut App, ws: &WorldspaceId, home: WorldPos, key: u128, seed: u64) -> Entity {
+        super::drive_tests::spawn_wanderer(app, ws, home, key, seed)
+    }
+}
 
 #[cfg(test)]
 #[path = "sight_tests.rs"]

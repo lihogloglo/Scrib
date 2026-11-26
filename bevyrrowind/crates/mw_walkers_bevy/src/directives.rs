@@ -44,7 +44,7 @@ use sf_ai::{
     Directive, DirectiveEnd, DirectiveId, DirectiveSource, DirectiveSpec, DirectiveStack, GameTime, StackEdit,
     StackPolicy,
 };
-use sf_ai_bevy::{AiActor, AiDirectives};
+use sf_ai_bevy::{AiActor, AiDirectives, AiLogical};
 use sf_character_bevy::{Character, CharacterPlacement};
 use sf_controller_bevy::Mover;
 use sf_ids::ActorKey;
@@ -437,12 +437,13 @@ pub(crate) fn seed_directives(
 /// `Update`, after [`seed_directives`]: when a character spawns or [`PlacedObjects`] changes,
 /// maps each [`PendingPackages`] entry again and puts what resolves on its actor's stack at its
 /// record position ([`Late`], through [`Renewing`]), with its extras.
-#[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
+#[allow(clippy::needless_pass_by_value, clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn retry_pending(
     pending: Option<ResMut<PendingPackages>>,
     store: Option<ResMut<AiDirectives>>,
     objects: Option<Res<PlacedObjects>>,
     clock: Option<Res<GameClock>>,
+    mut logical: Option<ResMut<AiLogical>>,
     spawned: Query<(), Added<CharacterPlacement>>,
     placed: Query<(&Character, &CharacterPlacement)>,
     mut actors: Query<(Entity, &AiActor, Option<&mut AiPackageExtras>, Option<&mut DirectiveDrive>)>,
@@ -474,6 +475,10 @@ pub(crate) fn retry_pending(
             };
             let late = Late { renewing: &policy, index, stacked: &entry.stacked };
             let id = stack.push(spec.clone(), now, &late, &mut events);
+            if let Some(store) = logical.as_deref_mut() {
+                // AI10c2: a tier-0 actor takes the late package up on the next tier-0 step.
+                store.wake(*key);
+            }
             entry.stacked.push((index, spec));
             landed += 1;
             if let Some((_, _, extras, drive)) = actor.as_mut() {

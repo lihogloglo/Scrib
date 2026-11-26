@@ -85,3 +85,13 @@ Log: `ai: N wanderers on navmesh, M on pathgrid fallback (since start: X navmesh
 - Q3: walk ~8 m away and come back: does it greet again? yes/no
 - Q4: approach one from behind: does it turn around smoothly (no snap)? yes/no
 - Status: awaiting owner.
+
+### AI-14: far NPCs run at tier 0 and come back without a pop (AI10c2, 2026-11-26)
+- Kind: game, dev build. `owner_launch.sh view "Balmora" --hour 12` (exterior, noon), F11 drops the player.
+- Proof log line: `tier0: N logical, Q queued, P placed (X other-space)` with N > 0 (NPCs past the AI radius are
+  tier 0: they stand where they are, their state runs on the world graph; one line a second at most).
+- Q1: from the bridge, watch NPCs more than ~100 m away for 30 s: does any jump from one place to another while you
+  watch? (expected no)
+- Q2: walk toward a far NPC: does it start moving normally when you get near, with no pop? (expected yes)
+- Q3: turn away for 10 s and back: is every nearby NPC still there, none vanished? (expected yes)
+- Status: awaiting owner.
