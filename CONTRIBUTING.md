@@ -222,6 +222,16 @@ Several sessions may work **in the same working tree** at once.
   fullscreen, muted unless the check is about audio or the whole game (`--sound` keeps it). One scene at a
   time; never close the owner's window. Sub-agents never launch the game, not for log lines nor BRP: they
   build and hand the scene name and the log lines or BRP checks to look for to the orchestrator.
+- **A look comparison is one scene with a live toggle (owner 2026-11-26).** "Does it look the same" or "which is
+  better" reaches the owner only as ONE test scene with the switch on a key or a dev panel entry, at a fixed
+  weather, hour and camera start, with one short line on screen saying which arm is live. Never the same scene
+  launched twice ("too many variables that change (weather etc)"); a check whose second arm is only
+  `--set x=false` is not ready for the owner.
+- **No wall of text on screen (owner 2026-11-26).** Test scenes and review tools show a minimal overlay, one line
+  of keys, and a visible confirmation of every action the owner takes (the clip browser was rejected: "I have no
+  idea if my changes were validated or not").
+- **A check brief** says what was built, what to do, then 2-4 yes/no questions (`docs/meta-coordinator.md` "Owner
+  checks").
 - Changed animation slots or sources? Re-run `bevyrrowind bake` before checking in the live game: headless
   tests bake their own cache, the game reads the last bake.
 

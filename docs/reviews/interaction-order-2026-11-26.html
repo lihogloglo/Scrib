@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interaction Order</title>
+<style>
+:root { --bg:#fbfaf7; --fg:#1f1d1a; --muted:#6b665e; --line:#ddd8cf; --accent:#8a4b16; --card:#ffffff;
+  --ok:#2f6b3a; --okbg:#e4f1e5; --wait:#8a5a00; --waitbg:#f6ead0; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#17161a; --fg:#e9e6e0; --muted:#a39d93;
+  --line:#34323a; --accent:#e0a064; --card:#1f1e23; --ok:#8fd19a; --okbg:#1f3323; --wait:#e8c26a; --waitbg:#3a3018; } }
+:root[data-theme="dark"] { --bg:#17161a; --fg:#e9e6e0; --muted:#a39d93; --line:#34323a; --accent:#e0a064;
+  --card:#1f1e23; --ok:#8fd19a; --okbg:#1f3323; --wait:#e8c26a; --waitbg:#3a3018; }
+* { box-sizing:border-box; }
+body { background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, sans-serif; margin:0; padding:24px 16px 48px; }
+main { max-width:760px; margin:0 auto; }
+h1 { font-size:1.55rem; line-height:1.2; margin:0 0 6px; text-wrap:balance; }
+h2 { font-size:.8rem; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin:28px 0 8px; font-weight:600; }
+p { margin:0 0 10px; }
+.lede { color:var(--muted); margin-bottom:18px; }
+.now { border-left:3px solid var(--accent); padding:8px 12px; background:var(--card); border-radius:0 6px 6px 0; }
+ol.rows { list-style:none; margin:0; padding:0; border-top:1px solid var(--line); }
+ol.rows li { display:grid; grid-template-columns:2.2rem 1fr auto; gap:4px 10px; align-items:start;
+  padding:10px 0; border-bottom:1px solid var(--line); }
+.n { font-variant-numeric:tabular-nums; color:var(--muted); font-weight:600; padding-top:1px; }
+.what { font-weight:600; }
+.id { font-weight:400; color:var(--muted); font-size:.82rem; white-space:nowrap; }
+.needs { grid-column:2 / 4; color:var(--muted); font-size:.9rem; }
+.size { font-size:.78rem; font-weight:600; border:1px solid var(--line); border-radius:999px; padding:1px 9px;
+  white-space:nowrap; margin-top:2px; }
+.tag { font-size:.78rem; font-weight:600; border-radius:4px; padding:0 6px; margin-right:4px; white-space:nowrap; }
+.tag.ok { color:var(--ok); background:var(--okbg); }
+.tag.wait { color:var(--wait); background:var(--waitbg); }
+.ask { border:2px solid var(--accent); border-radius:8px; padding:14px 16px; background:var(--card); margin-top:8px; }
+.ask strong { font-size:1.1rem; }
+.small { color:var(--muted); font-size:.88rem; }
+</style>
+</head>
+<body>
+<main>
+<h1>Interaction lane: the next rows, in the proposed order</h1>
+<p class="lede">Owner page, 2026-11-26. One line per row: what you can do in the game once it is built. The lane builds
+nothing new until you answer the question at the bottom.</p>
+
+<p class="now"><strong>Now, not part of the question:</strong> the sit fix (pressing E on &ldquo;Sit&rdquo; did nothing in
+tonight&rsquo;s check). Built today: the use prompts and swing doors.</p>
+
+<h2>Proposed order</h2>
+<ol class="rows">
+  <li><span class="n">1</span><span class="what">Lie down on a bed and rest from it; lean at lean spots <span class="id">IN3</span></span><span class="size">medium</span>
+    <span class="needs"><span class="tag ok">ready</span>after the sit fix. Bed clips from the anim lane for the final look.</span></li>
+  <li><span class="n">2</span><span class="what">NPCs sit and sleep on the same chairs and beds, and never take the one you use <span class="id">IN8 = AI14</span></span><span class="size">medium</span>
+    <span class="needs"><span class="tag ok">ready</span>after row 1. The AI lane builds it.</span></li>
+  <li><span class="n">3</span><span class="what">Carry one thing in your hands in third person (chair, crate, body): slower, no sprint, no roll <span class="id">IN35</span></span><span class="size">medium</span>
+    <span class="needs"><span class="tag wait">waits on anim</span>the hand grip table and the carry clips.</span></li>
+  <li><span class="n">4</span><span class="what">Move furniture: carry or drag a chair, put it down, it is still there after a reload <span class="id">IN6</span></span><span class="size">medium</span>
+    <span class="needs"><span class="tag wait">waits on row 3</span></span></li>
+  <li><span class="n">5</span><span class="what">Smash crates, barrels, urns and pottery: they break in stages and spill what they hold <span class="id">IN1, IN38</span></span><span class="size">large</span>
+    <span class="needs"><span class="tag wait">waits on combat</span>weapon hits that land on objects.</span></li>
+  <li><span class="n">6</span><span class="what">Nothing to see yet: the hand-over and put-down rules NPC errands will use <span class="id">IN45, IN46</span></span><span class="size">small</span>
+    <span class="needs"><span class="tag ok">half ready</span>the put-down rule needs nothing; the hand-over waits on row 3.</span></li>
+  <li><span class="n">7</span><span class="what">Things break when they hit hard: a dropped or thrown pot shatters <span class="id">IN4</span></span><span class="size">small</span>
+    <span class="needs"><span class="tag wait">waits on row 5</span></span></li>
+  <li><span class="n">8</span><span class="what">Every impact, break, door, throw and drop makes a noise that NPCs can hear <span class="id">IN18</span></span><span class="size">small</span>
+    <span class="needs"><span class="tag wait">waits on row 7</span>NPC hearing exists; how they react is the AI lane&rsquo;s next stage.</span></li>
+  <li><span class="n">9</span><span class="what">Bash a locked door or chest open: strength decides, the contents may break, it is a crime <span class="id">IN37</span></span><span class="size">medium</span>
+    <span class="needs"><span class="tag wait">waits on row 5</span></span></li>
+  <li><span class="n">10</span><span class="what">Nothing to see yet: the world keeps a record of what you changed (door left open, crate broken, chair moved), for NPCs to notice later <span class="id">IN14</span></span><span class="size">small</span>
+    <span class="needs"><span class="tag wait">waits on rows 4, 5</span></span></li>
+  <li><span class="n">11</span><span class="what">Broken and moved things come back after a while, by rules: a town tidies itself <span class="id">IN15</span></span><span class="size">medium</span>
+    <span class="needs"><span class="tag wait">waits on row 5</span></span></li>
+  <li><span class="n">12</span><span class="what">Throw what you carry at someone: it hurts and staggers by weight and speed; seen, it is assault <span class="id">IN36</span></span><span class="size">medium</span>
+    <span class="needs"><span class="tag wait">waits on rows 3, 7</span></span></li>
+</ol>
+<p class="small" style="margin-top:8px">Sizes are estimates: small = 1-2 build slices, medium = 3-5, large = 6 or more.
+For scale, swing doors took about 15 slices in one day.</p>
+
+<h2>Worth knowing</h2>
+<p>After rows 1 and 2, almost everything waits on two things from other lanes: the <strong>hand grip table</strong>
+(anim) and <strong>weapon hits on objects</strong> (combat). One row that needs nothing and now sits much later:
+<strong>snuff and relight lamps to darken a room</strong> (IN19).</p>
+
+<h2>The question</h2>
+<div class="ask">
+  <p><strong>Approve this order?</strong></p>
+  <p style="margin:0">Answer <strong>yes</strong>, or <strong>&ldquo;move X before Y&rdquo;</strong> (for example
+  &ldquo;move lamps before carrying&rdquo;).</p>
+</div>
+
+<p class="small" style="margin-top:22px">Later, not in this question: ladders and levers, NPCs that carry and work at forges,
+standing and sitting on moving decks, fire. Source: <code>docs/roadmaps/interaction.md</code> stages 1-2 and
+<code>docs/roadmaps/order.md</code> waves 1 and 3.</p>
+</main>
+</body>
+</html>

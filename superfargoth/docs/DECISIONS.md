@@ -2100,3 +2100,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (owner via meta-7, "yeah to all recommended"; `worldgen-landuse.md` "Owner answers"): field crops are not
   harvestable in v1 (later a share near farms, owned); generated fields may reach right up to kept towns and plantations,
   outside the kept area; field walls and fences block the player, jumpable, a gate at every field way; MU's own land-use farms stay off (data switch later).
+- 2026-11-26 (owner sitting, via meta-7; CONTRIBUTING "Tests and visual checks"): a look comparison reaches the owner only
+  as one scene with a live toggle at a fixed weather, hour and camera start, never two launches; test scenes and review
+  tools show no wall of text and confirm every action on screen; a check brief = what was built, what to do, 2-4 yes/no.
