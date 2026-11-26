@@ -688,10 +688,7 @@ impl ItemContent for MwItems {
 fn hook(spawners: Option<ResMut<PlacementSpawners>>) {
     if let Some(mut spawners) = spawners {
         // Containers and activators are solid (and focusable: the focus ray needs a body).
-        hook_physics(
-            &mut spawners,
-            &[PlacementClass::Static, PlacementClass::Door, PlacementClass::Dynamic, mw_world::source::CONTAINER, mw_world::source::ACTIVATOR],
-        );
+        hook_physics(&mut spawners, mw_world::source::MOVER_SOLID);
         hook_items(&mut spawners, &[PlacementClass::Light]);
     }
 }

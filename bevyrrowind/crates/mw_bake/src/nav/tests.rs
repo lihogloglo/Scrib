@@ -698,3 +698,109 @@ fn nav_bake_cost_over_real_cells() {
     }
     println!("nv4m world total: {total_cpu:.0} CPU-s, {:.0} s on 16 threads (ideal scaling)", total_cpu / 16.0);
 }
+
+// NV16: activators and containers are the mover's solids, so the bake's geometry too.
+
+const COUNTER: &str = "meshes/counter.nif";
+const TRIGGER: &str = "meshes/trigger.nif";
+/// The counter activator's footprint centre (XZ) and the trigger activator's.
+const COUNTER_AT: Vec3 = Vec3::new(5.0, 0.0, 5.0);
+const TRIGGER_AT: Vec3 = Vec3::new(15.0, 0.0, 5.0);
+
+#[test]
+fn the_mover_solid_set_is_nav_geometry() {
+    let with = |class, flags| Placement { flags, ..placed(9, COUNTER, class, Vec3::ZERO) };
+    let none = PlacementFlags::empty();
+    for class in [PlacementClass::Static, PlacementClass::Dynamic, PlacementClass::Door, mw_world::source::ACTIVATOR, mw_world::source::CONTAINER] {
+        assert!(is_solid(&with(class, none)), "{class:?}");
+    }
+    // One list: everything the physics hook makes solid is geometry.
+    assert!(mw_world::source::MOVER_SOLID.iter().all(|&c| is_solid(&with(c, none))));
+    for class in [PlacementClass::Actor, PlacementClass::Light, PlacementClass::Marker] {
+        assert!(!is_solid(&with(class, none)), "{class:?}");
+    }
+    assert!(!is_solid(&with(mw_world::source::ACTIVATOR, PlacementFlags::EDITOR_ONLY)));
+    assert!(!is_solid(&with(mw_world::source::ACTIVATOR, PlacementFlags::DISABLED)));
+}
+
+/// [`FakeCollision`] plus a 2 x 1 x 2 m counter and a trigger with no collision shape.
+struct PropCollision;
+
+impl Step for PropCollision {
+    fn id(&self) -> &'static str {
+        COLLISION_COOK
+    }
+    fn version(&self) -> u32 {
+        1
+    }
+    fn run(&self, subject: &str, cx: &mut RunCx<'_>) -> Result<Vec<u8>, BakeError> {
+        match subject {
+            COUNTER => Ok(cuboid(Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 1.0, 1.0)).to_bytes()),
+            TRIGGER => Ok(CollisionMesh { positions: Vec::new(), triangles: Vec::new(), surfaces: Vec::new() }.to_bytes()),
+            _ => FakeCollision.run(subject, cx),
+        }
+    }
+}
+
+/// `model.info` bounds: the trigger has render bounds but no collision.
+fn prop_bounds(m: &str) -> Option<(Vec3, Vec3)> {
+    match m {
+        COUNTER => Some((Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 1.0, 1.0))),
+        TRIGGER => Some((Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 2.0, 1.0))),
+        _ => bounds_of(m),
+    }
+}
+
+fn prop_world() -> NavWorld {
+    let mut placements = room();
+    placements.push(placed(10, COUNTER, mw_world::source::ACTIVATOR, COUNTER_AT));
+    placements.push(placed(11, TRIGGER, mw_world::source::ACTIVATOR, TRIGGER_AT));
+    let terrain = BTreeSet::new();
+    let input = SpaceInput { extent: None, water: None, placements: placements.iter().collect(), terrain: &terrain, nodes: vec![NODE] };
+    let space = NavSpace::build(&ws(), input, &prop_bounds).unwrap();
+    NavWorld::new(BTreeMap::from([(ws(), space)]), 0.9)
+}
+
+/// Whether the XZ point lies in the convex polygon (either winding, edges included).
+fn inside_xz(points: &[Vec3], at: Vec3) -> bool {
+    let n = points.len();
+    let sides: Vec<f32> = (0..n)
+        .map(|i| {
+            let (a, b) = (points[i], points[(i + 1) % n]);
+            (b.x - a.x) * (at.z - a.z) - (b.z - a.z) * (at.x - a.x)
+        })
+        .collect();
+    sides.iter().all(|&s| s >= -1e-4) || sides.iter().all(|&s| s <= 1e-4)
+}
+
+#[test]
+fn an_activator_blocks_the_floor_but_one_without_collision_does_not() {
+    use sf_nav::NavBackend;
+    let world = Arc::new(prop_world());
+    let c = &world.spaces[&ws()].cells[&(0, 0)];
+    assert_eq!(c.solids.iter().map(|o| o.id).collect::<Vec<_>>(), vec![1, 2, 10, 11]);
+
+    let dir = tempfile::tempdir().unwrap();
+    let (baker, bake, _) = session_with(dir.path(), &world, PropCollision);
+    let report = baker.bake(&bake.class_products(&[ws()], HUMANOID));
+    assert_eq!(report.failures().count(), 0, "{:?}", report.failures().collect::<Vec<_>>());
+    let backend = sf_nav_recast::RecastBackend::new(sf_nav_recast::RecastConfig::new(classes())).unwrap();
+    // Every polygon over each footprint centre: the mean height of its vertices.
+    let (mut counter, mut trigger) = (Vec::new(), Vec::new());
+    for k in bake.tile_keys(&ws(), HUMANOID) {
+        let b = bytes(&baker, &ProductKey::new(sf_nav_bake::TILES, sf_nav_bake::tile_subject(&k)));
+        let Some(t) = BakedTile::decode(&b).unwrap() else { continue };
+        let tile = backend.read_tile_blob(&t.blob).unwrap();
+        for p in &tile.polys {
+            let points: Vec<Vec3> = p.points(&tile).collect();
+            if inside_xz(&points, COUNTER_AT) {
+                counter.push(p.centroid(&tile).y);
+            }
+            if inside_xz(&points, TRIGGER_AT) {
+                trigger.push(p.centroid(&tile).y);
+            }
+        }
+    }
+    assert!(counter.iter().all(|&y| y > 0.5), "no floor polygon under the counter: {counter:?}");
+    assert!(trigger.iter().any(|&y| y.abs() < 0.5), "the trigger leaves the floor walkable: {trigger:?}");
+}

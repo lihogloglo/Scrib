@@ -7,8 +7,9 @@
 //!   one 16 km region). The exterior covers the `LAND` grid's bounding box; an interior covers
 //!   its placements' bounds plus [`INTERIOR_PAD`].
 //! - **Geometry**: exactly what the mover collides with: each placement's `collision.cook`
-//!   product (statics and items; [`is_solid`]) and the baked level-0 `terrain.tile` heights (the
-//!   physics heightfield's source), read through the step's `RunCx` so they are recorded inputs.
+//!   product (statics, items, containers and activators; [`is_solid`]) and the baked level-0
+//!   `terrain.tile` heights (the physics heightfield's source), read through the step's `RunCx`
+//!   so they are recorded inputs.
 //! - **Nav cells** ([`CELL_STEP`], [`NAV_CELL`] m squares): the host's world source puts every
 //!   placement in each cell its world bounds touch, and names the terrain tiles under the cell.
 //!   A tile reads the cells under its bounds, so a moved wall re-bakes only the tiles over the
@@ -75,7 +76,8 @@ const DEFAULT_SWIM_HEIGHT_SCALE: f32 = 0.9;
 /// Level-0 terrain sample spacing, meters (`sf_terrain` `BASE_SPACING`).
 const TERRAIN_SPACING: f32 = sf_terrain::BASE_SPACING;
 /// Bump when this module's geometry rules change (part of every cell product).
-const RULES_VERSION: u32 = 1;
+/// 2: activators and containers are geometry (NV16).
+const RULES_VERSION: u32 = 2;
 
 /// Every worldspace's one nav region (module doc "Regions"): id and origin, as the bake tiles it and
 /// the runtime ring (`mw_walkers_bevy::nav`) reads it.
@@ -132,10 +134,12 @@ pub fn areas() -> AreaTable {
     .expect("the Morrowind area table is valid")
 }
 
-/// Whether a placement is nav geometry: statics, items and doors (doors become volumes), not
-/// actors, lights, markers, editor helpers or references that start disabled.
+/// Whether a placement is nav geometry: the mover's solid set ([`mw_world::source::MOVER_SOLID`]:
+/// statics, items, containers, activators and doors; doors become volumes), not actors, lights,
+/// markers, editor helpers or references that start disabled. A model whose `collision.cook` is
+/// empty (an invisible trigger) is listed but adds no geometry, as the mover sees it.
 pub fn is_solid(p: &Placement) -> bool {
-    matches!(p.class, PlacementClass::Static | PlacementClass::Dynamic | PlacementClass::Door)
+    mw_world::source::MOVER_SOLID.contains(&p.class)
         && !p.flags.intersects(PlacementFlags::EDITOR_ONLY | PlacementFlags::DISABLED)
 }
 

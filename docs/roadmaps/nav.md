@@ -153,6 +153,7 @@ Ends with: a pilgrim walks Balmora to Caldera; leave and come back, and she's fu
 | NV10b | Dirty-tile runtime rebuild: worker, budget, coalesced, atomic swap at tick boundary; first move navmesh-rs 0.2.2 -> 0.2.6 (0.2.3 `replace_tile` / `replace_tile_budgeted` is the swap; rebase our `DetachedQuery` patch, upstream keeps it crate-private; compare tile-blob blake3 before/after, differ = rebake), unless the batched "update all" pass does it first (NV-R1, `docs/research/gameplay-2026-11-25/nav-r1.md`) | `sf_nav_bevy`, `sf_nav_bake` | NV0b | rebuilt tile = offline bake bit for bit; ≤ budget |
 | NV10c | Missing-tile generation with disk cache, off the frame (loading screen or workers ahead of streaming; owner Q1, yes) | `sf_nav_bevy` | NV10b | generated = baked; second load reads cache |
 | NV15 | Destruction feed: `Destroyed` on walkable geometry marks tiles dirty | `sf_interaction_bevy` → `sf_nav_bevy` | NV10b, IN1 | broken barricade opens a path; owner NV-4 |
+| NV16 | Activators and containers are navmesh obstacles (the mover's solid set; IN32d dc64d84b) | `mw_bake` | – | **done 2026-11-26** (`is_solid` = `mw_world::source::MOVER_SOLID`, shared with the physics hook; `RULES_VERSION` 2; 2 tests) |
 
 **Parked:** lane graph for ambient traffic (UE Mass; revisit with ambient flows), tile-border HPA*, `huge` class,
 TileCache carving, deck-local nav IN22 (interaction lane builds it, nav reviews).

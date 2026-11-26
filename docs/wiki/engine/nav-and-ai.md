@@ -16,7 +16,9 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   queries in `sf_nav_recast/src/corridor.rs`.
 - **Bake** (`sf_nav_bake`): `nav.tiles` (per tile, reads recorded as dynamic inputs so a moved wall re-bakes only its
   tiles; door volumes get own polygons) and `nav.links` (off-mesh links). Backend-agnostic.
-- **Morrowind adapter** (`mw_bake/src/nav.rs`): `MwNavSource` feeds the cooked collision and baked terrain heights;
+- **Morrowind adapter** (`mw_bake/src/nav.rs`): `MwNavSource` feeds the cooked collision of the mover's solid set
+  (`is_solid`, `:140`, over `mw_world::source::MOVER_SOLID`: statics, items, doors, containers, activators; the
+  physics hook uses the same list) and baked terrain heights;
   `bake_nav` (`:960`) runs inside `bevyrrowind bake` (`mw_boot_bevy/src/bake.rs:73`). Water is a flat swim-level quad,
   as in OpenMW.
 - **Test levels** (`mw_exterior_bevy/src/level/nav.rs`, AI47b): `level:` scenes bake their own tiles at load from the

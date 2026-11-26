@@ -25,6 +25,11 @@ use crate::{EDITOR_MARKERS, ids, model_path};
 pub const CONTAINER: PlacementClass = PlacementClass::Custom(1);
 /// Activators: placed like statics, but the content pack spawns them (scripts, activation).
 pub const ACTIVATOR: PlacementClass = PlacementClass::Custom(2);
+/// The classes the mover collides with: the physics hook gives them static bodies
+/// (`mw_walkers_bevy` `physics.rs` `hook`) and the navmesh bake takes their `collision.cook`
+/// shapes as geometry (`mw_bake::nav::is_solid`). One list, so the two never disagree.
+pub const MOVER_SOLID: &[PlacementClass] =
+    &[PlacementClass::Static, PlacementClass::Door, PlacementClass::Dynamic, CONTAINER, ACTIVATOR];
 
 /// A reference's base record: its kind tag, placement class, and model.
 #[derive(Clone, Debug, PartialEq, Eq)]
