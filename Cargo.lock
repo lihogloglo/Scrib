@@ -7920,6 +7920,7 @@ dependencies = [
  "serde",
  "sf_anim",
  "sf_bake",
+ "sf_tunables",
  "spade",
  "tempfile",
  "thiserror 2.0.21",

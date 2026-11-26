@@ -26,6 +26,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use sf_anim::{LimbSolver, RootMotionMode};
+use sf_tunables::{Def, Lifetime, Net, Scope, Source, def};
 
 /// A whole graph asset.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -533,6 +534,51 @@ pub struct LegSpec {
     pub contact: Option<String>,
 }
 
+/// Default of [`FootGuards::extension`].
+pub const FOOT_EXTENSION: Def<f32> = def!(float "anim.graph.foot.extension" = 0.99)
+    .range(0.5, 1.0)
+    .help("Share of the leg's remaining reach a toe pin may stretch before the foot unplants (UE5 Foot Placement MaxExtensionRatio); 1 or more is off")
+    .source(Source::Industry("UE5 Foot Placement plant settings MaxExtensionRatio; value Guess"))
+    .scope(Scope::Dev)
+    .net(Net::Presentation)
+    .lifetime(Lifetime::Bake);
+
+/// Default of [`FootGuards::plant_speed`].
+pub const FOOT_PLANT_SPEED: Def<f32> = def!(float "anim.graph.foot.plant_speed" = 4.0)
+    .range(0.0, 10.0)
+    .help("Leg reaches per second under which a joint of the final pose counts as still for a foot lock (AN1d); 0 turns the final-pose detection off")
+    .source(Source::Industry("UE5 Foot Placement plant settings speed threshold; value from the AN1d slope_walk trace"))
+    .scope(Scope::Dev)
+    .net(Net::Presentation)
+    .lifetime(Lifetime::Bake);
+
+/// Default of [`FootGuards::heel_rise`].
+pub const FOOT_HEEL_RISE: Def<f32> = def!(float "anim.graph.foot.heel_rise" = 0.01)
+    .range(0.002, 0.1)
+    .help("Heel rise (leg reaches) over its lowest point since the plant that hands a stance lock to the toe")
+    .source(Source::Industry("UE5 Foot Placement plant settings distance to ground; value from the AN1d trace"))
+    .scope(Scope::Dev)
+    .net(Net::Presentation)
+    .lifetime(Lifetime::Bake);
+
+/// Default of [`FootGuards::toe_rise`].
+pub const FOOT_TOE_RISE: Def<f32> = def!(float "anim.graph.foot.toe_rise" = 0.08)
+    .range(0.01, 0.3)
+    .help("Toe rise (leg reaches) that releases a toe pin")
+    .source(Source::Industry("UE5 Foot Placement plant settings distance to ground; value Guess from the AN1d trace"))
+    .scope(Scope::Dev)
+    .net(Net::Presentation)
+    .lifetime(Lifetime::Bake);
+
+/// Default of [`FootGuards::lift`].
+pub const FOOT_LIFT: Def<f32> = def!(float "anim.graph.foot.lift" = 2.0)
+    .range(1.0, 4.0)
+    .help("Hysteresis of plant_speed: a still joint stops being still only past this multiple of it")
+    .source(Source::Guess)
+    .scope(Scope::Dev)
+    .net(Net::Presentation)
+    .lifetime(Lifetime::Bake);
+
 /// Robustness limits of `FootPlacement` (UE Foot Placement / Leg IK
 /// practice). Lengths are fractions of each leg's reach, so they hold for
 /// any rig size and body scale.
@@ -625,11 +671,11 @@ impl Default for FootGuards {
             max_rise: 0.5,
             unplant: 0.3,
             unplant_angle: 45f32.to_radians(),
-            extension: 0.99,
-            plant_speed: 4.0,
-            heel_rise: 0.01,
-            toe_rise: 0.08,
-            lift: 2.0,
+            extension: FOOT_EXTENSION.default_value(),
+            plant_speed: FOOT_PLANT_SPEED.default_value(),
+            heel_rise: FOOT_HEEL_RISE.default_value(),
+            toe_rise: FOOT_TOE_RISE.default_value(),
+            lift: FOOT_LIFT.default_value(),
             max_speed: 8.0,
             blend_halflife: 0.1,
             foot_halflife: 0.04,

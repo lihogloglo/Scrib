@@ -20,6 +20,7 @@ serde.workspace = true
 # Cooked clips, skeletons, pose ops and IK; no glTF importer.
 sf_anim.workspace = true
 sf_bake.workspace = true
+sf_tunables.workspace = true
 spade = { workspace = true, optional = true }
 thiserror.workspace = true
 
