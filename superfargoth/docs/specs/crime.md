@@ -268,50 +268,44 @@ thieves' fences; framework default on, Morrowind off: decision 11); the adapter 
 
 ### Stealth and detection
 
-The sneak state is the `Sneak` mode flag in `sf_action::ActionState` (action.md); this spec never moves a character.
-`StealthState { sneaking: bool, moving: Speed }` is the read-only view `sf_crime_bevy` builds from it and the
-character's stats. One rule seam, pure (decision 6: crime owns the formula, AI owns detection):
+Decision 6: crime owns the concealment formula, AI owns detection. The sneak state is the `Sneak` mode flag in
+`sf_action::ActionState` (action.md); this spec never moves a character. One pure seam (`sf_crime/src/stealth.rs` is
+the source of truth for names):
 
 ```rust
-pub trait DetectionRules {
-    /// How hidden `target` is from `observer` right now; larger is better hidden. 0..~200.
+pub trait DetectionRules: Send + Sync {
+    /// How hidden the target is from the observer right now; larger is better hidden. 0..~200.
     fn concealment(&self, i: &DetectIn) -> f32;
 }
 pub struct DetectIn { pub target: TargetView, pub observer: ObserverView, pub distance_m: f32,
                       pub angle_rad: f32 /* 0 = in front */, pub factors: VisibilityFactors }
 ```
 
-`VisibilityFactors` is ai.md's (`light` from AI8d's `LightExposure` after the observer's `darkness`); crime never
-reads light. `ObserverView` carries stats only, never duty, drink, sleep or mood: those are the observer's
-`PerceptionProfile`/`PerceptionStates` (AI0g), scaling sight and hearing in `sf_ai`. `sf_ai` runs the model
-(`DetectionModel`, ai.md "Models"): **Meter** (framework default; gain × `1 - concealment / 100`) or **Classic** (one
-seeded roll per sight check against concealment), and owns the loop, rolls, `Awareness` and `PlayerDetection`.
-Superseded 2026-11-25: `DetectIn.light`/`roll`, Classic as default. Pickpocket takes the lock seam's shape (decision
-9): `Timer` (KCD2 hold-to-search, risk from victim awareness, LW18) or `Roll` = `PickpocketRules::caught(&PickIn,
-roll) -> bool` (Classic and "auto").
+- **Inputs.** `factors` is ai.md's `VisibilityFactors`: stance, size, disguise, stat modifiers, and `light` = AI8d's
+  `LightExposure` after the observer's `darkness` (ai.md "Light exposure"). Crime never reads light. `TargetView {
+  stats, stealth: StealthState { sneaking, moving: Speed } }` and `ObserverView { stats }` carry stats only: duty,
+  drink, sleep and mood are the observer's `PerceptionProfile`/`PerceptionStates` (ai.md "Perception profile", AI0g).
+- **AI side** (ai.md "Awareness"): `sf_ai` owns the loop, meter, bands, `Awareness` and `PlayerDetection` (max over
+  observers that count). Its `DetectionModel` is **Meter** (default; gain × `visibility_from_concealment(c)` =
+  `clamp(1 - c/100, 0, 1)`) or **Classic**: one seeded roll per sight check inside `sf_ai`, so no roll enters
+  `DetectIn`. Bevyrrowind's Classic rules are MA5, Morrowind's `awarenessCheck` ported as a `DetectionRules`.
+- **Default rules.** `StandardDetection` (modern): light, stance (crouched, prone), behind the observer's facing, minus
+  a speed reveal above a free speed, clamped. It ignores distance (the meter's `f_dist`), size, disguise and
+  modifiers. Upright, still and in front equals the old light-only visibility. Tunables: the 9 `crime.stealth.*` in
+  `sf_crime_bevy/src/lib.rs` (`TUNABLES`; Guess, Live; defaults = `StandardDetectionConfig::default()`).
+- **Host.** `sf_ai_bevy/src/detection.rs`: `AiDetectionRules(Arc<dyn DetectionRules>)` (default `StandardDetection`,
+  replaceable) and the target's `AiVisibilityFactors` (absent = upright); sight builds one `DetectIn` per check on the
+  stack. `CrimeStealthPlugin` binds the tunables and swaps the `Arc` on a change, only while the installed rules are
+  its own (`Arc::ptr_eq`).
+- **Built:** LW4a (seam, `StandardDetection`), LW4b1 (sight seam), LW4b2 (live tunables), MA18 (Bevyrrowind writes the
+  player's `AiVisibilityFactors` from `Mode::Sneak`, ai-adapter.md). **Next:** stats and `StealthState` in the views
+  (still default), MA5 Classic, MA19 (chameleon, invisibility, size), LW12 eye.
+- **Departs** (owner 2026-11-25) from per-NPC indicators: one sneak eye ("Prompt and HUD").
+- **Departs** from crime reading light: light arrives through `factors` from AI8d.
+- **Departs** from nearest-observer exposure: `PlayerDetection` is the max over observers.
 
-**As built (LW4a, 2026-11-25):** `sf_crime/src/stealth.rs`. `DetectionRules: Send + Sync`; `TargetView { stats: StatView,
-stealth: StealthState }`, `ObserverView { stats }` (`StatView`: 8 inline `(StatId, f32)`); `Speed { Still, Walk, Run,
-Sprint }` (own data, not `sf_controller::Gait`). `StandardDetection` (modern default) = `light_concealment × (1 − light)` +
-stance (crouched 30, prone 50) + `behind_concealment × behind(angle)` (0 within ±`facing_front_rad`, 1 straight behind) −
-`min(speed_reveal_per_mps × max(0, speed − speed_free_mps), speed_reveal_max)`, clamped to 0..`max_concealment`; it
-ignores distance (sf_ai `f_dist`), size, noise, disguise and `modifiers`. Defaults keep upright/still/in-front equal to
-the light-only visibility. `visibility_from_concealment(c) = clamp(1 − c/100, 0, 1)`. Tunables `crime.stealth.*`
-(`StandardDetectionConfig`, bound in `sf_crime_bevy`).
-
-**As built (LW4b1, 2026-11-25):** `sf_ai_bevy/src/detection.rs`: `AiDetectionRules(Arc<dyn DetectionRules>)` resource
-(default `StandardDetection`, replaceable), optional target component `AiVisibilityFactors { stance, size, disguise,
-modifiers }` (absent = upright). `queue_sight` builds one `DetectIn` per check on the stack: light after the observer's
-darkness (`VISIBILITY_UNMODELLED` without a sample), speed = |velocity|, distance and angle eye to chest; visibility =
-`visibility_from_concealment(concealment)`. Views (stats, `StealthState`) stay default until `sf_crime_bevy` fills them.
-`light_only_visibility` removed. Meter only; Classic with MA5.
-
-**As built (LW4b2, 2026-11-25):** `sf_crime_bevy` (bevy_app/bevy_ecs std only) declares the 9 `crime.stealth.*`
-tunables (defaults = `StandardDetectionConfig::default()`, a test keeps them equal; Guess, Live). `CrimeStealthPlugin`
-binds them into `CrimeStealthSettings` and, in PreUpdate after `TunableSystems::Bind`, installs
-`AiDetectionRules(Arc::new(StandardDetection::new(cfg)))`, swapping the `Arc` only on a change and only while the
-installed rules are still its own (`Arc::ptr_eq`: a game's own rules are kept). Bevyrrowind adds it in
-`mw_walkers_bevy::sight::add` beside `AiSightPlugin`.
+Pickpocket takes the lock seam's shape (decision 9): `Timer` (KCD2 hold-to-search, risk from victim awareness, LW18)
+or `Roll` = `PickpocketRules::caught(&PickIn, roll) -> bool` (Classic and "auto").
 
 ### Locks and traps
 
@@ -350,14 +344,13 @@ if within activation reach, else it detonates at the object).
 
 ### Prompt and HUD
 
-`InteractPrompt { target, name, owned: Option<OwnerLabel>, taking_is_crime: bool, stolen_count: u32, lock: Option<LockView>,
-trapped: bool, pickpocket: Option<PickChanceView> }` is built from the same pure functions the host uses, so the
-prompt cannot disagree with the outcome (`use_allowed`, `gate_activation`, `LockRules` preview). Owned and
-crime-if-taken shows a marker on the crosshair and the item row; `LockView` shows the tier label. `StealthView {
-sneaking, exposure: Hidden | Caution | Detected }` drives the one sneak eye (owner: Skyrim-style, no per-NPC
-markers): exposure = `PlayerDetection.band` (ai.md "Net, saves, HUD": max over observers that count), Unaware →
-Hidden, Curious/Suspicious/Searching → Caution, Alerted → Detected; the Classic preset shows only a sneak icon.
-Superseded 2026-11-25: "nearest awareness value". Screens send intents only; themes style `sf-crime-*` parts.
+`InteractPrompt { target, name, owned: Option<OwnerLabel>, taking_is_crime: bool, stolen_count: u32, lock:
+Option<LockView>, trapped: bool, pickpocket: Option<PickChanceView> }` (LW8) is built from the host's own pure functions
+(`use_allowed`, `gate_activation`, `LockRules` preview), so the prompt cannot disagree with the outcome. Owned and
+crime-if-taken marks the crosshair and the item row; `LockView` shows the tier label. `StealthView { sneaking,
+exposure: Hidden | Caution | Detected }` (LW12) drives one sneak eye: exposure = `PlayerDetection.band` (ai.md "Net,
+saves, HUD"): Unaware is Hidden; Curious, Suspicious, Searching are Caution; Alerted is Detected. Classic shows
+Morrowind's sneak icon only. Screens send intents only; themes style `sf-crime-*` parts.
 
 ### Commands and events (net rules 2, 5, 8)
 
@@ -416,9 +409,10 @@ guards**: noticing a wanted player is a perception-driven event, not a loop (Ope
 |---|---|---|
 | OpenMW / Morrowind | owner or faction + rank, global lifts; witness = LOS + roll; bounty global; alarm 100 reports at once; guards pursue above a threshold, arrest dialogue; jail with skill loss; stolen map by item id | **match** (adapter), except the report walks (owner, Classic too); ledger adds reconcile, jail loss and the prompt marker are hooks |
 | Oblivion | same model, bounty global, fences, jail loss | **same rules**, different numbers |
-| Skyrim | crime factions per hold, bounty per faction added at once by any witness, trespass areas, witnesses must see or hear, fences, Thieves Guild clears bounty, stolen items marked per stack, detection meter | **option**: jurisdictions, `crime.clear`, Meter model; per-stack marker rejected (stack splitting) |
+| Skyrim | crime factions per hold, bounty per faction added at once by any witness, trespass areas, witnesses must see or hear, fences, Thieves Guild clears bounty, stolen items marked per stack, one graded sneak eye | **option**: jurisdictions, `crime.clear`, Meter model; **match**: one eye from `PlayerDetection`; per-stack marker rejected (stack splitting) |
 | KCD, KCD2 | witnesses walk to guards or confront; fines, jail, flee, talk out; reputation per town; stealth by noise and light; players call unseen bounties unfair | **match**: walked `Report`, `ArrestOption` data, `BountyCause` in the journal, per-town jurisdictions |
 | RDR2 | eyewitness runs to the law and can be stopped (threat, pay, beat, kill); seen versus identified; masks fool civilians, not lawmen; bounty cools with time away | **match**: `ReportState` with cancel causes, `Recognition` with the law tier, `decay_per_day` |
+| Thief; TLOU2, Hitman | light gem (the player's own light); graded awareness per NPC | **match**: light from `LightExposure` (AI8d), graded bands in `sf_ai`; per-NPC markers rejected (owner: one eye) |
 | Hitman | disguises pass most NPCs; staff of the disguise's role see through it | **match**: `Disguise` item data, one tier higher for law and acquaintances |
 | GTA, Cyberpunk 2.0 | wanted level or heat: pursuit around the last known position, lost by breaking sight and waiting; escalating units | **match**: heat = AI29 over AI8f LKP, apart from the bounty debt; ladder per jurisdiction |
 | Elden Ring / Souls | no crime system (NPC aggro and a world event per murder) | covered by `Reaction::Fight` via the same assess |
@@ -443,8 +437,8 @@ Bevy-free, exact assertions, synthetic records and GMSTs (`sf_crime` tests):
 - **Locks**: `gate_activation` order (key unlocks and disarms; trap before open; locked without key); `pick_chance`
   Impossible / Percent; `window` seeded and re-simulated; `force` to 0 hp breaks; tool wear removes at 0; `UnlockAttempted` yields trespass only when owned and (level or locked
   or trapped); an unlocked-but-once-locked owned object is still trespass.
-- **Detection**: `concealment` exact for a worked case per term over `VisibilityFactors` (sneak, boots, distance,
-  facing, invisibility, light); non-sneaking is always seen (model and roll tests are `sf_ai`'s).
+- **Detection**: `StandardDetection` exact per term (light, stance, behind, speed reveal, clamp); upright, still, in
+  front equals light-only visibility (model, roll and meter tests are `sf_ai`'s).
 - **Witnesses**: a fake `WitnessQuery`; allies and the dead never report; deterministic order.
 - **Co-op** (headless, two `PlayerId`s): A steals, only A's bounty and ledger change; B is not a witness; both open
   the same chest, one `LockChanged`; a second `ArrestRequest` on a claimed guard fails `Busy`.
