@@ -92,6 +92,17 @@ lock-on or hit-stop, swings over walking legs [7].
     hit-stop: declared with unit, range, source (`Guess` counted), never bare consts.
 18. **Order departs from the spec**: enemy fighters (C6) before ranged (§7 #1); C6 is verified first against a scripted
     **duelist** (a `Command` writer using the C6 picker directly, replacing the sparring beat), so it doesn't wait for AI15.
+19. **One rules core, per-view profiles as data** (proposed 2026-11-26, research `combat-views.md`, C-R2; owner questions
+    7-9 open). Every game that ships both views keeps one set of melee rules (Avowed: same timings, 1P master, drift felt
+    on switching [V]; Chivalry 2, Mordhau: third person is a camera option). Contacts, poise, parry, damage, i-frames,
+    windows and tokens are identical for every view and actor. The per-view profile (input layer, not `sf_combat`) holds
+    targeting (3P lock-on + flick; 1P soft aim), which dodge move an input picks, camera and feedback weight, and threat
+    cues (heavier in 1P). The one view-aware rule is in C6 token requests: an attacker outside the target's view waits
+    longer and telegraphs longer (our extension; no source for Doom/AC doing it). Departs from decision 7: feint and morph
+    follow the input scheme, not the view (both views have them in Chivalry 2 and Mordhau). Mixed views in co-op PvE are
+    allowed (only information differs; a "force first person" host option only if a PvP mode ever exists).
+    **Slices this changes once answered:** C11 (both views), C4c (3P profile only), C2c (dodge move = profile data), C6a
+    (view-aware request), C0a (profile section). Stages stay as written until the owner answers.
 
 ## 4. Stages
 
@@ -222,5 +233,10 @@ anim lane's. character-shapes.md S5 points at this roadmap.
 6. **Status buildup:** in the framework (C12); Morrowind content ships none at first (its on-strike enchantments and poisons
    stay instant effects).
 
-**Open (C-R2, research running):** should first and third person share one combat mechanic? Stage 1-2 slices it may
-change are flagged when the research lands; no stage is rewritten before the owner answers.
+**Open (C-R2, decision 19):**
+
+7. **Dodge in first person:** backstep and sidestep only, or the same roll as third person? Recommended: both moves in
+   both views, different default bindings (third person roll, first person backstep/sidestep); same rules per move.
+8. **Switching view mid-fight:** Recommended: yes, instantly, nothing about the fight changes.
+9. **Attackers you can't see in first person:** Recommended: a soft rule: enemies outside your view wait their turn longer
+   and wind up longer; never a hard "no attacks from behind"; the difficulty setting scales it.
