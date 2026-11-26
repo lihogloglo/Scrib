@@ -252,6 +252,17 @@ toggled back closed keeps a closed blob (the overlay has no state removal). With
 (the overlay is what saves and cell fetches read). `DoorState.opener` is not saved, so a restored open door does not
 close behind anyone.
 
+### As built (IN33c2c, 2026-11-26)
+
+`input::prompt` (`Update`, `FocusUpdate` after `mw_player_bevy::FocusRay`, which wrote `activatable`'s name and
+"Open") now corrects a prompt that does not belong to the player's best verb. `class_prompts(verb)` lists the prompts
+of the offered non-furniture rows with that verb (`class_verb` = it yields one). When the best verb is a slotless
+class verb and `Focus::target`'s verb is not one of its row prompts, the verb becomes the first of them: an open
+swing door (best verb `close`, row "Close") shows its name with "Close". Name, record and distance stay, the string
+comes from the row, and `Focus` is written only in that case: a closed door's or a container's "Open" is left
+untouched and unmarked. No class lookup: any later class whose rows give two verbs different prompts gets the same
+correction.
+
 ## World rules mapping (IN41, IN38, IN19)
 
 **Material rows** (`sf.interact.material` + a pattern table in `mw_interaction`, checked against the install at cook,

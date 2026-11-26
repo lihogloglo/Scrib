@@ -29,7 +29,9 @@
 //!   prompts the verb its focus offers, from the furniture rows (`mw_interaction::activation::ROWS`:
 //!   "Sit", "Lie down", "Lean"); every other target keeps `activatable`'s name and verb, and so
 //!   does a def'd census container or activator whose best verb is its class's own (the baked
-//!   slotless class verb, `IN32c0`: "Open", "Use"; its pose verbs follow in the hold list).
+//!   slotless class verb, `IN32c0`: "Open", "Use"; its pose verbs follow in the hold list), with
+//!   that verb's own row prompt when `activatable`'s is another (an open swing door's `close`:
+//!   "Close", `IN33c2c`).
 //! - **Activation**: each latched Use press (`mw_player_bevy::UsePresses`, written by
 //!   `mw_scripts_bevy`) becomes one `ActivateCommand` ([`FocusState::command`], best verb and slot;
 //!   a def-less target's primary use) between `InteractionSystems::Focus` and `::Activate`.

@@ -24,11 +24,19 @@ pub fn furniture_prompt(verb: TagId) -> Option<&'static str> {
         .map(|r| r.prompt)
 }
 
-/// Whether `verb` is a record class's own primary use (an offered row of a non-furniture class:
-/// `open`, `use`, ...), the slotless verb the bake keeps on a def'd container or activator
-/// (`mw_interaction::class_verb`).
+/// The prompts of the offered non-furniture rows with verb `verb`, in row order (`open`: "Open";
+/// a swing door's `close`: "Close").
+fn class_prompts(verb: TagId) -> impl Iterator<Item = &'static str> {
+    ROWS.iter()
+        .filter(move |r| !matches!(r.class, RecordClass::Furniture(_)) && r.available == Availability::Offered && TagId::of(r.verb) == verb)
+        .map(|r| r.prompt)
+}
+
+/// Whether `verb` is a record class's own primary use (it has [`class_prompts`]: `open`, `close`,
+/// `use`, ...), the slotless verb the bake keeps on a def'd container or activator
+/// (`mw_interaction::class_verb`) and a swing door's def offers (`mw_interaction::door_def`).
 fn class_verb(verb: TagId) -> bool {
-    ROWS.iter().any(|r| !matches!(r.class, RecordClass::Furniture(_)) && r.available == Availability::Offered && TagId::of(r.verb) == verb)
+    class_prompts(verb).next().is_some()
 }
 
 /// A focus candidate's score from its distance: nearer is higher (one candidate today; the
@@ -60,7 +68,9 @@ pub(crate) fn player_user(
 /// A focused target with a def prompts its best offered verb (verb only); one offering none (a
 /// taken seat) prompts nothing. Def-less targets, and a def'd one whose best verb is its record
 /// class's own primary use (a census container's "Open", an activator's "Use"), keep
-/// `activatable`'s prompt (name + verb).
+/// `activatable`'s prompt (name + verb), unless that prompt is not one of the verb's
+/// [`class_prompts`]: then its verb becomes the first of them (an open swing door's "Close" over
+/// `activatable`'s "Open"), and only then is [`Focus`] written.
 #[allow(clippy::needless_pass_by_value)] // system parameters
 pub(crate) fn prompt(mut focus: ResMut<Focus>, defs: Res<InteractionDefs>, players: Res<PlayerFocus>, placements: Res<ScriptPlacements>) {
     let Some(hit) = focus.hit else { return };
@@ -69,7 +79,14 @@ pub(crate) fn prompt(mut focus: ResMut<Focus>, defs: Res<InteractionDefs>, playe
         return;
     }
     let best = players.get(PLAYER_USER).filter(|s| s.target() == Some(target)).and_then(|s| s.verbs().first());
-    if best.is_some_and(|c| matches!(c.target, VerbTarget::Slotless { .. }) && class_verb(c.verb)) {
+    if let Some(c) = best.filter(|c| matches!(c.target, VerbTarget::Slotless { .. }) && class_verb(c.verb)) {
+        let stale = focus.target.as_ref().is_some_and(|t| t.handle == hit.handle && !t.verb.is_some_and(|v| class_prompts(c.verb).any(|p| p == v)));
+        if stale
+            && let Some(first) = class_prompts(c.verb).next()
+            && let Some(t) = focus.target.as_mut()
+        {
+            t.verb = Some(first);
+        }
         return;
     }
     let verb = best.map(|c| c.verb);

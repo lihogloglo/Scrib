@@ -332,6 +332,50 @@ fn a_defd_container_opens_first_with_activatables_prompt() {
     assert_eq!(seen.approved.last(), Some(&UseApproved { activation: opened, verb: Some(open()), slot: None }));
 }
 
+/// A resident swing door (`tests_door`'s), at rest open when `open`, aimed at, `Focus::target`
+/// what `activatable` shows for every door ("Door", "Open"); one tick for the rest and the
+/// state tag, one for the focus.
+fn aimed_swing_door(open: bool) -> (App, FocusTarget) {
+    use crate::tests_door::{DOOR as SWING, door, residency as door_residency, spawn};
+    let mut app = app();
+    let hook = crate::door::DoorHook(Arc::new(Nothing));
+    let p = door();
+    spawn(&mut app, &hook, &p);
+    door_residency(&mut app, &hook, &p, true);
+    if open {
+        app.world_mut().write_message(sf_interaction_bevy::DoorRest { placement: SWING, open: true, sign: 1 });
+    }
+    tick(&mut app, 1);
+    aim(&mut app, SWING);
+    let shown = FocusTarget { handle: Handle(SWING.0), record: "in_door_01".into(), name: "Door".into(), verb: Some("Open"), distance: 1.0 };
+    app.world_mut().resource_mut::<Focus>().target = Some(shown.clone());
+    tick(&mut app, 1);
+    (app, shown)
+}
+
+/// A prompt's fields, comparable (`FocusTarget` has no `PartialEq`).
+fn fields(t: &FocusTarget) -> (Handle, &str, &str, Option<&'static str>, f32) {
+    (t.handle, t.record.as_str(), t.name.as_str(), t.verb, t.distance)
+}
+
+#[test]
+fn an_open_swing_door_prompts_its_close_row() {
+    let (mut app, shown) = aimed_swing_door(true);
+    app.update();
+    let target = app.world().resource::<Focus>().target.clone().expect("the door keeps its prompt");
+    assert_eq!(fields(&target), fields(&FocusTarget { verb: Some("Close"), ..shown }));
+}
+
+#[test]
+fn a_closed_swing_door_keeps_activatables_open_and_focus_unwritten() {
+    let (mut app, shown) = aimed_swing_door(false);
+    let before = app.world().resource_ref::<Focus>().last_changed();
+    app.update();
+    let focus = app.world().resource_ref::<Focus>();
+    assert_eq!(focus.target.as_ref().map(fields), Some(fields(&shown)));
+    assert_eq!(focus.last_changed(), before, "prompt left Focus unchanged");
+}
+
 fn scratch_store(name: &str) -> (Store, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(format!("mw_interaction_bevy_{name}_{}", std::process::id()));
     (Store::open(&dir).expect("temp store"), dir)
