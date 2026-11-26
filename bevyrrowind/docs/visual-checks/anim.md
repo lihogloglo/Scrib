@@ -26,3 +26,14 @@ knee buckle while walk blends into jog? (5) feet stay put on sidesteps and backp
 Proof log: `walkers feet: ... unplanted` and `head track: player body present` lines in last.log. A/B: graph guard
 `plant_speed` 0 (off). Status: awaiting owner (commit of AN1d, 2026-11-26).
 
+## ANIM-6b: side-by-side group review in clip-preview (AN10)
+
+Run: `owner_launch.sh clip-preview --browse "D:/Gamedev/Bevyrrowind/animation packs/generated/loco2"` (absolute folder),
+Down to a walk activity, then G (V = unrated first if you like; verdicts land in the same `verdicts.toml`). Questions:
+(1) G on a walk group: do 2-4 takes play side by side, starting and restarting in step, a label over each? yes/no
+(2) press 2 then N: does that take vanish and the rest close up, still in step? yes/no
+(3) with 2 left, Y on one and M on the other: does the next group open by itself? yes/no
+(4) G again: back to one clip, one actor on the mark? yes/no
+Proof log: `clip-preview: group <id> <n> takes` (and `clip-preview: group row spacing ...`) in last.log.
+Status: awaiting owner (AN10, uncommitted 2026-11-26).
+

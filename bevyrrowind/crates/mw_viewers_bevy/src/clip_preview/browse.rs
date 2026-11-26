@@ -6,6 +6,9 @@
 //! The grader's `grades.json` (scrib-motiongen `motiongen grade`) orders each activity (ungated
 //! clips first, gated ones, then failing prompt groups last), feeds the overlay, and drives the
 //! "candidates only" filter; a view filter (all, unrated, maybe, keep) serves the second pass.
+//! Group review (AN10, [`GroupStage`]): the cursor's prompt group (takes of one recipe job) on
+//! stage side by side, reject drops the selected take, the last [`GROUP_FINAL`] get keep / maybe,
+//! and an emptied stage opens the next group; [`GroupClock`] is the row's one shared clock.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -53,6 +56,8 @@ pub struct BrowseList {
     pub candidates_only: bool,
     /// Which verdicts navigation shows (needs the verdicts; without them every verdict is shown).
     pub view: View,
+    /// Group review's stage (AN10); `None` in single-clip review.
+    pub group: Option<GroupStage>,
 }
 
 /// The verdict filter navigation follows (cycled all -> unrated -> maybe -> keep).
@@ -167,6 +172,7 @@ impl BrowseList {
             grades: Grades::default(),
             candidates_only: false,
             view: View::All,
+            group: None,
         })
     }
 
@@ -276,9 +282,15 @@ impl BrowseList {
     /// The first clip after the cursor in browse order (wrapping, the cursor's own excluded)
     /// matching `pred`.
     fn find_after(&self, pred: impl Fn(&BrowseClip) -> bool) -> Option<(usize, usize)> {
+        self.find_from(false, pred)
+    }
+
+    /// [`Self::find_after`], or (`back`) the first before the cursor going backwards.
+    fn find_from(&self, back: bool, pred: impl Fn(&BrowseClip) -> bool) -> Option<(usize, usize)> {
         let all: Vec<_> = self.cursors().map(|(at, clip)| (at, pred(clip))).collect();
+        let n = all.len();
         let here = all.iter().position(|(at, _)| *at == (self.activity, self.clip)).unwrap_or(0);
-        (1..all.len()).map(|k| all[(here + k) % all.len()]).find(|(_, hit)| *hit).map(|(at, _)| at)
+        (1..n).map(|k| all[if back { (here + n - k) % n } else { (here + k) % n }]).find(|(_, hit)| *hit).map(|(at, _)| at)
     }
 
     /// Every clip with its cursor (activity, clip), in browse order.
@@ -333,6 +345,242 @@ impl BrowseList {
             None => "group -".to_owned(),
         };
         Some(format!("{gates}   {metrics}{mirror}   {group}   type {}", grade.kind.as_deref().unwrap_or("-")))
+    }
+}
+
+/// Takes group review puts side by side (AN10; a layout capacity: the row and its 1-4 keys).
+pub const GROUP_MAX: usize = 4;
+/// Takes left on stage once keep / maybe are allowed (AN10, the roadmap's rule: reject down to these first).
+pub const GROUP_FINAL: usize = 2;
+
+/// The prompt group of `clip` (its stem without the take number).
+pub fn group_name(clip: &BrowseClip) -> &str {
+    group_of(stem(&clip.rel))
+}
+
+/// The take number of `clip` inside its group (`"01"`), or `"-"` for a stem without one.
+pub fn take_number(clip: &BrowseClip) -> &str {
+    let s = stem(&clip.rel);
+    match s.strip_prefix(group_of(s)).and_then(|t| t.strip_prefix('.')) {
+        Some(take) if !take.is_empty() => take,
+        _ => "-",
+    }
+}
+
+/// One take on the group stage, with the seat (actor) it got when the group opened: a seat keeps
+/// its take until the take leaves, so a reject never re-cooks the others.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StageTake {
+    pub clip: BrowseClip,
+    pub seat: usize,
+}
+
+/// Group review's stage: the prompt group, its takes still on stage (list order), the selected one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroupStage {
+    pub name: String,
+    pub takes: Vec<StageTake>,
+    pub selected: usize,
+}
+
+impl GroupStage {
+    pub fn selected_take(&self) -> &StageTake {
+        &self.takes[self.selected]
+    }
+
+    /// The take sitting in `seat` and its place in the row, if it is on stage.
+    pub fn in_seat(&self, seat: usize) -> Option<(usize, &StageTake)> {
+        self.takes.iter().enumerate().find(|(_, t)| t.seat == seat)
+    }
+
+    /// Whether keep / maybe are allowed (at most [`GROUP_FINAL`] takes left).
+    pub fn final_round(&self) -> bool {
+        self.takes.len() <= GROUP_FINAL
+    }
+}
+
+/// What a verdict on the stage's selected take did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GroupRated {
+    /// Keep / maybe while more than [`GROUP_FINAL`] takes are on stage: nothing recorded.
+    Refused,
+    /// The take was rated and left the stage; the others stay.
+    Removed,
+    /// The stage emptied and opened again: the same group's next unrated takes, else the next group.
+    Opened,
+    /// The stage emptied and no other group is shown: group review is off.
+    Finished,
+}
+
+/// The x of row place `rank` among `n` takes `spacing` m apart, the row centred on the origin.
+pub fn row_x(rank: usize, n: usize, spacing: f32) -> f32 {
+    #[allow(clippy::cast_precision_loss)] // ranks are below GROUP_MAX
+    let (rank, n) = (rank as f32, n.max(1) as f32);
+    (rank - (n - 1.0) / 2.0) * spacing
+}
+
+/// The group row's one clock (AN10): every take on stage starts together and replays together each
+/// loop, the loop as long as the longest take; a shorter take holds its last frame until the
+/// restart (looping it on its own would put its starts out of step with the others'). `rate` scales
+/// time (0 pauses; AN46's pause / step / speed act here).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GroupClock {
+    /// Seconds into the loop.
+    pub t: f32,
+    /// Loop length, seconds.
+    pub length: f32,
+    pub rate: f32,
+}
+
+/// Shortest loop, seconds (a guard against a zero-length clip restarting every frame).
+const MIN_LOOP_S: f32 = 0.1;
+
+impl GroupClock {
+    /// A clock at 0 looping the longest of `durations` (seconds).
+    pub fn new(durations: impl IntoIterator<Item = f32>) -> Self {
+        let mut c = Self { t: 0.0, length: MIN_LOOP_S, rate: 1.0 };
+        c.set_length(durations);
+        c
+    }
+
+    /// The loop becomes the longest of `durations` (after a take left); time carries on.
+    pub fn set_length(&mut self, durations: impl IntoIterator<Item = f32>) {
+        self.length = durations.into_iter().fold(MIN_LOOP_S, f32::max);
+    }
+
+    /// Advance `dt` seconds (times `rate`); `true` when the loop restarted (every take replays).
+    pub fn tick(&mut self, dt: f32) -> bool {
+        self.t += dt * self.rate;
+        if self.t < self.length {
+            return false;
+        }
+        self.t = (self.t - self.length) % self.length;
+        true
+    }
+
+    /// Whether a take `duration` s long holds its last frame now.
+    pub fn holds(&self, duration: f32) -> bool {
+        self.t >= duration
+    }
+}
+
+impl BrowseList {
+    /// Put the cursor's prompt group on stage: its shown takes in list order (a group larger than
+    /// [`GROUP_MAX`]: its first unrated ones, or its first ones if every one is rated), seats 0..,
+    /// the first selected and under the cursor. `false` (stage cleared) if the cursor's clip isn't
+    /// shown.
+    pub fn open_group(&mut self, verdicts: Option<&Verdicts>) -> bool {
+        let name = group_name(self.current()).to_owned();
+        let rated = |c: &BrowseClip| verdicts.is_some_and(|v| v.get(&c.id).is_some());
+        let members: Vec<&BrowseClip> = self.cursors().map(|(_, c)| c).filter(|c| group_name(c) == name && self.shown(c, verdicts)).collect();
+        let unrated: Vec<usize> = (0..members.len()).filter(|&i| !rated(members[i])).collect();
+        let chosen: Vec<usize> = if members.len() <= GROUP_MAX || unrated.is_empty() { (0..members.len().min(GROUP_MAX)).collect() } else { unrated.into_iter().take(GROUP_MAX).collect() };
+        let takes: Vec<StageTake> = chosen.iter().enumerate().map(|(seat, &i)| StageTake { clip: members[i].clone(), seat }).collect();
+        if takes.is_empty() {
+            self.group = None;
+            return false;
+        }
+        self.group = Some(GroupStage { name, takes, selected: 0 });
+        self.follow_selection();
+        true
+    }
+
+    /// Select row place `rank` (the 1-4 keys); `false` if no take sits there.
+    pub fn select_take(&mut self, rank: usize) -> bool {
+        let Some(stage) = self.group.as_mut().filter(|s| rank < s.takes.len()) else { return false };
+        stage.selected = rank;
+        self.follow_selection();
+        true
+    }
+
+    /// Select the next (`step` 1) or previous (-1) take in the row, wrapping.
+    pub fn step_take(&mut self, step: isize) {
+        if let Some(stage) = self.group.as_mut() {
+            stage.selected = wrap(stage.selected, step, stage.takes.len());
+            self.follow_selection();
+        }
+    }
+
+    /// Record `verdict` for the selected take and save. A rated take leaves the stage; an emptied
+    /// stage opens the same group's next unrated takes, else the next group in list order (or
+    /// ends group review). Keep / maybe are refused while more than [`GROUP_FINAL`] takes are on.
+    ///
+    /// # Errors
+    /// No group is on stage, or `verdicts.toml` couldn't be written (the verdict stays recorded in memory).
+    pub fn rate_take(&mut self, verdicts: &mut Verdicts, verdict: Verdict) -> Result<GroupRated, String> {
+        let Some(stage) = self.group.as_mut() else { return Err("no group on stage".to_owned()) };
+        if verdict != Verdict::Reject && !stage.final_round() {
+            return Ok(GroupRated::Refused);
+        }
+        let take = stage.takes.remove(stage.selected);
+        verdicts.set(&take.clip.id, verdict);
+        let out = if stage.takes.is_empty() {
+            let name = stage.name.clone();
+            if self.reopen_or_next(&name, verdicts) { GroupRated::Opened } else { GroupRated::Finished }
+        } else {
+            stage.selected = stage.selected.min(stage.takes.len() - 1);
+            self.follow_selection();
+            GroupRated::Removed
+        };
+        verdicts.save().map(|()| out)
+    }
+
+    /// Leave group review: the cursor goes to the next group's first shown clip (it stays if no
+    /// other group is shown).
+    pub fn leave_group(&mut self, verdicts: Option<&Verdicts>) {
+        if let Some(stage) = self.group.take() {
+            self.goto_group(false, &stage.name, verdicts);
+        }
+    }
+
+    /// Put the next (`step` > 0) or previous group on stage; `false` (stage unchanged) if no other
+    /// group is shown.
+    pub fn step_group(&mut self, step: isize, verdicts: Option<&Verdicts>) -> bool {
+        let Some(name) = self.group.as_ref().map(|s| s.name.clone()) else { return false };
+        self.goto_group(step < 0, &name, verdicts) && self.open_group(verdicts)
+    }
+
+    /// The cursor onto the nearest shown clip (forwards, or `back`) outside group `name`; `false`
+    /// (cursor unchanged) if there is none.
+    fn goto_group(&mut self, back: bool, name: &str, verdicts: Option<&Verdicts>) -> bool {
+        let found = self.find_from(back, |c| group_name(c) != name && self.shown(c, verdicts));
+        if let Some(at) = found {
+            (self.activity, self.clip) = at;
+        }
+        found.is_some()
+    }
+
+    /// After group `name` emptied: its next unrated shown takes, else the next group; `false` (group
+    /// review off) if neither is shown.
+    fn reopen_or_next(&mut self, name: &str, verdicts: &Verdicts) -> bool {
+        let again = self.find_from(false, |c| group_name(c) == name && verdicts.get(&c.id).is_none() && self.shown(c, Some(verdicts)));
+        if let Some(at) = again {
+            (self.activity, self.clip) = at;
+        } else if !self.goto_group(false, name, Some(verdicts)) {
+            self.group = None;
+            return false;
+        }
+        self.open_group(Some(verdicts))
+    }
+
+    /// The cursor onto the selected take (the overlay, Backspace and U follow the cursor).
+    fn follow_selection(&mut self) {
+        let Some(id) = self.group.as_ref().map(|s| s.selected_take().clip.id.clone()) else { return };
+        let found = self.cursors().find(|(_, c)| c.id == id).map(|(at, _)| at);
+        if let Some(at) = found {
+            (self.activity, self.clip) = at;
+        }
+    }
+
+    /// A take's label over its actor: take number, its gates (or `ok`) when graded, its verdict.
+    pub fn take_label(&self, clip: &BrowseClip, verdicts: Option<&Verdicts>) -> String {
+        let grade = match self.grades.grade(clip) {
+            Some(g) if g.gated() => format!("  {}", g.gates.join(",")),
+            Some(_) => "  ok".to_owned(),
+            None => String::new(),
+        };
+        let verdict = verdicts.and_then(|v| v.get(&clip.id)).map(|v| format!("  [{v}]")).unwrap_or_default();
+        format!("take {}{grade}{verdict}", take_number(clip))
     }
 }
 
@@ -980,5 +1228,153 @@ mod tests {
         l.view = View::Keep;
         assert_eq!(l.shown_count(None), l.len());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn stage_ids(l: &BrowseList) -> Vec<(&str, usize)> {
+        l.group.as_ref().map(|s| s.takes.iter().map(|t| (t.clip.id.as_str(), t.seat)).collect()).unwrap_or_default()
+    }
+
+    fn selected(l: &BrowseList) -> &str {
+        &l.group.as_ref().unwrap().selected_take().clip.id
+    }
+
+    #[test]
+    fn group_opens_the_cursors_prompt_group_in_list_order() {
+        let mut l = graded();
+        l.step_activity(1);
+        l.step_clip(1);
+        assert_eq!(l.current().id, "walk.f.act.g0.02");
+        assert!(l.open_group(None));
+        let s = l.group.as_ref().unwrap();
+        assert_eq!(s.name, "walk.f.act.g0");
+        assert_eq!(stage_ids(&l), [("walk.f.act.g0.01", 0), ("walk.f.act.g0.02", 1), ("walk.f.act.g0.00", 2)]);
+        // The first take is selected and under the cursor.
+        assert_eq!((selected(&l), l.current().id.as_str()), ("walk.f.act.g0.01", "walk.f.act.g0.01"));
+        assert!(l.select_take(2));
+        assert_eq!((selected(&l), l.current().id.as_str()), ("walk.f.act.g0.00", "walk.f.act.g0.00"));
+        assert!(!l.select_take(3));
+        assert_eq!(selected(&l), "walk.f.act.g0.00");
+        l.step_take(1);
+        assert_eq!(selected(&l), "walk.f.act.g0.01");
+        l.step_take(-1);
+        assert_eq!(selected(&l), "walk.f.act.g0.00");
+        // Labels: take number, gates or ok, verdict.
+        let dir = temp("labels");
+        let mut v = Verdicts::load(&dir).unwrap();
+        v.set("walk.f.act.g0.01", Verdict::Maybe);
+        assert_eq!(l.take_label(&find(&l, "walk.f.act.g0.00"), Some(&v)), "take 00  skate");
+        assert_eq!(l.take_label(&find(&l, "walk.f.act.g0.01"), Some(&v)), "take 01  ok  [maybe]");
+        assert_eq!(l.take_label(&find(&l, "idle"), None), "take -");
+        assert_eq!((take_number(&find(&l, "run.f.act.g0.01")), group_name(&find(&l, "run.f.act.g0.01"))), ("01", "run.f.act.g0"));
+        // Candidates only: the gated take stays off stage.
+        l.candidates_only = true;
+        l.step_take(-1);
+        assert!(l.open_group(None));
+        assert_eq!(stage_ids(&l), [("walk.f.act.g0.01", 0), ("walk.f.act.g0.02", 1)]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reject_drops_the_selected_take_and_the_final_two_get_keep_or_maybe() {
+        let dir = temp("group-rate");
+        let mut l = graded();
+        let mut v = Verdicts::load(&dir).unwrap();
+        l.view = View::Unrated;
+        l.step_activity(1);
+        assert!(l.open_group(Some(&v)));
+        assert!(l.select_take(1));
+        // Three on stage: keep / maybe are refused and record nothing.
+        assert_eq!(l.rate_take(&mut v, Verdict::Keep), Ok(GroupRated::Refused));
+        assert_eq!(l.rate_take(&mut v, Verdict::Maybe), Ok(GroupRated::Refused));
+        assert_eq!(v.get("walk.f.act.g0.02"), None);
+        assert_eq!(l.rate_take(&mut v, Verdict::Reject), Ok(GroupRated::Removed));
+        assert_eq!(v.get("walk.f.act.g0.02"), Some("reject"));
+        // The others keep their seats; the selection moves to the take that took the place.
+        assert_eq!(stage_ids(&l), [("walk.f.act.g0.01", 0), ("walk.f.act.g0.00", 2)]);
+        assert_eq!((selected(&l), l.current().id.as_str()), ("walk.f.act.g0.00", "walk.f.act.g0.00"));
+        let s = l.group.as_ref().unwrap();
+        assert_eq!((s.in_seat(2).map(|(rank, _)| rank), s.in_seat(1).is_none()), (Some(1), true));
+        assert_eq!(l.rate_take(&mut v, Verdict::Maybe), Ok(GroupRated::Removed));
+        assert_eq!(stage_ids(&l), [("walk.f.act.g0.01", 0)]);
+        // The last one rated: the stage opens the next group in list order.
+        assert_eq!(l.rate_take(&mut v, Verdict::Keep), Ok(GroupRated::Opened));
+        assert_eq!(l.group.as_ref().unwrap().name, "walk.f.act.g1");
+        assert_eq!(stage_ids(&l), [("walk.f.act.g1.00", 0)]);
+        assert_eq!(l.rate_take(&mut v, Verdict::Reject), Ok(GroupRated::Opened));
+        assert_eq!(stage_ids(&l), [("run.f.act.g0.00", 0), ("run.f.act.g0.01", 1)]);
+        assert_eq!(l.rate_take(&mut v, Verdict::Keep), Ok(GroupRated::Removed));
+        assert_eq!(l.rate_take(&mut v, Verdict::Reject), Ok(GroupRated::Opened));
+        // Wrapping round to the top clip, its own group of one.
+        assert_eq!(stage_ids(&l), [("idle", 0)]);
+        assert_eq!(l.rate_take(&mut v, Verdict::Maybe), Ok(GroupRated::Finished));
+        assert_eq!(l.group, None);
+        assert!(l.rate_take(&mut v, Verdict::Keep).is_err());
+        // Saved in the single-clip format.
+        let saved = Verdicts::load(&dir).unwrap();
+        let got: Vec<_> = ["idle", "walk.f.act.g0.00", "walk.f.act.g0.01", "walk.f.act.g0.02", "walk.f.act.g1.00", "run.f.act.g0.00", "run.f.act.g0.01"].map(|id| saved.get(id).unwrap_or("-")).into();
+        assert_eq!(got, ["maybe", "maybe", "keep", "reject", "reject", "keep", "reject"]);
+        assert_eq!(saved, v);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_big_group_shows_four_unrated_then_the_rest() {
+        let dir = temp("group-big");
+        let root = Path::new("gen");
+        let paths = (0..6).map(|n| format!("walk/walk.g.0{n}.bvh")).chain(["walk/walk.h.00.bvh".to_owned()]);
+        let mut l = BrowseList::from_paths(root, paths.map(|p| root.join(p))).unwrap();
+        let mut v = Verdicts::load(&dir).unwrap();
+        v.set("walk.g.01", Verdict::Keep);
+        assert!(l.open_group(Some(&v)));
+        assert_eq!(stage_ids(&l), [("walk.g.00", 0), ("walk.g.02", 1), ("walk.g.03", 2), ("walk.g.04", 3)]);
+        for _ in 0..3 {
+            assert_eq!(l.rate_take(&mut v, Verdict::Reject), Ok(GroupRated::Removed));
+        }
+        // The emptied stage reopens the same group on its last unrated take, alone.
+        assert_eq!(l.rate_take(&mut v, Verdict::Reject), Ok(GroupRated::Opened));
+        assert_eq!(stage_ids(&l), [("walk.g.05", 0)]);
+        assert_eq!(l.rate_take(&mut v, Verdict::Keep), Ok(GroupRated::Opened));
+        assert_eq!(stage_ids(&l), [("walk.h.00", 0)]);
+        // Back to the fully rated group: its first four.
+        assert!(l.step_group(-1, Some(&v)));
+        assert_eq!(stage_ids(&l), [("walk.g.00", 0), ("walk.g.01", 1), ("walk.g.02", 2), ("walk.g.03", 3)]);
+        assert!(l.step_group(1, Some(&v)));
+        assert_eq!(l.group.as_ref().unwrap().name, "walk.h");
+        // Leaving goes to the next group's first shown clip (wrapping).
+        l.leave_group(Some(&v));
+        assert_eq!((l.group.as_ref(), l.current().id.as_str()), (None, "walk.g.00"));
+        assert!(!l.step_group(1, Some(&v)));
+        // A view that hides the cursor's clip opens nothing.
+        l.view = View::Maybe;
+        assert!(!l.open_group(Some(&v)));
+        assert_eq!(l.group, None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn group_clock_restarts_every_take_together_and_short_ones_hold() {
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-6;
+        let row = |n: usize, gap: f32| (0..n).map(|r| row_x(r, n, gap)).collect::<Vec<_>>();
+        let rows_near = |a: &[f32], b: &[f32]| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| near(*x, *y));
+        let mut c = GroupClock::new([1.0, 2.5, 0.0]);
+        assert!(near(c.t, 0.0) && near(c.length, 2.5) && near(c.rate, 1.0));
+        assert!(!c.tick(1.0));
+        assert!(c.holds(1.0) && !c.holds(2.5));
+        assert!(!c.tick(1.0));
+        assert!(c.tick(1.0));
+        assert!(near(c.t, 0.5));
+        assert!(!c.holds(1.0));
+        c.rate = 0.0;
+        assert!(!c.tick(5.0));
+        assert!(near(c.t, 0.5));
+        c.rate = 1.0;
+        c.set_length([0.25]);
+        assert!(c.tick(0.0));
+        assert!(near(c.t, 0.0) && near(c.length, 0.25));
+        assert!(near(GroupClock::new([]).length, MIN_LOOP_S));
+        assert!(rows_near(&row(3, 1.5), &[-1.5, 0.0, 1.5]));
+        assert!(rows_near(&row(2, 1.5), &[-0.75, 0.75]));
+        assert!(rows_near(&row(4, 1.0), &[-1.5, -0.5, 0.5, 1.5]));
+        assert!(near(row_x(0, 1, 2.0), 0.0));
     }
 }

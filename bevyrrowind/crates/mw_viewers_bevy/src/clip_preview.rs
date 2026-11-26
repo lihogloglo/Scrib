@@ -296,7 +296,8 @@ fn add_mode(app: &mut App, browsing: bool, step: Duration) {
         app.init_resource::<live::OrbitCam>()
             .add_systems(Startup, live::spawn_overlay)
             .add_systems(Update, live::browse_step.after(drive))
-            .add_systems(PostUpdate, (live::orbit, floor_follows).after(sf_anim_bevy::AnimSystems::Apply).before(TransformSystems::Propagate));
+            .add_systems(PostUpdate, (live::orbit, floor_follows).after(sf_anim_bevy::AnimSystems::Apply).before(TransformSystems::Propagate))
+            .add_systems(PostUpdate, live::seat_labels.after(TransformSystems::Propagate));
     } else {
         app.insert_resource(TimeUpdateStrategy::ManualDuration(step))
             .add_systems(PostUpdate, follow.after(sf_anim_bevy::AnimSystems::Apply).before(TransformSystems::Propagate))
@@ -313,8 +314,9 @@ const FLOOR_PERIOD: f32 = 2.0;
 
 /// The browser's floor stays under a clip walking on (a cut loop never returns to the mark): it steps
 /// by whole checker periods, which leaves every tile's look in place, so the floor reads as endless.
-fn floor_follows(actors: Query<&Transform, With<Animator>>, mut floors: Query<&mut Transform, (With<Floor>, Without<Animator>)>) {
-    let Some(at) = actors.iter().next().map(|t| t.translation) else { return };
+/// Under group review it follows the row's middle ([`live::focus`]).
+fn floor_follows(actors: live::Bodies, roots: live::SeatRoots, mut floors: Query<&mut Transform, FloorOnly>) {
+    let Some(at) = live::focus(&actors, &roots) else { return };
     let snap = |v: f32| (v / FLOOR_PERIOD).round() * FLOOR_PERIOD;
     for mut t in &mut floors {
         t.translation = Vec3::new(snap(at.x), 0.0, snap(at.z));
@@ -343,6 +345,7 @@ fn stage(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Ass
         Transform::IDENTITY,
         Name::new(npc.as_str().to_owned()),
         CharacterReadiness(Readiness::Sheathed),
+        live::Seat(0),
     ));
     commands.spawn((Camera3d::default(), Exposure { ev100: mw_assets::SCENE_EV100 }, Transform::from_xyz(0.0, 1.3, 3.6).looking_at(Vec3::new(0.0, 0.95, 0.0), Vec3::Y)));
 }
@@ -436,6 +439,9 @@ fn visible_chain(commands: &mut Commands, joints: &Query<(Option<&ChildOf>, Has<
         at = parent.parent();
     }
 }
+
+/// The floor, apart from the actors and their seat roots.
+type FloorOnly = (With<Floor>, Without<Animator>, Without<live::Seat>);
 
 type ActorQuery<'a> = (&'a mut Animator, &'a mut AnimLod, &'a mut Transform, Option<&'a mut AnimRootMotion>);
 

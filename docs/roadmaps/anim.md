@@ -102,7 +102,7 @@ P-IK4 + lean fix (PL-10) and the roll chain (CB-6), both 2026-11-25.
 |---|---|---|---|---|
 | AN9 | Diagnosis: what slows decisions in `--browse` (owner notes, a timed session) vs dailies review; gap list in the spec | docs | - | **done 2026-11-26** (`motion-generation.md` "Browse review: diagnosis", 8 ranked gaps; no timed session, owner away) |
 | AG2 | Browser reads `grades.json`: overlay, sort, candidates only (absorbs ROADMAP's MG10b) | `mw_viewers_bevy` | AN9 | list order; owner ANIM-6 | **done 2026-11-26** (C candidates only, V view all/unrated/maybe/keep, gated last per activity, grade line in the overlay)
-| AN10 | Side-by-side elimination: 2-4 takes synced in a row, reject drops one, last ones get keep/maybe | `mw_viewers_bevy` | AG2 | exact list state; owner ANIM-6 |
+| AN10 | Side-by-side elimination: 2-4 takes synced in a row, reject drops one, last ones get keep/maybe | `mw_viewers_bevy` | AG2 | exact list state; owner ANIM-6 **done 2026-11-26** (G group review, one shared `GroupClock`, 4 exact tests; owner ANIM-6b) |
 | AN46 | Review controls: Z undo (Backspace today clears the NEXT clip, `browse.rs:174-190`), pause/frame step/speed, number-key reason tags into the note, mirror preview of `mirror_candidate` | `mw_viewers_bevy` | AN10 | exact list state |
 | AN11 | In context: a take through the shipped graph at slot speed (treadmill, ramps) on chosen bodies (old/young, races, female rig) | `mw_viewers_bevy` | AN10 | pose = `mw_graphs::sim`; owner ANIM-6 |
 | AG3 | Fitted gates + score; `motiongen calibrate` from `verdicts.toml` | scrib-motiongen | AG2 | AUC printed |
@@ -142,7 +142,8 @@ Each family: recipe against slot contact points and MG4 height bands, generation
 | AN44 | Spike verdict: the three arms' hubcheck + foot-slide tables side by side; owner ranks takes | docs | AN44b-d | table; owner ranks |
 | AN45 | Bake hub snap + hub gate: blend the last frames into the exact hub pose, reject takes whose hub error exceeds a tunable (beside the foot-slide gate) | scrib-motiongen, `mw_graphs` bake | AN44 | exact: snapped ends equal the hub; rejects printed |
 | MG7b | Grip table + second-hand `FullBodyIk` | `mw_viewers_bevy`, data | MG7a | exact sockets |
-| MG8 | MotionBricks link worker (approach, loop seams, exit) | scrib-motiongen | AN13 | seams printed |
+| MG8 | MotionBricks link worker (approach, loop seams, exit) | scrib-motiongen | AN13 | **done 2026-11-26** (seams printed: `motiongen link`, `[[link]]`/`[[loop_seam]]` recipes, one MotionBricks venv with a numpy Kimodo port; hubcheck on 4 takes: ends 0.0 deg/cm, slide p95 13-19 cm/s, raw RightHand miss ~50 deg spread by the correction, 4 ms/segment; ledger animation 2026-11-26) |
+| MG8b | Link worker: wrists and fingers slerped hub to hub over the piece (the model's raw wrists miss the hubs by 29-53 deg, MG8 diagnosis), the body keeps the endpoint correction; hand contacts stay runtime IK | scrib-motiongen | MG8 | hubcheck: ends 0/0, no wrist correction spread; per-frame wrist twist printed **done 2026-11-26** (`--hand-mode slerp` default, `model` = A/B; ends 0/0, wrist peak 2-67 deg/s vs MG8 113-217; left forearm correction 16-17 deg remains, ledger) |
 | AN26 | Sit/stand (IN2): approach-turn-in, sit, idle loops, stand; stool/chair/bench/floor; sides; bands; old/heavy variant | generation | AN25, MG8 | grade; owner ANIM-9 |
 | AN27 | Chair pull-out/push-in, bench scoot, seated prop chain: reach, pick, drink/eat/read, put down (IN9, AI31) | generation | AN26, MG7b | grade; owner ANIM-9 |
 | AN28 | Doors (IN33): push/pull, hinge L/R, both sides, walk-through, knock, locked rattle, bash (IN37) | generation | AN25 | grade; owner ANIM-10 |
