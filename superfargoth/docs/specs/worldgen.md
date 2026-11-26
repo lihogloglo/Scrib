@@ -166,11 +166,16 @@ height; runs start noisy and stop at a finite time, not at strict equilibrium.
    halo; a hash-cached product read at load, the budget cut by rank. v1 (WG-X5, running today): per-region densities
    learned from the source's own placements (WG-R3 §6) and one Bernoulli draw per candidate.
    Rocks (WG-E3) run first: talus thrown from scarp cells under the shadow angle (big blocks to the toe), outcrop
-   blocks with debris, field stones per rock unit; truncated Pareto sizes; rockgen library classes per unit.
+   blocks with debris, field stones per rock unit; truncated Pareto sizes; per unit, rockgen library classes and the pack's own rock models side by side (owner 2026-11-26).
 9. **Wilderness sites** ([sites.md](sites.md), WG-P/V/NM): a site table (data) drives Magna Urbis `Terrain::place` in
    `list` mode (kept towns by `position`, generated hamlets, farms, activity and remote sites) in `scrib-worldgen`;
    Scrib reads `sites.json` v2 (`sf_worldgen::sites`), floods reachability on the final ground (`sf_worldgen::reach`,
    46 deg), stamps pads, clears flora; sites become static content like anchors. Caves: `rockgen.md` RG-7.
+10. **Rural land use** ([worldgen-landuse.md](worldgen-landuse.md), WG-LU): Magna Urbis `landuse` (`wire::execute`,
+   `rural`) per parish (a farming place and its farms) in `scrib-worldgen`, after sites, pads and roads; Scrib reads
+   `landuse.json` v1 (`sf_worldgen::landuse`): field layers, crops by groundcover rules, scatter exclusion, orchard rows,
+   field ways as tracks, walls and hedges as placements. Land use places no farm and writes no heights.
+   (Stage numbers are not run order: scatter (8) reads the clearings of sites (9) and the kinds of land use (10).)
 
 **Stage rules (WG-R3):** no stage creates or removes water except hydrology. Every stage runs a wet/dry audit (no
 new or dried water is a test), and every mask is rebuilt from the current field, never reused from an earlier stage

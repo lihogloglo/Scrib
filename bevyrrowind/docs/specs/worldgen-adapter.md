@@ -274,6 +274,9 @@ Framework slices and the order across both specs: framework spec "Build plan".
   **WG-A3b** the coordinate list above through the anchor transform.
 - **WG-A4** first Vvardenfell 10× world in the game (`--world vvardenfell-10x`); owner check WG-A4.
 - **WG-A5** rivers and lakes from hydrology as water bodies (`water-adapter.md`).
+- **WG-LU3** rural land use data: `worldgen/landuse-x10.toml` (recipe: class -> MU biome, crop surplus per culture),
+  `worldgen/mu-packs/landuse.json` (enclosures of Morrowind cultures), `worldgen/landuse.toml` (kind -> LTEX layer, crop
+  and orchard species, boundary kits); spec `superfargoth/docs/specs/worldgen-landuse.md`.
 - **WG-G2** Tamriel Rebuilt's ESMs through the same adapter: new regions, new recipes.
 
 ## Open questions (owner)

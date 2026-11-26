@@ -145,8 +145,9 @@ drops still there after ~5 s, any hitch when they start.
 ### WA-13: Generated river without sea waves, bank shear, joins (FL-1, FL-2; joins after FL-4b; `superfargoth/docs/specs/water-bodies.md`)
 
 Status: planned (after FL-1, FL-2; joins part after FL-4b).
-Launch: `bash bevyrrowind/tools/owner_launch.sh view "world:C:/cargo-target/scrib/worldgen/x10s-b2w" --hour 12 --camera -2450,+90,1850,-2690,+5,1650`
-(TN-2 Odai 2.0 reach, clear); A/B `--off waterflowtex` (today's FFT ripples), later `--off flowfield`.
+Launch: `bash bevyrrowind/tools/owner_launch.sh view "world:C:/cargo-target/scrib/worldgen/x10hs-b2w" --hour 12 --camera -213,+3,3035,-282,+0,3111`
+(guide river 55 entering lake 161, clear; the TN-2 "Odai 2.0" camera used before 2026-11-26 has no guide river: it is a
+sea-level arm); A/B `--off waterflowtex` (today's FFT ripples), later `--off flowfield`.
 Do: stand on the bank, then a bridge looking downstream; walk to a confluence and to where the river enters a lake.
 Look for: streaks drifting downstream at the water's speed, no waves running in random directions, slower calmer water
 at the banks than mid-channel, smoother water on fast reaches with white only where it is fastest; at joins the
@@ -169,25 +170,29 @@ fall popping in or out while walking, a frame hitch near it.
 ### WA-15: Wading rings and a short wake (FL-7, after R2/R3; `world:` x10s-b2w)
 
 Status: planned (after FL-7).
-Launch: same as WA-13 (Odai 2.0 reach, noon, clear); A/B `--off wadewake`, `--off ripples`.
+Launch: same as WA-13 (river 55 into lake 161, noon, clear); A/B `--off wadewake`, `--off ripples`.
 Do: third person, wade knee-deep across the river, stop mid-stream, walk upstream, then into a still lake edge.
 Look for: rings around the legs while moving and small ones while standing, a short trail drifting downstream and
 fading in ~1.5 s, none drifting in the still lake (rings only); the river's own streaks unchanged around the legs.
 Bad: rings frozen in place on a flowing river, a long V like a boat wake, the river's streaks bending round the
 character, rings far from the legs, any flicker at the grid's edge.
 
-### WA-16: Swimming in the current (FL-5c; `world:` x10s-b2w)
+### WA-16: The player swims; rivers carry (FL-5c; `world:` x10hs-b2w, river 55 into lake 161)
 
-Status: awaiting owner (built 2026-11-26, worldgen-4).
-Launch 1 (river, the Odai 2.0 reach): `bash bevyrrowind/tools/owner_launch.sh view "world:C:/cargo-target/scrib/worldgen/x10s-b2w" --hour 12 --camera -2450,+90,1850,-2690,+5,1650`
-Launch 2 (altitude lake 142, level 125 m, 38 ha): same with `--camera -1446,+3,1662,-1081,+0,1392`.
-No log line proves it (the system is silent); the headless test `river_carries_a_swimmer` is the proof.
-Do: walk into the river until swimming, hold still, swim upstream, across, climb out on a bank; then swim in the lake.
-Yes/no: (1) does walking turn into swimming at about neck depth, and back to wading in the shallows, without popping
-between the two? (2) holding still in the river, are you carried downstream at about the water's visible speed? (3) can
-you still swim upstream (slowly) and does the bank stop the drift (never pushed through it)? (4) in the lake: you float
-at the surface, 125 m above the sea, with no drift?
-Known, not part of this check: strokes are still the walk animation, no dive, no breath (ROADMAP 3.6); the river's
-speed is the same across its width until FL-1.
-Bad: walking on the river bed in deep water, popping between swim and walk, being pushed through a bank, drift in still
-water, the current faster than the water looks.
+Status: awaiting owner (rebuilt 2026-11-26, worldgen-9: the rule now reaches the player's body).
+Launch: `bash bevyrrowind/tools/owner_launch.sh view "world:C:/cargo-target/scrib/worldgen/x10hs-b2w" --hour 12 --camera -213,+3,3035,-282,+0,3111`
+(on the bank of guide river 55, 13 m wide, 80 m before it enters lake 161: level 134.3 m, 140 ha, 4 m deep 20 m from the
+mouth). F11 walks the player.
+Proof log line (once the player floats): `swim: body <entity> starts swimming (water 1.6x m above its feet, current ... m/s)`,
+and `swim: body <entity> stops swimming` back in the shallows.
+Do: walk down the river into the lake until you float, hold still, swim back to the shore.
+Yes/no: (1) does walking turn into swimming at about neck depth, and back to walking in the shallows, without popping
+between the two? (2) in the lake, do you float at the surface without drifting? (3) can you swim in every direction and
+climb out on the shore?
+Known, not part of this check: the river is 0.6 m deep (no carved bed yet), so you wade it and its push is about
+0.2 m/s; strokes are still the walk animation, no dive, no breath (ROADMAP 3.6).
+Bad: walking on the lake bed under water, popping between swim and walk, drift in the still lake.
+History: 2026-11-26 FAIL on the first build: "none of that no. rivers are still flat ribbons over the landscape too".
+Causes (`.sessions/out/worldgen-9-wa16-diagnosis.md`): the swim system only moved NPC `Mover`s, the player's
+`ActionBody` never (fixed); the old camera ("Odai 2.0 reach", `x10s-b2w`) is a sea-level arm with no guide river within
+2.4 km; guide rivers lie 0.6 m above uncarved ground (bed carve: ROADMAP `[p]` "generated rivers refactor").

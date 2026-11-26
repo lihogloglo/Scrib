@@ -185,7 +185,10 @@ Known: regional roads don't join the town (S-2d diagnosis), bridges are gaps (no
 
 ### TN-4: the regional road meets Balmora 2.0's streets (2026-11-26, worldgen-5, S-2c2)
 
-Status: **awaiting owner**.
+Status: **PASS** (owner 2026-11-26, all questions together: "yeah it seems alright"; the 4 m road meeting a ~2 m lane is
+accepted for now). Both proof lines seen (guide 178 segments, `balmora2-medina.json` 443 segments). The log's one
+`ERROR sf_terrain_bevy::gpu_fill: ... Shader import not yet available.` at startup is harmless (an import still loading,
+`pipelines ready` 0.28 s later; ROADMAP 1.33).
 Launch: `owner_launch.sh view "world:C:/cargo-target/scrib/worldgen/x10hs-b2w" --hour 12 --camera -2915,+35,2486,-2906,+2,2427`
 (the south-west road, 60 m before its join; the two other joins: east road from the south at engine x,z -2501,2422, from the
 north at -2355,1897. Regional roads are routed to the town centre, then cut where they first come within 8 m of a town
@@ -227,9 +230,35 @@ forest, a town edge, Grazelands (open). Live: `--set scatter.budget=N`, `scatter
 ### WG-E3: scatter v2 rocks on x10s (planned 2026-11-26, after WG-E3f and WG-E2j; spec `worldgen-scatter.md` Rocks)
 Not built yet: nothing to launch. Launch then: as WG-E2 (same arm folder). Places: a placed fault scarp (LF-2) with
 its talus, a basalt outcrop, an open plain of field stones, a road through rocky ground. Live: `--set
-scatter.budget=N`, `scatter.rock.sort_beta`, `scatter.rock.size_dim`.
+scatter.budget=N`, `scatter.rock.sort_beta`, `scatter.rock.size_dim`, `scatter.rock.pack_model_share` (0 = generated
+rocks only, 1 = the source's rock models wherever one fits).
 1. Do rocks show a clear spread of sizes, many small and few big, not one size?
 2. Do rocks gather below scarps in a fan, thinning away from the foot, rather than a spray?
 3. Do the biggest blocks sit toward the outer edge of the talus fan?
 4. Do outcrop blocks have smaller debris around them?
 5. Do rocks sit in the ground (partly buried, tilted with the slope), with none on roads or in water?
+6. Do the source game's rock models and the generated rocks sit together without one kind looking out of place? (If no:
+   which kind should go, at share 0 or 1?)
+
+### WG-P-look: generated wilderness sites (planned 2026-11-26, after WG-P3b; spec `sites.md`)
+Not built yet: nothing to launch. Launch then: `bash bevyrrowind/tools/owner_launch.sh view "world:target/worldgen/x10s"`
+with the site mod enabled (exact mod flag at P3b); camera at three sites from the `reach` census: a crag ruin, an
+ash-plain camp, a roadside shrine; noon, clear weather.
+1. Do sites sit on ground that suits them (ruins on crags and islets, camps on open plains)?
+2. Is anything floating, buried or cut by a pad edge?
+3. Is there enough to find between two towns on foot?
+4. Do the clearings read as natural, not as stamped discs?
+5. Should these sites get contents (creatures, a container) as the next slice? (Sites are scenery until then: `sites.md`
+   open question 3 is decided here.)
+
+### WG-LU-look: rural land use (planned 2026-11-26, after WG-LU3; spec `worldgen-landuse.md`)
+Not built yet: nothing to launch. Launch then: `bash bevyrrowind/tools/owner_launch.sh view "<generated hamlet with >= 3
+farms, Ascadian Isles class>"` at 10:00, then a kept town (Pelagiad surroundings, outside the anchor band), default
+flags. Look at the land between the houses and the farms, then the town's edge.
+1. Do the fields read as worked land (crop rows, bare strips, pasture), not as painted patches?
+2. Do the field strips and walled closes follow the slope and the roads, with no field on water or a road?
+3. Do walls, hedges or fences have gates where the field ways meet them?
+4. Are there no trees standing in fields, while woods stay outside them?
+5. Does the kept town sit in farmland beyond its band, with no seam at the band edge?
+Owner answers already given (2026-11-26): crops not harvestable in v1; fields may reach kept towns outside the kept
+area; field walls block, are jumpable and have a gate at each way; Magna Urbis's own land-use farms stay off for now.
