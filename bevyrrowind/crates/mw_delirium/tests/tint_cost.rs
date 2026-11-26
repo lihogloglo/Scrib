@@ -6,10 +6,13 @@
 //! Each `Sim` owns its own floor world and agent, so N agents are N independent sims (they do not collide).
 //! States are a table (`STATES`): a name, a setup run once and an optional per-tick drive run before each step.
 //! `tint_group_cost` instead puts N agents in one floor world and steps them together (`Agent::step_group`).
+//! `tint_fanout_cost` (state G only): grouped at N = 3..7, then a provider-side fan-out at N = 1..5 (one long-lived
+//! worker thread per agent, each stepping its own plain `Sim`; the main thread times release-to-all-done).
 
 #![allow(clippy::cast_precision_loss)]
 
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Barrier, OnceLock};
 use std::time::Instant;
 
 use delirium::prelude::*;
@@ -281,6 +284,121 @@ fn tick_group(sims: &mut [Sim], targets: &[Vec<Transform>], state: &State, world
     Agent::step_group(&mut agents, world, DT, group, &mut |_, _, _| {});
 }
 
+/// One result line: `kind` is `group` or `fanout`; `all` holds every tick's ms from tick 0, `fallen` the count at
+/// `FALLEN_AT`, `pelvis` the mean pelvis height as a % of the spawn pose's.
+fn print_cost(kind: &str, state: &State, n: usize, all: &[f64], fallen: usize, pelvis: f64) {
+    let t = sorted(&all[WARM_UP..]);
+    let first = sorted(&all[..FALLEN_AT]);
+    let mean = t.iter().sum::<f64>() / t.len() as f64;
+    let median = t[t.len() / 2];
+    println!(
+        "tint cost {kind} {} N={n}: {mean:.3} ms/tick mean, {:.3} min, {median:.3} median, {:.3} p99, {:.3} max, {:.3} ms/body; fallen {fallen}/{n} at 2 s; pelvis {pelvis:.0} %; first 2 s {:.3} median, {:.3} p99 ms/tick",
+        state.name,
+        t[0],
+        t[t.len() * 99 / 100],
+        t[t.len() - 1],
+        median / n as f64,
+        first[first.len() / 2],
+        first[first.len() * 99 / 100],
+    );
+}
+
+/// N agents of `state` in one floor world, `GROUP_SPACING` apart, stepped together (`Agent::step_group`) for
+/// `WARM_UP + TIMED` ticks; prints one `tint cost group` line.
+fn group_run(spawned: &Spawned, state: &State, n: usize, world: &Collision) {
+    let pelvis0 = f64::from(spawned.frames[0].translation.z);
+    let targets: Vec<Vec<Transform>> = (0..n).map(|i| shifted(spawned, Vec3::X * GROUP_SPACING * i as f32)).collect();
+    let mut sims: Vec<Sim> = targets.iter().enumerate().map(|(i, f)| sim_at(spawned, f, 0.3 + 0.1 * i as f32)).collect();
+    for s in &mut sims {
+        (state.setup)(s);
+    }
+    let mut group = Group::default();
+    let mut all: Vec<f64> = Vec::with_capacity(WARM_UP + TIMED);
+    let mut fallen = None;
+    for done in 1..=WARM_UP + TIMED {
+        let t0 = Instant::now();
+        tick_group(&mut sims, &targets, state, world, &mut group);
+        all.push(t0.elapsed().as_secs_f64() * 1000.0);
+        if done == FALLEN_AT {
+            fallen = Some(sims.iter().filter(|s| s.agent.fallen).count());
+        }
+    }
+    assert!(sims.iter().all(Sim::finite), "group {} N={n}: non-finite frames", state.name);
+    let pelvis = sims.iter().map(|s| f64::from(s.pelvis_z())).sum::<f64>() / n as f64 / pelvis0 * 100.0;
+    print_cost("group", state, n, &all, fallen.unwrap_or(0), pelvis);
+}
+
+/// N agents of `state`, each a plain `Sim` (own floor world, plain `Agent::step`) owned by its own long-lived worker
+/// thread; per tick the main thread releases all workers (`start`) and waits for all (`done`), timing that span (the
+/// frame cost of a provider with a warm pool). Prints one `tint cost fanout` line.
+fn fanout_run(spawned: &Spawned, state: &State, n: usize) {
+    let pelvis0 = f64::from(spawned.frames[0].translation.z);
+    let start = Barrier::new(n + 1);
+    let done = Barrier::new(n + 1);
+    let stop = AtomicBool::new(false);
+    let mut all: Vec<f64> = Vec::with_capacity(WARM_UP + TIMED);
+    let results: Vec<(bool, bool, f32)> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..n)
+            .map(|i| {
+                let mut sim = Sim::new(spawned, 0.3 + 0.1 * i as f32, false);
+                (state.setup)(&mut sim);
+                let (start, done, stop) = (&start, &done, &stop);
+                scope.spawn(move || {
+                    let mut ticks = 0;
+                    let mut fallen = false;
+                    loop {
+                        start.wait();
+                        if stop.load(Ordering::Acquire) {
+                            break;
+                        }
+                        tick_all(std::slice::from_mut(&mut sim), state, &spawned.frames);
+                        ticks += 1;
+                        if ticks == FALLEN_AT {
+                            fallen = sim.agent.fallen;
+                        }
+                        done.wait();
+                    }
+                    (fallen, sim.finite(), sim.pelvis_z())
+                })
+            })
+            .collect();
+        for _ in 0..WARM_UP + TIMED {
+            let t0 = Instant::now();
+            start.wait();
+            done.wait();
+            all.push(t0.elapsed().as_secs_f64() * 1000.0);
+        }
+        stop.store(true, Ordering::Release);
+        start.wait();
+        workers.into_iter().map(|w| w.join().expect("fan-out worker")).collect()
+    });
+    assert!(results.iter().all(|r| r.1), "fanout {} N={n}: non-finite frames", state.name);
+    let fallen = results.iter().filter(|r| r.0).count();
+    let pelvis = results.iter().map(|r| f64::from(r.2)).sum::<f64>() / n as f64 / pelvis0 * 100.0;
+    print_cost("fanout", state, n, &all, fallen, pelvis);
+}
+
+#[test]
+#[ignore = "measurement: state G, grouped Agent::step_group at N=3..7, and fan-out (one worker thread per agent, plain Agent::step) at N=1..5"]
+fn tint_fanout_cost() {
+    let Some(spawned) = fixture() else { return };
+    let state = STATES.iter().find(|s| s.name.starts_with("G ")).expect("state G in STATES");
+    let parallelism = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    println!(
+        "tint cost group: one floor world, agents {GROUP_SPACING} m apart along +x (shifted frames), Agent::step_group, {WARM_UP} warm-up + {TIMED} timed ticks; available parallelism {parallelism}"
+    );
+    let world = floor_world();
+    for n in [3usize, 4, 5, 6, 7] {
+        group_run(spawned, state, n, &world);
+    }
+    println!(
+        "tint cost fanout: own floor world per agent, one worker thread per agent, plain Agent::step, {WARM_UP} warm-up + {TIMED} timed ticks; available parallelism {parallelism}"
+    );
+    for n in [1usize, 2, 3, 4, 5] {
+        fanout_run(spawned, state, n);
+    }
+}
+
 fn median_max_us(t: &[f64]) -> (f64, f64) {
     let t = sorted(t);
     (t[t.len() / 2], t[t.len() - 1])
@@ -290,7 +408,6 @@ fn median_max_us(t: &[f64]) -> (f64, f64) {
 #[ignore = "measurement: ms per tick of N Delirium agents stepped together (Agent::step_group), and start/drop cost"]
 fn tint_group_cost() {
     let Some(spawned) = fixture() else { return };
-    let pelvis0 = f64::from(spawned.frames[0].translation.z);
     println!(
         "tint cost group: one floor world, agents {GROUP_SPACING} m apart along +x (shifted frames), Agent::step_group, {WARM_UP} warm-up + {TIMED} timed ticks; available parallelism {}",
         std::thread::available_parallelism().map_or(1, std::num::NonZero::get)
@@ -299,39 +416,7 @@ fn tint_group_cost() {
     for prefix in GROUP_STATES {
         let state = STATES.iter().find(|s| s.name.starts_with(prefix)).expect("state in STATES");
         for n in [1usize, 2, 4, 8] {
-            let targets: Vec<Vec<Transform>> = (0..n).map(|i| shifted(spawned, Vec3::X * GROUP_SPACING * i as f32)).collect();
-            let mut sims: Vec<Sim> = targets.iter().enumerate().map(|(i, f)| sim_at(spawned, f, 0.3 + 0.1 * i as f32)).collect();
-            for s in &mut sims {
-                (state.setup)(s);
-            }
-            let mut group = Group::default();
-            let mut all: Vec<f64> = Vec::with_capacity(WARM_UP + TIMED);
-            let mut fallen = None;
-            for done in 1..=WARM_UP + TIMED {
-                let t0 = Instant::now();
-                tick_group(&mut sims, &targets, state, &world, &mut group);
-                all.push(t0.elapsed().as_secs_f64() * 1000.0);
-                if done == FALLEN_AT {
-                    fallen = Some(sims.iter().filter(|s| s.agent.fallen).count());
-                }
-            }
-            assert!(sims.iter().all(Sim::finite), "group {} N={n}: non-finite frames", state.name);
-            let t = sorted(&all[WARM_UP..]);
-            let first = sorted(&all[..FALLEN_AT]);
-            let mean = t.iter().sum::<f64>() / t.len() as f64;
-            let median = t[t.len() / 2];
-            let pelvis = sims.iter().map(|s| f64::from(s.pelvis_z())).sum::<f64>() / n as f64 / pelvis0 * 100.0;
-            println!(
-                "tint cost group {} N={n}: {mean:.3} ms/tick mean, {:.3} min, {median:.3} median, {:.3} p99, {:.3} max, {:.3} ms/body; fallen {}/{n} at 2 s; pelvis {pelvis:.0} %; first 2 s {:.3} median, {:.3} p99 ms/tick",
-                state.name,
-                t[0],
-                t[t.len() * 99 / 100],
-                t[t.len() - 1],
-                median / n as f64,
-                fallen.unwrap_or(0),
-                first[first.len() / 2],
-                first[first.len() * 99 / 100],
-            );
+            group_run(spawned, state, n, &world);
         }
     }
     // Start and drop: one agent, alone (`Sim::new` + setup, its first plain `step`, then `drop`).
