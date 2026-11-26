@@ -1,9 +1,7 @@
 //! Census furniture kinds (motion-generation.md "As built (MG4)", interaction-adapter.md "Defs from
 //! the census"): what a `furn_*` / `active_*` record is used for, from its id or model name.
 //!
-//! `mw_bake::census` switches to `pub use mw_interaction::furniture::{Kind, classify}` once its
-//! current writer frees `mw_bake` (`IN32a` follow-up / `IN32b`); until then the census has its own copy
-//! (`bevyrrowind/crates/mw_bake/src/census.rs`), which this one must match word for word.
+//! The one definition: `mw_bake::census` re-exports these (`IN32b`).
 
 /// What a piece of furniture is used for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -103,7 +101,7 @@ pub fn classify(id: &str, model: Option<&str>) -> Option<Kind> {
 mod tests {
     use super::*;
 
-    /// The census's own cases (`mw_bake/src/census.rs` `classify_by_words`).
+    /// The census's original cases (once `mw_bake/src/census.rs` `classify_by_words`).
     #[test]
     fn classify_by_words() {
         assert_eq!(classify("furn_de_p_chair_01", None), Some(Kind::Seat));

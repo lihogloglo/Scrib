@@ -81,6 +81,10 @@ pub struct Measured {
     pub center: [f32; 2],
     /// Full extent of the footprint along x and z, m.
     pub footprint: [f32; 2],
+    /// Height of the floor (the model's lowest point) in its frame, m: slot roots and approach points
+    /// stand at this y, so a model authored with its origin above or below its floor still seats its
+    /// user on the ground (`IN32b`). 0 for most vanilla furniture.
+    pub floor: f32,
     /// Height of the usable top surface (seat, bed, table top) above the floor, m.
     pub top: f32,
     /// The side it is used from: a seat faces it, a table or counter is served across it (a counter's
@@ -90,6 +94,22 @@ pub struct Measured {
     /// A bed's head end: its `lie` slot's +Z. Seats, tables, counters and shelves don't read it
     /// ([`crate::measure()`] sets it to `front`).
     pub head: Facing,
+    /// Where `front` / `head` came from (reported by the bake; [`def_for`] doesn't read it).
+    pub basis: Basis,
+}
+
+/// Which [`crate::measure()`] rule set a [`Measured`] facing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Basis {
+    /// Measured from the geometry: a seat's backrest, a bed's head- or footboard.
+    Upright,
+    /// The + side of the short axis: a long backless seat (fallback); every table, counter and shelf
+    /// (their rule).
+    LongSide,
+    /// A short backless seat (stool; fallback): +Z.
+    PlusZ,
+    /// A bed with no clear head (bedroll, hammock; fallback): the + end of the long axis.
+    LongEnd,
 }
 
 /// The footprint as a box seen from the front.
@@ -114,7 +134,7 @@ impl Box2 {
             Facing::PosZ | Facing::NegZ => (m.footprint[1] / 2.0, m.footprint[0] / 2.0),
         };
         Self {
-            center: Vec3::new(m.center[0], 0.0, m.center[1]),
+            center: Vec3::new(m.center[0], m.floor, m.center[1]),
             front,
             across: Vec3::Y.cross(front),
             half_depth,
@@ -176,7 +196,12 @@ pub fn def_for(base: &RecordId, kind: Kind, m: &Measured, p: &FurnitureParams) -
         return None;
     }
     let sane = |v: f32| v.is_finite() && v > 0.0;
-    if !(sane(m.footprint[0]) && sane(m.footprint[1]) && sane(m.top) && m.center.iter().all(|c| c.is_finite())) {
+    if !(sane(m.footprint[0])
+        && sane(m.footprint[1])
+        && sane(m.top)
+        && m.floor.is_finite()
+        && m.center.iter().all(|c| c.is_finite()))
+    {
         return None;
     }
     let b = Box2::of(m, m.front);

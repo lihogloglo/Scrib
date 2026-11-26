@@ -5119,6 +5119,7 @@ dependencies = [
  "mw_anim",
  "mw_graphs",
  "mw_install",
+ "mw_interaction",
  "mw_nif",
  "mw_physics",
  "mw_records",

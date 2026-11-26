@@ -6,7 +6,7 @@ use glam::{Quat, Vec3};
 use sf_interaction::Side;
 use sf_records::RecordId;
 
-use crate::defs::{Facing, Measured, def_for};
+use crate::defs::{Basis, Facing, Measured, def_for};
 use crate::furniture::Kind;
 use crate::measure::measure;
 use crate::tunables::{FurnitureParams, MeasureParams};
@@ -70,9 +70,10 @@ fn chair() -> Soup {
 fn chair_faces_away_from_its_backrest_in_every_rotation() {
     let m = measured(Kind::Seat, &chair(), 0.45);
     assert_eq!(m.front, Facing::PosZ);
-    assert_eq!(m.head, Facing::PosZ);
+    assert_eq!((m.head, m.basis), (Facing::PosZ, Basis::Upright));
     assert!(near2(m.center, [0.0, 0.0]) && near2(m.footprint, [0.5, 0.5]));
     assert!((m.top - 0.45).abs() < EPS);
+    assert!(m.floor.abs() < EPS);
     for quarters in 0..4 {
         let m = measured(Kind::Seat, &turned(&chair(), quarters), 0.45);
         assert_eq!(m.front, turned_facing(Facing::PosZ, quarters), "{quarters} quarter turns");
@@ -93,10 +94,11 @@ fn backless_seats_get_the_fallback() {
     // Stool: square, nothing above the top: +Z.
     let stool = soup(&[([-0.2, 0.0, -0.2], [0.2, 0.6, 0.2])]);
     assert_eq!(measured(Kind::Seat, &stool, 0.6).front, Facing::PosZ);
+    assert_eq!(measured(Kind::Seat, &stool, 0.6).basis, Basis::PlusZ);
     // Benches: the + side of the short axis.
     let along_z = soup(&[([-0.2, 0.0, -0.8], [0.2, 0.45, 0.8])]);
     let m = measured(Kind::Seat, &along_z, 0.45);
-    assert_eq!((m.front, m.head), (Facing::PosX, Facing::PosX));
+    assert_eq!((m.front, m.head, m.basis), (Facing::PosX, Facing::PosX, Basis::LongSide));
     let along_x = soup(&[([-0.8, 0.0, -0.2], [0.8, 0.45, 0.2])]);
     assert_eq!(measured(Kind::Seat, &along_x, 0.45).front, Facing::PosZ);
     // Below the bench aspect (0.5 x 0.4 = 1.25): a stool, +Z, though longer along x.
@@ -119,7 +121,7 @@ fn bed() -> Soup {
 #[test]
 fn bed_head_is_its_taller_end() {
     let m = measured(Kind::Bed, &bed(), 0.6);
-    assert_eq!((m.head, m.front), (Facing::PosX, Facing::PosX));
+    assert_eq!((m.head, m.front, m.basis), (Facing::PosX, Facing::PosX, Basis::Upright));
     assert!(near2(m.footprint, [2.0, 1.0]));
     for quarters in 0..4 {
         let m = measured(Kind::Bed, &turned(&bed(), quarters), 0.6);
@@ -141,7 +143,7 @@ fn beds_without_a_clear_head_get_the_fallback() {
     // Bedroll along z, top 0.22 m, a pillow 8 cm high at -Z: below the board line, + long axis.
     let bedroll = soup(&[([-0.3, 0.0, -0.9], [0.3, 0.22, 0.9]), ([-0.25, 0.22, -0.9], [0.25, 0.3, -0.6])]);
     let m = measured(Kind::Bed, &bedroll, 0.22);
-    assert_eq!((m.head, m.front), (Facing::PosZ, Facing::PosZ));
+    assert_eq!((m.head, m.front, m.basis), (Facing::PosZ, Facing::PosZ, Basis::LongEnd));
     // Equal posts at both ends (a hammock frame, a canopy): a tie, + long axis (x).
     let posts = soup(&[
         ([-1.0, 0.0, -0.5], [1.0, 0.6, 0.5]),
@@ -159,7 +161,10 @@ fn tables_and_counters_face_a_long_side() {
     let table = soup(&[([1.4, 0.0, 2.6], [2.6, 0.84, 3.4])]);
     let m = measured(Kind::Table, &table, 0.84);
     assert!(near2(m.center, [2.0, 3.0]) && near2(m.footprint, [1.2, 0.8]));
-    assert_eq!((m.front, m.head), (Facing::PosZ, Facing::PosZ));
+    assert_eq!((m.front, m.head, m.basis), (Facing::PosZ, Facing::PosZ, Basis::LongSide));
+    // Its origin at the top: the floor is the lowest point, 0.84 m below.
+    let lifted: Soup = table.iter().map(|t| t.map(|p| p - Vec3::Y * 0.84)).collect();
+    assert!((measured(Kind::Table, &lifted, 0.84).floor + 0.84).abs() < EPS);
     // A counter along z, with a raised back rail: still the long side, +X.
     let counter = soup(&[([-0.3, 0.0, -1.0], [0.3, 0.94, 1.0]), ([-0.3, 0.94, -1.0], [-0.25, 1.2, 1.0])]);
     assert_eq!(measured(Kind::Counter, &counter, 0.94).front, Facing::PosX);

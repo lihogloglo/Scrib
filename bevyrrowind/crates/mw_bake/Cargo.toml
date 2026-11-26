@@ -18,6 +18,8 @@ image = { version = "0.25", default-features = false, features = ["tga", "bmp", 
 mw_actors.workspace = true
 mw_anim.workspace = true
 mw_graphs.workspace = true
+# `census`: furniture kinds; `interact`: furniture defs (`mw.interact.defs`, interaction-adapter.md).
+mw_interaction.workspace = true
 # `nav`: pathgrid nodes for door approach points.
 mw_ai.workspace = true
 mw_install.workspace = true

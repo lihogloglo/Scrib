@@ -6,14 +6,14 @@ use glam::{Quat, Vec3};
 use sf_interaction::{InteractableDef, Side, SlotDef, SlotKind, TagId};
 use sf_records::RecordId;
 
-use crate::defs::{Facing, Measured, def_for};
+use crate::defs::{Basis, Facing, Measured, def_for};
 use crate::furniture::Kind;
 use crate::tunables::FurnitureParams;
 
 const EPS: f32 = 1.0e-5;
 
 fn measured(footprint: [f32; 2], top: f32, front: Facing) -> Measured {
-    Measured { center: [0.0, 0.0], footprint, top, front, head: front }
+    Measured { center: [0.0, 0.0], footprint, floor: 0.0, top, front, head: front, basis: Basis::Upright }
 }
 
 fn def(kind: Kind, m: &Measured) -> InteractableDef {
@@ -64,7 +64,7 @@ fn chair_is_one_front_seat() {
 
 #[test]
 fn chair_facing_neg_x_off_centre() {
-    let m = Measured { center: [1.0, 2.0], footprint: [0.6, 0.4], top: 0.54, front: Facing::NegX, head: Facing::NegX };
+    let m = Measured { center: [1.0, 2.0], footprint: [0.6, 0.4], floor: 0.0, top: 0.54, front: Facing::NegX, head: Facing::NegX, basis: Basis::Upright };
     let d = def(Kind::Seat, &m);
     assert_eq!(d.slots.len(), 1);
     let s = &d.slots[0];
@@ -73,6 +73,24 @@ fn chair_facing_neg_x_off_centre() {
     assert!(s.local.rotation.abs_diff_eq(Quat::from_rotation_y(-FRAC_PI_2), EPS));
     // Depth along x: half 0.3, + 0.3.
     assert!(near(s.entrances[0].approach, Vec3::new(0.4, 0.0, 2.0)));
+}
+
+/// A model authored with its origin above its floor: roots and approaches stand on the floor,
+/// the band stays the height above it.
+#[test]
+fn floor_offset_moves_roots_and_approaches() {
+    let m = Measured { floor: -0.45, ..measured([0.5, 0.5], 0.45, Facing::PosZ) };
+    for kind in [Kind::Seat, Kind::Bed, Kind::Table, Kind::Counter] {
+        let d = def(kind, &m);
+        assert!(!d.slots.is_empty(), "{kind:?}");
+        for s in &d.slots {
+            assert!((s.local.translation.y + 0.45).abs() < EPS, "{kind:?}");
+            assert!(s.entrances.iter().all(|e| (e.approach.y + 0.45).abs() < EPS), "{kind:?}");
+            assert!((s.band - 0.45).abs() < EPS, "{kind:?}");
+        }
+    }
+    let nan = Measured { floor: f32::NAN, ..m };
+    assert!(def_for(&RecordId::new("furn_x"), Kind::Seat, &nan, &FurnitureParams::default()).is_none());
 }
 
 #[test]
@@ -170,7 +188,7 @@ fn bed_lies_head_first_entered_from_the_long_sides() {
 /// The head, not the front, sets the bed frame: a head at -X turns everything.
 #[test]
 fn bed_frame_follows_the_head() {
-    let m = Measured { center: [1.0, 0.0], footprint: [2.0, 1.0], top: 0.5, front: Facing::PosZ, head: Facing::NegX };
+    let m = Measured { center: [1.0, 0.0], footprint: [2.0, 1.0], floor: 0.0, top: 0.5, front: Facing::PosZ, head: Facing::NegX, basis: Basis::Upright };
     let d = def(Kind::Bed, &m);
     let lie = &d.slots[0];
     assert!(near(faces(lie), Vec3::NEG_X));
@@ -253,9 +271,11 @@ fn shelf_and_degenerate_shapes_have_no_def() {
     let m = Measured {
         center: [f32::INFINITY, 0.0],
         footprint: [0.5, 0.5],
+        floor: 0.0,
         top: 0.5,
         front: Facing::PosZ,
         head: Facing::PosZ,
+        basis: Basis::Upright,
     };
     assert!(def_for(&id, Kind::Seat, &m, &p).is_none());
 }

@@ -71,6 +71,8 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     let exterior = world::bake_exterior(&mut baker, &db, terrain, layers, &paths);
     // Navmeshes (nav.md "Bake"): after the collision cook and the terrain, which the tiles read.
     let nav = mw_bake::nav::bake_nav(&mut baker, &db, &paths);
+    // Furniture interactable defs (interaction-adapter.md "Defs from the census"): census models measured.
+    let interact = mw_bake::interact::bake_interact(&mut baker, &db);
     // Far field (far-field.md): L1-L3 proxies and impostors over the exterior.
     let far = mw_bake::far::bake_far(&mut baker, &db, &[world::exterior()]);
     // Animation (bake-adapter.md "Animation"): skeletons, clips and graphs of every actor.
@@ -214,6 +216,10 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     for (key, error) in nav.failures.iter().take(10) {
         eprintln!("  failed: {key}: {error}");
     }
+    println!("{interact}");
+    for (key, error) in &interact.failures {
+        eprintln!("  failed: {key}: {error}");
+    }
     let fingerprint_hex = fingerprint.hex();
     println!("profile fingerprint {} ({})", &fingerprint_hex[..12], if profile_changed { "changed since the last bake" } else { "unchanged" });
     println!(
@@ -259,6 +265,9 @@ pub fn run(install: &MorrowindInstall, cache: Option<PathBuf>) -> Result {
     }
     if !nav.failures.is_empty() {
         errors.push(format!("{} navmesh products failed", nav.failures.len()));
+    }
+    if !interact.failures.is_empty() {
+        errors.push("furniture interactable defs failed".to_owned());
     }
     if let Err(e) = &catalog {
         errors.push(format!("pipeline catalog not baked ({e})"));

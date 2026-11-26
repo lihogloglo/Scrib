@@ -85,7 +85,7 @@ placements, 97 % at scale 1.00. Measured bands: seat 0.14 / 0.48 / 0.54 / 0.64 m
 ### As built (IN32a, 2026-11-26)
 
 Bevy-free crate `bevyrrowind/crates/mw_interaction` (21 exact tests), nothing wired yet:
-- `furniture.rs`: `Kind`, `classify` (a copy of `mw_bake::census`'s; the census switches to `pub use` in IN32b).
+- `furniture.rs`: `Kind`, `classify` (the one definition; `mw_bake::census` re-exports them since IN32b2).
 - `defs.rs`: `def_for(base, kind, &Measured { center, footprint, top, front: Facing }, &FurnitureParams)`. Slot frame =
   root on the floor, +Z the way the user faces; `band` = `top`. Seat: places of `bench_seat_m` across the front, plus
   the places between them for 2-5 places (slot `k` has mask bits `k - 1`, `k`), Front entrance (`seat.chair` /
@@ -121,8 +121,31 @@ measuring planes (area-weighted, so density and long panels don't bias). Rules (
 - **Table, counter, shelf front** = + side of the short axis (def stations use both long sides / all edges, so the
   sign is not measured). `head` = `front` for every non-bed kind. Square footprints count as long along x.
 - `None`: no triangles, any non-finite point, zero extent in x or z, top not positive finite.
-- Open for IN32b2: `def_for` roots slots at y = 0 of the object frame; a model whose floor (min y) is off its origin
-  needs the floor offset applied (check the census `lo.y` spread on the install).
+- Floor offset: closed in IN32b2 (below).
+
+### As built (IN32b2, 2026-11-26)
+
+Bake step `mw.interact.defs` (`bevyrrowind/crates/mw_bake/src/interact.rs`, version 1, one product, subject
+`furniture`), run by `bevyrrowind bake` after the navmeshes; nothing registered at runtime (IN32c reads it with
+`decode_interact_defs`). The census now `pub use`s `mw_interaction::furniture::{Kind, classify}` and shares two
+helpers: `furniture_records(db)` (the census record scan) and `model_soups(nif)` (collision + render triangles).
+- Per census base record: census top (`Shape::top_below(kind.cap())`) on the collision soup, else the render soup;
+  that soup and top to `measure()`, then `def_for` with the `FurnitureParams` defaults. Shelves, records without
+  a usable top or a loadable model: no def (counted). Product = `InteractDefs { defs (sorted by base RecordId),
+  counts per kind, failed models }`, postcard.
+- Plan parameters: the record list (`id kind model` lines) and both parameter sets (`Debug`); every model is a
+  tracked file read, so a mod editing a furniture record or its mesh re-bakes the defs.
+- **Floor offset rule:** `Measured::floor` = the measured soup's lowest y (model frame); `def_for` stands every slot
+  root and approach point at that y (`band` stays the height above it). Vanilla furniture is authored centred, not
+  floor-rooted: 133 of 143 measured records (every table, counter and bed, 30 of 31 seats) sit 0.18-1.34 m above
+  their floor (beds ~0.45, `pr` beds 0.65, bunks 1.0, bars 0.47); without the offset every slot would float.
+- `Measured::basis` records which rule set the facing (`Upright` = backrest/headboard found, `LongSide`, `PlusZ`,
+  `LongEnd`); the bake report counts it.
+- **On the install** (vanilla + expansions, `tests/interact_real_install.rs`, measurement): seat 32 records, 31 defs,
+  83 slots (backrest 10, long-side fallback 12, +Z fallback 9, 1 unmeasured, 6 on render geometry); table 28 / 28 /
+  266 slots; counter 12 / 12 / 24; bed 46 / 46 / 138 (headboard 12, long-end fallback 34, 6 render); shelf 28 records,
+  no defs; 0 models failed. Open: 34 of 46 beds take the head fallback (a head at the foot is possible; the owner
+  check in IN32c shows it); 266 table stations (~9.5 per table) may want a coarser `counter_spacing_m`.
 
 ## World rules mapping (IN41, IN38, IN19)
 

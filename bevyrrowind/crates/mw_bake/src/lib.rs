@@ -27,6 +27,7 @@ pub mod collision;
 pub mod cook;
 pub mod delight;
 pub mod demand;
+pub mod interact;
 mod importer;
 mod inputs;
 pub mod nav;

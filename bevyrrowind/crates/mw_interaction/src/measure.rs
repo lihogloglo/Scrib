@@ -1,10 +1,11 @@
 //! A census furniture model's [`Measured`] shape from its triangles (`IN32b1`, interaction-adapter.md
-//! "As built (IN32b1)"): pure code the bake (`IN32b2`) calls once per furniture base record with the
+//! "As built (`IN32b1`)"): pure code the bake (`IN32b2`) calls once per furniture base record with the
 //! census triangle soup (collision first, render fallback) and the census top
 //! (`Shape::top_below(kind.cap())`).
 //!
 //! Space: the model's own frame, engine axes, metres, Y up, the floor = the lowest point (as the
-//! census). The footprint is the x/z bounds of every triangle, its centre their middle.
+//! census). The footprint is the x/z bounds of every triangle, its centre their middle; `floor` = the
+//! lowest point's y (slot roots stand there).
 //!
 //! - **Seat front** = the side opposite its backrest: the parts of triangles more than
 //!   [`MeasureParams::backrest_above_m`] above the top, if their area is at least
@@ -31,7 +32,7 @@
 use glam::Vec3;
 use smallvec::SmallVec;
 
-use crate::defs::{Facing, Measured};
+use crate::defs::{Basis, Facing, Measured};
 use crate::furniture::Kind;
 use crate::tunables::MeasureParams;
 
@@ -89,21 +90,27 @@ pub fn measure(kind: Kind, triangles: &[[Vec3; 3]], top: f32, p: &MeasureParams)
     let long_side = short.facing(true);
     let footprint_area = size.x * size.z;
     let top_y = lo.y + top;
-    let (front, head) = match kind {
-        Kind::Seat => {
-            let front = seat_front(triangles, center, size, top_y, footprint_area, p).unwrap_or_else(|| {
-                let aspect = long.of(size) / short.of(size);
-                if aspect >= p.bench_aspect { long_side } else { Facing::PosZ }
-            });
-            (front, front)
-        }
-        Kind::Bed => {
-            let head = bed_head(triangles, lo, hi, long, top_y, footprint_area, p).unwrap_or(long.facing(true));
-            (head, head)
-        }
-        Kind::Table | Kind::Counter | Kind::Shelf => (long_side, long_side),
+    let (front, basis) = match kind {
+        Kind::Seat => match seat_front(triangles, center, size, top_y, footprint_area, p) {
+            Some(front) => (front, Basis::Upright),
+            None if long.of(size) / short.of(size) >= p.bench_aspect => (long_side, Basis::LongSide),
+            None => (Facing::PosZ, Basis::PlusZ),
+        },
+        Kind::Bed => match bed_head(triangles, lo, hi, long, top_y, footprint_area, p) {
+            Some(head) => (head, Basis::Upright),
+            None => (long.facing(true), Basis::LongEnd),
+        },
+        Kind::Table | Kind::Counter | Kind::Shelf => (long_side, Basis::LongSide),
     };
-    Some(Measured { center: [center.x, center.z], footprint: [size.x, size.z], top, front, head })
+    Some(Measured {
+        center: [center.x, center.z],
+        footprint: [size.x, size.z],
+        floor: lo.y,
+        top,
+        front,
+        head: front,
+        basis,
+    })
 }
 
 /// Lowest and highest corner, or `None` (empty, non-finite).

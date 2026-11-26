@@ -47,99 +47,9 @@ const FLAT: f32 = 0.9;
 /// Surface height bin before merging neighbors, meters.
 const SURFACE_BIN: f32 = 0.02;
 
-/// What a piece of furniture is used for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Kind {
-    Seat,
-    Table,
-    Counter,
-    Bed,
-    Shelf,
-}
-
-impl Kind {
-    pub const ALL: [Self; 5] = [
-        Self::Seat,
-        Self::Table,
-        Self::Counter,
-        Self::Bed,
-        Self::Shelf,
-    ];
-
-    /// The key in `bands.json` (scrib-motiongen `motiongen/default_bands.json`).
-    pub fn key(self) -> &'static str {
-        match self {
-            Self::Seat => "seat",
-            Self::Table => "table",
-            Self::Counter => "counter",
-            Self::Bed => "bed",
-            Self::Shelf => "shelf",
-        }
-    }
-
-    /// Highest surface this kind measures (above it: backrests, canopies,
-    /// hutches), meters above the floor.
-    pub fn cap(self) -> f32 {
-        match self {
-            Self::Seat => 0.8,
-            Self::Table | Self::Bed => 1.2,
-            Self::Counter => 1.5,
-            Self::Shelf => 2.5,
-        }
-    }
-}
-
-/// The kind of a furniture record from its id or, failing that, its model's
-/// file name: `furn_*` / `active_*` ids (and `furn_*` models) whose
-/// `_`-separated words (trailing digits dropped) name a bed, counter,
-/// table, seat or shelf, in that order (`furn_de_bar_01` is a counter,
-/// `furn_de_r_bench_01` a seat, `active_de_bedroll` a bed). Words, not
-/// substrings: `barrel` is not a `bar`.
-pub fn classify(id: &str, model: Option<&str>) -> Option<Kind> {
-    fn words(name: &str) -> Option<Vec<String>> {
-        let lower = name.to_ascii_lowercase();
-        let words: Vec<String> = lower
-            .split(|c: char| !c.is_ascii_alphanumeric())
-            .map(|w| w.trim_end_matches(|c: char| c.is_ascii_digit()).to_owned())
-            .filter(|w| !w.is_empty())
-            .collect();
-        matches!(words.first().map(String::as_str), Some("furn" | "active")).then_some(words)
-    }
-    fn kind(words: &[String]) -> Option<Kind> {
-        let any = |names: &[&str]| words.iter().any(|w| names.contains(&w.as_str()));
-        if any(&["door"]) {
-            return None;
-        }
-        if any(&["bed", "beds", "bedroll", "hammock", "cot", "bunk"]) {
-            Some(Kind::Bed)
-        } else if any(&["counter", "bar", "bartop"]) {
-            Some(Kind::Counter)
-        } else if any(&["table", "desk"]) {
-            Some(Kind::Table)
-        } else if any(&["chair", "stool", "bench", "seat", "throne", "pew"]) {
-            Some(Kind::Seat)
-        } else if any(&["shelf", "shelves", "bookshelf", "bookcase"]) {
-            Some(Kind::Shelf)
-        } else {
-            None
-        }
-    }
-    let stem = |m: &str| {
-        m.rsplit(['/', '\\'])
-            .next()
-            .unwrap_or(m)
-            .split('.')
-            .next()
-            .unwrap_or(m)
-            .to_owned()
-    };
-    words(id).and_then(|w| kind(&w)).or_else(|| {
-        model
-            .map(stem)
-            .and_then(|s| words(&s))
-            .and_then(|w| kind(&w))
-    })
-}
+/// Furniture kinds and their classifier live in the interaction adapter core (`IN32b`); the census
+/// re-exports them so its callers keep their paths.
+pub use mw_interaction::furniture::{Kind, classify};
 
 /// A horizontal surface of a model, above its floor.
 #[derive(Clone, Copy, Debug, Default)]
@@ -270,6 +180,13 @@ pub fn shape(triangles: &[[Vec3; 3]], source: &'static str) -> Option<Shape> {
 /// A model's collision shape and its render-geometry shape (visible nodes
 /// outside collision subtrees).
 pub fn model_shapes(nif: &mw_nif::Model) -> Shapes {
+    let (collision, render) = model_soups(nif);
+    (shape(&collision, "collision"), shape(&render, "render"))
+}
+
+/// A model's collision and render triangles (model frame, engine space, y
+/// up), the soups [`model_shapes`] measures.
+pub fn model_soups(nif: &mw_nif::Model) -> Soups {
     let (_, mesh) = collision_of(nif, crate::collision::MwCollisionRules::default().weld);
     let collision: Vec<[Vec3; 3]> = mesh
         .triangles
@@ -311,11 +228,50 @@ pub fn model_shapes(nif: &mw_nif::Model) -> Shapes {
                 .map(|t| [point(t[0]), point(t[1]), point(t[2])]),
         );
     }
-    (shape(&collision, "collision"), shape(&render, "render"))
+    (collision, render)
 }
 
 /// A model's collision and render shapes ([`model_shapes`]).
 pub type Shapes = (Option<Shape>, Option<Shape>);
+
+/// A model's collision and render triangles ([`model_soups`]).
+pub type Soups = (Vec<[Vec3; 3]>, Vec<[Vec3; 3]>);
+
+/// A furniture base record ([`furniture_records`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FurnitureRecord {
+    /// Lowercase base id.
+    pub id: String,
+    /// `"STAT"`, `"ACTI"` or `"CONT"`.
+    pub record: &'static str,
+    pub kind: Kind,
+    /// Model path as the records resolve it ([`mw_world::model_path`]).
+    pub model: String,
+}
+
+/// Every `STAT`, `ACTI` and `CONT` that [`classify`] names, sorted by id.
+pub fn furniture_records(db: &RecordDb) -> Vec<FurnitureRecord> {
+    let mut found = Vec::new();
+    let mut add = |id: &str, record: &'static str, mesh: &str| {
+        let Some(model) = mw_world::model_path(mesh) else {
+            return;
+        };
+        if let Some(kind) = classify(id, Some(&model)) {
+            found.push(FurnitureRecord { id: id.to_ascii_lowercase(), record, kind, model });
+        }
+    };
+    for (id, r) in db.iter::<Static>() {
+        add(id.as_str(), "STAT", &r.mesh);
+    }
+    for (id, r) in db.iter::<Activator>() {
+        add(id.as_str(), "ACTI", &r.mesh);
+    }
+    for (id, r) in db.iter::<Container>() {
+        add(id.as_str(), "CONT", &r.mesh);
+    }
+    found.sort_by(|a, b| a.id.cmp(&b.id));
+    found
+}
 
 /// How a record is placed in the world.
 #[derive(Clone, Debug, Default)]
@@ -404,28 +360,9 @@ fn placements(db: &RecordDb) -> HashMap<String, Placements> {
 
 /// Runs the census over loaded records and their VFS.
 pub fn run(db: &RecordDb, vfs: &Vfs) -> Census {
-    let mut found: Vec<(String, &'static str, Kind, String)> = Vec::new();
-    let mut add = |id: &str, record: &'static str, mesh: &str| {
-        let Some(model) = mw_world::model_path(mesh) else {
-            return;
-        };
-        if let Some(kind) = classify(id, Some(&model)) {
-            found.push((id.to_ascii_lowercase(), record, kind, model));
-        }
-    };
-    for (id, r) in db.iter::<Static>() {
-        add(id.as_str(), "STAT", &r.mesh);
-    }
-    for (id, r) in db.iter::<Activator>() {
-        add(id.as_str(), "ACTI", &r.mesh);
-    }
-    for (id, r) in db.iter::<Container>() {
-        add(id.as_str(), "CONT", &r.mesh);
-    }
-    found.sort_by(|a, b| a.0.cmp(&b.0));
-
+    let found = furniture_records(db);
     let models: Vec<String> = {
-        let mut m: Vec<String> = found.iter().map(|f| f.3.to_ascii_lowercase()).collect();
+        let mut m: Vec<String> = found.iter().map(|f| f.model.to_ascii_lowercase()).collect();
         m.sort();
         m.dedup();
         m
@@ -453,7 +390,7 @@ pub fn run(db: &RecordDb, vfs: &Vfs) -> Census {
     }
 
     let mut refs = placements(db);
-    for (id, record, kind, model) in found {
+    for FurnitureRecord { id, record, kind, model } in found {
         let (collision, render) = shapes
             .get(&model.to_ascii_lowercase())
             .cloned()
@@ -770,22 +707,6 @@ impl Census {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn classify_by_words() {
-        assert_eq!(classify("furn_de_p_chair_01", None), Some(Kind::Seat));
-        assert_eq!(classify("furn_com_rm_table_03", None), Some(Kind::Table));
-        assert_eq!(classify("active_de_bed_29", None), Some(Kind::Bed));
-        assert_eq!(classify("furn_de_bar_01", None), Some(Kind::Counter));
-        assert_eq!(classify("furn_de_r_bench_01", None), Some(Kind::Seat));
-        assert_eq!(classify("furn_barrel_01", None), None);
-        assert_eq!(classify("in_de_bar_01", None), None);
-        assert_eq!(classify("active_de_bar_door", None), None);
-        assert_eq!(
-            classify("xyz", Some("meshes/f/furn_com_chair01.nif")),
-            Some(Kind::Seat)
-        );
-    }
 
     fn quad(y: f32, x0: f32, x1: f32) -> [[Vec3; 3]; 2] {
         let corners = [
