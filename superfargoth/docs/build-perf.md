@@ -133,7 +133,8 @@ one `test --workspace` with nothing to compile still ran 290 s. Three changes, r
   work, cargo ignores aliases from it). Cargo releases its target lock before running the binaries (checked: a build
   finished in 3 s while a 20 s test ran). rustdoc.exe now counts as busy: doctests compile in the run phase.
 - **CI** (`.github/workflows/ci.yml`): test, both clippy runs, and a no-compile policy job (deny, hakari, tunables
-  census; the census is non-blocking until it passes again) on push to `main`, `ci/**`, `wt/**` and PRs.
+  census; the census is non-blocking until it passes again) on push to `main`, `ci/**`, `wt/**` and PRs; docs-only
+  pushes skip it, and a newer push cancels a running one except on `main` (one run at a time there).
   Windows runners for parity with the dev machine; `Swatinem/rust-cache` saved from `main` only (10 GB repo limit);
   LFS clips from the Actions cache (free LFS bandwidth ~1 GB/month). `tools/ci_push.sh` pushes HEAD + given paths.
 - **Worktrees** (`tools/worktree.sh`): own target per checkout, `C:\cargo-target\scrib-wt\<name>` via junctions.
