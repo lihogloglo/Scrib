@@ -146,7 +146,8 @@ anywhere in Bevy's dependency closure (`superfargoth/docs/build-perf.md` "Featur
 - **Before a PR, CI runs the gate (owner 2026-11-26):** `bash bevyrrowind/tools/ci_push.sh <name> <your paths>`
   pushes HEAD plus your paths to branch `ci/<name>` (no commit on main, shared index untouched; a worktree pushes its
   `wt/<name>` branch, a PR runs it too) and GitHub Actions (`.github/workflows/ci.yml`, Windows runners, jobs in
-  parallel) runs everything below off the laptop; follow it with `gh run watch`, read failures with
+  parallel) runs everything below off the laptop; follow it with `gh run watch --interval 120` (never a tighter loop: all
+  sessions share one GitHub API quota of 5000 calls/h, and `gh run watch` polls every 3 s by default), read failures with
   `gh run view --log-failed`, and `ci_push.sh --done <name>` after. Push it before an owner launch, so the owner checks
   while CI runs. The laptop runs only your slice's `-p` checks; run the full list locally (from the root, compiling
   ones through `cargo_turn.sh`) only when CI is down:
@@ -271,7 +272,7 @@ notes, only `docs/specs/`. Don't mix the two in one session.
 - Read lean: grep first, read only the lines needed; never a whole large file; cargo output filtered to errors
   and warnings, tests to summary lines, logs with `tail`/`grep`. Tokens grow with what an agent pulls into its
   context (every call re-sends it), not with its number of tool calls.
-- Hand off on context, not on a count: at ~200k tokens of context (owner 2026-11-16; was 80-100k), or once your
+- Hand off on context, not on a count: at ~200k tokens of context, never past 250k (owner 2026-11-16, kept 2026-11-26: the cost optimum, flat from 150k to 250k; `docs/reviews/context-handoff-2026-11-26.html`; was 80-100k), or once your
   context was summarised,
   stop at a compiling state, finish the handoff in your session file, and let a fresh agent continue.
   Orchestrators split slices to fit and log tool calls and tokens per slice in their session file.

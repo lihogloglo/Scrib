@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Context Handoff Size</title>
+<style>
+:root { --bg:#fbfaf7; --fg:#1f1d1a; --muted:#6b665e; --line:#ddd8cf; --accent:#8a4b16; --card:#ffffff; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#17161a; --fg:#e9e6e0; --muted:#a39d93; --line:#34323a; --accent:#e0a064; --card:#1f1e23; } }
+:root[data-theme="dark"] { --bg:#17161a; --fg:#e9e6e0; --muted:#a39d93; --line:#34323a; --accent:#e0a064; --card:#1f1e23; }
+body { background:var(--bg); color:var(--fg); font:16px/1.55 system-ui, sans-serif; margin:0; padding:24px 16px; }
+main { max-width:780px; margin:0 auto; }
+h1 { font-size:1.5rem; margin:0 0 4px; } h2 { font-size:1.1rem; margin:28px 0 8px; color:var(--accent); }
+.sub { color:var(--muted); margin:0 0 20px; }
+.rec { background:var(--card); border:1px solid var(--line); border-left:4px solid var(--accent); padding:12px 16px; border-radius:6px; }
+table { border-collapse:collapse; width:100%; font-size:.93rem; } th, td { border-bottom:1px solid var(--line); padding:6px 8px; text-align:left; }
+th { color:var(--muted); font-weight:600; } td.n { text-align:right; font-variant-numeric:tabular-nums; }
+code { font-size:.9em; } small, .muted { color:var(--muted); }
+.wrap { overflow-x:auto; }
+</style>
+</head>
+<body><main>
+<h1>Context handoff size</h1>
+<p class="sub">Meta-2, 2026-11-26. Owner question: is 200k the right point for a session to hand off? Model: Claude Opus 5.5 in Claude Code on a subscription.</p>
+
+<div class="rec">
+<strong>Recommendation:</strong> keep <strong>~200k</strong> for lane orchestrators. That is close to the cost optimum, and the optimum is flat: from 150k to 250k, the cost per unit of work changes by under ~10%. Keep the hard ceiling of <strong>250k</strong> (+11% at 300k, +30% at 400k). For the <strong>meta-coordinator, use ~150k</strong>: it adds little per turn and sits idle between messages, so it loses the cache more often.
+</div>
+
+<h2>Facts from sources</h2>
+<ul>
+<li><strong>Opus 5.5 prices per MTok:</strong> input $4, 5-min cache write $5, 1-h cache write $8, <strong>cache read $0.20</strong> (0.05x input, half the usual 0.1x), output $20.</li>
+<li><strong>No long-context price tier for Opus 5.5.</strong> "Claude 4.6 and later models (except Claude Haiku 5.5) … include the full 1M token context window at standard pricing. (A 900k-token request is billed at the same per-token rate as a 9k-token request.)" Only Haiku 5.5 charges more above 100k. Price alone sets no cliff at 200k.</li>
+<li><strong>Cost per turn grows with context.</strong> Claude Code docs: "Claude Code sends your full conversation with every request, and each time Claude uses tools it sends another request … Claude Code re-reads that history at the cached token rate." Every tool call reads the whole context again, so a session's total cost grows with the square of its length.</li>
+<li><strong>Subscription usage:</strong> the docs say long sessions "use far more of your plan limits" for this reason, and name the same causes. Claude.ai, Claude Code and Desktop share one 5-hour window and one weekly window. Anthropic does not publish how cached tokens are weighted against plan limits. This report assumes they count in proportion to their API price.</li>
+<li><strong>Cache misses:</strong> the first request after an idle gap longer than the cache lifetime "reprocesses your full context". A message from another session to an idle session also "sends your full context each time". On the meta's long idle waits, a miss at 200k means rewriting the whole context: about $1.60 at the 1-hour write rate, against $0.04 for a cache read.</li>
+</ul>
+
+<h2>Model</h2>
+<p>Say a session starts at <code>C0</code> (prompt, CLAUDE.md, CONTRIBUTING and the handoff it reads: ~40k). Context grows by <code>g</code> tokens per request (tool results plus output), and the session hands off at <code>H</code>. Reads cost <code>r</code> = $0.20/MTok per token of context per request. A handoff has a fixed cost <code>F</code>: the successor writes its starting context again, the old session writes the handoff, and the new one re-reads files to re-orient. That comes to about $0.5-1.5 in token terms.</p>
+<p>Cost per token of progress = <code>r·(H+C0)/(2g) + F/(H−C0)</code>. It is lowest at <code>H − C0 = √(2·g·F / r)</code>.</p>
+<div class="wrap"><table>
+<tr><th>Session</th><th>g / request</th><th>F</th><th class="n">Optimal H</th></tr>
+<tr><td>Lane orchestrator (typical)</td><td>3k</td><td>$0.8</td><td class="n">~195k</td></tr>
+<tr><td>Lane, cheap re-orientation</td><td>3k</td><td>$0.5</td><td class="n">~160k</td></tr>
+<tr><td>Lane, costly re-orientation</td><td>3k</td><td>$1.5</td><td class="n">~250k</td></tr>
+<tr><td>Meta-coordinator (short relays)</td><td>1.5k</td><td>$0.8</td><td class="n">~150k</td></tr>
+</table></div>
+<p>How flat the curve is, for a typical lane (cost relative to the optimum): 120k +18%, 195k 0%, 250k ~+4%, 300k +11%, 400k +30%.</p>
+
+<h2>What the model leaves out</h2>
+<ul>
+<li><strong>Cache misses push the point down.</strong> Each miss costs about 40x a cache read, multiplied by the context size. Sessions that wait idle for a long time (meta, lanes waiting on CI or the owner) should sit at the low end.</li>
+<li><strong>Lost understanding pushes it up.</strong> If a successor re-derives work or repeats mistakes, <code>F</code> grows. A good handoff file (CONTRIBUTING's ~2 KB) keeps <code>F</code> small.</li>
+<li><strong>Answer quality is not priced here.</strong> Very long contexts can make attention to early instructions worse. This analysis has no measurement of it, and it would also argue for not going far above 200k.</li>
+<li>Sub-agents end naturally at the end of their slice (one deliverable per brief), so this mainly applies to orchestrators.</li>
+</ul>
+
+<h2>Proposed edits (after the owner agrees)</h2>
+<ul>
+<li>CONTRIBUTING "Hand off on context": keep ~200k for orchestrators, give the reason (cost-optimal, flat between 150k and 250k; source: this page), add "hard ceiling 250k" and "meta-coordinator ~150k".</li>
+<li><code>docs/meta-coordinator.md</code> "Context and succession": the meta hands off at ~150k; sessions that idle for long stretches sit at the low end.</li>
+</ul>
+
+<h2>Sources</h2>
+<ul>
+<li><a href="https://platform.claude.com/docs/en/about-claude/pricing">Claude API pricing</a>: model table, prompt caching, long context pricing</li>
+<li><a href="https://code.claude.com/docs/en/costs">Claude Code: Manage costs effectively</a>: "Why usage climbs in a long session", "Reduce token usage"</li>
+<li><a href="https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work">How do usage and length limits work?</a>: shared 5-hour and weekly windows</li>
+</ul>
+</main></body>
+</html>
