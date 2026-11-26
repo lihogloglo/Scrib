@@ -163,6 +163,8 @@ Order: FL-1, FL-2 (look now), FL-5 (gameplay), FL-4, FL-3, FL-7, FL-6. Research-
 3. **Waterfalls: visible, dramatic set pieces wherever the MU levels drop more than 2 m (plus mist), or only on named falls?** Recommend all drops over the threshold, sized by Q, with the threshold as a tunable.
 4. **How strongly should a wading character disturb a river (rings only vs rings plus a visible downstream wake that fades)?** Recommend rings plus a short fading wake (FL-7), no change of the river's own flow.
 
+**Answers (owner via meta-3, 2026-11-26):** 4 owner yes: wading = visual rings + a short wake only, the river's flow is not changed. Meta-decided from the recommendations and the owner's stated wish: 1 rivers carry no ocean waves (flow ripples + foam); 2 FL-5 (swim + current in generated lakes/rivers) comes first; 3 waterfalls at drops > 2 m, the threshold a tunable.
+
 ## 9. Sources
 
 Web (fetched or searched, 2026-11-26):
