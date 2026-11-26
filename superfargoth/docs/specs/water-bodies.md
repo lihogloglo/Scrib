@@ -159,9 +159,13 @@ screen-door; Bevy's `VisibilityRange` dither (`pbr_functions.wesl:81`) is keyed 
 Industry: UE blends river into lake with transition materials on shared water tiles; our bodies are separate meshes
 with their own uniforms, so the ribbon gives way to the receiver's own mesh under it (UE `DitherTemporalAA` is the
 same opaque fade). `water.join.fade` 0 keeps the ribbon whole (the A/B arm, scene `river-join-ab`). On x10hs-b2w the
-zone is ≥ 10 m at 4 of 23 lake mouths, < 1 m at 16: Magna Urbis ends a course at the lake's edge and continues as a
-`lake_link`, which lies wholly in the lake, gets both fades and draws nothing. Open: such a mouth still ends within
-one sample (~4 m); the fix is a joins rule (the link carries its inflow's zone) or longer courses from the water stage.
+zone was ≥ 10 m at 4 of 23 lake mouths and < 1 m at 16: Magna Urbis ends a course at the lake's edge and continues as
+a `lake_link`. **FL-4c (2026-11-26):** in a lake the fades follow the course, not the record: where a river ends in a
+lake and another starts in it within the first one's half width of its last point, the fade-out runs on along the
+second over the same zone, and the fade-in toward the outlet starts on the piece before the river that leaves the
+lake; a lake point takes the larger of the two, a stray piece with neither gets 0 (one hop: only the first seam
+carries). On x10hs-b2w 9 of the 23 lake mouths are carried on, 14 end at 0 on their own run; at
+least 7 of those are short runs no piece carries on yet (open, water ledger).
 
 ### FL-5: guide bodies in the query, swimming carried by the current (worldgen-2, first)
 

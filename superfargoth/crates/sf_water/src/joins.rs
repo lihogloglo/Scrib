@@ -6,7 +6,10 @@
 //! The fade lies only over the overlap of the two bodies, where the receiver's water already is
 //! (industry: the UE Water plugin's river-to-lake and river-to-ocean transitions blend over the
 //! overlap), so a river never thins over its own dry bed. A tributary's last point is snapped onto
-//! the receiver's centreline so the two ribbons meet.
+//! the receiver's centreline so the two ribbons meet. In a lake the fade follows the course, not
+//! the record: where one river ends at the lake's edge and another starts at that point (a
+//! generator's separate piece through the lake), the fade-out runs on along the second, and the
+//! fade-in toward the lake's outlet starts on the piece before the river that leaves it.
 
 use glam::DVec2;
 use sf_tunables::{Def, Group, Lifetime, Scope, Source, Unit, def};
@@ -181,24 +184,36 @@ fn fade(arc: f64, z: f64) -> f64 {
     1.0 - x * x * (3.0 - 2.0 * x)
 }
 
-/// 2D length of the polyline through `pts`.
-fn length(pts: &[RiverPoint]) -> f64 {
-    pts.windows(2).map(|w| (w[1].center - w[0].center).length()).sum()
+/// The arc length of each point of `pts` from the first.
+fn arcs(pts: &[RiverPoint]) -> Vec<f64> {
+    let mut arc = 0.0;
+    let mut out = Vec::with_capacity(pts.len());
+    for (j, p) in pts.iter().enumerate() {
+        if j > 0 {
+            arc += (p.center - pts[j - 1].center).length();
+        }
+        out.push(arc);
+    }
+    out
 }
 
 /// Resolves every river's two ends, in place; one `Join` per river, in order.
 ///
 /// Receivers are read from a snapshot of the input splines, so the result does not depend on the
 /// order of the rivers. A river with fewer than 2 points is `Open`/`Open` and untouched; a receiver
-/// index equal to the river itself or out of range is ignored.
+/// index equal to the river itself or out of range is ignored. A river in a lake with neither a
+/// way in nor a way out along its course (a stray piece) gets `river_ness` 0 there.
 #[allow(clippy::cast_possible_truncation)] // river_ness and flow are f32 by record layout
 pub fn resolve(rivers: &mut [JoinRiver], lakes: &[JoinLake], sea_level: f64, s: &JoinSettings) -> Vec<Join> {
     let input: Vec<Vec<RiverPoint>> = rivers.iter().map(|r| r.spline.clone()).collect();
     let tol = s.level_tol_m;
     let mut joins = Vec::with_capacity(rivers.len());
+    // Per river: the first index of its end's overlap run, the last index of its start's.
+    let mut runs: Vec<(Option<usize>, Option<usize>)> = Vec::with_capacity(rivers.len());
     for (me, river) in rivers.iter_mut().enumerate() {
         let n = river.spline.len();
         if n < 2 {
+            runs.push((None, None));
             joins.push(Join { start: JoinStart::Open, end: JoinEnd::Open });
             continue;
         }
@@ -247,35 +262,98 @@ pub fn resolve(rivers: &mut [JoinRiver], lakes: &[JoinLake], sea_level: f64, s: 
             JoinStart::Open
         };
 
-        // river_ness and flow: the end fade over points k..=n-1, the start fade over 0..=m.
-        let mut factor = vec![1.0_f64; n];
-        if let Some(k) = end_run {
-            let run = &river.spline[k..];
-            let z = f64::from(s.mix_widths * run[0].width).min(length(run));
-            let mut arc = 0.0;
-            for (j, f) in factor[k..].iter_mut().enumerate() {
-                if j > 0 {
-                    arc += (run[j].center - run[j - 1].center).length();
-                }
-                *f *= fade(arc, z);
-            }
-        }
-        if let Some(m) = start_run {
-            let run = &river.spline[..=m];
-            let z = f64::from(s.mix_widths * run[m].width).min(length(run));
-            let mut arc = 0.0;
-            for (j, f) in factor[..=m].iter_mut().enumerate().rev() {
-                if j < m {
-                    arc += (run[j + 1].center - run[j].center).length();
-                }
-                *f *= fade(arc, z);
-            }
-        }
+        runs.push((end_run, start_run));
+        joins.push(Join { start, end });
+    }
+
+    // river_ness and flow, once every end is known.
+    let factors = fades(rivers, &joins, &runs, s);
+    for (river, factor) in rivers.iter_mut().zip(factors) {
         for (p, f) in river.spline.iter_mut().zip(factor) {
             p.river_ness *= f as f32;
             p.flow_speed *= f as f32;
         }
-        joins.push(Join { start, end });
     }
     joins
+}
+
+/// The factor on each point's `river_ness` and flow, per river, once every end is known (`runs`: the
+/// first index of each end's overlap run, the last index of each start's). A lake's fades run across
+/// the seam between two rivers of one course (`next`).
+fn fades(rivers: &[JoinRiver], joins: &[Join], runs: &[(Option<usize>, Option<usize>)], s: &JoinSettings) -> Vec<Vec<f64>> {
+    let count = rivers.len();
+    let cum: Vec<Vec<f64>> = rivers.iter().map(|r| arcs(&r.spline)).collect();
+    // The end's run in its lake (first index, length) and the start's run in its lake (last index, length).
+    let trail = |r: usize| match (joins[r].end, runs[r].0) {
+        (JoinEnd::Lake(_), Some(k)) => Some((k, cum[r][cum[r].len() - 1] - cum[r][k])),
+        _ => None,
+    };
+    let lead = |r: usize| match (joins[r].start, runs[r].1) {
+        (JoinStart::Lake(_), Some(m)) => Some((m, cum[r][m])),
+        _ => None,
+    };
+    // The river that carries river `r`'s course on through the lake it ends in: the nearest one starting
+    // in that lake within `r`'s half width of `r`'s last point (lowest index on ties), with the distance.
+    let next: Vec<Option<(usize, f64)>> = (0..count)
+        .map(|r| {
+            let JoinEnd::Lake(i) = joins[r].end else { return None };
+            let last = rivers[r].spline.last()?;
+            (0..count)
+                .filter(|&o| o != r && joins[o].start == JoinStart::Lake(i))
+                .map(|o| (o, (rivers[o].spline[0].center - last.center).length()))
+                .filter(|&(_, d)| d <= f64::from(last.width) * 0.5)
+                .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
+        })
+        .collect();
+    let zone = |river: usize, at: usize, room: f64| f64::from(s.mix_widths * rivers[river].spline[at].width).min(room);
+    (0..count)
+        .map(|r| {
+            let (c, n) = (&cum[r], rivers[r].spline.len());
+            let mut factor = vec![1.0_f64; n];
+            // A tributary's or the sea's end fade over points k..=n-1.
+            if let (Some(k), JoinEnd::Tributary { .. } | JoinEnd::Sea) = (runs[r].0, joins[r].end) {
+                let z = zone(r, k, c[n - 1] - c[k]);
+                for (f, arc) in factor[k..].iter_mut().zip(&c[k..]) {
+                    *f *= fade(arc - c[k], z);
+                }
+            }
+            // In a lake: the larger of the fade-out from where the course enters the lake and the fade-in
+            // to where it leaves it, each on this river or carried over the seam; neither = the lake's water.
+            let mut lake: Vec<Option<f64>> = vec![None; n];
+            let mut raise = |j: usize, v: f64| lake[j] = Some(lake[j].map_or(v, |l| l.max(v)));
+            if let Some((k, len)) = trail(r) {
+                let after = next[r].and_then(|(o, _)| lead(o).map(|(m, lead_len)| (o, m, lead_len)));
+                for j in k..n {
+                    raise(j, 0.0);
+                    if k > 0 {
+                        raise(j, fade(c[j] - c[k], zone(r, k, len + after.map_or(0.0, |a| a.2))));
+                    }
+                    if let Some((o, m, lead_len)) = after
+                        && m + 1 < rivers[o].spline.len()
+                    {
+                        raise(j, fade(lead_len + c[n - 1] - c[j], zone(o, m, lead_len + len)));
+                    }
+                }
+            }
+            if let Some((m, len)) = lead(r) {
+                // The rivers whose course runs on into this one, nearest first.
+                let mut before: Vec<(f64, usize)> = (0..count).filter_map(|p| next[p].filter(|&(o, _)| o == r).map(|(_, d)| (d, p))).collect();
+                before.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+                let before: Vec<(usize, usize, f64)> = before.iter().filter_map(|&(_, p)| trail(p).map(|(k, trail_len)| (p, k, trail_len))).collect();
+                for j in 0..=m {
+                    raise(j, 0.0);
+                    if m + 1 < n {
+                        raise(j, fade(c[m] - c[j], zone(r, m, len + before.first().map_or(0.0, |b| b.2))));
+                    }
+                    for &(p, k, trail_len) in before.iter().filter(|b| b.1 > 0) {
+                        raise(j, fade(trail_len + c[j], zone(p, k, trail_len + len)));
+                    }
+                }
+            }
+            for (f, l) in factor.iter_mut().zip(lake) {
+                *f *= l.unwrap_or(1.0);
+            }
+            factor
+        })
+        .collect()
 }

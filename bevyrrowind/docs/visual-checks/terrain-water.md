@@ -166,8 +166,9 @@ Yes/no: (1) in A, looking down the river into the lake: does the river's water g
 with no straight cut across the mouth? (2) in A, is the lake one clean sheet past the mouth (B shows a river-wide
 stripe running on across the lake)? (3) in A, standing still: is the fade zone free of sparkle, crawling or a dot
 pattern? (4) from 30 m up over the mouth: still no seam in A?
-Known, not part of this check: no carved bed (wade-deep river); 16 of the 23 lake mouths of this world have no run
-inside their lake (the old camera's river 55 into lake 161 is one), so there the river still ends within ~4 m.
+Known, not part of this check: no carved bed (wade-deep river). Since FL-4c the fade runs on along the lake link
+where a river stops at the lake's edge (9 of this world's 23 lake mouths); at least 7 short mouths are not carried
+yet and still end within ~4 m (open, water ledger).
 
 ### WA-14: Waterfall (FL-6b; `world:` x10s-b2w)
 

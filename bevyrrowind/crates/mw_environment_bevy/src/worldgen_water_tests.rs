@@ -601,3 +601,21 @@ fn join_fade_reaches_the_river_mesh() {
     assert!(lake.attribute(sf_water_bevy::mesh::ATTRIBUTE_WATER_RIVERNESS).is_none(), "a lake's mesh carries no river-ness");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// FL-4c on a real guide: how many lake mouths hand their fade on to a piece that runs on through the lake.
+#[test]
+#[ignore = "measurement: lake mouths whose fade a lake link carries on, on a real guide's water.json"]
+fn measure_real_lake_mouths() {
+    let dir = std::env::var("GW3_WATER_DIR").unwrap_or_else(|_| r"C:\cargo-target\scrib\worldgen\x10hs-b2w".into());
+    let Some(guide) = GuideWater::read(Path::new(&dir)).expect("read water.json") else { panic!("no water.json in {dir}") };
+    let resolved = resolve(&guide);
+    let last: Vec<f32> = resolved
+        .joins
+        .iter()
+        .zip(&resolved.splines)
+        .filter(|(j, _)| matches!(j.end, JoinEnd::Lake(_)))
+        .map(|(_, s)| s.last().map_or(0.0, |p| p.river_ness))
+        .collect();
+    let carried = last.iter().filter(|n| **n > 0.0).count();
+    println!("lake mouths {}: {carried} carried on through the lake (river-ness > 0 at the river's last point), {} end on their own; last river-ness {last:?}", last.len(), last.len() - carried);
+}

@@ -189,3 +189,41 @@ fn default_settings_read_the_tunables() {
     assert_eq!(JoinSettings::default(), JoinSettings { mix_widths: 2.5, snap_max_m: 20.0, level_tol_m: 0.5 });
     assert_eq!(TUNABLES.len(), 3);
 }
+
+/// FL-4c: the fade follows the course across a lake, not the record. River A ends 4 m inside the lake's
+/// edge; link L starts at that point and lies wholly in the lake (88 m); river B starts at L's end, 4 m
+/// before it leaves the lake. Width 8, so the zone is 2.5 x 8 = 20 m: A's fade-out runs on along L
+/// (arcs 0, 4 | 4, 12, 20: 1, 0.896 | 0.896, 0.352, 0), and B's fade-in starts on L's end (arcs 4 | 4, 0:
+/// 0.896 | 0.896, 1). The values meet at both seams; the flow scales alike. L alone is a stray piece: 0.
+#[test]
+fn a_lake_link_carries_its_inflow_and_outflow_zones() {
+    let at = |xs: &[f64], hs: &[f64]| JoinRiver { spline: xs.iter().zip(hs).map(|(&x, &h)| pt(x, 50.0, 8.0, h, 2.0)).collect(), receivers: vec![] };
+    let a = at(&[-30.0, -10.0, 2.0, 6.0], &[6.0, 5.6, 5.0, 5.0]);
+    let l = at(&[6.0, 14.0, 22.0, 30.0, 70.0, 94.0], &[5.0; 6]);
+    let b = at(&[94.0, 98.0, 110.0, 130.0], &[5.0, 5.0, 4.4, 4.0]);
+    let lake = [square_lake(5.0)];
+    // The order of the records does not matter.
+    for order in [[0, 1, 2], [2, 1, 0], [1, 2, 0]] {
+        let all = [a.clone(), l.clone(), b.clone()];
+        let mut rivers: Vec<JoinRiver> = order.iter().map(|&i| all[i].clone()).collect();
+        let joins = resolve(&mut rivers, &lake, -100.0, &JoinSettings::default());
+        let of = |i: usize| order.iter().position(|&o| o == i).expect("in the order");
+        assert_eq!(joins[of(0)], Join { start: JoinStart::Open, end: JoinEnd::Lake(0) });
+        assert_eq!(joins[of(1)], Join { start: JoinStart::Lake(0), end: JoinEnd::Lake(0) });
+        assert_eq!(joins[of(2)], Join { start: JoinStart::Lake(0), end: JoinEnd::Open });
+        assert_f32(&ness(&rivers[of(0)]), &[1.0, 1.0, 1.0, 0.896]);
+        assert_f32(&ness(&rivers[of(1)]), &[0.896, 0.352, 0.0, 0.0, 0.0, 0.896]);
+        assert_f32(&ness(&rivers[of(2)]), &[0.896, 1.0, 1.0, 1.0]);
+        assert_f32(&flow(&rivers[of(1)]), &[1.792, 0.704, 0.0, 0.0, 0.0, 1.792]);
+    }
+    // A link 5 m off the mouth's last point (more than the 4 m half width) does not carry it on.
+    let far = at(&[6.0, 14.0, 22.0], &[5.0; 3]);
+    let mut rivers = vec![a.clone(), JoinRiver { spline: far.spline.iter().map(|p| RiverPoint { center: p.center + DVec2::new(0.0, 5.0), ..*p }).collect(), receivers: vec![] }];
+    resolve(&mut rivers, &lake, -100.0, &JoinSettings::default());
+    assert_f32(&ness(&rivers[0]), &[1.0, 1.0, 1.0, 0.0]);
+    assert_f32(&ness(&rivers[1]), &[0.0, 0.0, 0.0]);
+    // A stray piece in the lake shows the lake.
+    let mut rivers = vec![l.clone()];
+    resolve(&mut rivers, &lake, -100.0, &JoinSettings::default());
+    assert_f32(&ness(&rivers[0]), &[0.0; 6]);
+}
