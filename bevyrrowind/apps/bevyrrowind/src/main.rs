@@ -49,6 +49,15 @@ struct Cli {
     command: Option<Command>,
 }
 
+/// `<east>,<north>` in metres, e.g. `-200,-380` (one argument: its values may start with a minus sign).
+fn parse_east_north(text: &str) -> std::result::Result<[f64; 2], String> {
+    let parse = |part: &str| part.trim().parse::<f64>().map_err(|e| format!("`{part}`: {e}"));
+    match text.split(',').collect::<Vec<_>>()[..] {
+        [east, north] => Ok([parse(east)?, parse(north)?]),
+        _ => Err(format!("`{text}`: expected <east>,<north>")),
+    }
+}
+
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant, reason = "parsed once at startup; the view flags are the big variant")]
 enum Command {
@@ -127,8 +136,8 @@ enum Command {
         cell_m: Option<f64>,
         /// SC-1, with `--guide`: found the town `<east>,<north>` metres from the centre found (e.g. `-200,-380`: on
         /// the plain south-west of the river reach); the crop and `centre_m` follow.
-        #[arg(long, value_delimiter = ',', num_args = 2, allow_hyphen_values = true)]
-        centre_offset_m: Vec<f64>,
+        #[arg(long, allow_hyphen_values = true, value_parser = parse_east_north)]
+        centre_offset_m: Option<[f64; 2]>,
         /// Output folder (created).
         #[arg(long)]
         out: PathBuf,
@@ -1049,10 +1058,7 @@ fn run(cli: Cli) -> Result {
             }
             let sharp_scale = mw_exterior_bevy::worldgen::WORLDGEN_SHARP.default_value();
             let table = mw_worldgen::site::SiteTable::builtin()?;
-            let centre_offset_m = match centre_offset_m[..] {
-                [east, north] => [east, north],
-                _ => [0.0, 0.0],
-            };
+            let centre_offset_m = centre_offset_m.unwrap_or([0.0, 0.0]);
             let args = mw_worldgen::site::SiteArgs { anchor, out, params, table, sharp_scale, centre_offset_m };
             print!("{}", mw_worldgen::site::run_guide(&content.db, &guide, &args)?);
             println!("worldgen-site: {:.1} s total", started.elapsed().as_secs_f64());
