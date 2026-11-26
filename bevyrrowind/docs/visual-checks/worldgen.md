@@ -183,6 +183,20 @@ Look for: buildings reaching the river front on both banks; houses packed along 
 slopes (no floating foundations); street ribbons on the ground, not through houses; trees only in empty lots.
 Known: regional roads don't join the town (S-2d diagnosis), bridges are gaps (no decks), no corner-lot side doors, squares unpaved.
 
+### TN-4: the regional road meets Balmora 2.0's streets (2026-11-26, worldgen-5, S-2c2)
+
+Status: **awaiting owner**.
+Launch: `owner_launch.sh view "world:C:/cargo-target/scrib/worldgen/x10hs-b2w" --hour 12 --camera -2915,+35,2486,-2906,+2,2427`
+(the south-west road, 60 m before its join; the two other joins: east road from the south at engine x,z -2501,2422, from the
+north at -2355,1897. Regional roads are routed to the town centre, then cut where they first come within 8 m of a town
+street and snapped onto it; the town is the chain layout of 2026-11-26: 2335 placements, 443 streets.)
+Log lines: `worldgen roads: guide ... 178 segments`, `worldgen roads: worldgen/roads/balmora2-medina.json 443 segments`,
+`worldgen town:` (0 unresolved bases).
+Look for: the road ribbon runs up to a town street and stops on it (no gap of bare ground); from the join inwards one
+ribbon only (no second ribbon on top of or beside the street); the same at the two other joins.
+Known: the 4 m dirt road meets a 1.7-2.5 m dirt lane (width step at the join); bridges are gaps; A/B = the old files in
+`x10hs-b2w-pre-s2c/` (`roads.json` + `mods/`).
+
 ### TN-2: Balmora 2.0 with rivers, lakes and regional roads (2026-11-24, world10x, Magna Urbis water + roads)
 
 Status: **rivers parked for a refactor** (round 3, 2026-11-24, owner: speed good after G-W7, but the river is a ribbon
