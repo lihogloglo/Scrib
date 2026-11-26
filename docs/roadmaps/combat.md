@@ -113,7 +113,7 @@ Each stage ends in something the player can use. Owner checks run in `level-spar
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
 | C0a | combat.md: Goal/non-goals rewrite; poise, parry, criticals, damage packet, push/environment contacts; "Views" (one rules core, per-view presentation profile, one dodge move); check-ID table | docs | - | doccheck; done 2026-11-26 |
-| C0b | combat.md "NPC combat (C6)": tokens, picker table, skill, telegraph lint, duelist, creatures; AI15 boundary | docs | C-R1 | doccheck |
+| C0b | `combat-npc.md` (new spec, split from combat.md): tokens, picker table, skill, telegraph lint, threat cues, duelist, creatures; AI15 boundary, `unaware` feed | docs | C-R1 | doccheck; done 2026-11-26 |
 | C0c | combat.md "Delivery (C8)": projectile/beam/area sources, aim modes, cast slot, `EffectRequest::Launch` contract | docs | C0a | doccheck |
 | C0d | combat-adapter.md: weapon/armour → poise, damage types, resistances; 2H/spear/fist sheets; marksman; creature rigs | docs | C0a, AN32 | doccheck |
 | C0e | net.md "Hit authority": attacker-claimed + plausibility default, rewind as fallback | docs | C0a | doccheck |

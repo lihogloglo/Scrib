@@ -1,6 +1,6 @@
 # Combat: feel layer, moveset sheets, rules seam
 
-Status (2026-11-26): C1a-C1c (lock-on parts 1-4), C4 soft aim, C4b, C2a, C2b built; design updated to `docs/roadmaps/combat.md` (C0a); C0b-e still pending. ROADMAP 3.5. Game side:
+Status (2026-11-26): C1a-C1c (lock-on parts 1-4), C4 soft aim, C4b, C2a, C2b built; design updated to `docs/roadmaps/combat.md` (C0a); NPC combat in [combat-npc.md](combat-npc.md) (C0b); C0c-e pending. ROADMAP 3.5. Game side:
 `../../../bevyrrowind/docs/specs/combat-adapter.md`. Built on [action.md](action.md) (commands, windows, chooser, motion
 owners, co-op rules: referenced, not repeated); owns its build-plan row E1-E3. Slices **combat C1..C7** are not action.md's
 C1 (interactions).
@@ -79,6 +79,8 @@ Why a leaf crate (rebuild cost): [history](archive/combat-history.md) "Crate spl
 - **`sf_combat_bevy`**: components, `CombatSystems` sets in `FixedUpdate` after `ActionSystems::Move`, socket-track build at
   load, lock-on shell (`sf_camera::lockon` + `sf_camera_bevy::LockOn`), gizmos, presentation messages. Plugin
   `SfCombatPlugin<R: CombatRules + Resource>` (one monomorphization, in the game).
+- **NPC fighters** (C6a-f, C19): [combat-npc.md](combat-npc.md): tokens, move picker, skill reactions, telegraph lint, threat
+  cues, duelist, creatures, the AI15 boundary and the `unaware` feed (`UnawareOf`).
 
 ## Data model
 
@@ -365,7 +367,7 @@ In `bevyrrowind/docs/visual-checks/combat.md`. The spec's old "CB-6 classic swin
 | **C3** heavy, openers, poise | C3a-d (poise, heavy + charge, openers, second classes) | second class adds no code | CB-10, CB-4, CB-4b |
 | **C4** targeting | soft aim, C4b built; C4c flick switch, shake; per-bone hurt shapes (S5) | flicked side; soft-aim pick | CB-5, CB-5b, CB-5c |
 | **C5** classic rules | classic `CombatRules` (game side), cone contacts, Classic profile | formula tests | CB-14 |
-| **C6** NPC combat | tokens, picker, skill, telegraphs (C0b); per-rig sheets | baked reach and recovery | CB-7 |
+| **C6** NPC combat | tokens, picker, skill, telegraphs: [combat-npc.md](combat-npc.md); per-rig sheets | baked reach and recovery | CB-7 |
 | **C7** net | host-authoritative hits, own-start prediction (co-op phase F) | replay determinism | none |
 
 action.md E1 = combat C1-C3 (windows, sheet, light/heavy/dodge/guard), E2 = C1c + C4 (lock-on, soft aim), E3 = C6.
@@ -375,6 +377,7 @@ backstep, knockdown; C2d parry; C2e criticals; C3a poise; C3b heavy + charge; C3
 third-person profile; C8a-e delivery (C0c); C9 kick; C10 hazards; C11 feint and morph; C12 damage packet; C13 Morrowind
 damage mapping; C14 prop targets; C15 hit and death events; C16 offences; C17 NPC fighters without AI; C18 first-person
 dodge; C19 threat cues.
+C6a-f and C19 are designed in [combat-npc.md](combat-npc.md) (C0b).
 
 ## As built by slice
 
