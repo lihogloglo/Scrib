@@ -12,6 +12,7 @@
 //! `head_track`: NPCs turn their heads to the player, `OpenMW`'s head tracking (`AN8b`).
 //! `in_view`: the tier allocator's `AiInView` from each player's `AiViewer` frustum (`MA20a`).
 //! `greeting`: NPCs greet the player, `OpenMW`'s greeting machine from `mw_ai` acted on (`MA4c2`).
+//! `logical`: the tier-0 envs (`AI10c2`): routes over the worldspace graph, views and navmesh snap for promotion.
 
 pub mod directive_drive;
 pub mod directives;
@@ -19,6 +20,7 @@ pub mod greeting;
 pub mod head_track;
 pub mod in_view;
 pub mod light_inputs;
+pub mod logical;
 pub mod nav;
 pub mod noise_emitters;
 pub mod physics;
