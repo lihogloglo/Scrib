@@ -121,7 +121,7 @@ script functions once the other lane's system exists; the trace test shows the g
 | DQ-12 | Deaths feed `OnDeath`, `GetDeadCount`, `OnMurder`, `OnKnockout`; `OnPCHitMe` from hits | `mw_scripts_bevy` | combat lane death/hit events | headless exact |
 | DQ-13 | Magic functions: `AddSpell/RemoveSpell`, `Cast`, `GetEffect`, `GetSpell` | `mw_rpg_bevy` | ROADMAP 2.7 A5b | headless per function |
 | DQ-14 | Sound/music functions: `Say` (with subtitle), `PlaySound`, `StreamMusic` events to audio | `mw_scripts_bevy` | audio playback | log lines; owner DJ-4 |
-| DQ-15 | `ShowMap`, `GetPCInJail`, `PayFine` hooks routed to map and crime | `mw_rpg_bevy` | crime lane, map | headless |
+| DQ-15 | `ShowMap`, `GetPCInJail`, `PayFine` hooks routed to map and crime; also `PayFineThief`, the two-call `GoToJail`, and the arrest greeting opening an `ArrestSession` (crime-adapter.md "Guards, pay and jail", 88525511) | `mw_rpg_bevy` | crime lane, map | headless |
 
 AI functions (`AI*` packages, `StartCombat`, Hello/Fight/Flee/Alarm, `GetDetected`) are ai-adapter MA2/MA4/MA5/MA6.
 
