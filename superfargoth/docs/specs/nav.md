@@ -376,8 +376,10 @@ crate, the builder stays the only way in); plan params = rules + format + the so
 
 Fliers and swimmers never use the navmesh (ground classes swim on its `water` polys, decision 8). Both read one
 class-free **height field** per worldspace, rasterised in the `nav.tiles` pass from the same `NavGeometrySource`
-triangles (Horizon Zero Dawn, GDC 2017 "Putting the AI back into air"; it rejected octrees and layered navmeshes on
-memory and query cost). HZD's `min_safe_height` = `floor` + the class's clearance, added at query: one field, all classes.
+triangles (Horizon Zero Dawn, Game AI North 2017 "Putting the AI back into Air": a max-collision height field in 64 × 64
+tiles with mips, chosen over volumetric representations for memory and query cost; NV-R1). HZD bakes one dilated field
+per agent size; ours is class-free (`floor` + the class's clearance, dilation by mip, added at query): one field, all
+classes, our own choice for memory.
 
 - **Classes** (`sf.nav.agent`): `AgentClass` gains `medium: Ground | Air | Water` (default `Ground`; only ground classes
   bake Recast tiles) and, for `Air`, `clearance_m`, `max_climb_deg`, `max_dive_deg`, `max_altitude_m` (content). The
@@ -397,7 +399,11 @@ memory and query cost). HZD's `min_safe_height` = `floor` + the class's clearanc
 - **Flight query** (NV13b; a job kind of the sliced query service, same `RequestId` order, `PathResult` with 3D
   waypoints): 8-connected A* at mip `k = ceil(log2(radius / cell_m))`, a cell's floor = max of its 3 × 3 (dilation ≥
   radius); cost = metres + `ai.nav.flight.climb_cost` × metres climbed; a gap under `height + 2 clearance` is a wall;
-  past `ai.nav.flight.fine_m` two mips coarser, replanned on approach. **Vertical profile**: `floor + clearance` per
+  coarse to fine like HZD: plan at mip `k + ai.nav.flight.coarse_mips`, then refine at mip `k` only inside that
+  corridor (dilated one coarse cell), each search capped at `ai.nav.flight.max_iterations` (HZD: 1024; over it =
+  `Partial` toward the best node, grid A* path symmetry makes uncapped searches blow up). **Landing**: the query also
+  returns landing candidates (cells with `ceil - floor ≥ height` near the goal on walkable ground) for levitation end and
+  a downed flier; a flier killed in the air falls on a guided arc to the nearest candidate instead of through props. **Vertical profile**: `floor + clearance` per
   waypoint, under `ceil - clearance` and `floor + max_altitude_m`, climb and dive angles limited by a forward and a
   backward pass; over water the floor is at least the surface. **Ray-clear shortcuts**: string-pull to the farthest
   waypoint whose segment (cell DDA) stays above floor + clearance.
@@ -405,7 +411,7 @@ memory and query cost). HZD's `min_safe_height` = `floor` + the class's clearanc
   body), same A* and shortcuts; waypoints clamped into `[bed + r, surface - r]`; a goal out of the water = `Partial` at
   the nearest band cell. Field tiles stream on demand like `large`, within `ai.nav.field.ring_m`; `nav.draw field|water`.
 - **Tunables** (Guess): `ai.nav.field.cell_m` 2 m (0.5-8, bake), `ai.nav.field.ring_m` 512 m (128-2048),
-  `ai.nav.flight.climb_cost` 2 ratio (1-10), `ai.nav.flight.fine_m` 128 m (32-1024), `ai.nav.water.default_depth_m`
+  `ai.nav.flight.climb_cost` 2 ratio (1-10), `ai.nav.flight.coarse_mips` 3 count (1-5; HZD plans at mip 3), `ai.nav.flight.max_iterations` 1024 count (128-8192; HZD), `ai.nav.water.default_depth_m`
   30 m (2-500), `ai.nav.water.margin_m` 0.5 m (0-5), `ai.nav.levitate.land_search_m` 4 m (0.5-20).
 - **Tests (exact, synthetic)**: NV13a two box towers: floor/ceil per cell, mip maxima, bed kept under a bridge deck,
   KB per tile printed; NV13b never under floor + clearance, the gap over the summit when `climb_cost` says so, one

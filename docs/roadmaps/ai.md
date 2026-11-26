@@ -86,7 +86,7 @@ Stages 1-3 in order; 4-9 start as their other-lane needs land (cross-lane: `orde
 
 | ID | Deliverable | Crates | Depends | Verify |
 |---|---|---|---|---|
-| AI0b | ai.md "Perception" rewrite (decisions 2, 3, 14) | docs | - | review; crime LW4 links |
+| AI0b | ai.md "Perception" rewrite (decisions 2, 3, 14) | docs | - | **done 2026-11-25** (ai.md "Perception and stimuli" 145-323: bands, light, cost; checked 2026-11-26) |
 | AI0g | `PerceptionProfile` per individual: multipliers + timed states; Morrowind mapping in ai-adapter (DECISIONS 2026-11-25) | docs | AI0b | **done 2026-11-25** (ai.md 195-235, ai-adapter 105-134) |
 | AI0c | ai.md interrupt table, build order, tier additions, 3D movers, industry fixes (KCD = BTs, not GOAP) | docs | - | doccheck |
 | AI0d | Followers and companions section (directive, commands, stealth, downed; adapter `AI_F`/`AI_E`) | docs | - | review |

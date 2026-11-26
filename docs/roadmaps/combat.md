@@ -205,7 +205,7 @@ Ends with: shoot an archer who keeps her distance; cast a fireball that arcs and
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
 | C14 | Prop targets in sweeps and projectiles (material × damage type table in the adapter) | `sf_combat`, `mw_combat` | C12, C8a | exact; feeds IN1 |
-| C15 | Events for other lanes: `HitLanded` credit, `Died { killer }`, `Knockout`, combat noise | `sf_combat_bevy` | C2c | exact event order |
+| C15 | Events for other lanes: `HitLanded` credit, `Died { killer }`, `Downed { who, kind, credit }`, `Spared`, `Finished` (combat.md "Non-lethal and mercy"), combat noise | `sf_combat_bevy` | C2c | exact event order |
 | C16 | Assault/murder `OffenceAttempt` on hits against non-hostiles (crime adapter) | `mw_combat` | C15, LW2b | exact offences |
 | C23 | Downed offences (Q14): knockout of a non-hostile = assault, finishing a non-hostile or yielded person with a witness = murder, hostile = none | `mw_combat` | C16, C21, AI37 | exact offences |
 

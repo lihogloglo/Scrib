@@ -75,9 +75,9 @@ formula), no ambushes, exploration-only reveal; operators are replaced here too 
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| TV-R1 | OpenMW (file + commit): providers, `DODT` counts per kind, placements, propylons, Mark/Recall (running: `travel-data.md`) | docs | - | counts per kind |
+| TV-R1 | OpenMW (file + commit): providers, `DODT` counts per kind, placements, propylons, Mark/Recall | docs | - | **done 2026-11-25** (`docs/research/gameplay-2026-11-25/travel-data.md`) |
 | TV-R2 | Quadruped gaits (Morrowind creature clips, N-leg IK, crates), mount practice, deck-local nav | docs | - | **parked** (owner 2026-11-25: no mount research for now) |
-| TV0 | New spec `travel.md`: decisions 1-2, 7-10, saves, budgets, reuse check, industry comparison | docs | - | doccheck |
+| TV0 | New spec `travel.md`: decisions 1-2, 7-10, saves, budgets, reuse check, industry comparison | docs | - | **done 2026-11-25** (8ec94f32; travel.md 27.6 KB) |
 | TV0b | `interaction.md` (c) rewrite: decisions 3-6, passenger state; rows IN7, IN10, IN11, IN20-IN26 | docs | TV0, TV-R2 | doccheck |
 | TV0c | `services-adapter.md` "Travel": networks (strider star, boats, guides, gondolas), operator templates, options | docs | TV-R1, TV0 | doccheck |
 
