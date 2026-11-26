@@ -24,8 +24,12 @@ use sf_vfs::{Vfs, VfsPath};
 const SET_STIFFNESS_DAMPING: f32 = 1.0;
 const WARM_UP: usize = 60;
 const TIMED: usize = 600;
-/// Ticks after setup (warm-up included) at which `fallen` is counted: 2 s at 60 Hz.
+/// Ticks after setup (warm-up included) at which `fallen` is counted, and the span of the "first 2 s" median: 2 s at
+/// 60 Hz (a tint lives 0.5-2 s).
 const FALLEN_AT: usize = 120;
+/// The disturbance D and E react to, as `real_install.rs` `parts_round_trip` uses: the chest (part 10), forward.
+const PUSH_PART: usize = 10;
+const PUSH_NS: f32 = 45.0;
 
 fn fixture() -> Option<&'static Spawned> {
     static F: OnceLock<Option<Spawned>> = OnceLock::new();
@@ -57,6 +61,21 @@ fn soft_stiffness(s: &mut Sim, stiffness: f32, mask: &str) {
     );
 }
 
+/// Feeds the target pose and drives the `mask` joints to it (`activePose`).
+fn pose_follow(s: &mut Sim, target: &[Transform], mask: &str) {
+    s.agent.incoming.clear();
+    s.agent.incoming.extend_from_slice(target);
+    s.send("activePose", &[("mask", Value::Str(mask.into()))]);
+}
+
+/// A reaction behaviour on top of the balancer, then the disturbance it reacts to.
+fn reaction(s: &mut Sim, name: &str) {
+    s.start("bodyBalance");
+    s.start(name);
+    let (fwd, _) = s.facing();
+    s.push(PUSH_PART, fwd * PUSH_NS);
+}
+
 const STATES: &[State] = &[
     // A: the balancer alone.
     State { name: "A bodyBalance", setup: |s| s.start("bodyBalance"), tick: None },
@@ -73,13 +92,38 @@ const STATES: &[State] = &[
     State {
         name: "F pose fb",
         setup: |s| soft_stiffness(s, 12.0, "fb"),
-        tick: Some(|s, target| {
-            s.agent.incoming.clear();
-            s.agent.incoming.extend_from_slice(target);
-            s.send("activePose", &[("mask", Value::Str("fb".into()))]);
-        }),
+        tick: Some(|s, target| pose_follow(s, target, "fb")),
+    },
+    // C: balancer legs, upper body pose-followed.
+    State { name: "C balance+pose ub", setup: |s| s.start("bodyBalance"), tick: Some(|s, target| pose_follow(s, target, "ub")) },
+    // D: stumble after a chest push.
+    State { name: "D stumble", setup: |s| reaction(s, "stumble"), tick: None },
+    // E: staggerFall after a chest push.
+    State { name: "E staggerFall", setup: |s| reaction(s, "staggerFall"), tick: None },
+    // G: F plus the pelvis held on its target (`hardConstraint` reads `agent.incoming`, which F's tick feeds).
+    State {
+        name: "G pose fb+pinned pelvis",
+        setup: |s| {
+            soft_stiffness(s, 12.0, "fb");
+            s.send(
+                "hardConstraint",
+                &[
+                    ("partIndex", Value::Str("0".into())),
+                    ("constrainOrientation", Value::Str("1".into())),
+                    ("constrainTranslation", Value::Str("1".into())),
+                    ("start", Value::Bool(true)),
+                ],
+            );
+        },
+        tick: Some(|s, target| pose_follow(s, target, "fb")),
     },
 ];
+
+fn sorted(t: &[f64]) -> Vec<f64> {
+    let mut t = t.to_vec();
+    t.sort_by(f64::total_cmp);
+    t
+}
 
 fn tick_all(sims: &mut [Sim], state: &State, target: &[Transform]) {
     for s in sims {
@@ -95,45 +139,43 @@ fn tick_all(sims: &mut [Sim], state: &State, target: &[Transform]) {
 fn tint_step_cost() {
     let Some(spawned) = fixture() else { return };
     let pelvis0 = f64::from(spawned.frames[0].translation.z);
-    println!("tint cost: setStiffness damping {SET_STIFFNESS_DAMPING}, {WARM_UP} warm-up + {TIMED} timed ticks");
+    println!(
+        "tint cost: setStiffness damping {SET_STIFFNESS_DAMPING}, push part {PUSH_PART}, {PUSH_NS} N s, {WARM_UP} warm-up + {TIMED} timed ticks"
+    );
     for state in STATES {
-        for n in [1usize, 4, 8] {
+        for n in [1usize, 2, 4, 8] {
             let mut sims: Vec<Sim> = (0..n).map(|i| Sim::new(spawned, 0.3 + 0.1 * i as f32, false)).collect();
             for s in &mut sims {
                 (state.setup)(s);
             }
+            // Every tick is timed from tick 0: ticks WARM_UP.. are the steady-state numbers, ticks ..FALLEN_AT the
+            // "first 2 s" a tint lives in.
+            let mut all: Vec<f64> = Vec::with_capacity(WARM_UP + TIMED);
             let mut fallen = None;
-            let mut done = 0;
-            for _ in 0..WARM_UP {
-                tick_all(&mut sims, state, &spawned.frames);
-                done += 1;
-                if done == FALLEN_AT {
-                    fallen = Some(sims.iter().filter(|s| s.agent.fallen).count());
-                }
-            }
-            let mut t: Vec<f64> = Vec::with_capacity(TIMED);
-            for _ in 0..TIMED {
+            for done in 1..=WARM_UP + TIMED {
                 let t0 = Instant::now();
                 tick_all(&mut sims, state, &spawned.frames);
-                t.push(t0.elapsed().as_secs_f64() * 1000.0);
-                done += 1;
+                all.push(t0.elapsed().as_secs_f64() * 1000.0);
                 if done == FALLEN_AT {
                     fallen = Some(sims.iter().filter(|s| s.agent.fallen).count());
                 }
             }
             assert!(sims.iter().all(Sim::finite), "{} N={n}: non-finite frames", state.name);
-            t.sort_by(f64::total_cmp);
+            let t = sorted(&all[WARM_UP..]);
+            let first = sorted(&all[..FALLEN_AT]);
             let mean = t.iter().sum::<f64>() / t.len() as f64;
             let median = t[t.len() / 2];
             let pelvis = sims.iter().map(|s| f64::from(s.pelvis_z())).sum::<f64>() / n as f64 / pelvis0 * 100.0;
             println!(
-                "tint cost {} N={n}: {mean:.3} ms/tick mean, {:.3} min, {median:.3} median, {:.3} p99, {:.3} max, {:.3} ms/body; fallen {}/{n} at 2 s; pelvis {pelvis:.0} %",
+                "tint cost {} N={n}: {mean:.3} ms/tick mean, {:.3} min, {median:.3} median, {:.3} p99, {:.3} max, {:.3} ms/body; fallen {}/{n} at 2 s; pelvis {pelvis:.0} %; first 2 s {:.3} median, {:.3} p99 ms/tick",
                 state.name,
                 t[0],
                 t[t.len() * 99 / 100],
                 t[t.len() - 1],
                 median / n as f64,
                 fallen.unwrap_or(0),
+                first[first.len() / 2],
+                first[first.len() * 99 / 100],
             );
         }
     }

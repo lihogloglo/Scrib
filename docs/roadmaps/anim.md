@@ -171,14 +171,14 @@ Each family: recipe against slot contact points and MG4 height bands, generation
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| AN38 | Research: Delirium partial drive (per-region strength, disturbance), cost per body | research, test | - | measurement; ledger | research **done 2026-11-26** (d96d9ec4); measurement: **a done** (A/B/F at N = 1, 4, 8: 0.50 / 0.67 / 0.86 ms per body, linear; pose follow alone collapses; ledger physics), b (C, D, E, G), c (pose error), d (`step_group`, start/drop) left |
+| AN38 | Research: Delirium partial drive (per-region strength, disturbance), cost per body | research, test | - | measurement; ledger | research **done 2026-11-26** (d96d9ec4); measurement: **a done** (A/B/F at N = 1, 4, 8: 0.50 / 0.67 / 0.86 ms per body, linear; pose follow alone collapses; ledger physics), **b done** (C, D, E, G + first 2 s + N = 2: pinned-pelvis pose follow G stands at 0.65 ms per body, 1.28 median / 2.1 p99 ms per tick at N = 2, fails the budget at N = 4: cap 2 confirmed; C 0.63, stumble 0.52, a fallen body 1.1-1.2), c (pose error), d (`step_group`, start/drop) left |
 | AN39 | Spec: `PhysicsTint` seam, states, cap, gate, fallback | docs | AN38 | doccheck | **done 2026-11-26** (`superfargoth/docs/specs/physics-tint.md`, fed5bd81; the concurrent cap stays a Guess until AN38's numbers) |
-| AN40a | Seam: `sf_anim::tint` types, envelope, `TintBook` (gate, cap, states), `sf_anim_bevy` plugin, `TintTarget`, fallback messages; exposes the pose before the physics blend (`GraphOutput::pose` already includes it, `sf_anim_graph/src/instance.rs:239-241`); checks hurt volumes do not follow the tinted pose | `sf_anim`, `sf_anim_bevy` | AN39 | exact cap, states (fake provider) |
-| AN40b | Delirium tint provider (pinned-pelvis pose follow); step 1 = balancer coexistence test | `mw_delirium`, `mw_delirium_bevy` | AN38, AN40a | no NaN, not through floor, comes to rest |
+| AN40a | Seam: `sf_anim::tint` types, envelope, `TintBook` (gate, cap, states), `sf_anim_bevy` plugin, `TintTarget`, fallback messages; exposes the pose before the physics blend (`GraphOutput::pose` already includes it, `sf_anim_graph/src/instance.rs:239-241`); checks hurt volumes do not follow the tinted pose | `sf_anim`, `sf_anim_bevy` | AN39 | exact cap, states (fake provider): the cap test keeps 4 as its fixture value (6 requests -> 4 Active, 2 Refused); the default read from `TintSettings` is 2 (Low 1) |
+| AN40b | Delirium tint provider (pinned-pelvis pose follow); step 1 = balancer coexistence test | `mw_delirium`, `mw_delirium_bevy` | AN38, AN40a | no NaN, not through floor, comes to rest; pelvis still at standing height 2 s into an undisturbed tint (the AN38a collapse); `Failed` comes from the provider's own check (NaN, part below the floor, pelvis off target), not `agent.fallen` |
 | AN41a | Hit triggers: Medium tier + impulse band -> Stagger (physics hits of 10 to `band.max_ns` 25 N s, Guess, become a stagger tint instead of today's owner-confirmed push takeover PH-14/15; `band.max_ns` = 10 keeps today's behaviour and is the A/B arm) | `mw_combat`, `mw_walkers_bevy` | AN40b, AN22 | exact |
 | AN41b | State triggers: injury, alcohol, fatigue -> Stumble, Sway, Sag; scene `anim-tint` | `mw_walkers_bevy` | AN41a | exact; owner ANIM-14 |
 | AN41c | Sway/Sag fallback key-pose clips (data) | `mw_combat` data | AN41b, AN36 | bake loads; ANIM-14 |
-| AN42 | Measurement: tint ms at the cap | tests | AN41b | `#[ignore = "measurement"]` |
+| AN42 | Measurement: tint ms at the cap (cap 2, each kind, and mixed with 1 and 2 takeovers) | tests | AN41b | `#[ignore = "measurement"]` |
 
 **Later / parked:** motion matching; quadruped legs IN26 (TV-R2 parked); first-person body (3.4b); player limp (Q3).
 
