@@ -58,6 +58,9 @@ Vvardenfell [5]. **Classic** uses the same navigation (OpenMW navigates by navme
    a tick boundary; derived state, so only the cause event replicates. One code path with the bake, no layer format.
    Doors stay poly-state flips with zero rebuilds (NV10a). Carving only if measured needed. A missing tile (modded or
    generated world) uses the same path with a disk cache (owner 2026-11-26, Q1: amends "nothing bakes during play").
+   **Always off the frame** (owner 2026-11-26; CONTRIBUTING "Design constraints"): missing tiles build at a loading
+   screen or on worker threads ahead of streaming; a changed tile rebuilds async and the old tile serves until the
+   swap; never a stall while playing.
 8. **Swimming costs, not links** (§3): area `water` with a per-class cost (humanoid ×5, swimmers ×1); shore polys touch,
    so no link. Lakes and rivers at their own heights need per-water-body polygons from the world10x water bodies.
 9. **Two ground classes stay** (spec decision (a); Unity/UE ship 2-4): `huge` only when a real creature needs it.
@@ -143,7 +146,7 @@ Ends with: a pilgrim walks Balmora to Caldera; leave and come back, and she's fu
 |---|---|---|---|---|
 | NV10a | Door polys: closed = cost, locked = filtered unless admitted; zero rebuilds | `sf_nav`, `sf_nav_bevy` | MA21 | exact filter cases |
 | NV10b | Dirty-tile runtime rebuild: worker, budget, coalesced, atomic swap at tick boundary | `sf_nav_bevy`, `sf_nav_bake` | NV0b | rebuilt tile = offline bake bit for bit; ≤ budget |
-| NV10c | Missing-tile generation with disk cache (owner Q1, yes) | `sf_nav_bevy` | NV10b | generated = baked; second load reads cache |
+| NV10c | Missing-tile generation with disk cache, off the frame (loading screen or workers ahead of streaming; owner Q1, yes) | `sf_nav_bevy` | NV10b | generated = baked; second load reads cache |
 | NV15 | Destruction feed: `Destroyed` on walkable geometry marks tiles dirty | `sf_interaction_bevy` → `sf_nav_bevy` | NV10b, IN1 | broken barricade opens a path; owner NV-4 |
 
 **Parked:** lane graph for ambient traffic (UE Mass; revisit with ambient flows), tile-border HPA*, `huge` class,

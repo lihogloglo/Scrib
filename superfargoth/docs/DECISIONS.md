@@ -2004,3 +2004,8 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (owner, nav): nav tiles may be built during play only when missing or when their walkable ground changed,
   cached to disk; the base set is baked once. **Amends "nothing bakes during play"** for nav tiles. Pursuers swim (slower),
   non-swimmers wait at the shore (`docs/roadmaps/nav.md`).
+- 2026-11-26 (owner, combat views): one combat rules core for both views; the dodge is one move (timing, i-frames, cost)
+  shown as a roll in third person and a side dash in first; view switch mid-fight is instant and changes nothing. No
+  view-aware AI (fragile in co-op): fairness = audio telegraphs, hit-direction indicator, token cap (`docs/roadmaps/combat.md` 19).
+- 2026-11-26 (owner, nav): runtime nav tiles are always built off the frame: missing ones at a loading screen or on workers
+  ahead of streaming; a changed tile rebuilds async while the old one serves until the swap; never a stall.

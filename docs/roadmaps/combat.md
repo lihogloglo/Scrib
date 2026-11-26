@@ -59,8 +59,8 @@ lock-on or hit-stop, swings over walking legs [7].
    `PoseSeq` clips (AN37). No Quaternius, Kimodo or mocap combat clips; the roll stays UAL `Roll` (CB-6). MG-C1 (Kimodo
    combat pass) is dropped.
 7. **Direction by movement keys** (owner 2026-11-12, KCD2 directional, not Morrowind's random pick): chop/slash/thrust from
-   the stick at the press. First person adds Mordhau's **feint** (`Cancel` in the last windup ticks) and **morph** (chain
-   `next` by look delta) as sheet data; no drag/accel (§1).
+   the stick at the press. Both views get Mordhau's **feint** (`Cancel` in the last windup ticks) and **morph** (chain
+   `next` by look delta) as sheet data (decision 19); no drag/accel (§1).
 8. **Enemy combat = Doom 2016 tokens + an ER-style move picker, as data** (§2 [V Doom GDC]): token pools per (target,
    melee/ranged/charged), request, hold, release at recovery start, steal if better placed, counts per difficulty;
    non-holders circle. Moves by distance band × angle × target state × cooldown × last move from a per-species RON table
@@ -92,17 +92,17 @@ lock-on or hit-stop, swings over walking legs [7].
     hit-stop: declared with unit, range, source (`Guess` counted), never bare consts.
 18. **Order departs from the spec**: enemy fighters (C6) before ranged (§7 #1); C6 is verified first against a scripted
     **duelist** (a `Command` writer using the C6 picker directly, replacing the sparring beat), so it doesn't wait for AI15.
-19. **One rules core, per-view profiles as data** (proposed 2026-11-26, research `combat-views.md`, C-R2; owner questions
-    7-9 open). Every game that ships both views keeps one set of melee rules (Avowed: same timings, 1P master, drift felt
-    on switching [V]; Chivalry 2, Mordhau: third person is a camera option). Contacts, poise, parry, damage, i-frames,
-    windows and tokens are identical for every view and actor. The per-view profile (input layer, not `sf_combat`) holds
-    targeting (3P lock-on + flick; 1P soft aim), which dodge move an input picks, camera and feedback weight, and threat
-    cues (heavier in 1P). The one view-aware rule is in C6 token requests: an attacker outside the target's view waits
-    longer and telegraphs longer (our extension; no source for Doom/AC doing it). Departs from decision 7: feint and morph
-    follow the input scheme, not the view (both views have them in Chivalry 2 and Mordhau). Mixed views in co-op PvE are
-    allowed (only information differs; a "force first person" host option only if a PvP mode ever exists).
-    **Slices this changes once answered:** C11 (both views), C4c (3P profile only), C2c (dodge move = profile data), C6a
-    (view-aware request), C0a (profile section). Stages stay as written until the owner answers.
+19. **One rules core, per-view presentation as data** (owner 2026-11-26, Q7-9; research `combat-views.md`, C-R2). Every
+    game that ships both views keeps one set of melee rules (Avowed: same timings, 1P master [V]; Chivalry 2, Mordhau:
+    third person is a camera option). Contacts, poise, parry, damage, i-frames, windows and tokens are identical for every
+    view and actor. **The dodge is one move** (one `MoveSpec`: timing, i-frames, stamina cost, rules), presented per view:
+    a roll clip in third person, a side dash in first person (a camera path, no tumble). The per-view profile (input and
+    presentation layer, never `sf_combat`) holds targeting (3P lock-on + flick; 1P soft aim), the dodge's presentation,
+    camera and feedback weight. **Switching view mid-fight** is instant and changes nothing in the fight. **No view-aware
+    AI** (owner: fragile in multiplayer): enemies behave the same whatever the view; first-person fairness comes from
+    cues every player gets (audio telegraphs, a hit-direction indicator) and the view-independent token cap on
+    simultaneous attackers (decision 8). Feint and morph follow the input scheme, not the view (both views, as Chivalry 2
+    and Mordhau). Mixed views in co-op PvE are allowed (a "force first person" host option only if PvP ever exists).
 
 ## 4. Stages
 
@@ -112,7 +112,7 @@ Each stage ends in something the player can use. Owner checks run in `level-spar
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| C0a | combat.md: Goal/non-goals rewrite; poise, parry, criticals, damage packet, push/environment contacts; check-ID table | docs | - | doccheck |
+| C0a | combat.md: Goal/non-goals rewrite; poise, parry, criticals, damage packet, push/environment contacts; "Views" (one rules core, per-view presentation profile, one dodge move); check-ID table | docs | - | doccheck |
 | C0b | combat.md "NPC combat (C6)": tokens, picker table, skill, telegraph lint, duelist, creatures; AI15 boundary | docs | C-R1 | doccheck |
 | C0c | combat.md "Delivery (C8)": projectile/beam/area sources, aim modes, cast slot, `EffectRequest::Launch` contract | docs | C0a | doccheck |
 | C0d | combat-adapter.md: weapon/armour → poise, damage types, resistances; 2H/spear/fist sheets; marksman; creature rigs | docs | C0a, AN32 | doccheck |
@@ -128,13 +128,14 @@ charged attacks, running and rolling attacks, heavy armour shrugging off a light
 |---|---|---|---|---|
 | (anim) | AN32-AN35, anim C4 attack clip pass (chop/slash/thrust by direction, step-in `Warp`) | anim lane | - | owner CB-1 re-check |
 | C2b2 | Guard fix: still held pose from `Shield@block`, regen delay so the break can be tested | `mw_combat` data, `sf_combat` | anim C4 | exact regen; owner CB-3b |
-| C2c | Backstep + knockdown through `Owner::Physics`, get-up roll-out window, invulnerable while down | `sf_combat`, `mw_walkers_bevy` | AN37 backstep | exact windows; owner CB-3c |
+| C2c | Backstep + knockdown through `Owner::Physics`, get-up roll-out window, invulnerable while down; same rules in both views | `sf_combat`, `mw_walkers_bevy` | AN37 backstep | exact windows; owner CB-3c |
+| C18 | First-person dodge: the same dodge `MoveSpec` (CB-6 timing, i-frames, cost) presented as a side dash camera path, no tumble; view switch mid-move changes nothing | `sf_camera_bevy`, `mw_combat` data | C0a | identical windows in both views; owner CB-5e |
 | C3a | Symmetric poise + armour windows, break escalation, `poise_broken` | `sf_combat` | C0a | exact tiers; owner CB-10 |
 | C3b | Heavy + charge from the `min attack`..`max attack` window | `sf_combat`, `mw_combat` | AN33 | charge release swaps clip; owner CB-4 |
 | C3c | Openers: running, rolling, backstep, jump attacks; typed i-frames | `mw_combat` data, `sf_action` | C3b | exact chains; owner CB-4 |
 | C3d | Second classes as data: `greatsword_2h`, `spear_2h`, `fist` on `WeaponTwoHand/TwoWide/HandToHand` | `mw_combat` data | C3b, C0d | no new code; owner CB-4b |
 | C17 | NPC and creature fighters without AI: `Fighter`, health from records, reactions, death via walkers ragdoll | `mw_combat`, `mw_walkers_bevy` | C2c | hit NPC reacts and dies; unblocks MA15, DQ-12, C16 |
-| C4c | Lock-on flick switching, combat shake | `sf_combat_bevy`, `sf_camera_bevy` | - | switch picks flicked side; owner CB-5c |
+| C4c | Third-person profile: lock-on flick switching, combat shake (1P keeps soft aim, CB-5) | `sf_combat_bevy`, `sf_camera_bevy` | - | switch picks flicked side; owner CB-5c |
 
 ### Stage 2: parry, riposte, finishers, kick and hazards
 
@@ -146,7 +147,7 @@ Ends with: parry the partner's swing and riposte; backstab an unaware dummy; kic
 | C2e | Criticals: backstab cone/unaware, riposte; `Warp`-aligned finisher, multiplier in rules | `sf_combat`, `mw_combat` | C2d, C2c | exact eligibility; owner CB-8b |
 | C9 | `Kick` class + push contact (impulse, credit), knockback via C2c | `sf_combat`, `mw_combat` data | C2c, AN37 kick | exact impulse; owner CB-9 |
 | C10 | Hazard volumes → `Contact { source: Environment }` credited to the pusher | `sf_combat`, `sf_interaction` | C9, IN28 | credit test; owner CB-9b |
-| C11 | First person: feint and morph as sheet data | `mw_combat` data, `sf_action` | anim C4 | exact cancel tick; owner CB-5d |
+| C11 | Feint and morph as sheet data, both views (input scheme, not view) | `mw_combat` data, `sf_action` | anim C4 | exact cancel tick; owner CB-5d |
 
 ### Stage 3: damage that means something, limbs that get hit
 
@@ -164,10 +165,11 @@ then, with AI15, three guards take turns while others circle (ai.md Stage 6).
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| C6a | Token pools: request, hold, release, steal, counts per difficulty; serde host state | `sf_combat` | C0b | exact pool tests |
+| C6a | Token pools: request, hold, release, steal, counts per difficulty; view-independent (no view-aware requests); serde host state | `sf_combat` | C0b | exact pool tests |
 | C6b | Move picker: bands from baked windows, weighted RON table, cooldowns, anti-spam memory | `sf_combat` | C0b | exact picks per table |
 | C6c | Skill reactions from the target's `FightState`; aim error vs target speed | `sf_combat` | C6b | exact probabilities by seed |
 | C6d | Telegraph lint at sheet load | `sf_combat` | C0b | warns below floor |
+| C19 | Threat cues for every player and view: audio telegraph at windup start, hit-direction indicator | `sf_combat_bevy`, `mw_combat` data | C6d | exact cue tick; owner CB-7b |
 | C6e | Duelist: C6 drives a humanoid fighter via `Command` in `level-sparring` | `sf_combat_bevy`, `mw_combat` | C6a-c, C3a | no NaN; owner CB-7 |
 | C6f | Creature sheets from `Attack1-3`: anatomy moves, lunge wall-stagger, boss phase swaps | `mw_combat` data | C6e, S1 | exact phase swap; owner CB-11 |
 | (ai) | AI15, AI36, AI37, MA10 wrap C6 in the combat drive | ai lane | C6e | owner AI-8 |
@@ -204,7 +206,7 @@ OpenMW `aicombataction.cpp` ratings (classic AI, after C5).
 
 ## 5. Spec changes
 
-C0a-C0e above, before their stages. Also: combat.md build plan gains C2b2, C2d, C2e, C8-C16; the spec's "CB-6 classic swing"
+C0a-C0e above, before their stages. Also: combat.md build plan gains C2b2, C2d, C2e, C8-C19; the spec's "CB-6 classic swing"
 becomes CB-14 (CB-6 is the confirmed roll). anim's "combat-adapter.md Morrowind attack clips" slice (before AN33) stays the
 anim lane's. character-shapes.md S5 points at this roadmap.
 
@@ -222,7 +224,7 @@ anim lane's. character-shapes.md S5 points at this roadmap.
 | Effects (no lane file) | A5b cast input, `EffectRequest::Launch`, status ticks | C8a/C8c delivery, C12 buildup |
 | Physics | character-shapes S1-S3, Delirium takeover | S5 hurt sweep |
 
-## 7. Owner questions (answered 2026-11-26: every recommendation accepted)
+## 7. Owner questions (answered 2026-11-26: Q1-6 and Q8 as recommended; Q7, Q9 owner variants)
 
 1. **Parry:** a tight window on raising the guard, riposte on parried or poise-broken foes, in both views. (C2d, C2e)
 2. **Player poise:** heavy armour and weapons shrug off light hits mid-swing (Elden Ring). (C3a)
@@ -233,10 +235,11 @@ anim lane's. character-shapes.md S5 points at this roadmap.
 6. **Status buildup:** in the framework (C12); Morrowind content ships none at first (its on-strike enchantments and poisons
    stay instant effects).
 
-**Open (C-R2, decision 19):**
+**Answered 2026-11-26 (C-R2, decision 19):**
 
-7. **Dodge in first person:** backstep and sidestep only, or the same roll as third person? Recommended: both moves in
-   both views, different default bindings (third person roll, first person backstep/sidestep); same rules per move.
-8. **Switching view mid-fight:** Recommended: yes, instantly, nothing about the fight changes.
-9. **Attackers you can't see in first person:** Recommended: a soft rule: enemies outside your view wait their turn longer
-   and wind up longer; never a hard "no attacks from behind"; the difficulty setting scales it.
+7. **Dodge in first person:** one dodge move (same timing, i-frames, cost, rules) in both views, presented as a roll in
+   third person and a side dash in first person (camera path, no tumble). Not the recommendation (two moves). (C18, C0a)
+8. **Switching view mid-fight:** yes, instantly, nothing about the fight changes (as recommended). (C18, C0a)
+9. **Attackers you can't see in first person:** no view-aware AI (fragile in multiplayer; not the recommendation).
+   Enemies behave the same in every view; fairness comes from audio telegraphs, a hit-direction indicator and the
+   view-independent token cap. (C6a, C19)
