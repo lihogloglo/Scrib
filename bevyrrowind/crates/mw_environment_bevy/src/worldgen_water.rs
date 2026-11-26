@@ -34,8 +34,10 @@ use sf_coords::WorldPos;
 use sf_tunables_bevy::sf_tunables::{AnyDef, Def, Group, Lifetime, Source, Unit, def};
 use sf_tunables_bevy::{Tunables, TunablesAppExt};
 use sf_records::RecordId;
+use sf_water::joins::{LEVEL_TOL_M, MIX_WIDTHS, SNAP_MAX_M};
 use sf_water::{
-    BodyMesh, LakeMeshParams, RiverMeshParams, RiverPoint, WaterBody, WaterKind, WaterOptics, WaterShape, WaveTerms, lake_mesh, river_mesh,
+    BodyMesh, Join, JoinEnd, JoinLake, JoinRiver, JoinSettings, JoinStart, LakeMeshParams, RiverMeshParams, RiverPoint, WaterBody, WaterKind,
+    WaterOptics, WaterShape, WaveTerms, lake_mesh, resolve_joins, river_mesh,
 };
 use sf_water_bevy::{WaterLook, WaterMeshSurface};
 use sf_world::RecordRef;
@@ -119,6 +121,9 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &RIVER_SPEED_MIN_MPS,
     &RIVER_SPEED_MAX_MPS,
     &RIBBON_CHUNK,
+    &MIX_WIDTHS,
+    &SNAP_MAX_M,
+    &LEVEL_TOL_M,
 ];
 
 /// A guide lake's priority in the water query: above the ocean (0), so a lake below sea level still owns its outline.
@@ -266,6 +271,8 @@ pub(crate) struct GuideSettings {
     pub flow: RiverFlow,
     /// [`RIBBON_CHUNK`].
     pub ribbon_chunk: usize,
+    /// `water.join.*` (FL-4b): how river ends join lakes, the sea and their receivers ([`resolved`]).
+    pub joins: JoinSettings,
 }
 
 /// Registers this module's start-time tunables and reads them (once, at app build).
@@ -274,11 +281,78 @@ pub(crate) fn settings(app: &mut App) -> GuideSettings {
     let steep_n = app.add_tunable(&RIVER_STEEP_N).id();
     let chunk = app.add_tunable(&RIBBON_CHUNK).id();
     let ids = [&RIVER_MANNING_N, &RIVER_SLOPE_WINDOW_M, &RIVER_SPEED_MIN_MPS, &RIVER_SPEED_MAX_MPS].map(|d| app.add_tunable(d).id());
+    let mix = app.add_tunable(&MIX_WIDTHS).id();
+    let [snap, tol] = [&SNAP_MAX_M, &LEVEL_TOL_M].map(|d| app.add_tunable(d).id());
     let tunables = app.world().resource::<Tunables>();
     let (on, steep_n) = (tunables.read(on), tunables.read(steep_n));
     let [manning_n, window_m, min_mps, max_mps] = ids.map(|id| f64::from(tunables.read(id)));
     let ribbon_chunk = usize::try_from(tunables.read(chunk)).unwrap_or(usize::MAX);
-    GuideSettings { on, flow: RiverFlow { manning_n, steep_n, window_m, min_mps, max_mps }, ribbon_chunk }
+    let joins = JoinSettings { mix_widths: tunables.read(mix), snap_max_m: tunables.read(snap), level_tol_m: tunables.read(tol) };
+    GuideSettings { on, flow: RiverFlow { manning_n, steep_n, window_m, min_mps, max_mps }, ribbon_chunk, joins }
+}
+
+/// The guide's river splines with their joins resolved (FL-4b), engine frame: one entry per guide river, same
+/// order (rivers of fewer than 2 points included, untouched), shared by the CPU query bodies and the mesh bake.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Resolved {
+    /// Each river's spline at its [`river_speeds`], its end moved onto its receiver and faded over its water.
+    pub splines: Vec<Vec<RiverPoint>>,
+    /// How each river's ends were resolved.
+    pub joins: Vec<Join>,
+}
+
+/// Resolves `guide`'s river joins once (`sf_water::resolve_joins`): a river naming line `m` (`joins`, non-negative)
+/// may join every other river of that `mu_id` (a cut line has several pieces); lakes at their level, the sea at
+/// the guide's.
+pub(crate) fn resolved(guide: &GuideWater, flow: &RiverFlow, joins: &JoinSettings) -> Resolved {
+    let engine = |p: [f64; 2]| DVec2::from_array(to_engine_xz(p));
+    let mut rivers: Vec<JoinRiver> = guide
+        .rivers
+        .iter()
+        .enumerate()
+        .map(|(i, river)| {
+            let receivers = match river.joins {
+                Some(m) if m >= 0 => guide.rivers.iter().enumerate().filter(|&(j, r)| j != i && r.mu_id == Some(m)).map(|(j, _)| j).collect(),
+                _ => Vec::new(),
+            };
+            JoinRiver { spline: river_spline(&river.points, &river_speeds(&river.points, flow)), receivers }
+        })
+        .collect();
+    let lakes: Vec<JoinLake> = guide
+        .lakes
+        .iter()
+        .map(|lake| JoinLake {
+            outline: lake.outline.iter().copied().map(engine).collect(),
+            holes: lake.holes.iter().map(|h| h.iter().copied().map(engine).collect()).collect(),
+            level: lake.level_m,
+        })
+        .collect();
+    let joins = resolve_joins(&mut rivers, &lakes, guide.sea_level_m, joins);
+    Resolved { splines: rivers.into_iter().map(|r| r.spline).collect(), joins }
+}
+
+impl Resolved {
+    /// The joins' log line: how many river ends reach a lake, a receiver, the sea or nothing.
+    pub(crate) fn summary(&self) -> String {
+        let (mut lake, mut tributary, mut unsnapped, mut sea, mut open, mut farthest) = (0, 0, 0, 0, 0, 0.0_f64);
+        for join in &self.joins {
+            match join.end {
+                JoinEnd::Open => open += 1,
+                JoinEnd::Lake(_) => lake += 1,
+                JoinEnd::Tributary { .. } => tributary += 1,
+                JoinEnd::Unsnapped { distance_m, .. } => {
+                    unsnapped += 1;
+                    farthest = farthest.max(distance_m);
+                }
+                JoinEnd::Sea => sea += 1,
+            }
+        }
+        let from_lake = self.joins.iter().filter(|j| matches!(j.start, JoinStart::Lake(_))).count();
+        format!(
+            "worldgen water joins: {} river ends: {lake} lake, {tributary} tributary, {unsnapped} unsnapped (farthest {farthest:.0} m), {sea} sea, {open} open; {from_lake} start in a lake",
+            self.splines.len()
+        )
+    }
 }
 
 /// A river's points as a ribbon spline in the engine frame, at `speeds` (one per point, [`river_speeds`]).
@@ -300,9 +374,9 @@ fn river_spline(points: &[[f64; 4]], speeds: &[f64]) -> Vec<RiverPoint> {
 /// `guide`'s lakes and rivers as water query records (W-QUERY; FL-5a), engine frame, in the exterior: one
 /// [`WaterShape::Polygon`] per lake at its level, and each river (whatever its `kind`) as [`WaterShape::Ribbon`]s of
 /// at most `ribbon_chunk` points, consecutive chunks sharing their seam point (no gap), with the speeds of the
-/// whole river ([`river_speeds`], the mesh bake's). Ids `guide:lake:<id>` and `guide:river:<id>:<chunk>`; a river
-/// of fewer than 2 points gives none.
-pub(crate) fn guide_bodies(guide: &GuideWater, flow: &RiverFlow, ribbon_chunk: usize) -> Vec<WaterBody> {
+/// whole river's [`Resolved`] spline (the mesh bake's). Ids `guide:lake:<id>` and `guide:river:<id>:<chunk>`; a
+/// river of fewer than 2 points gives none.
+pub(crate) fn guide_bodies(guide: &GuideWater, resolved: &Resolved, ribbon_chunk: usize) -> Vec<WaterBody> {
     let engine = |p: [f64; 2]| DVec2::from_array(to_engine_xz(p));
     let worldspace = ids::exterior();
     let optics = Some(RecordRef::new(WaterOptics::KIND, LOOK));
@@ -324,11 +398,10 @@ pub(crate) fn guide_bodies(guide: &GuideWater, flow: &RiverFlow, ribbon_chunk: u
         out.push(body(format!("guide:lake:{}", lake.id), WaterKind::Lake, WaterShape::Polygon { outline, holes }, lake.level_m, LAKE_PRIORITY));
     }
     let step = ribbon_chunk.max(2) - 1;
-    for river in &guide.rivers {
-        if river.points.len() < 2 {
+    for (river, spline) in guide.rivers.iter().zip(&resolved.splines) {
+        if spline.len() < 2 {
             continue;
         }
-        let spline = river_spline(&river.points, &river_speeds(&river.points, flow));
         let (mut start, mut k) = (0, 0);
         while start + 1 < spline.len() {
             let chunk = spline[start..(start + step + 1).min(spline.len())].to_vec();
@@ -342,13 +415,13 @@ pub(crate) fn guide_bodies(guide: &GuideWater, flow: &RiverFlow, ribbon_chunk: u
 }
 
 /// Starts the bake of `guide`'s bodies and the system that spawns them, with the [`settings`] read at start;
-/// nothing without a guide or with [`GUIDE_BODIES`] off.
-pub(crate) fn add(app: &mut App, guide: Option<GuideWater>, look: WaterLook, settings: GuideSettings) {
+/// nothing without a guide or with [`GUIDE_BODIES`] off. `guide` comes with its [`resolved`] joins (the query's).
+pub(crate) fn add(app: &mut App, guide: Option<(GuideWater, Resolved)>, look: WaterLook, settings: GuideSettings) {
     let GuideSettings { on, flow, .. } = settings;
-    let Some(guide) = guide.filter(|_| on) else { return };
+    let Some((guide, resolved)) = guide.filter(|_| on) else { return };
     let job = std::thread::Builder::new()
         .name("guide-water-bake".into())
-        .spawn(move || bake(&guide, &flow))
+        .spawn(move || bake(&guide, &resolved, &flow))
         .expect("spawn the guide water bake thread");
     app.insert_resource(GuideWaterBodies::Baking(Some(job))).insert_resource(GuideWaterLook(look)).add_systems(Update, spawn);
 }
@@ -356,8 +429,9 @@ pub(crate) fn add(app: &mut App, guide: Option<GuideWater>, look: WaterLook, set
 #[derive(Resource)]
 struct GuideWaterLook(WaterLook);
 
-/// Every lake and river mesh, engine frame.
-fn bake(guide: &GuideWater, flow: &RiverFlow) -> Baked {
+/// Every lake and river mesh, engine frame, the rivers on their `resolved` splines; `flow` only gives the log
+/// line's speed percentiles (the unresolved [`river_speeds`]).
+fn bake(guide: &GuideWater, resolved: &Resolved, flow: &RiverFlow) -> Baked {
     let t = Instant::now();
     let engine = |p: [f64; 2]| DVec2::from_array(to_engine_xz(p));
     let (lake_params, river_params) = (LakeMeshParams::default(), RiverMeshParams::default());
@@ -370,12 +444,10 @@ fn bake(guide: &GuideWater, flow: &RiverFlow) -> Baked {
         let body = lake_mesh(&outline, &holes, lake.level_m, origin, &lake_params);
         push(&mut bodies, GuideWaterBody::Lake, origin, &body, false);
     }
-    for river in &guide.rivers {
-        let speed = river_speeds(&river.points, flow);
-        let spline = river_spline(&river.points, &speed);
-        speeds.extend(speed);
+    for (river, spline) in guide.rivers.iter().zip(&resolved.splines) {
+        speeds.extend(river_speeds(&river.points, flow));
         let origin = centre(&spline.iter().map(|p| p.center).collect::<Vec<_>>());
-        let body = river_mesh(&spline, &river_params, origin);
+        let body = river_mesh(spline, &river_params, origin);
         push(&mut bodies, GuideWaterBody::River, origin, &body, true);
     }
     let count = |k| bodies.iter().filter(|b| b.kind == k).count();

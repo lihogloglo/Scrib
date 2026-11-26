@@ -17,13 +17,13 @@ use sf_controller_bevy::{Locomotion, LocomotionIntent, MoveIntent, Mover, MoverM
 use sf_coords::WorldPos;
 use sf_physics_bevy::Physics;
 use sf_tunables_bevy::TunablesPlugin;
-use sf_water::{WaterWorld, WorldspaceWater};
+use sf_water::{JoinSettings, WaterWorld, WorldspaceWater};
 use sf_world_bevy::ActiveWorldspace;
 use sf_worldgen::water::{GuideWater, River};
 
 use super::{SwimSettings, add};
 use crate::water::Water;
-use crate::worldgen_water::{RiverFlow, guide_bodies, river_speeds};
+use crate::worldgen_water::{RiverFlow, guide_bodies, resolved, river_speeds};
 
 /// Fixed ticks run so far.
 #[derive(Resource, Default)]
@@ -56,7 +56,8 @@ fn app(swim_height_scale: Option<f32>) -> App {
     let frame = Duration::from_secs_f64(1.0 / 60.0);
     let guide = GuideWater { rivers: vec![River { id: 1, kind: "river".into(), points: river_points(), ..River::default() }], ..GuideWater::default() };
     let mut world = WaterWorld::new();
-    world.insert(mw_world::ids::exterior(), WorldspaceWater::new(guide_bodies(&guide, &RiverFlow::default(), 64)));
+    let resolved = resolved(&guide, &RiverFlow::default(), &JoinSettings::default());
+    world.insert(mw_world::ids::exterior(), WorldspaceWater::new(guide_bodies(&guide, &resolved, 64)));
     let mut app = App::new();
     app.add_plugins((TimePlugin, TunablesPlugin))
         .insert_resource(TimeUpdateStrategy::ManualDuration(frame))

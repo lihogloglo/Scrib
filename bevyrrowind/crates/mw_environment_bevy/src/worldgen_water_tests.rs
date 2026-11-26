@@ -14,14 +14,26 @@ use bevy_mesh::{Mesh, VertexAttributeValues};
 use bevy_transform::components::Transform;
 use glam::{DVec2, DVec3, Vec3};
 use sf_coords::WorldPos;
-use sf_water::{BedHeights, Capsule, WaterBody, WaterKind, WaterQuery, WaterSample, WaterShape, WaterWorld, WorldspaceWater};
+use sf_water::{
+    BedHeights, Capsule, Join, JoinEnd, JoinSettings, JoinStart, WaterBody, WaterKind, WaterQuery, WaterSample, WaterShape, WaterWorld, WorldspaceWater,
+};
 use sf_water_bevy::{WaterLook, WaterMeshSurface};
 use sf_world::Worldspace;
 use sf_world_bevy::WorldspaceRegistry;
 use sf_world_bevy::big_space::prelude::CellCoord;
 use sf_worldgen::water::{GuideWater, Lake, River};
 
-use super::{GuideWaterBody, RIBBON_CHUNK, RiverFlow, add, guide_bodies, river_speeds};
+use super::{GuideWaterBody, RIBBON_CHUNK, Resolved, RiverFlow, add, guide_bodies, river_spline, river_speeds};
+
+/// `guide`'s joins resolved at the default flow and join settings.
+fn resolve(guide: &GuideWater) -> Resolved {
+    super::resolved(guide, &RiverFlow::default(), &JoinSettings::default())
+}
+
+/// `guide`'s query bodies on its default-resolved splines.
+fn bodies_of(guide: &GuideWater, chunk: usize) -> Vec<WaterBody> {
+    guide_bodies(guide, &resolve(guide), chunk)
+}
 
 /// One lake (a 100 m square at 12.5 m with a 20 m square hole) and one 3-point river (20 → 18 → 15 m), guide frame.
 const WATER_JSON: &str = r#"{
@@ -52,6 +64,10 @@ fn run(dir: &Path, want: usize) -> App {
     WorldspaceRegistry::ensure_in(app.world_mut(), &mw_world::ids::exterior());
     let guide = GuideWater::read(dir).expect("read water.json");
     let settings = super::settings(&mut app);
+    let guide = guide.map(|g| {
+        let resolved = super::resolved(&g, &settings.flow, &settings.joins);
+        (g, resolved)
+    });
     add(&mut app, guide, WaterLook::default(), settings);
     let start = Instant::now();
     loop {
@@ -147,16 +163,19 @@ fn no_water_json_no_bodies() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// The bake on a real guide (`GW3_WATER_DIR`, default the x10s-b2w build output): the log line's numbers.
+/// The bake on a real guide (`GW3_WATER_DIR`, default the x10hs-b2w build output): the joins' and the bake's log
+/// lines.
 #[test]
 #[ignore = "measurement: bake time and size of a real guide's water.json"]
 fn measure_real_guide_bake() {
-    let dir = std::env::var("GW3_WATER_DIR").unwrap_or_else(|_| r"C:\cargo-target\scrib\worldgen\x10s-b2w".into());
+    let dir = std::env::var("GW3_WATER_DIR").unwrap_or_else(|_| r"C:\cargo-target\scrib\worldgen\x10hs-b2w".into());
     let Some(guide) = GuideWater::read(Path::new(&dir)).expect("read water.json") else {
         println!("no water.json in {dir}");
         return;
     };
-    let b = super::bake(&guide, &RiverFlow::default());
+    let resolved = resolve(&guide);
+    println!("{dir}: {}", resolved.summary());
+    let b = super::bake(&guide, &resolved, &RiverFlow::default());
     let [p10, p50, p90] = b.speeds;
     println!(
         "{dir}: {} lakes, {} rivers, {:.1} km, river speed p10/p50/p90 {p10:.2}/{p50:.2}/{p90:.2} m/s, {} vertices, built in {:.0} ms",
@@ -340,7 +359,7 @@ fn query_of(guide: &GuideWater, chunk: usize, bed: Option<f32>) -> WorldspaceWat
     ws.has_terrain = true;
     ws.sea_level = Some(0.0);
     let mut bodies = vec![WaterBody::from_worldspace(&ext, &ws).expect("the ocean")];
-    bodies.extend(guide_bodies(guide, &RiverFlow::default(), chunk));
+    bodies.extend(bodies_of(guide, chunk));
     let mut water = WorldspaceWater::new(bodies);
     water.set_bed(bed.map(|b| Arc::new(FlatBed(b)) as Arc<dyn BedHeights>));
     water
@@ -353,7 +372,7 @@ fn at(x: f64, y: f64, h: f64) -> WorldPos {
 
 #[test]
 fn guide_bodies_records() {
-    let bodies = guide_bodies(&query_guide(), &RiverFlow::default(), 64);
+    let bodies = bodies_of(&query_guide(), 64);
     let ids: Vec<&str> = bodies.iter().map(|b| b.id.as_str()).collect();
     assert_eq!(ids, ["guide:lake:4", "guide:river:9:0"]);
     let (lake, river) = (&bodies[0], &bodies[1]);
@@ -424,7 +443,7 @@ fn long_river_splits_into_seamless_chunks() {
     // A straight 20-point river due north at x = 1 km, 10 m wide, dropping 1 cm per metre.
     let points: Vec<[f64; 4]> = (0..20).map(|i| f64::from(i) * 20.0).map(|y| [1000.0, y, 10.0, 100.0 - 0.01 * y]).collect();
     let guide = GuideWater { rivers: vec![River { id: 5, kind: "river".into(), points, ..River::default() }], ..GuideWater::default() };
-    let chunks = guide_bodies(&guide, &RiverFlow::default(), 8);
+    let chunks = bodies_of(&guide, 8);
     let ids: Vec<&str> = chunks.iter().map(|b| b.id.as_str()).collect();
     assert_eq!(ids, ["guide:river:5:0", "guide:river:5:1", "guide:river:5:2"], "points 0-7, 7-14, 14-19");
     let splines: Vec<_> = chunks
@@ -457,7 +476,60 @@ fn long_river_splits_into_seamless_chunks() {
 #[test]
 fn short_river_gives_no_body() {
     let guide = GuideWater { rivers: vec![River { id: 1, kind: "braid".into(), points: vec![[0.0, 0.0, 5.0, 10.0]], ..River::default() }], ..GuideWater::default() };
-    assert!(guide_bodies(&guide, &RiverFlow::default(), 64).is_empty());
+    assert!(bodies_of(&guide, 64).is_empty());
+}
+
+/// FL-4b: FL-4a's Y confluence in guide coordinates. River 11 names line 7 (rivers 10 and 12, far away); its end
+/// (31, -1) is 1 m from river 10's centre line (y = 0), so it moves to (31, 0) in the engine frame and fades out
+/// there; the resolved spline reaches the query's ribbon unchanged.
+#[test]
+fn joins_reach_the_query_bodies() {
+    let river = |id: i64, mu_id: i64, joins: Option<i64>, points: Vec<[f64; 4]>| River {
+        id,
+        kind: "river".into(),
+        mu_id: Some(mu_id),
+        joins,
+        points,
+        ..River::default()
+    };
+    let tributary = vec![[30.0, -40.0, 4.0, 12.0], [30.0, -30.0, 4.0, 11.0], [30.0, -20.0, 4.0, 10.5], [30.0, -10.0, 4.0, 10.0], [30.0, -4.0, 4.0, 9.6], [31.0, -1.0, 4.0, 9.5]];
+    let guide = GuideWater {
+        rivers: vec![
+            river(10, 7, None, vec![[0.0, 0.0, 10.0, 10.0], [50.0, 0.0, 10.0, 9.0], [100.0, 0.0, 10.0, 8.0]]),
+            river(11, 8, Some(7), tributary.clone()),
+            river(12, 7, None, vec![[1000.0, 0.0, 10.0, 5.0], [1050.0, 0.0, 10.0, 4.0]]),
+        ],
+        ..GuideWater::default()
+    };
+    let resolved = resolve(&guide);
+
+    let open = Join { start: JoinStart::Open, end: JoinEnd::Open };
+    assert_eq!((resolved.joins[0], resolved.joins[2]), (open, open));
+    let Join { start: JoinStart::Open, end: JoinEnd::Tributary { receiver: 0, moved_m } } = resolved.joins[1] else {
+        panic!("river 11 joins river 10: {:?}", resolved.joins[1]);
+    };
+    assert!((moved_m - 1.0).abs() <= 1e-9, "moved {moved_m} m");
+
+    let spline = &resolved.splines[1];
+    let ness: Vec<f32> = spline.iter().map(|p| p.river_ness).collect();
+    for (got, want) in ness.iter().zip([1.0_f32, 1.0, 1.0, 1.0, 1.0, 0.0]) {
+        assert!((got - want).abs() <= 1e-6, "river_ness {ness:?}");
+    }
+    assert_eq!(ness.len(), 6);
+    let last = spline.last().expect("six points");
+    assert_eq!((last.center, last.flow_speed), (DVec2::new(31.0, 0.0), 0.0));
+    let plain = river_spline(&tributary, &river_speeds(&tributary, &RiverFlow::default()));
+    assert_eq!(spline[..5], plain[..5], "the points above the confluence are untouched");
+
+    let bodies = guide_bodies(&guide, &resolved, 64);
+    let body = bodies.iter().find(|b| b.id.as_str() == "guide:river:11:0").expect("river 11's body");
+    let WaterShape::Ribbon { spline: ribbon } = &body.shape else { panic!("a river is a ribbon: {:?}", body.shape) };
+    assert_eq!(ribbon, spline, "the query's ribbon carries the resolved spline");
+
+    assert_eq!(
+        resolved.summary(),
+        "worldgen water joins: 3 river ends: 0 lake, 1 tributary, 0 unsnapped (farthest 0 m), 0 sea, 2 open; 0 start in a lake"
+    );
 }
 
 /// FL-5a: ns per `WorldspaceWater::sample` on a real guide (`GW3_WATER_DIR`, default the x10s-b2w build output), on

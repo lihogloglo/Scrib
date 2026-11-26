@@ -124,7 +124,9 @@ x10s-b2w printed by an `#[ignore = "measurement: ..."]` test (est. 20-60 s, 1.3 
 
 ### FL-4: joins (worldgen-2)
 
-FL-4a and FL-4b are written for the worldgen-2 lane in "Build rows". Design: the reader keeps `mu_id`, `joins`, `outlet`,
+FL-4a and FL-4b are written for the worldgen-2 lane in "Build rows". Wired 2026-11-26 (FL-4b slice 1, worldgen-9):
+`mw_environment_bevy/src/worldgen_water.rs` `resolved()` resolves the joins once at start, the query bodies and the mesh
+bake share its splines, log line `worldgen water joins: ...`; the mesh attribute and shader fade are slice 2. Design: the reader keeps `mu_id`, `joins`, `outlet`,
 `clipped` (rivers) and `kind`, `from_course` (lakes); `sf_water::joins` resolves each river end: **tributary** (`joins`
 names another river's `mu_id`): last point projected onto the receiver's centreline if within `snap_max_m`, level =
 min(own, receiver's there); **mouth** (end inside a lake polygon, or at sea level over the ocean): mixing zone;
