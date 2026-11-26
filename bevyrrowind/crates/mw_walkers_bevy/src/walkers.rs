@@ -1089,8 +1089,11 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest, p
             )
                 .chain(),
         )
-        // MA2d1: record AI packages onto the directive stack of each new `AiActor`.
-        .add_systems(Update, crate::directives::seed_directives.after(attach))
+        // MA2d1: record AI packages onto the directive stack of each new `AiActor`; MA2d3: the
+        // `AI_A` placement index and the packages waiting for a target to spawn.
+        .init_resource::<crate::directives::PendingPackages>()
+        .add_systems(PostStartup, crate::directives::hook_placed_objects)
+        .add_systems(Update, (crate::directives::seed_directives, crate::directives::retry_pending).chain().after(attach))
         // Gameplay on the fixed tick (NV7a): the physics step first (IN11b: characters ride the
         // bases it moved), then the player (its tick state is what the NPCs avoid), then the NPC
         // intents and their mover.

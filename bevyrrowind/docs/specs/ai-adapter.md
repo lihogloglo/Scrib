@@ -193,6 +193,7 @@ record order through `MorrowindPolicy`; a stack already in `AiDirectives` (save,
 every actor gets one (empty = seeded, no packages). Resolver: `actor(id)` = lowest spawned placement of that base;
 the player and AI_A objects resolve to `None` (skipped, `info!` count per batch; no retry) -> MA2d3. Extras
 (`AiPackageExtras`, wander idles, follow end) re-mapped by kind order for kept stacks. Clock: `sf_sky_bevy::GameClock`.
+As built (MA2d3, 2026-11-26): `player` = `ActorKey::player(HOST_KEY)` (`sf_ids`: tag `sfplayer` in the high 64 bits, PlayerKey in the low 64; placement hashes land there with p = 2^-64); AI_A = lowest R0 placement of the record in `PlacedObjects` (index of the content's AI_A targets, kept by `PlacedObjectsHook` on activate/deactivate, enabled only); an unresolved AI_E/AI_F/AI_A waits in `PendingPackages` (by actor, not saved) and `retry_pending` (on `Added<CharacterPlacement>` or `PlacedObjects` change) inserts it before the first directive of a later record package, through `Renewing`. Script pushes still resolve without `PlacedObjects`.
 
 **MWScript** (`mw_script/src/functions.txt`: "AI, combat" block, `Get/Set/Mod{$AISTATS}` 188-190, `GetLineOfSight`
 90; "later" or "stub" today): `AIWander`, `AITravel`, `AIEscort(Cell)`, `AIFollow(Cell)`, `AIActivate` push
