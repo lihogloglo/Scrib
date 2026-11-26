@@ -53,7 +53,7 @@ pub use sf_anim::{RootChain, RootPath, RootPose, WarpPlan, WarpProfile, WarpRefu
 pub use variety::{FidgetPicker, Variety};
 pub use secondary::{CLOTH_LEG_FOLLOW, CLOTH_MAX_LOD, ClothBinding, ClothRun, Hit, SPRING_MAX_SUBSTEPS, SPRING_SUBSTEP};
 pub use instance::{
-    ActiveWarp, BindError, Binding, FootStats, GraphEvent, GraphInstance, GraphOutput, GroundSample, IkTarget, Params, UpdateInputs, WarpTarget,
+    ActiveWarp, BindError, Binding, FootStats, GraphEvent, GraphInstance, GraphOutput, GroundSample, IkTarget, Params, StyleSel, UpdateInputs, WarpTarget,
 };
 pub use slot::{LateClip, MontageClip, MontageId, MontageStatus, NoticeKind, SlotError, SlotId, SlotNotice, SlotRequest, SlotStart};
 
@@ -63,5 +63,7 @@ mod creature_tests;
 mod style_tests;
 #[cfg(all(test, feature = "bake"))]
 mod style_compile_tests;
+#[cfg(all(test, feature = "bake"))]
+mod style_switch_tests;
 #[cfg(all(test, feature = "bake"))]
 mod tests;

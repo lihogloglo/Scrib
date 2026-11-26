@@ -360,6 +360,17 @@ per tier (High, 4060 laptop) into `docs/ledger/perf.md`.
   `ClipResolution`; `validate()` refuses a remap past the clip list or an `at` row naming a missing node.
   `GRAPH_FORMAT` 17: every graph product rebuilds (`steps.rs` passes the format into the bake key), so a
   `bevyrrowind bake` follows. The runtime switch (`GraphInstance::set_style`) is AN14b2.
+- **AN14b2a (2026-11-26), the runtime switch:** `GraphInstance::set_style(b, StyleSel { active, identity }, blend_s)`
+  and `style()`. `set_style` resolves ONE map per instance (`clip_map`: active class, else identity class, else the
+  base slot; stored empty when every slot is its base, so an unstyled instance allocates nothing) and every player
+  lane reads its clip, curves, events and warp windows through it (one array read per sampled clip). Montage slots
+  are not remapped. A lane whose clip changed takes its time from `sync_time` (marker phase when both clips have
+  markers, else the normalized loop phase) and fires no event for the jump; when a changed lane is playing and
+  `blend_s > 0`, the next update inertializes (`style_blend`, merged into the update's request by the same `min`
+  rule as a slot switch, because `update` clears `request` at its start). A selection that resolves to the current
+  clips does nothing; a class index past the graph's classes contributes no clip. `GraphEvent.clip` reports the
+  class slot. Not built yet: the class `at` speeds at runtime (AN14b2b: nothing reads `CompiledClass.at`), the
+  `down.*` marker wait (AN14b2c: the switch applies at once), the stale-bake digest warning (the glue, AN22a).
 
 ## Open questions (taste and scope; each with a recommendation)
 

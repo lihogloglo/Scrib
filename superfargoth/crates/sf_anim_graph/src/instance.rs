@@ -487,6 +487,28 @@ pub struct GraphInstance {
     cloth: Vec<ClothRun>,
     /// Phase offset and rate jitter ([`GraphInstance::set_variety`]).
     variety: Variety,
+    /// The selection of the last [`GraphInstance::set_style`].
+    style: Option<StyleSel>,
+    /// Per base clip slot, the slot player lanes sample instead (empty = no
+    /// remap); resolved once by [`GraphInstance::set_style`].
+    clip_map: Box<[u16]>,
+    /// The blend a style switch on a playing lane asks the next update for.
+    style_blend: Option<f32>,
+}
+
+/// A style selection: compiled class indices
+/// ([`CompiledGraph::styles`](crate::CompiledGraph::styles) `.classes`).
+/// A player lane plays the `active` class's clip for its slot, else the
+/// `identity` class's, else the base clip.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StyleSel {
+    pub active: u16,
+    pub identity: u16,
+}
+
+/// The clip slot a player lane samples for base slot `slot` under `map`.
+fn mapped(map: &[u16], slot: u16) -> u16 {
+    map.get(usize::from(slot)).copied().unwrap_or(slot)
 }
 
 /// A pose supplied from outside the graph (a ragdoll's), with a weight per
@@ -501,6 +523,8 @@ struct PhysicsInput {
 struct Cx<'a> {
     g: &'a CompiledGraph,
     clips: &'a [Arc<Clip>],
+    /// The style clip map ([`mapped`]).
+    map: &'a [u16],
     dt: f32,
 }
 
@@ -547,9 +571,62 @@ impl GraphInstance {
             slots: vec![SlotState::default(); g.slots.len()],
             next_montage: 0,
             variety: Variety::default(),
+            style: None,
+            clip_map: Box::default(),
+            style_blend: None,
         };
-        inst.reset_range(b, 0, u32::try_from(g.nodes.len()).expect("node count fits u32"));
+        inst.reset_range(b, &[], 0, u32::try_from(g.nodes.len()).expect("node count fits u32"));
         inst
+    }
+
+    /// Switches the style class (animation-style.md "Class remap"): from the
+    /// next update every player lane samples, for its base clip slot, the
+    /// `sel.active` class's clip, else the `sel.identity` class's, else the
+    /// base clip (montage slots play what they were given). A lane whose clip
+    /// changes keeps its phase (by markers when both clips have them, else
+    /// the normalized loop phase) and fires no event for the jump; when one
+    /// of them is playing, the next update inertializes over `blend_s`
+    /// (`<= 0` cuts). A selection resolving to the current clips does nothing;
+    /// a class index past the graph's classes contributes no clip.
+    pub fn set_style(&mut self, b: &Binding<'_>, sel: StyleSel, blend_s: f32) {
+        self.style = Some(sel);
+        let classes = &b.graph.styles.classes;
+        let base = classes.iter().map(|c| c.remap.len()).max().unwrap_or(0);
+        let base = u16::try_from(base).expect("clip slots fit u16");
+        let pick = |class: u16, i: u16| {
+            classes.get(usize::from(class)).and_then(|c| c.remap.get(usize::from(i))).copied().filter(|&s| s != u16::MAX)
+        };
+        let map: Box<[u16]> = (0..base).map(|i| pick(sel.active, i).or_else(|| pick(sel.identity, i)).unwrap_or(i)).collect();
+        // All base clips: the same as no map, without the per-sample read.
+        let map = if map.iter().enumerate().all(|(i, &s)| usize::from(s) == i) { Box::default() } else { map };
+        if map == self.clip_map {
+            return;
+        }
+        let old = std::mem::replace(&mut self.clip_map, map);
+        let mut playing = false;
+        for (node, state) in b.graph.nodes.iter().zip(&mut self.nodes) {
+            let (NodeKind::Player(p), NodeState::Player(st)) = (&node.kind, state) else { continue };
+            let player_w = st.weight;
+            for (lane, &slot) in st.lanes.iter_mut().zip(&p.lanes) {
+                let (from, to) = (mapped(&old, slot), mapped(&self.clip_map, slot));
+                if from == to {
+                    continue;
+                }
+                let (from_clip, to_clip) = (&b.clips[usize::from(from)], &b.clips[usize::from(to)]);
+                lane.time = sync_time(to_clip, p.looping, lane.time, from_clip, p.looping, lane.time);
+                lane.prev = lane.time;
+                lane.wrapped = false;
+                playing |= player_w > EPS && lane.weight > EPS;
+            }
+        }
+        if playing && blend_s > 0.0 {
+            self.style_blend = Some(self.style_blend.map_or(blend_s, |r| r.min(blend_s)));
+        }
+    }
+
+    /// The selection of the last [`GraphInstance::set_style`] (`None` before the first).
+    pub fn style(&self) -> Option<StyleSel> {
+        self.style
     }
 
     /// Gives this character its own phase and rate ([`Variety`]): looping
@@ -567,7 +644,7 @@ impl GraphInstance {
                 continue;
             }
             for (lane, &clip) in st.lanes.iter_mut().zip(&p.lanes) {
-                let (a, e) = loop_span(&b.clips[usize::from(clip)], true);
+                let (a, e) = loop_span(&b.clips[usize::from(mapped(&self.clip_map, clip))], true);
                 if e - a > 1e-6 {
                     lane.time = a + (lane.time - a + delta * (e - a)).rem_euclid(e - a);
                     lane.prev = lane.time;
@@ -921,7 +998,10 @@ impl GraphInstance {
             out.slot_notices.append(&mut st.notices);
         }
 
-        let cx = Cx { g, clips: b.clips, dt };
+        // The passes below borrow the instance mutably: the map is lent out
+        // for them and put back before the evaluation.
+        let map = std::mem::take(&mut self.clip_map);
+        let cx = Cx { g, clips: b.clips, map: &map, dt };
         self.prepare(b, &cx, g.root, 1.0, 1.0, 0);
         self.advance(&cx, inputs);
         // A slot switch inertializes where the slot is seen.
@@ -932,13 +1012,18 @@ impl GraphInstance {
                 self.request = Some(self.request.map_or(d, |r| r.min(d)));
             }
         }
+        // A style switch on a playing lane (`set_style`) inertializes the same way.
+        if let Some(d) = self.style_blend.take() {
+            self.request = Some(self.request.map_or(d, |r| r.min(d)));
+        }
         // The hand-back owns the blend: a state switch on the same update (the
         // host clearing its knocked-out flag) starts from the same pose, and
         // its shorter blend snapped the lying pose onto the clip (AN-5).
         if let Some(d) = self.handback.take() {
             self.request = Some(d);
         }
-        self.collect_events(g, out);
+        self.collect_events(g, &map, out);
+        self.clip_map = map;
         self.params.clear_triggers();
 
         let posed = lod < 3;
@@ -949,6 +1034,7 @@ impl GraphInstance {
         let ecx = EvalCx {
             g,
             clips: b.clips,
+            map: &self.clip_map,
             skeleton: b.skeleton,
             nodes: &self.nodes,
             params: &self.params,
@@ -1136,11 +1222,12 @@ impl GraphInstance {
                 if w <= EPS || lane.wrapped || lane.time <= lane.prev {
                     continue;
                 }
-                for win in &g.warp_windows[usize::from(def.lanes[i])] {
+                let clip = usize::from(mapped(&self.clip_map, def.lanes[i]));
+                for win in &g.warp_windows[clip] {
                     let open = lane.prev < win.end && lane.time > win.start;
                     let target_set = inputs.warp_targets.get(usize::from(win.target)).is_some_and(Option::is_some);
                     if open && target_set && best.is_none_or(|b| w > b.0) {
-                        best = Some((w, &clips[usize::from(def.lanes[i])], win, lane.prev, lane.time));
+                        best = Some((w, &clips[clip], win, lane.prev, lane.time));
                     }
                 }
             }
@@ -1316,13 +1403,15 @@ impl GraphInstance {
     }
 
     /// Resets the nodes `start..end` (a subtree) to their entry state.
-    fn reset_range(&mut self, b: &Binding<'_>, start: u32, end: u32) {
+    /// `map`: the style clip map ([`mapped`]; the instance's own is lent out
+    /// while the passes run).
+    fn reset_range(&mut self, b: &Binding<'_>, map: &[u16], start: u32, end: u32) {
         let offset = self.variety.phase;
         for k in start as usize..end as usize {
             match (&b.graph.nodes[k].kind, &mut self.nodes[k]) {
                 (NodeKind::Player(p), NodeState::Player(st)) => {
                     for (lane, &clip) in st.lanes.iter_mut().zip(&p.lanes) {
-                        let c = &b.clips[usize::from(clip)];
+                        let c = &b.clips[usize::from(mapped(map, clip))];
                         let (a, e) = loop_span(c, p.looping);
                         let time = if p.looping { a + (p.start + offset).rem_euclid(1.0) * (e - a) } else { p.start * c.duration };
                         *lane = Lane { time, prev: time, ..Lane::default() };
@@ -1372,7 +1461,7 @@ impl GraphInstance {
         let lead = || {
             self.dominant(g, state_node).and_then(player).map(|(def, st)| {
                 let lane = st.lanes[st.leader.min(st.lanes.len() - 1)];
-                (&cx.clips[usize::from(def.lanes[st.leader.min(def.lanes.len() - 1)])], def.looping, lane.time, st.finished)
+                (&cx.clips[usize::from(mapped(cx.map, def.lanes[st.leader.min(def.lanes.len() - 1)]))], def.looping, lane.time, st.finished)
             })
         };
         match *c {
@@ -1385,7 +1474,7 @@ impl GraphInstance {
                 let end = g.nodes[state_node as usize].subtree_end as usize;
                 (state_node as usize..end).filter_map(player).any(|(def, st)| {
                     st.events.iter().any(|(lane, e)| {
-                        let clip = usize::from(def.lanes[usize::from(*lane)]);
+                        let clip = usize::from(mapped(cx.map, def.lanes[usize::from(*lane)]));
                         e.edge != EventEdge::Exit && g.clip_events[clip].get(e.event as usize) == Some(&id)
                     })
                 })
@@ -1425,7 +1514,7 @@ impl GraphInstance {
             let snapshot: Vec<(u16, f32)> = ms.weights.iter().copied().filter(|(s, _)| *s != t.to).collect();
             if restart {
                 let node = m.states[usize::from(t.to)].node;
-                self.reset_range(b, node, cx.g.nodes[node as usize].subtree_end);
+                self.reset_range(b, cx.map, node, cx.g.nodes[node as usize].subtree_end);
             }
             let NodeState::Machine(ms) = &mut self.nodes[n] else { unreachable!() };
             ms.current = t.to;
@@ -1548,7 +1637,7 @@ impl GraphInstance {
         if def.root_motion == RootMotionMode::Match {
             let total: f32 = st.lanes.iter().map(|l| l.weight).sum::<f32>().max(EPS);
             for (lane, &c) in st.lanes.iter().zip(&def.lanes) {
-                let meta = &cx.clips[usize::from(c)].meta;
+                let meta = &cx.clips[usize::from(mapped(cx.map, c))].meta;
                 anim_vel += meta.average_velocity * (lane.weight / total);
                 stride_vel += meta.stride_velocity() * (lane.weight / total);
             }
@@ -1574,13 +1663,13 @@ impl GraphInstance {
         st.leader = leader;
         // A blend space plays at the weighted length of its samples.
         let length = |i: usize| {
-            let c = &cx.clips[usize::from(def.lanes[i])];
+            let c = &cx.clips[usize::from(mapped(cx.map, def.lanes[i]))];
             let (a, b) = loop_span(c, def.looping);
             (b - a) / def.lane_rates[i].max(EPS)
         };
         let weighted: f32 = (0..st.lanes.len()).map(|i| st.lanes[i].weight * length(i)).sum();
         let leader_len = length(leader);
-        let clip = &cx.clips[usize::from(def.lanes[leader])];
+        let clip = &cx.clips[usize::from(mapped(cx.map, def.lanes[leader]))];
         let mut delta = if def.lanes.len() == 1 || weighted <= EPS {
             dt * rate * def.lane_rates[leader]
         } else {
@@ -1627,10 +1716,10 @@ impl GraphInstance {
         let Some(i) = pst.lanes.len().checked_sub(1).map(|last| pst.leader.min(last)) else {
             return;
         };
-        let (p_clip, p_time) = (&cx.clips[usize::from(pdef.lanes[i])], pst.lanes[i].time);
+        let (p_clip, p_time) = (&cx.clips[usize::from(mapped(cx.map, pdef.lanes[i]))], pst.lanes[i].time);
         let st = self.player_mut(n);
         for (lane, &c) in st.lanes.iter_mut().zip(&def.lanes) {
-            let clip = &cx.clips[usize::from(c)];
+            let clip = &cx.clips[usize::from(mapped(cx.map, c))];
             let t = sync_time(clip, def.looping, lane.time, p_clip, pdef.looping, p_time);
             lane.time = t;
             lane.prev = t;
@@ -1645,12 +1734,12 @@ impl GraphInstance {
             return;
         };
         let l_lane = lst.leader.min(lst.lanes.len() - 1);
-        let (l_clip, l_time, l_forward) = (&cx.clips[usize::from(ldef.lanes[l_lane])], lst.lanes[l_lane].time, lst.lanes[l_lane].speed >= 0.0);
+        let (l_clip, l_time, l_forward) = (&cx.clips[usize::from(mapped(cx.map, ldef.lanes[l_lane]))],lst.lanes[l_lane].time, lst.lanes[l_lane].speed >= 0.0);
         let st = self.player_mut(f);
         let lead = argmax(st.lanes.iter().map(|l| l.weight));
         st.leader = lead;
         st.events.clear();
-        let clip = &cx.clips[usize::from(fdef.lanes[lead])];
+        let clip = &cx.clips[usize::from(mapped(cx.map, fdef.lanes[lead]))];
         let old = st.lanes[lead].time;
         let new = sync_time(clip, fdef.looping, old, l_clip, ldef.looping, l_time);
         move_lane(cx.dt, clip, fdef.looping, st, lead, old, new, l_forward);
@@ -1661,7 +1750,7 @@ impl GraphInstance {
 
     // --- Events -------------------------------------------------------------------------
 
-    fn collect_events(&mut self, g: &CompiledGraph, out: &mut GraphOutput) {
+    fn collect_events(&mut self, g: &CompiledGraph, map: &[u16], out: &mut GraphOutput) {
         out.events.clear();
         // Montages fire all their events, outside the layer selection.
         for st in &mut self.slots {
@@ -1699,8 +1788,8 @@ impl GraphInstance {
                     EventEdge::Enter | EventEdge::Exit => w >= 0.5 - EPS,
                 };
                 if keep {
-                    let clip = def.lanes[usize::from(lane)];
-                    let id = g.clip_events[usize::from(clip)].get(e.event as usize).copied().unwrap_or(u16::MAX);
+                    let clip = mapped(map, def.lanes[usize::from(lane)]);
+                    let id =g.clip_events[usize::from(clip)].get(e.event as usize).copied().unwrap_or(u16::MAX);
                     out.events.push(GraphEvent { clip, event: e.event, id, edge: e.edge, weight: w, layer: st.layer, montage: None });
                 }
             }
@@ -1758,13 +1847,13 @@ fn sync_lanes(cx: &Cx<'_>, def: &PlayerNode, st: &mut PlayerState, leader: usize
     if def.lanes.len() < 2 {
         return;
     }
-    let l_clip = &cx.clips[usize::from(def.lanes[leader])];
+    let l_clip = &cx.clips[usize::from(mapped(cx.map, def.lanes[leader]))];
     let l_time = st.lanes[leader].time;
     for i in 0..def.lanes.len() {
         if i == leader {
             continue;
         }
-        let clip = &cx.clips[usize::from(def.lanes[i])];
+        let clip = &cx.clips[usize::from(mapped(cx.map, def.lanes[i]))];
         let old = st.lanes[i].time;
         let new = sync_time(clip, def.looping, old, l_clip, def.looping, l_time);
         move_lane(cx.dt, clip, def.looping, st, i, old, new, forward);
@@ -1777,6 +1866,8 @@ fn sync_lanes(cx: &Cx<'_>, def: &PlayerNode, st: &mut PlayerState, leader: usize
 struct EvalCx<'a> {
     g: &'a CompiledGraph,
     clips: &'a [Arc<Clip>],
+    /// The style clip map ([`mapped`]).
+    map: &'a [u16],
     skeleton: &'a Skeleton,
     nodes: &'a [NodeState],
     params: &'a Params,
@@ -1882,24 +1973,26 @@ fn eval(ecx: &EvalCx<'_>, s: &mut Scratch, node: u32, d: usize) {
             s.ensure(d + 2 + active.len(), joints, curves);
             if active.len() <= 1 {
                 let i = active.first().copied().unwrap_or(0);
-                let clip = &ecx.clips[usize::from(def.lanes[i])];
+                let slot = usize::from(mapped(ecx.map, def.lanes[i]));
+                let clip = &ecx.clips[slot];
                 let f = &mut s.frames[d];
                 if ecx.posed {
                     clip.sample(sample_time(clip, def.looping, &st.lanes[i], ecx.shift), &mut f.pose, ecx.mask);
                 }
-                write_curves(&g.clip_curves[usize::from(def.lanes[i])], clip, st.lanes[i].time, &mut f.curves);
+                write_curves(&g.clip_curves[slot], clip, st.lanes[i].time, &mut f.curves);
                 let drive = def.root_motion == RootMotionMode::Drive;
                 f.root = if drive { st.lanes[i].root } else { RootDelta::ZERO };
                 f.drive = if drive { 1.0 } else { 0.0 };
             } else {
                 let mut weights = Vec::with_capacity(active.len());
                 for (k, &i) in active.iter().enumerate() {
-                    let clip = &ecx.clips[usize::from(def.lanes[i])];
+                    let slot = usize::from(mapped(ecx.map, def.lanes[i]));
+                    let clip = &ecx.clips[slot];
                     let f = &mut s.frames[d + 1 + k];
                     if ecx.posed {
                         clip.sample(sample_time(clip, def.looping, &st.lanes[i], ecx.shift), &mut f.pose, ecx.mask);
                     }
-                    write_curves(&g.clip_curves[usize::from(def.lanes[i])], clip, st.lanes[i].time, &mut f.curves);
+                    write_curves(&g.clip_curves[slot], clip, st.lanes[i].time, &mut f.curves);
                     let drive = def.root_motion == RootMotionMode::Drive;
                     f.root = if drive { st.lanes[i].root } else { RootDelta::ZERO };
                     f.drive = if drive { 1.0 } else { 0.0 };
