@@ -1,7 +1,8 @@
 # Big-world rendering: millions of trees and dense scatter (`sf_bigworld`, `sf_bigworld_bevy`)
 
-Status: **spec, nothing built** (bigworld-1, 2026-11-26). Lane roadmap: [docs/roadmaps/bigworld.md](../../../docs/roadmaps/bigworld.md)
-(every build slice `[p]` until the owner's go). Owner brief (2026-11-26): render a world about 10x Vvardenfell with on the
+Status: **BW-1 built** (the Bevy-free core `sf_bigworld`, 2026-11-26; "As built"); nothing draws yet. Owner go for
+Stage A (BW-1, BW-2) 2026-11-26. Lane roadmap: [docs/roadmaps/bigworld.md](../../../docs/roadmaps/bigworld.md)
+(later build slices `[p]` until the owner's go). Owner brief (2026-11-26): render a world about 10x Vvardenfell with on the
 order of 10 million trees and dense statics, the way Chlorophyll, UE5 Nanite foliage and PCG, Decima, RDR2 and Cyberpunk
 do, within the frame target. It runs **on the side**: new crates only, and no build time or crates taken from other lanes.
 Earlier idea: `superfargoth/docs/WISHLIST.md` §17.
@@ -140,12 +141,14 @@ Rules:
 
 1. **Tiles.** The world is cut into tiles of `tile_m` (256 m, the scatter tile). A CPU ring planner (`sf_bigworld`)
    keeps T0 and T1 tiles resident around the camera, with hysteresis. Entering tiles are generated on
-   `AsyncComputeTaskPool` through an **`InstanceSource`**: `fn tile(&self, key, &mut Vec<Instance>)`, deterministic
+   `AsyncComputeTaskPool` through an **`InstanceSource`**: `fn tile(&self, key, tile_m, &mut Vec<Instance>)`, deterministic
    and pure. The adapter implements it, for example over `sf_worldgen::scatter`. Nothing is stored: about 1 ms per tile,
    and about 5 tiles/s while flying at 60 m/s.
-2. **Compact pool.** Each tile's instances go into one GPU pool as **16 B instances**: tile-local position as 3 × u16
-   (4 mm steps over 256 m), yaw as u8, scale as u8 (log), species as u16, seed as u16, flags as u16. They are uploaded
-   in one write per tile, and a freed tile is one block return. No 10 M array ever exists.
+2. **Compact pool.** Each tile's instances go into one GPU pool as **16 B instances** (four u32 words): tile-local x
+   and z as u16 (4 mm steps over 256 m), height as u16 over the tile's own height range (kept in its header), yaw as u8,
+   scale as u8 (log), the up axis as 2 × u8 (octahedral, for props that lean with the slope), species as u16, seed as
+   u16, flags as u16. They are uploaded in one write per tile, and a freed tile is one block return. No 10 M array ever
+   exists.
 3. **Producer** (our compute pass in `GpuInstanceBatchSystems::Publish`, the eidolon pattern):
    - one workgroup per resident tile; one tile-AABB test first;
    - then per instance: tier from distance and screen size, fade, and a frustum test **only past the shadow range**,
@@ -301,6 +304,56 @@ is the owner's (visual checks `BW-`). Build slices wait for the owner's go (road
 Later (each its own slice, after BW-10): terrain-horizon occlusion of tiles (cinevva 2026; MGE-XE horizon culling),
 GPU scatter in the producer (Horizon), canopy into distant shadows (weather lane), groundcover footprints (groundcover
 lane), nav obstacles (nav lane), and Morrowind's vanilla trees on this path (a policy choice for the owner).
+
+## As built
+
+### BW-1: `sf_bigworld` core (2026-11-26; 49b7ae15, 11b0cf8f, 1d134b3d)
+
+Bevy-free, one dependency (`sf_tunables`). Frame: metres, x and z on the ground, y up. 27 exact tests plus one
+measurement test.
+
+- **Tiles** (`tile.rs`): `TileKey { x: i32, z: i32 }`, `containing`, `min_corner`, `distance_to` (0 inside the square).
+- **Instance format** (`instance.rs`): `PackedInstance` = four little-endian u32 words.
+  - `w0` = x | z << 16, each `round(v / tile_m × 65535)`.
+  - `w1` = y | yaw << 16 | scale << 24. Height is quantised over the tile's `[y_min, y_max]`, kept in `TileHeader`, so a
+    tile's step is its relief / 65535. Yaw has 256 steps. Scale is logarithmic over [0.25, 4] (about 1.1 % steps).
+  - `w2` = species | seed << 16.
+  - `w3` = flags | up << 16: the up axis, octahedral with +y as the pole (Cigolle et al. 2014), 2 × u8, about 1° of
+    error; upright is exact.
+  - `PackedTile::pack` / `unpack` / `world_position` / `write_le_bytes`. Packing an unpacked tile again gives the same
+    bits. A point on a shared tile edge can decode to exactly `tile_m`.
+- **Sources** (`source.rs`): `InstanceSource::tile(key, tile_m, out)` (`Send + Sync`, pure). `SyntheticForest` is a
+  jittered grid hashed per tile with SplitMix64 (`hash.rs`), with optional sine relief: for tests, BW-2 and example
+  scenes.
+- **Tier bands** (`bands.rs`): `ViewScale` (pixels per radian), `SpeciesDims` (height, crown), `Bands::new` gives
+  `mesh_end_m = height · ppr / mesh.switch_px` and `impostor_end_m = crown · ppr / aggregate.switch_px` (never below the
+  mesh end). `Bands::fades(dist, scale)` returns `TierFades { mesh, impostor }` with `m` and `i` the two ends times the
+  instance's scale and `b` = `fade_band`:
+  - mesh falls from 1 to 0 over `[m(1−b), m]`; the impostor rises over the same band, so the two always sum to 1 there;
+  - the impostor falls from 1 to 0 over `[i(1−b), i]`. The T2 tile must be fully drawn from `aggregate_lead_m = i(1−b)`
+    (BW-8 owns that); when a species' two bands touch, this is what keeps it from showing a hole;
+  - `b = 0` is a hard switch. Bad inputs (NaN, zero or negative sizes) never give NaN.
+  The maths is f32 saturate-style, written to port to the producer's WGSL one-to-one (BW-3).
+- **Ring planner** (`ring.rs`): `Ring::update(viewer, &RingSettings) -> RingDelta`. A tile enters when the viewer is
+  within `radius_m` of its square and leaves past `radius_m + hysteresis_tiles × tile_m`; optional world `bounds`.
+  `enter` is sorted nearest first (the upload order). `clear` is for teleports and for a changed `tile_m`. The renderer
+  keeps two rings, from `ring_radii(bands, max_scale)`: the impostor radius (the GPU pool) and the mesh radius
+  (`NearInstances`).
+- **Tunables** (`tunables.rs`, `Group::Foliage`): `bigworld.tile_m`, `bigworld.ring.hysteresis_tiles`,
+  `bigworld.mesh.switch_px`, `bigworld.aggregate.switch_px`, `bigworld.fade_band`. No plugin registers them until
+  `sf_bigworld_bevy` exists, so `docs/tunables-index.md` does not list them yet.
+- **Measured** (`measure_ring_counts`, release, one thread, ppr 831, one 12 m species with an 8 m crown; ledger
+  2026-11-26). The ring counts match the cost model within 5 %:
+
+  | Preset | Density | Tiles | Instances resident (pool) | In the mesh tier | In the impostor tier |
+  |---|---|---|---|---|---|
+  | High | 60/ha | 276 | 110 k (1.7 MB) | 298 | 95 k |
+  | High | 400/ha | 276 | 718 k (11.0 MB) | 1,962 | 618 k |
+  | Ultra | 400/ha | 568 | 1.48 M (22.5 MB) | 5,018 | 1.39 M |
+  | Low | 400/ha | 80 | 208 k (3.2 MB) | 318 | 155 k |
+
+  The synthetic source generates and packs a tile in 0.02 ms at 60/ha and 0.12 ms at 400/ha. A real scatter with
+  terrain queries will cost more; BW-6 measures it.
 
 ## Risks and open questions
 

@@ -3,7 +3,7 @@
 Spec: [superfargoth/docs/specs/big-world-rendering.md](../../superfargoth/docs/specs/big-world-rendering.md) (`BW-`
 slices). Ledger: [docs/ledger/bigworld.md](../ledger/bigworld.md). Visual checks: `BW-` entries in a new
 `bevyrrowind/docs/visual-checks/bigworld.md` (created with the first owner look). Owner brief 2026-11-26: on the side,
-with no build time or crates taken from other lanes. **Every build slice is `[p]` until the owner's go.**
+with no build time or crates taken from other lanes. **Owner go for Stage A (2026-11-26); later stages stay `[p]`.**
 
 ## 1. Player-facing goal
 
@@ -18,7 +18,8 @@ with no build time or crates taken from other lanes. **Every build slice is `[p]
 
 ## 2. Where we are (2026-11-26)
 
-- **Not started.** No `sf_bigworld` crates exist.
+- **Core built, nothing draws yet.** `sf_bigworld` (Bevy-free) plans tiles and tiers and packs instances; no
+  `sf_bigworld_bevy` yet.
 - Generated worlds draw every scattered tree as an entity: 7.21 M flora ran at 26 fps (owner run, 2026-11-19). The
   static scene, precombine and far field are off there (scaffold `WorldgenPlacementStatics`).
 - Placement exists and is deterministic per 256 m tile (`sf_worldgen::scatter`).
@@ -45,9 +46,10 @@ with no build time or crates taken from other lanes. **Every build slice is `[p]
 ## 4. Stages
 
 **Stage A: ceiling and core.** Decides whether the slot path holds before anything else is built.
-- [~] **BW-1** `sf_bigworld` core (owner go for Stage A, 2026-11-26): tiles, ring planner, tier bands, 16 B instance format, `InstanceSource` plus a
-  synthetic source. NEW Bevy-free crate. Verify: exact tests, plus a measurement test printing ring counts.
-- [p] **BW-2** ceiling bench `forest_ceiling` (NEW `sf_bigworld_bevy`, example only). Verify: the orchestrator runs
+- [x] **BW-1** `sf_bigworld` core (2026-11-26; 49b7ae15, 11b0cf8f, 1d134b3d): tiles, the 16 B instance format,
+  `InstanceSource` plus a synthetic forest, tier bands, ring planner. 27 exact tests. Measured ring counts match the
+  cost model within 5 % (High stand: 618 k trees in the impostor ring, 11 MB pool).
+- [~] **BW-2** (meta GO 2026-11-26: one run under 10 min, all arms in one launch) ceiling bench `forest_ceiling` (NEW `sf_bigworld_bevy`, example only). Verify: the orchestrator runs
   one run per arm (10⁵ / 3·10⁵ / 10⁶ slots). Stop rule in the spec.
 
 **Stage B: a forest in a framework example scene** (owner looks, synthetic content).
@@ -80,11 +82,8 @@ None pending: BW-0 is the spec. As-built detail goes into the spec as each slice
 - **Groundcover, nav, weather:** they consume our hooks when they choose to. Nothing is asked of them now.
 - **Provides:** `InstanceSource`, `NearInstances` (colliders, nav) and `BigworldFootprints` (groundcover).
 
-## 7. Owner questions (each with a recommended answer)
+## 7. Owner answers (2026-11-26)
 
-1. **Vanilla Morrowind trees:** should they move to this path too, or stay on today's static scene and far field?
-   *Recommended: stay for now.* Only generated worlds use bigworld until BW-10. Vanilla trees can follow later as one
-   slice if the look matches.
-2. **Tree models for the 10x world:** Morrowind's own tree models only, or also generated trees (a clean re-port of
-   the MIT ez-tree generator)? *Recommended: Morrowind models first.* The generator comes later, only if forests need
-   more variety than about 16 species.
+1. **Vanilla Morrowind trees** stay on today's static scene and far field. Moving them to this path is a later option
+   ("maybe for Morrowind too if it's performant, not important"): the BW-2 and BW-10 numbers decide whether to propose it.
+2. **Tree models for the 10x world:** Morrowind's own tree models first; the ez-tree generator port comes later.
