@@ -19,6 +19,7 @@ crime, interaction, travel) plus `ecswind.md` (the owner's earlier sim, ideas on
 | Crime and stealth | [crime.md](crime.md) | crime, crime-adapter, world-reactions |
 | Interaction | [interaction.md](interaction.md) | interaction, interaction-adapter, world-reactions |
 | Travel | [travel.md](travel.md) | services (travel), interaction (c), travel (new) |
+| Big-world rendering (side lane, no gameplay) | [bigworld.md](bigworld.md) | big-world-rendering |
 | Cross-lane order | [order.md](order.md) | all of the above |
 
 ## Format (every lane file, ~8-14 KB)

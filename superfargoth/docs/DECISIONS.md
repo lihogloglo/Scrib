@@ -2028,3 +2028,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   stealth knock-outs), no global toggle. (owner, travel): no paid trips while hunted in Modern; Recall/Interventions never blocked.
 - 2026-11-26 (crime Q3 applied, LW0f): Morrowind bounty per jurisdiction keyed on settlement (not region), default
   `imperial`; scripts/dialogue act on the current jurisdiction (arrest session, else speaker, else place); Classic one bounty.
+- 2026-11-26 (bigworld-1, BW-0): millions of trees = three screen-size tiers (mesh, octahedral impostor, per-tile canopy
+  proxy), instances never entities (16 B tile pools from a deterministic `InstanceSource`, GPU producer into
+  `GpuBatchedMesh3d`); Bevy meshlets rejected for foliage (opaque-only, no wind); new crates only (`sf_bigworld*`).
