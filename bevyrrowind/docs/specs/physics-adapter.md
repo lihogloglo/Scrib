@@ -136,13 +136,16 @@ provider for creatures; quadruped reactions wait for a procedural animation syst
   to a local pose under the live root, `PhysicsPose` with per-joint weights. Done: the agent is dropped; no
   `DeliriumHandedBack`, no root move. Masks: SPINE `us`, NECK `un`, ARM_L/R `ul`/`ur`, LEG_L/R `ll`/`lr`.
 - **Per kind:** Stagger: `applyImpulse` on the struck part x `impulse_gain`. Stumble: `injury` on the hurt leg's mask at
-  the intensity. Sway: `leanInDirection` along `direction`; with `bodyBalance` on the legs and `armsOutOnPushTimeout` only
-  if AN40b step 1 passes. Sag: `bodyRelax` on `ub`, its dip values seeded from `staggerFall`'s wind-down (arms/spine 12 to
+  the intensity. Sway: `leanInDirection` along `direction`, on the pinned pelvis like every kind (AN38c: under
+  `bodyBalance` the followed upper body drifts to 8-10 degrees mean / 27-34 max after 1 s and the legs leave the clip).
+  Sag: `bodyRelax` on `ub`, its dip values seeded from `staggerFall`'s wind-down (arms/spine 12 to
   6/8, legs to 3; R§2).
 - **Cap and step:** `PhysicsBodies.takeovers` = live takeovers that still step (not settled corpses), every tick. Tints
   step in the same `FixedUpdate` loop; `DeliriumStats.step_us` sums both, plus a `tints` count. A `DeliriumReaction` on a
   tinted root promotes it: the takeover reuses the built agent, else starts as today. A tinted agent on a balancer that
-  falls (`agent.fallen`) sends that `DeliriumReaction` itself the same tick (AN38b: a body on the ground costs twice).
+  falls (`agent.fallen`) sends that `DeliriumReaction` itself the same tick (AN38b: a body on the ground costs twice;
+  no kind stands on a balancer in AN40b). Each agent is stepped on its own, as takeovers are (`takeover.rs:625`);
+  a grouped step is AN38d's measurement, not today's path.
 - **Bands (walkers' impacts, `HitRules`):** 1-10 N s `HitReact` (as today); 10 to `anim.tint.band.max_ns` a Stagger tint;
   from there to `certain_fall` (100) today's push takeover; above, push + knockdown. `HitRules::takeover` becomes the band
   top.
@@ -154,7 +157,8 @@ provider for creatures; quadruped reactions wait for a procedural animation syst
   (sujamma, flin, mazte, greef, shein, brandy) -> a Sway every `mw.tint.sway.interval_s` (6) +- `mw.tint.sway.jitter_s`
   (3). Fatigue at or under `mw.tint.sag.fatigue_frac` (0.05 of max) -> Sag, held; it ends above that plus
   `mw.tint.sag.hysteresis` (0.05); fatigue below 0 is Morrowind's knockout: the knockdown takeover promotes the Sag. All
-  Guess; `delirium.tint.stiffness` 12 (stand-in stagger value, R§2), Guess, replaced by AN38's stability at the dip.
+  Guess; `delirium.tint.stiffness` 12 (stand-in stagger value, R§2), Guess, replaced by AN38's stability at the dip;
+  at full strength a pinned body sits ~10 degrees mean / ~20 max off the target on the upper body (AN38c).
 - **Fallbacks:** Stagger and Stumble: the `HitReact` kick (on the leg for Stumble). Sway and Sag: additive key-pose
   `PoseSeq` clips (anim decision 9) under `tint.fallback.sway` / `.sag` (AN41c, data); unmapped, the kick plays.
 - **Classic:** `anim.tint.enabled` false: fallbacks only. Vanilla NPCs rarely drink; the player does, and is not tinted

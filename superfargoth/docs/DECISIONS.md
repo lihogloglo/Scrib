@@ -2062,3 +2062,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (owner via meta-5, DQ-34): a `once` line is heard once for the whole group by default, `#once:player` marks
   per-player lines; a mod replaces another mod's whole scene by record id, no single-node patches (dialogue-authoring.md
   "Open questions").
+- 2026-11-26 (specs-7, AN38c): every physics tint kind runs on the pinned pelvis; the balanced-legs variant for Sway is
+  not built (the followed upper body reaches the pose, then drifts to 8-10 degrees mean / 27-34 max, and the legs leave
+  the clip). AN40b loses its coexistence step (physics-tint.md "Design", "Performance").

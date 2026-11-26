@@ -16,7 +16,8 @@ Status (2026-11-26): spec (AN39), nothing built. Rows AN38-AN42 in `docs/roadmap
   takeovers are never refused and preempt the lowest tint. Refused: the kind's fallback on the same tick; Classic: always.
 - Every number is a tunable, most `Guess` until AN38/AN42. Measured (AN38a/b): 0.65 ms per pinned tinted body per tick,
   so the cap is 2; the provider must hold the pelvis (pose follow alone collapses); a tint that falls is promoted to the
-  takeover ("Performance").
+  takeover. Every kind runs on the pinned pelvis and holds the clip within ~10 degrees mean on the upper body (AN38c,
+  "Performance").
 
 ## Goal
 
@@ -37,7 +38,8 @@ creatures and beast races (owner answers 2-3, "Open questions"); wall contacts; 
   the shortest hand-back ~1.15 s. Delirium's partial drive (per-joint strength, region masks, pose follow) is unused (R§1).
 - **Hit bands on a human walker:** kinematic `HitReact` from 1 N s (`HIT_REACT_IMPULSE`, physics.rs:274), Delirium push
   takeover from 10 N s, push + knockdown from 100 N s (`HitRules`, lib.rs:153-174).
-- **Step:** `FixedUpdate` 60 Hz, one sequential loop, no cap (lib.rs:626-649); gauge `DeliriumStats.step_us`.
+- **Step:** `FixedUpdate` 60 Hz, one sequential loop, no cap (lib.rs:626-649); each takeover steps its own agent
+  (`mw_delirium/src/takeover.rs:625`), Delirium's `step_group` is never called; gauge `DeliriumStats.step_us`.
 - **Physics into animation:** `PhysicsPose { pose, weight, weights }` (`sf_anim_bevy/src/lib.rs:713-735`) goes to
   `GraphInstance::set_physics` (`sf_anim_graph/src/instance.rs:592-602`), blended per joint in local space as the graph's last
   stage, after the ops (`:1032-1049`); history keeps the animated pose (`:996-1006`). `GraphOutput::pose` (`:239-241`) is
@@ -86,7 +88,9 @@ second provider for creatures.
 
 **Changes from R§7.** A request names a kind and an intensity; the curve is the kind's profile (UE's named profiles).
 The simulated pelvis is held on the animated one and the root is never physics (UE's "simulate below the pelvis"), so no
-balancer is needed; R§1's open point only decides an optional balanced lower body for `Sway` (AN40b step 1).
+balancer is needed. R§1's open point (balanced legs under a followed upper body, for `Sway`) is settled by AN38c: the
+balancer does not overwrite the followed pose (2.3 degrees mean at 0.5 s) but the body does not hold it (8-10 mean,
+27-34 max from 1 s on) and its legs are the balancer's, never the clip's. So every kind uses the pinned pelvis.
 **The pelvis hold is a requirement, not an option (AN38a):** whole-body pose follow with neither a pinned pelvis nor a
 balancer sinks to the floor (pelvis at 14 % of standing height after 2 s): pose follow drives joint angles only, nothing
 carries the weight. Every tint body is either pinned at the pelvis or stands on a balancer, never neither.
@@ -124,8 +128,9 @@ impl TintBook {                                    // per root: tint, start tick
 
 `sample`: strength falls from 1 to `1 - intensity·(1 - dip)` over `attack_s`, holds, rises back to 1 over the last
 `recover_s` of the hold; weight rises from 0 to `intensity·weight` over `attack_s`, holds to the hold's end, falls to 0
-over `release_s`. Strength is back at 1 before the release starts, so the bodies are on the clip while the weight leaves:
-no pop. Legs use `weight·legs_weight`; the pelvis joint is always weight 0.
+over `release_s`. Strength is back at 1 before the release starts, so the bodies are back near the clip (within the
+provider's tracking error, "Performance") while the weight leaves, and the weight reaches 0 continuously: no pop. Legs
+use `weight·legs_weight`; the pelvis joint is always weight 0.
 
 ### Bevy layer (`sf_anim_bevy::tint`) and the provider contract
 
@@ -267,6 +272,12 @@ pinned pelvis), 0.64-0.65, stands at 100 % pelvis height; C (balancer + followed
 45 N s chest push) 0.56 standing, 1.1-1.2 once down. Cost is linear in N (no shared cost); p99 is 1.5-2x the median. A
 body on the ground costs about twice a standing one, hence the promotion rule in the provider contract.
 
+**Pose error (AN38c,** one body following a pose from the bind pose, no motion; degrees mean / max; numbers per state:
+[history](archive/physics-tint-history.md)): the tint's path G holds ~10 / ~20 on the upper body and 4.8 / 12.5 on the
+legs, steady from 0.5 s to 2 s (an undriven body: 19-20 / 47). So at strength 1 a tinted body is near the clip, not on
+it: the weight ramp, not the strength, makes the hand-back popless, and the standing offset is part of the look
+ANIM-14 (1) judges. The provider's stiffness trades it against give; AN40b prints it per kind on a walking clip.
+
 **Budget: tints + takeovers at the cap <= 2.0 ms median and <= 2.7 ms p99 per tick** (2.7 ms = the frame's p99 11 ms
 minus its median 8.3 ms; physics share, not the 25 us animation budget). **Cap 2 holds:** G at N = 2 is 1.28 / 2.13 ms
 (first 2 s 1.25 / 1.71), C 1.27 / 1.96; N = 3 is ~1.9 ms median by the linear cost with p99 over the limit; N = 4 fails
@@ -274,9 +285,9 @@ minus its median 8.3 ms; physics share, not the 25 us animation budget). **Cap 2
 in. Takeovers are never refused, so the cap only stops tints adding to them: four takeovers alone cost 2.0-3.1 ms a
 tick today, cap or not.
 
-**AN38 still to time** (c, d): whether the balancer overwrites the followed upper body (pose error); N = 1-8 as one
-grouped step; body construction and drop; pinned tracking error with no disturbance; the
-impulse at which a push first takes a catch step (`band.max_ns`). Over budget: lower `cap`, then `step_divisor` 2; never
+**AN38 still to time** (d): N = 1-8 through `step_group` (what a grouped provider would gain: the game steps each
+agent on its own today); body construction and drop; the impulse at which a push first takes a catch step
+(`band.max_ns`). Over budget: lower `cap`, then `step_divisor` 2; never
 delete the feature. A grouped or parallel step that cuts the per-body cost raises the cap by the same rule; it waits on
 the provider's thread-safety check (R§5).
 
@@ -306,16 +317,16 @@ Large intensity at 0 is the clip alone, the A/B arm.)
 
 | ID | Deliverable + test | Crates | Depends | Verify |
 |---|---|---|---|---|
-| AN38 | measurement test (list in "Performance"); a (A, B, F) 39628390 and b (C, D, E, G, N = 2) 37041235 done, c-d left | `mw_delirium` tests | - | `cargo test -p mw_delirium --release -- --ignored`; ledger |
+| AN38 | measurement test (list in "Performance"); a (A, B, F) 39628390, b (C, D, E, G, N = 2) 37041235 and c (pose error) 8663e3a7 done, d left | `mw_delirium` tests | - | `cargo test -p mw_delirium --release -- --ignored`; ledger |
 | AN40a | seam: types, `sample`, `TintBook`, plugin sets, `TintTarget`, fallback messages; exact tests with a fake provider | `sf_anim`, `sf_anim_bevy` | AN39 | `cargo test -p sf_anim -p sf_anim_bevy` (exact cap) |
-| AN40b | Delirium provider; step 1 the coexistence test; sanity tests | `mw_delirium`, `mw_delirium_bevy` | AN38, AN40a | `cargo test -p mw_delirium -p mw_delirium_bevy` (no NaN, floor, rest) |
+| AN40b | Delirium provider, every kind on the pinned pelvis; sanity tests | `mw_delirium`, `mw_delirium_bevy` | AN38, AN40a | `cargo test -p mw_delirium -p mw_delirium_bevy` (no NaN, floor, rest) |
 | AN41a | hit triggers: Medium and Large tiers and the impulse band -> `Stagger` | `mw_combat`, `mw_walkers_bevy` | AN40b, AN22 | `cargo test -p mw_combat -p mw_walkers_bevy` (exact) |
 | AN41b | state triggers: injury, alcohol, fatigue -> `Stumble`, `Sway`, `Sag`; scene `anim-tint` | `mw_walkers_bevy` | AN41a | exact tests; owner ANIM-14 |
 | AN41c | `Sway`/`Sag` fallback key-pose clips (data) | `mw_combat` data | AN41b, AN36 | bake loads them; ANIM-14 (5) |
 | AN42 | measurement: tint ms at the cap, each kind and mixed with takeovers | `mw_delirium_bevy` tests | AN41b | `#[ignore = "measurement"]`; ledger perf |
 
-AN40b step 1 settles R§1's open point: balanced legs with the upper body following a walking clip. If arm and spine
-tracking hold, `Sway` may use the balanced lower body (provider data); if not, every kind uses the pinned pelvis.
+AN38c settled R§1's open point ("Design"): AN40b builds no balanced lower body. Later, only once a per-part print
+explains C's drift: `Sway` on balanced legs (provider data).
 
 ## Open questions
 
