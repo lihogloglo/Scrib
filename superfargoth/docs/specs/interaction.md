@@ -581,7 +581,7 @@ under `interact.sit.enter`: the enter is tried first (already in place: no appro
 Slices: IN2c4 the rule in `sf_action`; IN2c5 shell (`SeatStep` for the approach, the `Release` of open point (w));
 IN2c6 the repro's stances A-E assert `Entered`.
 
-**As built (IN2c4, 2026-11-27).** `sf_action/src/approach.rs` (pure functions; `step.rs` only calls them):
+**As built (IN2c4, 2026-11-26).** `sf_action/src/approach.rs` (pure functions; `step.rs` only calls them):
 `Owner::Approach { arrive_m, arrive_rad, timeout_s, max_m }`, `ExitOn::Arrived`, rule `interact.sit.approach` at rank
 95 showing the `loco.move` slot; the enter's `from` gains the approach. The held slot is `ActionState::approach`
 (`#[serde(skip)]`: a load mid-approach ends it as lost and the shell re-offers). Start gate: `Slot` (no seat sensed),
