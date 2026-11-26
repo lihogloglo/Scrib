@@ -104,7 +104,7 @@ Four commits (a2e6d20, 3a54f4b, ddc252d, 2709b71); check CB-2.
 ### C1b sheet (moved from combat.md 2026-11-10)
 
 Briefs and as-built notes for C1a and C1b (first sheet values on the UAL2 `Sword_Regular_*` 3-hit chain):
-[history](archive/combat-history.md). The sheet as it stands:
+[history](combat-history.md). The sheet as it stands:
 
 | Move | Slots (first candidate) | rate / root_scale | Hits (window, mv, stamina, tier, stop) | Cancels Dodge / Light / Move |
 |---|---|---|---|---|
@@ -291,3 +291,202 @@ numbers: raise 4 frames, 80 deg half-arc, stamina x0.55. Reuse: nothing to adopt
   on the press tick from `Loco` (R8 adopt 1).
 - Measurements: first contact time vs dummy distance (0.8-2.5 m), stamina per chain, roll distance, i-frame share, hit-stop
   total.
+
+## combat.md text replaced by C0a (moved 2026-11-26)
+
+The lines C0a rewrote in [combat.md](../combat.md) to match the lane roadmap ([combat roadmap](../../../../docs/roadmaps/combat.md)),
+verbatim as they stood before.
+
+### Status, Goal, non-goals and owner direction
+
+Status (2026-11-10): C1a, C1b, C1c (lock-on parts 1-4), the C4 soft aim, C4b first-person attack look limits, C2a (sparring dummy, player reactions) and C2b (guard, both views) built; next C2c backstep + knockdown, C1c-2b strafe clips. ROADMAP 3.5. Game side:
+
+An Elden Ring feel in third person (owner 2026-10-27): committed attacks with clip windows, a stamina economy, rolls with
+i-frames, weapon sweeps with hit-stop, tiered reactions, lock-on. Game-agnostic: any content pack supplies moveset sheets,
+clips and a rules implementation. The same framework runs classic rules (swing then roll to hit, fatigue, no i-frames) behind
+one seam (ARCHITECTURE §1b), and drives NPCs and creatures with per-rig sheets.
+
+Non-goals (first cuts): parry/deflect (guard only), player poise and hyper-armor (every unguarded hit staggers), weapon
+skills, ranged and magic combat, stealth/paired kills (C6), first-person melee presentation (arms view model: first-person.md FP-2..; gameplay: "C4 soft aim"), AI
+(`sf_ai`, M7), damage numbers.
+
+First-person melee direction (owner 2026-11-15): third person keeps the Elden Ring feel; first person aims at Dark Messiah
+of Might and Magic / Faithkeeper (kicks, directional and charged attacks, parries, slides, environmental kills, finishers),
+on the same fighter, sheets and rules seam with first-person movesets. Reference for later:
+[Brutal Morrowind](https://github.com/incident201/brutal-morrowind) (GPL-3.0 C++ fork of OpenMW 0.51.0, Dark Messiah melee:
+kicks, directional/charged attacks, parries, sliding, adrenaline finishers, ragdolls, procedural dismemberment). It ships no
+clips: it imports Dark Messiah's from the player's install, which our clip sources don't cover. Portable with a file +
+commit citation; it's an early AI-built project, so diff it against OpenMW 0.51.0 in a research slice before porting.
+
+Owner decisions (2026-10-27, DECISIONS.md): one button, tap = roll on release, hold = sprint; clips from free packs
+(Quaternius UAL1/UAL2) plus the content's own animations, LaFAN1 optional with a non-LaFAN1 fallback per slot. Defaults
+taken: one weapon class first (one-handed sword), laid out so a second class is only data; per-rig sheets for NPCs and
+creatures (C6); co-op host-authoritative.
+
+### Moveset sheet: hit row and guard bullets
+
+- **Hit row**: window, `mv` (motion value), `stamina` (cost, charged when the window opens), `kind` (content tag for the
+  rules), `tier` (unguarded reaction), `stop` (hit-stop hold, s), `guard_damage` (stamina damage when guarded; default
+  `stamina`); later `poise`, `knockback`, flags
+  `Unblockable | Sweep | Thrust | Grab`, `source: Sweep | Cone` (classic resolves by reach cone).
+- **Guard** (C2b): a move with `classes: [Guard]` is a hold move (it lasts while held; its last slot loops); `guard: (raise, arc)`
+  makes it guard (raise s, rounded to ticks; half-arc deg). Sheet `guard_hit` / `guard_break`: optional reaction slots.
+
+### Fighter and vitals
+
+`sf_combat::Fighter` (component `Combatant` wraps it): `id: CharacterId`, `moveset`, `vitals`, `weapon: WeaponShape`,
+`hurt: HurtShape`, `offense { attack }`, `defense { absorb, guard_absorb, guard_stability }` (numbers the content fills;
+classic ignores them), `hostile`, `min_tier` (player `Small`: every unguarded hit staggers). `Vitals { health, stamina,
+poise: Option<_> }` of `Pool { cur, max }`; other pools stay content-side (`Outcome::events`). `FightState` (serde, beside
+`ActionState`): the swing (move, start tick, landed `(hit, defender)` pairs, hits charged), hit-stop timer, regen open.
+
+### Pipeline steps 6-7
+
+6. **Contact order** (SK, R6 §7): dead → skip; defender `IFrames` open for the row's flags → no landing, pair unspent;
+   guard raised (the guard move's clock before this tick >= `raise`) and the attacker's position within its arc of the
+   defender's facing → `DefenderState::guarded` (C2b); then `rules.resolve_contact`.
+7. **Outcome**: pool deltas on both sides; tier = `max(rules hint or row tier, defender.min_tier)` (armor clamps it, C3),
+   side from the hit direction in the defender's frame; death at health 0. `Outcome::guarded`: tier `Additive` and the sheet's
+   `guard_hit` (none: the guard holds); with `guard_break`: tier `Large` and `guard_break` (else the Large reaction).
+
+### Rules seam: Contact and Outcome
+
+- `Contact { attacker, defender, move_key, hit: u8, strength, kind: TagId, mv, flags, guard_damage, point, direction, side,
+  defender_state { guarded, down, unaware, in_reaction } }`.
+- `Outcome { landed: bool, defender: PoolDelta, attacker: PoolDelta, guarded: bool, guard_break: bool, tier_hint:
+  Option<Tier>, events: SmallVec<[TagId; 2]> }`; `PoolDelta { health, stamina, poise }`. `guarded` is the rules' answer (the
+  guard reaction plays), so a classic rule can block with no guard move.
+
+### Build plan rows C2, C5, C6
+
+| Slice | Deliverable | Test | Visual check |
+|---|---|---|---|
+| **C2** guard, reactions | **C2a** (built 2026-11-10) sparring dummy that strikes, player reactions by tier and side; **C2b** (built 2026-11-10) guard (both views); **C2c** backstep, knockdown via `Physics` | contact-order unit tests; guard break at 0 | CB-3a sparring hits; CB-3 block, guard break, knockdown, get-up |
+| **C5** classic rules | classic `CombatRules` (game side), cone contacts, Classic profile | formula tests against the ported source | CB-6 classic swing |
+| **C6** NPC combat | NPCs and creatures through `Command` from `sf_ai`; per-rig sheets; paired takedown, ragdoll victim | AI uses baked reach and recovery | CB-7 |
+
+### Crate split rationale
+
+`sf_action` is upstream of every character and edited by traversal and movement slices; combat changes daily through
+C1-C7. Inside `sf_action`, every combat edit would rebuild `sf_action_bevy` and all its dependents (build-perf.md rules 3
+and 5). As a leaf off `sf_action`, `sf_combat` rebuilds only itself, its shell and the game crates that fight; a classic
+rules crate depends on `sf_combat` alone.
+
+### Moveset sheet example (the C1 shape)
+
+```ron
+(
+    id: "sword_1h",
+    rig: "humanoid",                         // the graph family whose slots it names
+    defaults: (turn: 360.0, hit_stop: (hold: 0.06, ease: 0.10), blend_in: 0.10),
+    weapon: (socket: "weapon", segment: ((0.0, 0.08, 0.0), (0.0, 0.95, 0.0)), radius: 0.08), // socket space, m
+    moves: {
+        "light1": (
+            category: Attack, classes: [Light], from: [Any], rank: 10,
+            slots: ["attack.sword_1h.light1", "attack.sword_1h.light1_rec"],
+            windows: [                       // move time, s (after `rate`)
+                Accept([Light, Heavy, Dodge], 0.10, End),
+                Cancel([Dodge], 0.35, End), Cancel([Light, Heavy], 0.45, End), Cancel([Move], 0.80, End),
+                Turn(360.0, 0.0, 0.15), NoTurn(0.15, 0.32),
+            ],
+            hits: [(window: (0.18, 0.32), mv: 1.0, stamina: 12.0, kind: "slash", tier: Small, stop: 0.05)],
+            next: { Light: "light2" },
+        ),
+        "roll": (
+            category: Dodge, classes: [Dodge], from: [Any], rank: 10,
+            slots: ["dodge.roll.fwd"], rate: 1.25, root_scale: 0.75, square_up: Stick,
+            cost: 12.0, iframes: [(0.02, 0.40, All)],
+            windows: [Cancel([Light, Heavy], 0.75, End), Cancel([Dodge], 0.80, End), Cancel([Move], 0.95, End), NoTurn(0.0, End)],
+            locked: { Left: "roll_left", Right: "roll_right" },   // 4-way when locked on
+        ),
+    },
+    reactions: { (Small, Front): "react.small.front", (Medium, Front): "react.medium.front" /* ... */ },
+    costs: (jump: 10.0, sprint_per_s: 11.0),
+)
+```
+
+### Canonical technique: sources and adopted numbers
+
+**FromSoftware's split: a fixed-tick decider with per-clip windows, weapon sweeps against hurt volumes, a per-character
+hit-stop clock, and a rules layer behind the hit event.** Sources: `../research/combat/01-elden-ring-reference.md` (R1: the
+ELDEN-RING-Combat-Rewrite reference, MIT, constants and slices), `../research/animation/06-souls-combat-feel.md` (R6: ER and
+Sekiro code, windows, buffer, hit-stop curve, typed i-frames, armor windows), `../research/animation/08-industry-combat-responsiveness.md`
+(R8: latency budget, asymmetric timing, hit-stop, shake), the classic requirements in
+`../../../bevyrrowind/docs/research/combat-classic-openmw.md`. Industry: UE's Gameplay Ability System keeps attributes and
+effects apart from animation notifies, as our feel layer / rules seam does.
+
+Numbers adopted (R1 unless noted): per-class accept/cancel, no timer (R6 §3, built); dodge on release if held < 0.3 s,
+else sprint; 5 sweep sub-steps; one landing per (hit, defender); hit-stop hold ~60 ms + quadratic ease ~0.1 s per side
+(R6 §7, not ER's flat freeze); stamina roll 12, backstep 8, jump 10, regen 45/s, x0.5 guarding, sprint 11/s near
+hostiles; turn inside actions 360 deg/s; guard raise 4 frames, arc 80 deg, stamina taken x0.55 (C2); lock 15 m / break
+20 m (`LockParams`); first visible response within 1-3 ticks (R8 adopt 1).
+
+### Hit volume and animation sources bullets
+
+- **Weapon**: a segment and radius in socket space, from the sheet default or the content (weapon mesh length). Composed at
+  runtime with the **baked socket track** of the playing slot: `sf_anim::SocketTrack` (socket transform in root space at
+  60 Hz over the clip). C1 builds tracks at load from the cooked clip and skeleton (sf_anim pose sampling); a bake product
+  (`anim.cook` `sockets`) later if load time asks for it. Gameplay never reads the evaluated pose (action.md).
+- **Sources**: candidates in the content's animation-sources manifest, first present wins, then the fallback
+  (`ClipFallback::Clip` = the content's own clip, or `Drop`). Dropped slots leave the move's chain at compile (today an
+  unknown slot holds the chain: fix in C1a); a move with every slot dropped is not loaded.
+
+### Build plan rows C1a, C1b, C1c, C3, C4, C7
+
+| Slice | Deliverable | Test | Visual check |
+|---|---|---|---|
+| **C1a** core | `sf_action` vocabulary + `Clip` owner; `sf_combat` sheet, vitals, sweeps, contact order, `StandardRules`, hit-stop | Tests list, headless | none |
+| **C1b** player vs dummy | `sf_combat_bevy`; game glue (sheet, clips, player, training dummy, level `arena`, stamina bar) | 3-hit chain on the dummy lands 4 hits; no NaN; dummy on the floor | CB-1 chain, roll, stamina, hit-stop |
+| **C1c** lock-on | built 2026-10-27 (parts 1-4, "As built (C1c)"; strafe clips C1c-2b next): acquire/break, locked strafe, 4-way rolls, framing | breaks past 20 m and on a mantle | CB-2 strafe and roll around the dummy |
+| **C3** heavy, openers, poise | heavy + charge; run/roll/backstep/jump attacks; armor windows; poise; lunge; typed i-frames; second weapon class | second class adds no code; charge release swaps clip | CB-4 heavy and openers |
+| **C4** targeting | switching, soft aim (built 2026-11-10, first person included; C4b look limits built), combat shake, per-bone hurt capsules | switch picks the flicked side; soft-aim pick and window | CB-5 |
+| **C7** net | host-authoritative hits, own-start prediction (co-op phase F) | replay determinism | none |
+
+### Lock-on, windows and knockdown text
+
+The target is gameplay state (`ActionState::lock`, a stable id). A lock press acquires with `sf_camera::lockon::acquire`
+over `Lockable` hostiles (the shell gathers candidates and line of sight), else recentres; `LockTimers::check` breaks it
+(20 m, 1.5 s without line of sight, death), as does any traversal (re-offered on touchdown). The shell mirrors it to
+`sf_camera_bevy::LockOn`, which already frames it. Locked locomotion sets `LocomotionIntent::desired_facing` to the
+target, capped by the mover's own turn rates (`SpringParams::turn`, the player-feel retune): no second turn system. Clip
+moves aim `Turn` windows at the target; locked rolls use the sheet's `locked` moves, unlocked rolls square up to the stick.
+Unlocked, attacks soft-aim (~3 m, +-30 deg, first ~1/6 s of an attack, R6 §5; "C4 soft aim"); first person has no hard lock.
+C4 left: switching by stick flick, combat shake.
+The Classic mode profile turns lock-on and hit-stop off (action.md "Mode profiles").
+
+- **Windows** are authored against the slot's first candidate clip. Every other candidate brings its own (manifest `events`
+  or the content pack's text-key synthesis); one that brings none gets the sheet windows scaled by the length ratio, with a
+  load warning. Startup/active/recovery are derived from hit and cancel windows (R6 §12), never authored.
+- **Knockdown / Death**: a forced move with `Owner::Physics`: `sf_action` emits `PhysicsTakeover { impulse, point }` and
+  holds the move until the shell reports the hand-back; invulnerable while down, a roll-out window on the get-up. The
+  content routes it to its ragdoll path (Bevyrrowind: the walkers' powered-ragdoll knockdown or the Delirium takeover,
+  combat-adapter.md); framework code names neither. Today those react to thrown bodies (`sf_physics::PhysicsEvent::Hit`);
+  weapon hits become a second source.
+
+## As built by slice (moved from combat.md 2026-11-26)
+
+### C1b, C1c, C4 soft aim, C4b, C2a
+
+All built; as built and tests in [history](combat-history.md) ("C1b sheet", "C1c as built", "C4 soft aim as built", "C4b
+as built", "C2a as built"; live sheet `bevyrrowind/crates/mw_combat/data/movesets/sword_1h.ron`). C1c (CB-2): lock, locked facing
+and strafe, 4-way rolls, marker (to do: strafe clips C1c-2b, back roll, switching C4). C4 (CB-5): soft aim 3 m / +-30 deg; first
+person (`face_view`) squares attacks to the view, never locks. C4b (CB-5b): `MoveRule.look` bounds the first-person view around
+the body until `Cancel(Move)`. C2a (CB-3a): `SparSchedule` writes an ordinary `Command` on a beat; the player is a defender like
+any; a reaction has no `look` rule (free view).
+
+### C2b: guard in both views
+
+**As built (2026-11-10)**, check CB-3b; industry, content numbers and tests: [history](combat-history.md) "C2b as built".
+- **Hold moves** (`sf_action`): `CompiledRule::holds` (request classes all in `ClassSet::HOLD` = Guard) lapses on the release
+  tick; a held hold class latches each tick it is accepted and not refused (a guard held through an attack rises at its
+  `Cancel(Guard)`, and after a reaction). A looping last slot (`SlotInfo.length` `None`) wraps `ClipOutput.progress` by its
+  root path's duration.
+- **Facing**: Guard moves face the view in first person like attacks (`faces_view`), and their `Turn(rate)` window over the
+  whole guard is the capped turn-with-view; third person the stick, locked the target; no new window kind.
+- **Contact** (`sf_combat`): `MoveSpec.guard: GuardSpec { raise, arc_cos }`; guarded = clock before this tick >= `raise` and
+  `facing . (attacker - defender) >= cos(arc)`; `HitLanded.guard: GuardResult { Unguarded, Held, Broken }`; regen `Guarding`
+  for the whole guard move.
+- **Classic seam (C5)**: no held guard in Morrowind; a classic `resolve_contact` rolls OpenMW's `blockMeleeAttack`
+  (`apps/openmw/mwmechanics/combat.cpp` at `ca5e2576`) and sets `Outcome::guarded`; the same guard reaction plays.
+- **Not built**: guard walk (the pose in the `upper` slot over a Sim-owned hold move), guard-hit recoil and the avatar's Additive
+  hit springs, HUD guard cue (`HudView` is `sf_ui_screens`'), guard counter, parry, guard numbers from records (C3).
