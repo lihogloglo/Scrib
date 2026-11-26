@@ -82,6 +82,17 @@ pub const WATER_FLOW_FOAM: Def<f32> = def!(float "water.flow.foam" = 0.6)
     .source(Source::Guess)
     .group(Group::Water);
 
+/// `water.join.fade`: how far a river's ribbon thins out over a join's mixing zone
+/// ([`crate::mesh::ATTRIBUTE_WATER_RIVERNESS`]); 0 = the ribbon ends hard over the water it joins.
+pub const WATER_JOIN_FADE: Def<f32> = def!(float "water.join.fade" = 1.0)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("River joins: how far the ribbon thins out where it meets a lake, the sea or a main river (0 = hard end)")
+    .source(Source::Industry(
+        "UE5 Water: river-to-lake and river-to-ocean transition materials blend the river fully into the receiver over the join",
+    ))
+    .group(Group::Water);
+
 /// The river flow's look (bound from [`crate::TUNABLES`] by the host; live both ways).
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct WaterFlowSettings {
@@ -93,6 +104,8 @@ pub struct WaterFlowSettings {
     pub foam_start_mps: f32,
     pub foam_full_mps: f32,
     pub foam: f32,
+    /// [`WATER_JOIN_FADE`].
+    pub join_fade: f32,
 }
 
 impl Default for WaterFlowSettings {
@@ -106,6 +119,7 @@ impl Default for WaterFlowSettings {
             foam_start_mps: WATER_FLOW_FOAM_START_MPS.default_value(),
             foam_full_mps: WATER_FLOW_FOAM_FULL_MPS.default_value(),
             foam: WATER_FLOW_FOAM.default_value(),
+            join_fade: WATER_JOIN_FADE.default_value(),
         }
     }
 }
@@ -128,7 +142,7 @@ pub fn phases(t: f32) -> [(f32, f32); 2] {
 
 /// The uniform's `flow`, `flow2` and `flow3` slots (`water_common.wesl` `WaterParams`): (cycle
 /// clock s, wrapped at the cycle; cycle s; advection scale; phase noise share), (phase noise cells
-/// per noise period; normal gain; foam start m/s; foam full m/s), (foam cover; 0, 0, 0). The clock
+/// per noise period; normal gain; foam start m/s; foam full m/s), (foam cover; join fade; 0, 0). The clock
 /// wraps on whole cycles, so the shader's phase (`clock / cycle`) never jumps.
 #[allow(clippy::cast_possible_truncation)]
 pub(crate) fn slots(time: f64, s: &WaterFlowSettings) -> [Vec4; 3] {
@@ -139,6 +153,6 @@ pub(crate) fn slots(time: f64, s: &WaterFlowSettings) -> [Vec4; 3] {
     [
         Vec4::new(clock.min(cycle), cycle, s.advect_scale.max(0.0), s.phase_noise.clamp(0.0, 1.0)),
         Vec4::new(crate::lace_cells(s.noise_cell_m), s.normal_gain.max(0.0), start, full),
-        Vec4::new(s.foam.clamp(0.0, 1.0), 0.0, 0.0, 0.0),
+        Vec4::new(s.foam.clamp(0.0, 1.0), if s.join_fade.is_finite() { s.join_fade.clamp(0.0, 1.0) } else { 1.0 }, 0.0, 0.0),
     ]
 }

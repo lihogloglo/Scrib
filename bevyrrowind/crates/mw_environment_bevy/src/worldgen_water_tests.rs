@@ -284,7 +284,7 @@ fn river_speed_clamped_and_continuous() {
     assert!(worst < range * 0.2, "neighbouring speeds jump {worst} of {range}");
 }
 
-/// The flow shading's `water.flow.*` reach `WaterFlowSettings`, live.
+/// The flow shading's `water.flow.*` and `water.join.fade` reach `WaterFlowSettings`, live.
 #[test]
 fn flow_tunables_bind_live() {
     use sf_tunables_bevy::{SetBy, SetTunable, TunablesPlugin};
@@ -303,6 +303,7 @@ fn flow_tunables_bind_live() {
         ("water.flow.foam_start_mps", "2"),
         ("water.flow.foam_full_mps", "6"),
         ("water.flow.foam", "0.3"),
+        ("water.join.fade", "0"),
     ] {
         app.world_mut().write_message(SetTunable::new(name, value, SetBy::Console));
     }
@@ -317,6 +318,7 @@ fn flow_tunables_bind_live() {
         foam_start_mps: 2.0,
         foam_full_mps: 6.0,
         foam: 0.3,
+        join_fade: 0.0,
     };
     assert_eq!(f, want, "every water.flow.* tunable reaches WaterFlowSettings");
 }
@@ -568,4 +570,34 @@ fn measure_real_guide_query() {
             grid.len()
         );
     }
+}
+
+/// FL-4b: a river's join reaches its GPU mesh. The river's last two points lie in the lake at its level (the
+/// overlap run: 20 m, shorter than 2.5 widths of 10 m), so the river-ness is 1 up to the first of them and 0 at
+/// the mouth, one value per vertex; the lake's mesh carries none.
+#[test]
+#[allow(clippy::float_cmp)] // exact: the fade's ends are 1 and 0
+fn join_fade_reaches_the_river_mesh() {
+    const JSON: &str = r#"{
+  "format": 1, "frame": "guide: x east, y north, metres", "sea_level_m": 0.0,
+  "lakes": [{ "id": 1, "kind": "open", "level_m": 12.5,
+              "outline": [[0, 0], [100, 0], [100, 100], [0, 100]], "holes": [], "area_m2": 10000 }],
+  "rivers": [{ "id": 0, "kind": "river", "mu_id": 0, "joins": -1, "outlet": 1, "clipped": false,
+               "points": [[-60, 50, 10, 14], [-30, 50, 10, 13], [-10, 50, 10, 12.8], [10, 50, 10, 12.5], [30, 50, 10, 12.5]] }],
+  "stats": { "lakes": 1, "rivers": 1 }
+}"#;
+    let dir = guide_dir("joinmesh", Some(JSON));
+    let mut app = run(&dir, 2);
+    let (river, mesh) = world_vertices(&mut app, GuideWaterBody::River);
+    let Some(VertexAttributeValues::Float32(ness)) = mesh.attribute(sf_water_bevy::mesh::ATTRIBUTE_WATER_RIVERNESS) else {
+        panic!("river-ness attribute")
+    };
+    assert_eq!(ness.len(), river.len(), "one river-ness per vertex");
+    // The centre vertex of a control point's cross-section, guide (x, 50) at engine (x, -50).
+    let at = |gx: f64| ness[river.iter().position(|(p, _)| p.distance(DVec2::new(gx, -50.0)) < 1e-3).expect("a centre vertex")];
+    assert_eq!([at(-60.0), at(-30.0), at(-10.0), at(10.0), at(30.0)], [1.0, 1.0, 1.0, 1.0, 0.0]);
+    assert!(ness.iter().all(|v| (0.0..=1.0).contains(v)), "{ness:?}");
+    let (_, lake) = world_vertices(&mut app, GuideWaterBody::Lake);
+    assert!(lake.attribute(sf_water_bevy::mesh::ATTRIBUTE_WATER_RIVERNESS).is_none(), "a lake's mesh carries no river-ness");
+    let _ = std::fs::remove_dir_all(dir);
 }

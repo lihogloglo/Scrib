@@ -70,6 +70,9 @@ pub struct BodyMesh {
     pub uvs: Vec<[f32; 2]>,
     /// Downstream direction × speed in XZ, m/s; zero for lakes.
     pub flow: Vec<[f32; 2]>,
+    /// The body's own share of the surface ([`RiverPoint::river_ness`]: 1 = its own water, 0 = the
+    /// receiver of a river's join shows instead); 1 for lakes.
+    pub river_ness: Vec<f32>,
     /// Triangle list, counter-clockwise seen from above.
     pub indices: Vec<u32>,
     pub aabb: BodyAabb,
@@ -228,6 +231,8 @@ pub struct RiverSample {
     pub height: f64,
     /// Downstream speed, m/s.
     pub flow_speed: f64,
+    /// The river's own share here ([`RiverPoint::river_ness`], 0-1), interpolated like the speed.
+    pub river_ness: f64,
     /// Arc length from the first sample, metres.
     pub along: f64,
     /// Index of the input point this sample sits on, if any.
@@ -306,6 +311,7 @@ pub fn lake_mesh(
                 mesh.normals.push([0.0, 1.0, 0.0]);
                 mesh.uvs.push([x, z]);
                 mesh.flow.push([0.0, 0.0]);
+                mesh.river_ness.push(1.0);
             }
             mesh.indices.push(*slot);
         }
@@ -380,6 +386,7 @@ pub fn river_samples(
                 width: c.0[2].clamp(a.0[2].min(b.0[2]), a.0[2].max(b.0[2])),
                 height: c.0[3].clamp(b.0[3], a.0[3]),
                 flow_speed: c.0[4].clamp(a.0[4].min(b.0[4]), a.0[4].max(b.0[4])),
+                river_ness: c.0[5].clamp(a.0[5].min(b.0[5]), a.0[5].max(b.0[5])),
                 along: 0.0,
                 control,
             });
@@ -458,6 +465,7 @@ pub fn river_mesh(spline: &[RiverPoint], params: &RiverMeshParams, origin: DVec2
                     .push([p.x as f32, s.height as f32, p.y as f32]);
                 mesh.uvs.push([off as f32, s.along as f32]);
                 mesh.flow.push([flow.x as f32, flow.y as f32]);
+                mesh.river_ness.push(s.river_ness as f32);
             }
         }
     }
@@ -555,6 +563,7 @@ fn clean_spline(spline: &[RiverPoint], origin: DVec2) -> Vec<Channels> {
             f64::from(p.width).max(0.0),
             p.height,
             f64::from(p.flow_speed),
+            f64::from(p.river_ness).clamp(0.0, 1.0),
         ]);
         if !ch.0.iter().all(|v| v.is_finite()) {
             continue;
@@ -569,9 +578,9 @@ fn clean_spline(spline: &[RiverPoint], origin: DVec2) -> Vec<Channels> {
     out
 }
 
-/// The interpolated channels of a river point: x, z, width, height, speed.
+/// The interpolated channels of a river point: x, z, width, height, speed, river-ness.
 #[derive(Clone, Copy, Debug)]
-struct Channels([f64; 5]);
+struct Channels([f64; 6]);
 
 impl Channels {
     fn xz(&self) -> DVec2 {

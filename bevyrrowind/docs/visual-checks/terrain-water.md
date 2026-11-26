@@ -144,7 +144,7 @@ drops still there after ~5 s, any hitch when they start.
 
 ### WA-13: Generated river without sea waves, bank shear, joins (FL-1, FL-2; joins after FL-4b; `superfargoth/docs/specs/water-bodies.md`)
 
-Status: planned (after FL-1, FL-2; joins part after FL-4b).
+Status: joins part awaiting owner (FL-4b, 2026-11-26, below); flow parts planned (after FL-1, FL-2).
 Launch: `bash bevyrrowind/tools/owner_launch.sh view "world:C:/cargo-target/scrib/worldgen/x10hs-b2w" --hour 12 --camera -213,+3,3035,-282,+0,3111`
 (guide river 55 entering lake 161, clear; the TN-2 "Odai 2.0" camera used before 2026-11-26 has no guide river: it is a
 sea-level arm); A/B `--off waterflowtex` (today's FFT ripples), later `--off flowfield`.
@@ -154,6 +154,20 @@ at the banks than mid-channel, smoother water on fast reaches with white only wh
 tributary dissolving into the main river or lake with no hard edge or doubled ripples.
 Bad: shimmering in place, a conveyor belt (banks as fast as the middle), pulsing every ~2 s, a seam or a straight cut
 where two waters meet, the lake ripples stopping at a line.
+
+**Joins part (FL-4b): one scene with a live A/B, awaiting owner.**
+Launch: `bash bevyrrowind/tools/owner_launch.sh scene river-join-ab` (x10hs-b2w, clear, 12:00; camera 14 m above the
+bank of guide river 6, 11.5 m wide, 30 m before it enters lake 33. From `water.json`: the river's last 32.5 m lie in
+the lake at its level, 317.76 m; mixing zone 28.8 m = 2.5 widths; water 0.5-0.7 m deep; lake link 60 runs on from
+the mouth across the lake). Tab switches `water.join.fade`: A = 1 "river fades into the lake (new)", B = 0 "river
+ends hard (before)"; one line on screen names the arm.
+Proof log lines: `worldgen water joins: 86 river ends: 23 lake, ...` at start; one `[A/B]` line per Tab.
+Yes/no: (1) in A, looking down the river into the lake: does the river's water give way to the lake's gradually,
+with no straight cut across the mouth? (2) in A, is the lake one clean sheet past the mouth (B shows a river-wide
+stripe running on across the lake)? (3) in A, standing still: is the fade zone free of sparkle, crawling or a dot
+pattern? (4) from 30 m up over the mouth: still no seam in A?
+Known, not part of this check: no carved bed (wade-deep river); 16 of the 23 lake mouths of this world have no run
+inside their lake (the old camera's river 55 into lake 161 is one), so there the river still ends within ~4 m.
 
 ### WA-14: Waterfall (FL-6b; `world:` x10s-b2w)
 

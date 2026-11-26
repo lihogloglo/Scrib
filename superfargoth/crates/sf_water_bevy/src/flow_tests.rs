@@ -8,8 +8,8 @@ use bevy_render::render_resource::VertexAttribute;
 use bevy_shader::ShaderDefVal;
 
 use crate::flow::{phases, slots, WaterFlowSettings};
-use crate::material::{flow_attribute, specialize_water, FLOW_LOCATION, WATER_FLOW_DEF, WATER_MESH_DEF};
-use crate::mesh::ATTRIBUTE_WATER_FLOW;
+use crate::material::{flow_attribute, riverness_attribute, specialize_water, FLOW_LOCATION, RIVERNESS_LOCATION, WATER_FLOW_DEF, WATER_MESH_DEF, WATER_RIVERNESS_DEF};
+use crate::mesh::{ATTRIBUTE_WATER_FLOW, ATTRIBUTE_WATER_RIVERNESS};
 
 /// The two phases are half a cycle apart, their weights sum to 1 and vanish where a phase wraps.
 #[test]
@@ -61,6 +61,7 @@ fn slots_wrap_on_whole_cycles_and_clamp() {
     let [flow, flow2, flow3] = slots(0.0, &s);
     assert_eq!((flow.y, flow.z, flow.w), (s.cycle_s, s.advect_scale, s.phase_noise));
     assert_eq!((flow2.y, flow2.z, flow2.w, flow3.x), (s.normal_gain, s.foam_start_mps, s.foam_full_mps, s.foam));
+    assert_eq!((flow3.y, flow3.z, flow3.w), (1.0, 0.0, 0.0), "the join fade is on by default");
     assert_eq!(flow2.x.fract(), 0.0, "noise cells not whole per noise period");
     let cycle = f64::from(s.cycle_s);
     for t in [0.3, 1.9, 12_345.678, 1.0e6 + 0.25] {
@@ -68,22 +69,27 @@ fn slots_wrap_on_whole_cycles_and_clamp() {
         let b = slots(t + cycle * 7.0, &s)[0].x / s.cycle_s;
         assert!((a - b).abs() < 1e-3 && (0.0..=1.0).contains(&a), "{t}: {a} vs {b}");
     }
-    let bad = WaterFlowSettings { cycle_s: 0.0, foam_start_mps: 3.0, foam_full_mps: 1.0, phase_noise: 4.0, foam: -1.0, ..s };
+    let bad = WaterFlowSettings { cycle_s: 0.0, foam_start_mps: 3.0, foam_full_mps: 1.0, phase_noise: 4.0, foam: -1.0, join_fade: 3.0, ..s };
     let [flow, flow2, flow3] = slots(5.0, &bad);
     assert!(flow.y > 0.0 && flow.x < flow.y);
     assert!(flow2.w > flow2.z);
-    assert_eq!((flow.w, flow3.x), (1.0, 0.0));
-    let nan = WaterFlowSettings { cycle_s: f32::NAN, ..s };
+    assert_eq!((flow.w, flow3.x, flow3.y), (1.0, 0.0, 1.0));
+    let nan = WaterFlowSettings { cycle_s: f32::NAN, join_fade: f32::NAN, ..s };
     assert!(slots(5.0, &nan)[0].y > 0.0);
+    assert_eq!(slots(5.0, &nan)[2].y, 1.0);
+    assert_eq!(slots(5.0, &WaterFlowSettings { join_fade: 0.0, ..s })[2].y, 0.0, "0 = the hard end");
 }
 
-/// A body mesh with `flow` (the attribute) or without, its layout as Bevy keys the pipeline.
-fn layout(flow: bool) -> MeshVertexBufferLayoutRef {
+/// A body mesh with or without `flow` and `river_ness` (the attributes), its layout as Bevy keys the pipeline.
+fn layout(flow: bool, river_ness: bool) -> MeshVertexBufferLayoutRef {
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32; 3]; 3]);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; 3]);
     if flow {
         mesh.insert_attribute(ATTRIBUTE_WATER_FLOW, vec![[1.0f32, 0.0]; 3]);
+    }
+    if river_ness {
+        mesh.insert_attribute(ATTRIBUTE_WATER_RIVERNESS, vec![1.0f32; 3]);
     }
     mesh.get_mesh_vertex_buffer_layout(&mut MeshVertexBufferLayouts::default())
 }
@@ -111,8 +117,8 @@ fn flow_in(buffer: &VertexBufferLayout) -> Option<&VertexAttribute> {
 /// it; a lake mesh without it and the clipmap keep today's layout and defs.
 #[test]
 fn flow_attribute_only_on_the_mesh_path() {
-    let with = layout(true);
-    let without = layout(false);
+    let with = layout(true, false);
+    let without = layout(false, false);
     let a = flow_attribute(true, &with).expect("the flow attribute on the mesh path");
     assert_eq!((a.format, a.shader_location), (VertexFormat::Float32x2, FLOW_LOCATION));
     assert!(flow_attribute(false, &with).is_none(), "the clipmap path reads no flow");
@@ -144,4 +150,51 @@ fn flow_attribute_only_on_the_mesh_path() {
     assert!(v.is_empty() && f.is_empty(), "{v:?} {f:?}");
     // Both paths keep the water's double-sided, depth-writing draw.
     assert!(river.primitive.cull_mode.is_none() && clipmap.primitive.cull_mode.is_none());
+}
+
+fn at(buffer: &VertexBufferLayout, location: u32) -> Option<&VertexAttribute> {
+    buffer.attributes.iter().find(|a| a.shader_location == location)
+}
+
+/// FL-4b: the river-ness attribute (`Float32` at `RIVERNESS_LOCATION`, in the mesh's own interleaved
+/// buffer, beside the flow) and `WATER_RIVERNESS` in both stages, only on the mesh path of a mesh that
+/// carries it, with or without the flow; a mesh without it and the clipmap keep their layout and defs.
+#[test]
+fn riverness_attribute_only_on_meshes_that_carry_it() {
+    let both = layout(true, true);
+    let only = layout(false, true);
+    let a = riverness_attribute(true, &both).expect("the river-ness attribute on the mesh path");
+    assert_eq!((a.format, a.shader_location), (VertexFormat::Float32, RIVERNESS_LOCATION));
+    assert!(riverness_attribute(false, &both).is_none(), "the clipmap path reads no river-ness");
+    assert!(riverness_attribute(true, &layout(true, false)).is_none(), "a mesh without river-ness has none");
+
+    let mut river = descriptor(&both);
+    specialize_water(&mut river, &both, true);
+    let buffer = &river.vertex.buffers[0];
+    let (flow, ness) = (at(buffer, FLOW_LOCATION).expect("flow"), at(buffer, RIVERNESS_LOCATION).expect("river-ness"));
+    assert_eq!((flow.format, ness.format), (VertexFormat::Float32x2, VertexFormat::Float32));
+    assert!(ness.offset + 4 <= buffer.array_stride, "the river-ness lies outside the mesh's vertex");
+    // Position (12 bytes), normal (12), flow (8), river-ness (4): no two attributes share bytes.
+    let mut spans: Vec<(u64, u64)> = buffer.attributes.iter().map(|x| (x.offset, x.offset + x.format.size())).collect();
+    spans.sort_unstable();
+    assert_eq!(spans.len(), 4);
+    assert!(spans.windows(2).all(|w| w[0].1 <= w[1].0), "attributes overlap: {spans:?}");
+    assert_eq!(buffer.array_stride, 36);
+    let (v, f) = defs(&river);
+    for def in [WATER_MESH_DEF, WATER_FLOW_DEF, WATER_RIVERNESS_DEF] {
+        assert!(has(&v, def) && has(&f, def), "{def}: {v:?} {f:?}");
+    }
+
+    let mut still = descriptor(&only);
+    specialize_water(&mut still, &only, true);
+    assert!(at(&still.vertex.buffers[0], RIVERNESS_LOCATION).is_some() && at(&still.vertex.buffers[0], FLOW_LOCATION).is_none());
+    let (v, f) = defs(&still);
+    assert!(has(&v, WATER_RIVERNESS_DEF) && has(&f, WATER_RIVERNESS_DEF) && !has(&v, WATER_FLOW_DEF) && !has(&f, WATER_FLOW_DEF));
+
+    let mut clipmap = descriptor(&both);
+    let before = clipmap.vertex.buffers.clone();
+    specialize_water(&mut clipmap, &both, false);
+    assert_eq!(clipmap.vertex.buffers, before, "the clipmap's layout changed");
+    let (v, f) = defs(&clipmap);
+    assert!(v.is_empty() && f.is_empty(), "{v:?} {f:?}");
 }

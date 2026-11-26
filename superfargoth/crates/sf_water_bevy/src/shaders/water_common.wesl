@@ -53,7 +53,8 @@ struct WaterParams {
     rain2: vec4<f32>,
     // River flow (`sf_water_bevy::WaterFlowSettings`, read only with `WATER_FLOW`): (cycle clock s,
     // cycle s, advection scale, phase noise share); (phase noise cells per noise period, normal
-    // gain, foam start m/s, foam full m/s); (foam cover at full speed, 0, 0, 0).
+    // gain, foam start m/s, foam full m/s); (foam cover at full speed; join fade 0..1, read with
+    // `WATER_RIVERNESS`: 0 = the ribbon ends hard; 0, 0).
     flow: vec4<f32>,
     flow2: vec4<f32>,
     flow3: vec4<f32>,

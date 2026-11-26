@@ -192,12 +192,13 @@ fn bind_medium(app: &mut App) {
 }
 
 /// River flow shading (`sf_water_bevy::flow`): `water.flow.*` live both ways into `WaterFlowSettings` (the
-/// advected normals and speed foam of meshes with a flow attribute, the generated world's rivers).
+/// advected normals and speed foam of meshes with a flow attribute, the generated world's rivers), and
+/// `water.join.fade` (FL-4b: the ribbon thinning out at a join; 0 = the hard end).
 pub(crate) fn bind_flow(app: &mut App) {
     use sf_tunables_bevy::TunablesAppExt;
     use sf_water_bevy::{
         WaterFlowSettings as F, WATER_FLOW_ADVECT_SCALE, WATER_FLOW_CYCLE_S, WATER_FLOW_FOAM, WATER_FLOW_FOAM_FULL_MPS, WATER_FLOW_FOAM_START_MPS,
-        WATER_FLOW_NOISE_CELL_M, WATER_FLOW_NORMAL_GAIN, WATER_FLOW_PHASE_NOISE,
+        WATER_FLOW_NOISE_CELL_M, WATER_FLOW_NORMAL_GAIN, WATER_FLOW_PHASE_NOISE, WATER_JOIN_FADE,
     };
     let _cycle = app.add_tunable(&WATER_FLOW_CYCLE_S).bind_resource(|f: &mut F, v| f.cycle_s = v);
     let _advect = app.add_tunable(&WATER_FLOW_ADVECT_SCALE).bind_resource(|f: &mut F, v| f.advect_scale = v);
@@ -207,6 +208,7 @@ pub(crate) fn bind_flow(app: &mut App) {
     let _start = app.add_tunable(&WATER_FLOW_FOAM_START_MPS).bind_resource(|f: &mut F, v| f.foam_start_mps = v);
     let _full = app.add_tunable(&WATER_FLOW_FOAM_FULL_MPS).bind_resource(|f: &mut F, v| f.foam_full_mps = v);
     let _foam = app.add_tunable(&WATER_FLOW_FOAM).bind_resource(|f: &mut F, v| f.foam = v);
+    let _join = app.add_tunable(&WATER_JOIN_FADE).bind_resource(|f: &mut F, v| f.join_fade = v);
 }
 
 /// `--off underwater` (U3): the camera's medium is still tracked, but the frame is drawn as above

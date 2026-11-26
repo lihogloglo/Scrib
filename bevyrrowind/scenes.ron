@@ -925,6 +925,21 @@
             look_for: "flat dark water with small ripples only (no sea swell), floor visible through shallow water and fading with depth, water stays put and level while moving (no swimming or tilting with the camera), no water above the floor in dry rooms",
             checks: ["WA-6"],
         ),
+        (
+            name: "river-join-ab",
+            cell: "world:C:/cargo-target/scrib/worldgen/x10hs-b2w",
+            camera: "1710,+14,-18420,1727,+0,-18462",
+            hour: 12.0,
+            flags: ["--weather", "clear"],
+            ab: (
+                set: "water.join.fade",
+                a: (value: "1", label: "river fades into the lake (new)"),
+                b: (value: "0", label: "river ends hard (before)"),
+            ),
+            description: "Generated world x10hs-b2w (a guide folder on the owner's machine), clear at 12:00: guide river 6 (11.5 m wide) enters lake 33; its last 29 m thin out over the lake (A) or draw whole, with the lake link's ribbon on across the lake (B); Tab switches",
+            look_for: "A: the river's water gives way to the lake's over ~30 m, no straight cut, no stripe across the lake, and the fade zone does not sparkle or crawl",
+            checks: ["WA-13"],
+        ),
         // ---- cloth (M4 P10, physics-adapter.md; the robe lineup is `character`, see PH-3) ----
         (
             name: "ph3-balmora-temple",

@@ -503,3 +503,53 @@ fn surf_shape_reaches_the_shader_with_the_twins_constants() {
     assert_eq!(on[2].y.fract(), 0.0, "gap cells not whole per noise period");
     assert_eq!(on[2].y, d.gap_cells());
 }
+
+/// FL-4b river joins: the water draw links with `WATER_RIVERNESS` (as `material::specialize_water` pushes
+/// it), with and without the flow, an environment map and temporal jitter; its vertex stage reads the
+/// river-ness at the Rust side's `RIVERNESS_LOCATION` and passes it on; the fragment thins the ribbon out
+/// by dithered discard before any shading, on a new pattern each frame only under `TEMPORAL_JITTER`.
+/// Without the def (lakes, plain rivers, the clipmap) none of it is linked.
+#[test]
+fn riverness_path_links_and_thins_the_ribbon_by_dither() {
+    let (mesh_def, flow_def, ness_def) = (crate::material::WATER_MESH_DEF, crate::material::WATER_FLOW_DEF, crate::material::WATER_RIVERNESS_DEF);
+    let module = "sf_water_bevy::shaders::water_material";
+    for defs in [&[mesh_def, ness_def][..], &[mesh_def, flow_def, ness_def][..], &[mesh_def, flow_def, ness_def, "ENVIRONMENT_MAP", "TEMPORAL_JITTER"][..]] {
+        compile(module, defs).unwrap_or_else(|e| panic!("{e}"));
+    }
+    let join = compile(module, &[mesh_def, flow_def, ness_def]).expect("compiles");
+    let jittered = compile(module, &[mesh_def, flow_def, ness_def, "TEMPORAL_JITTER"]).expect("compiles");
+    let river = compile(module, &[mesh_def, flow_def]).expect("compiles");
+    let lake = compile(module, &[mesh_def]).expect("compiles");
+    let ocean = compile(module, &[]).expect("compiles");
+    for wgsl in [&join, &jittered] {
+        assert!(wgsl.contains("river_ness") && wgsl.contains("water.flow3.y"), "no switched river-ness on the join path");
+    }
+    for (path, wgsl) in [("river", &river), ("lake", &lake), ("ocean", &ocean)] {
+        assert!(!wgsl.contains("river_ness") && !wgsl.contains("water.flow3.y"), "the {path} path reads the river-ness");
+    }
+    let parsed = naga::front::wgsl::parse_str(&join).expect("parses");
+    let location = |stage: naga::ShaderStage, output: bool| -> Option<u32> {
+        let entry = parsed.entry_points.iter().find(|e| e.stage == stage)?;
+        let ty = if output { entry.function.result.as_ref()?.ty } else { entry.function.arguments.first()?.ty };
+        let naga::TypeInner::Struct { members, .. } = &parsed.types[ty].inner else { return None };
+        members.iter().find(|m| m.name.as_deref() == Some("river_ness")).and_then(|m| match m.binding {
+            Some(naga::Binding::Location { location, .. }) => Some(location),
+            _ => None,
+        })
+    };
+    assert_eq!(location(naga::ShaderStage::Vertex, false), Some(crate::material::RIVERNESS_LOCATION), "the river-ness attribute's location");
+    let varying = location(naga::ShaderStage::Vertex, true).expect("the vertex stage does not pass the river-ness on");
+    assert_eq!(location(naga::ShaderStage::Fragment, false), Some(varying), "the fragment does not receive the river-ness");
+    let src = std::fs::read_to_string(PathBuf::from(CRATE).join("src/shaders/water_material.wesl")).expect("source").replace("\r\n", "\n");
+    assert!(src.contains(&format!("@location({}) river_ness: f32", crate::material::RIVERNESS_LOCATION)), "the attribute's location is not RIVERNESS_LOCATION");
+    // The dither (Bevy's interleaved gradient noise; its own shadow sampling links the same function on every
+    // path, so this is read on the source): a new pattern each frame only under `TEMPORAL_JITTER`.
+    let dither = "@if(TEMPORAL_JITTER)\n            let dither = interleaved_gradient_noise(in.position.xy, globals.frame_count);\n            @else\n            let dither = interleaved_gradient_noise(in.position.xy, 0u);\n";
+    assert!(src.contains(dither), "the dither moves per frame only under TEMPORAL_JITTER");
+    // Fully the river (cover 1) never discards (the noise is < 1), fully the receiver (0) always does;
+    // the switch at 0 gives cover 1 everywhere.
+    assert!(src.contains("let cover = 1.0 - water.flow3.y * (1.0 - in.river_ness);"), "the cover is not the switched river-ness");
+    let thin = src.find("if cover <= dither {").expect("the coverage test");
+    let shade = src.find("let sh = shore_at(water, shore_field, shore_sampler, in.lagrangian);").expect("the first shading read");
+    assert!(thin < shade, "the ribbon must thin out before anything is shaded");
+}

@@ -12,13 +12,13 @@
 use bevy_asset::{Asset, Handle};
 use bevy_image::Image;
 use bevy_math::Vec4;
-use bevy_mesh::MeshVertexBufferLayoutRef;
+use bevy_mesh::{MeshVertexAttribute, MeshVertexBufferLayoutRef};
 use bevy_pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline, StandardMaterial};
 use bevy_reflect::TypePath;
 use bevy_render::render_resource::{AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError, VertexAttribute};
 use bevy_shader::ShaderRef;
 
-use crate::mesh::ATTRIBUTE_WATER_FLOW;
+use crate::mesh::{ATTRIBUTE_WATER_FLOW, ATTRIBUTE_WATER_RIVERNESS};
 use crate::WaterImages;
 
 const SHADER: &str = "embedded://sf_water_bevy/shaders/water_material.wesl";
@@ -201,24 +201,45 @@ pub(crate) const FLOW_LOCATION: u32 = 10;
 /// The flow attribute of a mesh with `layout` at [`FLOW_LOCATION`], on the mesh-body path only and
 /// only when the mesh carries it (lakes and other meshes without it keep today's layout).
 pub(crate) fn flow_attribute(mesh: bool, layout: &MeshVertexBufferLayoutRef) -> Option<VertexAttribute> {
-    if !mesh || !layout.0.contains(ATTRIBUTE_WATER_FLOW) {
+    body_attribute(mesh, layout, &ATTRIBUTE_WATER_FLOW, FLOW_LOCATION)
+}
+
+/// The shader def of a mesh body whose mesh carries [`ATTRIBUTE_WATER_RIVERNESS`] (a river's join:
+/// dithered coverage, `water_material.wesl`).
+pub(crate) const WATER_RIVERNESS_DEF: &str = "WATER_RIVERNESS";
+/// The river-ness attribute's shader location (`water_material.wesl` `WaterMeshVertex`), next to
+/// [`FLOW_LOCATION`].
+pub(crate) const RIVERNESS_LOCATION: u32 = 11;
+
+/// The river-ness attribute of a mesh with `layout` at [`RIVERNESS_LOCATION`], under
+/// [`flow_attribute`]'s rule (with or without the flow).
+pub(crate) fn riverness_attribute(mesh: bool, layout: &MeshVertexBufferLayoutRef) -> Option<VertexAttribute> {
+    body_attribute(mesh, layout, &ATTRIBUTE_WATER_RIVERNESS, RIVERNESS_LOCATION)
+}
+
+/// `attribute` of a mesh with `layout` at shader `location`: only on the mesh-body path and only
+/// when the mesh carries it.
+fn body_attribute(mesh: bool, layout: &MeshVertexBufferLayoutRef, attribute: &MeshVertexAttribute, location: u32) -> Option<VertexAttribute> {
+    if !mesh || !layout.0.contains(attribute.id) {
         return None;
     }
-    layout.0.get_layout(&[ATTRIBUTE_WATER_FLOW.at_shader_location(FLOW_LOCATION)]).ok()?.attributes.first().copied()
+    layout.0.get_layout(&[attribute.at_shader_location(location)]).ok()?.attributes.first().copied()
 }
 
 /// The water's part of the pipeline (`WaterExt::specialize` without the unused pipeline): the
-/// mesh-body defs, and the flow attribute appended to the mesh's vertex buffer (the same
-/// interleaved buffer Bevy laid out from the mesh) with `WATER_FLOW`.
+/// mesh-body defs, and the flow and river-ness attributes appended to the mesh's vertex buffer (the
+/// same interleaved buffer Bevy laid out from the mesh) with `WATER_FLOW` and `WATER_RIVERNESS`.
 pub(crate) fn specialize_water(descriptor: &mut RenderPipelineDescriptor, layout: &MeshVertexBufferLayoutRef, mesh: bool) {
     let mut defs = Vec::new();
     if mesh {
         defs.push(WATER_MESH_DEF);
-        if let Some(flow) = flow_attribute(mesh, layout)
-            && let Some(buffer) = descriptor.vertex.buffers.first_mut()
-        {
-            buffer.attributes.push(flow);
-            defs.push(WATER_FLOW_DEF);
+        for (attribute, def) in [(flow_attribute(mesh, layout), WATER_FLOW_DEF), (riverness_attribute(mesh, layout), WATER_RIVERNESS_DEF)] {
+            if let Some(attribute) = attribute
+                && let Some(buffer) = descriptor.vertex.buffers.first_mut()
+            {
+                buffer.attributes.push(attribute);
+                defs.push(def);
+            }
         }
     }
     for def in defs {

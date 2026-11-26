@@ -41,6 +41,7 @@ fn assert_valid(m: &BodyMesh) {
     assert_eq!(m.normals.len(), n);
     assert_eq!(m.uvs.len(), n);
     assert_eq!(m.flow.len(), n);
+    assert_eq!(m.river_ness.len(), n);
     assert_eq!(m.indices.len() % 3, 0);
     assert!(m.indices.iter().all(|&i| (i as usize) < n));
     for t in 0..m.triangle_count() {
@@ -413,4 +414,48 @@ fn builders_are_deterministic() {
         river_mesh(&bend(), &r, DVec2::ZERO),
         river_mesh(&bend(), &r, DVec2::ZERO)
     );
+}
+
+/// FL-4b: a river's `river_ness` reaches the mesh, one value per vertex. Every vertex of a control
+/// point's cross-section carries that point's value exactly; between two control points the value
+/// stays within theirs (the spline never overshoots); lakes carry 1.
+#[test]
+#[allow(clippy::float_cmp)] // exact: a control sample copies its point's f32
+fn river_ness_reaches_every_vertex() {
+    let ness = [1.0_f32, 1.0, 0.75, 0.25, 0.0, 0.0];
+    let mut spline = bend();
+    for (p, n) in spline.iter_mut().zip(ness) {
+        p.river_ness = n;
+    }
+    let origin = d(5000.0, 300.0);
+    let params = RiverMeshParams::default();
+    let samples = river_samples(&spline, &params, origin);
+    let m = river_mesh(&spline, &params, origin);
+    assert_valid(&m);
+    let cols = params.cross_samples as usize;
+    assert_eq!(m.river_ness.len(), samples.len() * cols);
+
+    let mut seen = 0;
+    let mut before = 0;
+    for (i, s) in samples.iter().enumerate() {
+        let row = &m.river_ness[i * cols..(i + 1) * cols];
+        #[allow(clippy::cast_possible_truncation)]
+        let want = s.river_ness as f32;
+        assert!(row.iter().all(|&v| v == want), "sample {i}: {row:?} vs {want}");
+        if let Some(c) = s.control {
+            assert_eq!(want, ness[c], "control point {c}");
+            (seen, before) = (seen + 1, c);
+        } else {
+            let (lo, hi) = (ness[before].min(ness[before + 1]), ness[before].max(ness[before + 1]));
+            assert!((lo..=hi).contains(&want), "sample {i} between points {before} and {}: {want}", before + 1);
+        }
+    }
+    assert_eq!(seen, ness.len(), "every control point is a sample");
+    // The mouth's last cross-section is fully the receiver's; the source's fully the river's.
+    assert!(m.river_ness[..cols].iter().all(|&v| v == 1.0));
+    assert!(m.river_ness[m.river_ness.len() - cols..].iter().all(|&v| v == 0.0));
+
+    let lake = lake_mesh(&square(d(0.0, 0.0), 10.0), &[], 3.0, DVec2::ZERO, &LakeMeshParams::default());
+    assert!(!lake.is_empty() && lake.river_ness.len() == lake.positions.len());
+    assert!(lake.river_ness.iter().all(|&v| v == 1.0));
 }

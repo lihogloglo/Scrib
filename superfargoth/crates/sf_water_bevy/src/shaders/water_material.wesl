@@ -3,7 +3,8 @@
 // by the `water.shore` field (swell by openness and shore distance, chop down to a floor); with
 // `WATER_MESH`, a host mesh body (lake polygon, river ribbon) placed flat by its transform; with
 // `WATER_FLOW` (its mesh carries the flow attribute) the ripples ride the river's flow (two-phase
-// flow-advected normals, Vlachos 2010) and fast water foams.
+// flow-advected normals, Vlachos 2010) and fast water foams; with `WATER_RIVERNESS` (its mesh carries
+// the river-ness attribute) a river thins out over its join so the water it joins shows.
 // Fragment: wave normals from the mip-filtered slopes (the variance the mips lose widens the
 // highlight), refraction from the scene snapshot (rejected where the refracted sample is in front
 // of the water), Beer-Lambert absorption + single scattering over the view path with optics
@@ -17,6 +18,8 @@
 import super::water_common::{SurfInput, WaterParams, clipmap_xz, covered_by_finer, cascade_uv, cascade_scale, displaced, shore_at, shore_foam_weight, shore_normal_scales, shore_scales, shore_slope, shore_wave_offset, shore_waves, surf_birth, surf_foam, sw_cells, sw_hash, sw_noise};
 import sf_render_order_bevy::rain_rings::rain_ripples;
 import bevy_pbr::render::mesh_view_bindings::view;
+@if(WATER_RIVERNESS) import bevy_pbr::render::mesh_view_bindings::globals;
+@if(WATER_RIVERNESS) import bevy_pbr::render::utils::interleaved_gradient_noise;
 import bevy_pbr::render::mesh_types::MESH_FLAGS_SHADOW_RECEIVER_BIT;
 import bevy_pbr::render::pbr_types::{PbrInput, pbr_input_new};
 import bevy_pbr::render::pbr_functions::{apply_pbr_lighting, calculate_F0_dielectric};
@@ -44,11 +47,13 @@ struct WaterVertex {
 }
 
 // A host mesh body's vertex: its position and, on a river, its flow (`sf_water_bevy::mesh::
-// ATTRIBUTE_WATER_FLOW`, local XZ m/s; location `material.rs` `FLOW_LOCATION`).
+// ATTRIBUTE_WATER_FLOW`, local XZ m/s; location `material.rs` `FLOW_LOCATION`) and its river-ness
+// (`ATTRIBUTE_WATER_RIVERNESS`, 1 = the river's own water, 0 = the water it joins; `RIVERNESS_LOCATION`).
 @if(WATER_MESH)
 struct WaterMeshVertex {
     @location(0) position: vec3<f32>,
     @if(WATER_FLOW) @location(10) flow: vec2<f32>,
+    @if(WATER_RIVERNESS) @location(11) river_ness: f32,
 }
 
 struct WaterVarying {
@@ -59,6 +64,8 @@ struct WaterVarying {
     @location(3) height: f32,
     // The flow velocity, render-space XZ m/s.
     @if(WATER_FLOW) @location(4) flow: vec2<f32>,
+    // The river's own share of the surface, 0-1.
+    @if(WATER_RIVERNESS) @location(5) river_ness: f32,
 }
 
 @if(!WATER_MESH)
@@ -94,6 +101,9 @@ fn vertex(v: WaterMeshVertex, @builtin(instance_index) instance: u32) -> WaterVa
     // The flow is a vector in the mesh's local XZ: it turns (and scales) with the body.
     @if(WATER_FLOW) {
         out.flow = (world_from_local * vec4(v.flow.x, 0.0, v.flow.y, 0.0)).xz;
+    }
+    @if(WATER_RIVERNESS) {
+        out.river_ness = v.river_ness;
     }
     out.world_position = vec4(world.xyz / world.w, 1.0);
     out.position = view.clip_from_world * out.world_position;
@@ -233,6 +243,24 @@ fn fragment(in: WaterVarying, @builtin(front_facing) is_front: bool) -> @locatio
     }
     if water.waves.z > 0.5 && (any(in.lagrangian < water.bounds.xy) || any(in.lagrangian > water.bounds.zw)) {
         discard;
+    }
+    // A river's join (`WATER_RIVERNESS`, `sf_water::joins`): over its mixing zone the ribbon thins out and
+    // the water it joins (lake, sea, main river), which lies under it there, shows. Coverage by dither,
+    // not alpha: the draw is opaque and writes depth (UE `DitherTemporalAA`; Bevy's transmission and
+    // SSAO noise: interleaved gradient noise, a new pattern each frame only while TAA or DLSS
+    // resolves it). The flow already fades by the same value (scaled per point on the CPU).
+    // `water.join.fade` (`flow3.y`) 0 keeps the ribbon whole: the hard end, the A/B arm.
+    @if(WATER_RIVERNESS) {
+        let cover = 1.0 - water.flow3.y * (1.0 - in.river_ness);
+        if cover < 1.0 {
+            @if(TEMPORAL_JITTER)
+            let dither = interleaved_gradient_noise(in.position.xy, globals.frame_count);
+            @else
+            let dither = interleaved_gradient_noise(in.position.xy, 0u);
+            if cover <= dither {
+                discard;
+            }
+        }
     }
     // The sea under land is not shaded (it is behind the terrain anyway).
     let sh = shore_at(water, shore_field, shore_sampler, in.lagrangian);

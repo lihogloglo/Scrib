@@ -126,7 +126,8 @@ x10s-b2w printed by an `#[ignore = "measurement: ..."]` test (est. 20-60 s, 1.3 
 
 FL-4a and FL-4b are written for the worldgen-2 lane in "Build rows". Wired 2026-11-26 (FL-4b slice 1, worldgen-9):
 `mw_environment_bevy/src/worldgen_water.rs` `resolved()` resolves the joins once at start, the query bodies and the mesh
-bake share its splines, log line `worldgen water joins: ...`; the mesh attribute and shader fade are slice 2. Design: the reader keeps `mu_id`, `joins`, `outlet`,
+bake share its splines, log line `worldgen water joins: ...`; slice 2 (worldgen-10) added the mesh attribute and the shader fade (as built
+below). Design: the reader keeps `mu_id`, `joins`, `outlet`,
 `clipped` (rivers) and `kind`, `from_course` (lakes); `sf_water::joins` resolves each river end: **tributary** (`joins`
 names another river's `mu_id`): last point projected onto the receiver's centreline if within `snap_max_m`, level =
 min(own, receiver's there); **mouth** (end inside a lake polygon, or at sea level over the ocean): mixing zone;
@@ -146,6 +147,21 @@ The same value scales the point's `flow_speed` (mesh and query agree) and, as a 
 through and no two flows cross-fade by alpha. Priorities: ocean 0, guide lakes 20, guide rivers 30 (rivers own their
 inlet/outlet zones; constants, an overlap rule). Bed carving under the ribbon stays the worldgen tool's (ROADMAP [p]
 "generated rivers refactor"), not FL-4.
+**As built (FL-4b slice 2, 2026-11-26):** `river_mesh` writes `river_ness` per vertex (`BodyMesh::river_ness`,
+interpolated like the speed and clamped between its two control points; lakes 1); the ribbon carries it as
+`sf_water_bevy::mesh::ATTRIBUTE_WATER_RIVERNESS` (`Float32`, location 11, def `WATER_RIVERNESS`, independent of the
+flow). The water draw is opaque and writes depth, so coverage is a dithered discard, before any shading read:
+`cover = 1 − water.join.fade × (1 − river_ness)`, discarded where `cover ≤` noise. The flow needs no second multiply
+(`joins` scaled the point speeds). Reuse check: the noise is Bevy's `interleaved_gradient_noise`
+(`bevy_pbr/src/render/utils.wesl:45`), moved per frame only under `TEMPORAL_JITTER` as Bevy's transmission does
+(`transmission.wesl:118-121`), so TAA and DLSS resolve it into a blend and a view without them gets a still
+screen-door; Bevy's `VisibilityRange` dither (`pbr_functions.wesl:81`) is keyed per entity, not per vertex; no crate.
+Industry: UE blends river into lake with transition materials on shared water tiles; our bodies are separate meshes
+with their own uniforms, so the ribbon gives way to the receiver's own mesh under it (UE `DitherTemporalAA` is the
+same opaque fade). `water.join.fade` 0 keeps the ribbon whole (the A/B arm, scene `river-join-ab`). On x10hs-b2w the
+zone is ≥ 10 m at 4 of 23 lake mouths, < 1 m at 16: Magna Urbis ends a course at the lake's edge and continues as a
+`lake_link`, which lies wholly in the lake, gets both fades and draws nothing. Open: such a mouth still ends within
+one sample (~4 m); the fix is a joins rule (the link carries its inflow's zone) or longer courses from the water stage.
 
 ### FL-5: guide bodies in the query, swimming carried by the current (worldgen-2, first)
 
@@ -245,6 +261,7 @@ once per-feature rows are allowed. Switches are game `--off` parts: `waterflowte
 | `water.flow.solve_tolerance` | ratio | 1e-5-1e-2 | 1e-3 | Guess | FL-3 |
 | `water.join.mix_widths` | ratio | 0.5-8 | 2.5 | Guess (research: 2-3 widths) | FL-4a |
 | `water.join.snap_max_m` | m | 0-50 | 20 | Guess (farther ends unsnapped, logged) | FL-4a |
+| `water.join.fade` | ratio | 0-1 | 1 | Industry (UE transition materials blend fully; 0 = hard end, the A/B arm) | FL-4b |
 | `water.join.level_tol_m` | m | 0-5 | 0.5 | Guess (x10hs-b2w: real mouths within 0.4 m of the lake level, courses under a lake 2-48 m below) | FL-4a |
 | `water.query.ribbon_chunk` | count | 8-512 | 64 | Guess (keeps a sample ≤ 2 µs) | FL-5a |
 | `swim.enter_fraction` | ratio | 0-1 | 0.7 | Guess (adapter: from `fSwimHeightScale`) | FL-5c |
@@ -290,7 +307,7 @@ effect expected.
 ## Verification (owner visual checks)
 
 Planned in `bevyrrowind/docs/visual-checks/terrain-water.md`: **WA-13** river without sea waves, shear, joins (after
-FL-1, FL-2; joins part after FL-4b); **WA-14** waterfall (after FL-6b); **WA-15** wading rings + wake (after FL-7);
+FL-1, FL-2; joins part awaiting owner since FL-4b, scene `river-join-ab`); **WA-14** waterfall (after FL-6b); **WA-15** wading rings + wake (after FL-7);
 **WA-16** swimming in the current (after FL-5c).
 
 ## Moved from water.md "Rivers: baked flow to the sea" (2026-11-26)

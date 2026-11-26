@@ -490,6 +490,8 @@ fn push(out: &mut Vec<Built>, kind: GuideWaterBody, origin: DVec2, body: &BodyMe
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, body.uvs.clone());
     if flow {
         mesh.insert_attribute(sf_water_bevy::mesh::ATTRIBUTE_WATER_FLOW, body.flow.clone());
+        // FL-4b: the ribbon thins out over its joins' mixing zones (`resolved`).
+        mesh.insert_attribute(sf_water_bevy::mesh::ATTRIBUTE_WATER_RIVERNESS, body.river_ness.clone());
     }
     mesh.insert_indices(Indices::U32(body.indices.clone()));
     out.push(Built { kind, origin: DVec3::new(origin.x, 0.0, origin.y), mesh });

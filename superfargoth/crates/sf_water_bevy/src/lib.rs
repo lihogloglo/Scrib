@@ -59,7 +59,7 @@ use sf_water::{origin_phase, reflection_plane, Cascades, OpticsMap, PlaneCandida
 pub use material::{WaterExt, WaterKey, WaterMaterial, WaterParams};
 pub use flow::{
     phases as flow_phases, WaterFlowSettings, WATER_FLOW_ADVECT_SCALE, WATER_FLOW_CYCLE_S, WATER_FLOW_FOAM, WATER_FLOW_FOAM_FULL_MPS, WATER_FLOW_FOAM_START_MPS, WATER_FLOW_NOISE_CELL_M, WATER_FLOW_NORMAL_GAIN,
-    WATER_FLOW_PHASE_NOISE,
+    WATER_FLOW_PHASE_NOISE, WATER_JOIN_FADE,
 };
 pub use rain::{WaterRain, WaterRainSettings, RAIN_CLOCK_WRAP_S, WATER_RAIN_RIPPLE_FADE_FAR_M, WATER_RAIN_RIPPLE_FADE_NEAR_M, WATER_RAIN_RIPPLE_STRENGTH};
 pub use gate::{gate_stats, GateStats, WaterGate, WaterGateSettings, MAX_GATE_BOXES, WATER_GATE_IDLE_FFT_S, WATER_GATE_MARGIN_M, WATER_GATE_VISIBLE};
@@ -89,6 +89,7 @@ pub const TUNABLES: &[&dyn sf_tunables::AnyDef] = &[
     &WATER_FLOW_FOAM_START_MPS,
     &WATER_FLOW_FOAM_FULL_MPS,
     &WATER_FLOW_FOAM,
+    &WATER_JOIN_FADE,
 ];
 
 /// FFT grid per cascade at High/Ultra (water.md: 256²); Low and Medium use 128².

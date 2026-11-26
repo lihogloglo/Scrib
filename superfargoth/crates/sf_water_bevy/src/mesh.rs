@@ -5,7 +5,8 @@
 //! edge onto the next ring's grid (CDLOD), so one static mesh serves every camera position.
 //!
 //! Mesh bodies ([`crate::WaterMeshSurface`]) bring their own mesh instead; [`ATTRIBUTE_WATER_FLOW`]
-//! is the vertex attribute a river ribbon carries its flow in.
+//! is the vertex attribute a river ribbon carries its flow in, [`ATTRIBUTE_WATER_RIVERNESS`] the one
+//! it fades out with where it joins other water.
 
 use bevy_asset::RenderAssetUsages;
 use bevy_mesh::{Indices, Mesh, MeshVertexAttribute, PrimitiveTopology, VertexFormat};
@@ -18,6 +19,14 @@ use crate::ClipmapSettings;
 /// along it and adds speed foam (Vlachos 2010, [`crate::WaterFlowSettings`]). Meshes without it stay
 /// valid and render as still water.
 pub const ATTRIBUTE_WATER_FLOW: MeshVertexAttribute = MeshVertexAttribute::new("Water_Flow", 0x5F57_A7E2_F10F_0001, VertexFormat::Float32x2);
+
+/// A river's own share of the surface per vertex (water-bodies.md FL-4, `sf_water::joins`): 1 = the
+/// river's water, 0 = the water it joins (lake, sea, main river) shows instead. The water draw thins
+/// the ribbon out by it over the join's mixing zone, as dithered coverage (the draw is opaque and
+/// writes depth, so nothing blends by alpha; UE's `DitherTemporalAA` fade, in place of its
+/// river-to-lake transition materials). The flow is expected to be scaled by the same value already
+/// (`sf_water::joins` does it, so the mesh and the water query agree). Meshes without it draw whole.
+pub const ATTRIBUTE_WATER_RIVERNESS: MeshVertexAttribute = MeshVertexAttribute::new("Water_Riverness", 0x5F57_A7E2_F10F_0002, VertexFormat::Float32);
 
 /// Half-size, in its own grid cells, of the hole a ring leaves for the finer ring inside it.
 /// The finer ring covers `quads/4` of this ring's cells around its own centre, which is at most
