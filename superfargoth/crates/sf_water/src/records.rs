@@ -24,6 +24,15 @@ pub struct RiverPoint {
     pub height: f64,
     /// Downstream speed, m/s.
     pub flow_speed: f32,
+    /// 1 = the river's own water, 0 = the receiving water (a lake, the sea, the main river) shows through
+    /// ([`crate::joins`]); scales the ribbon's coverage and flow.
+    #[serde(default = "full_river")]
+    pub river_ness: f32,
+}
+
+/// [`RiverPoint::river_ness`] when a record leaves it out: the river's own water.
+fn full_river() -> f32 {
+    1.0
 }
 
 /// Where a body's water is, in world XZ.

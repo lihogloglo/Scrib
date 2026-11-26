@@ -4,9 +4,10 @@
 //!
 //! **File.** `<guide>/water.json`: `{ "format": 1, "sea_level_m", "lakes": [{ "id", "level_m", "outline": [[x, y],
 //! ..], "holes": [[[x, y], ..]], .. }], "rivers": [{ "id", "kind", "points": [[x, y, width_m, level_m], ..], .. }],
-//! .. }`, guide frame (x east, y north, metres; [`crate::guide`]). River points run upstream to downstream. Extra
-//! keys (`frame`, `stats`, `area_m2`, `joins`, ...) are ignored. [`to_engine_xz`] maps a guide point to the
-//! engine's XZ ([`crate::tiles`] "Frames").
+//! .. }`, guide frame (x east, y north, metres; [`crate::guide`]). River points run upstream to downstream. The
+//! join keys are kept as written ([`River::mu_id`], [`River::joins`], [`River::outlet`], [`River::clipped`],
+//! [`Lake::kind`], [`Lake::from_course`]; all optional in the file); other extra keys (`frame`, `stats`, `area_m2`,
+//! ...) are ignored. [`to_engine_xz`] maps a guide point to the engine's XZ ([`crate::tiles`] "Frames").
 
 use std::fs::File;
 use std::io::BufReader;
@@ -16,29 +17,52 @@ use serde::Deserialize;
 
 use crate::{Error, Result};
 
+#[cfg(test)]
+#[path = "tests_water.rs"]
+mod tests;
+
 /// The `water.json` format this module reads.
 pub const FORMAT: u32 = 1;
 
 /// A lake: a closed outline (either winding, closing point optional) with holes, at one surface level.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct Lake {
     #[serde(default)]
     pub id: i64,
+    /// As written: `open` (drains out), `closed` (terminal); empty when the file has none.
+    #[serde(default)]
+    pub kind: String,
     /// Surface level, metres.
     pub level_m: f64,
     /// Guide frame, metres.
     pub outline: Vec<[f64; 2]>,
     #[serde(default)]
     pub holes: Vec<Vec<[f64; 2]>>,
+    /// Set on a lake that fills a basin a river course crosses: the [`River::id`] flowing into it.
+    #[serde(default)]
+    pub from_course: Option<i64>,
 }
 
 /// A river (or a lake link, a braid, a distributary: `kind` as written): its centre line upstream to downstream.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 pub struct River {
     #[serde(default)]
     pub id: i64,
     #[serde(default)]
     pub kind: String,
+    /// The network line this river is a piece of (several rivers share it when the line was cut); `None` when the
+    /// file has none (lake links).
+    #[serde(default)]
+    pub mu_id: Option<i64>,
+    /// The [`River::mu_id`] of the line this river's end flows into; negative or `None` = it joins no river.
+    #[serde(default)]
+    pub joins: Option<i64>,
+    /// Set when the line reaches the sea (the tool's outlet cell, opaque here).
+    #[serde(default)]
+    pub outlet: Option<u64>,
+    /// True when the line was cut at a stamp or a dropped lake (one of its ends is not a real end).
+    #[serde(default)]
+    pub clipped: bool,
     /// `[x, y, width_m, level_m]`, guide frame, metres.
     pub points: Vec<[f64; 4]>,
 }

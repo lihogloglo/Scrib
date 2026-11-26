@@ -237,6 +237,7 @@ fn bend() -> Vec<RiverPoint> {
             width: widths[i],
             height: heights[i],
             flow_speed: speeds[i],
+            river_ness: 1.0,
         })
         .collect()
 }
@@ -331,6 +332,7 @@ fn river_hairpin_never_folds() {
             #[allow(clippy::cast_precision_loss)]
             height: 5.0 - i as f64,
             flow_speed: 1.0,
+            river_ness: 1.0,
         })
         .collect();
     for cross in [2, 3, 4, 9] {
@@ -352,6 +354,7 @@ fn river_degenerate_inputs_are_empty() {
         width: w,
         height: 1.0,
         flow_speed: 1.0,
+        river_ness: 1.0,
     };
     let params = RiverMeshParams::default();
     for spline in [

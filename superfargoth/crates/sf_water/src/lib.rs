@@ -8,6 +8,9 @@
 pub mod body_mesh;
 #[cfg(test)]
 mod body_mesh_tests;
+pub mod joins;
+#[cfg(test)]
+mod joins_tests;
 pub mod medium;
 #[cfg(test)]
 mod medium_tests;
@@ -35,6 +38,7 @@ mod wet_tiles_tests;
 mod tests;
 
 pub use body_mesh::{BodyAabb, BodyMesh, LakeMeshParams, RiverMeshParams, RiverSample, lake_mesh, river_mesh, river_samples};
+pub use joins::{Join, JoinEnd, JoinLake, JoinRiver, JoinSettings, JoinStart, resolve as resolve_joins};
 pub use medium::{CameraMedium, MediumCues, MediumState, NearPlane, optics_index_at};
 pub use query::{
     BedHeights, Capsule, Immersion, WaterQuery, WaterSample, WaterWorld, WorldspaceWater,

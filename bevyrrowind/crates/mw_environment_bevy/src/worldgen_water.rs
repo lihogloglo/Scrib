@@ -292,6 +292,7 @@ fn river_spline(points: &[[f64; 4]], speeds: &[f64]) -> Vec<RiverPoint> {
             width: w as f32,
             height: level,
             flow_speed: v as f32,
+            river_ness: 1.0,
         })
         .collect()
 }

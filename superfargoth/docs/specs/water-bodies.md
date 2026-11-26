@@ -130,6 +130,15 @@ names another river's `mu_id`): last point projected onto the receiver's centrel
 min(own, receiver's there); **mouth** (end inside a lake polygon, or at sea level over the ocean): mixing zone;
 **inlet** (first point inside a lake, `lake_link` or an open lake's outflow): mixing zone from the lake edge.
 `RiverPoint` gains `river_ness: f32` (serde default 1): 1 → 0 over `mix_widths × width` toward the join, smoothstep.
+**As built (FL-4a, 2026-11-26, `sf_water::joins::resolve`):** the zone lies only where the receiver's water already
+is, so a river never thins over its own dry bed (UE's Water plugin blends river into lake or ocean over the overlap of
+the two bodies): the *overlap run* is the trailing run of points inside the lake at its level, within the receiver
+river's half width, or at sea level (leading run for an inlet); `river_ness` is 1 at the run's first point and falls
+by smoothstep to 0 over `min(mix_widths × width, run length)`, 0 beyond. A point counts as in a lake only within
+`water.join.level_tol_m` of its level (the real file has courses running 2-48 m under lake outlines: not mouths). End
+order: lake, then tributary (snapped when within `snap_max_m`, else reported unsnapped and left alone), then sea. The
+reader keeps the keys as written (`River { mu_id, joins, outlet, clipped }`, `Lake { kind, from_course }`); several
+rivers can share one `mu_id` (a cut line), so a tributary's receivers are every piece of the named line.
 The same value scales the point's `flow_speed` (mesh and query agree) and, as a vertex attribute
 `ATTRIBUTE_WATER_RIVERNESS`, the ribbon's coverage and flow normals, so the receiver (lake, sea, main river) shows
 through and no two flows cross-fade by alpha. Priorities: ocean 0, guide lakes 20, guide rivers 30 (rivers own their
@@ -232,6 +241,7 @@ once per-feature rows are allowed. Switches are game `--off` parts: `waterflowte
 | `water.flow.solve_tolerance` | ratio | 1e-5-1e-2 | 1e-3 | Guess | FL-3 |
 | `water.join.mix_widths` | ratio | 0.5-8 | 2.5 | Guess (research: 2-3 widths) | FL-4a |
 | `water.join.snap_max_m` | m | 0-50 | 20 | Guess (farther ends unsnapped, logged) | FL-4a |
+| `water.join.level_tol_m` | m | 0-5 | 0.5 | Guess (x10hs-b2w: real mouths within 0.4 m of the lake level, courses under a lake 2-48 m below) | FL-4a |
 | `water.query.ribbon_chunk` | count | 8-512 | 64 | Guess (keeps a sample ≤ 2 µs) | FL-5a |
 | `swim.enter_fraction` | ratio | 0-1 | 0.7 | Guess (adapter: from `fSwimHeightScale`) | FL-5c |
 | `swim.exit_fraction` | ratio | 0-1 | 0.6 | Guess (hysteresis) | FL-5c |

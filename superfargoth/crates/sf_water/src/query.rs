@@ -397,7 +397,7 @@ fn shape_bounds(shape: &WaterShape) -> Option<Aabb2> {
 }
 
 /// Even-odd point in polygon.
-fn in_ring(ring: &[DVec2], p: DVec2) -> bool {
+pub(crate) fn in_ring(ring: &[DVec2], p: DVec2) -> bool {
     let mut inside = false;
     let mut j = ring.len().wrapping_sub(1);
     for i in 0..ring.len() {

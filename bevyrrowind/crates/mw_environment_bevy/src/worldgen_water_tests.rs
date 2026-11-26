@@ -313,11 +313,13 @@ fn query_guide() -> GuideWater {
             level_m: 120.0,
             outline: vec![[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]],
             holes: vec![vec![[40.0, 40.0], [60.0, 40.0], [60.0, 60.0], [40.0, 60.0]]],
+            ..Lake::default()
         }],
         rivers: vec![River {
             id: 9,
             kind: "river".into(),
             points: vec![[200.0, 0.0, 10.0, 130.0], [200.0, 100.0, 12.0, 128.0], [250.0, 200.0, 14.0, 125.0]],
+            ..River::default()
         }],
     }
 }
@@ -421,7 +423,7 @@ fn guide_lake_answers_the_query() {
 fn long_river_splits_into_seamless_chunks() {
     // A straight 20-point river due north at x = 1 km, 10 m wide, dropping 1 cm per metre.
     let points: Vec<[f64; 4]> = (0..20).map(|i| f64::from(i) * 20.0).map(|y| [1000.0, y, 10.0, 100.0 - 0.01 * y]).collect();
-    let guide = GuideWater { rivers: vec![River { id: 5, kind: "river".into(), points }], ..GuideWater::default() };
+    let guide = GuideWater { rivers: vec![River { id: 5, kind: "river".into(), points, ..River::default() }], ..GuideWater::default() };
     let chunks = guide_bodies(&guide, &RiverFlow::default(), 8);
     let ids: Vec<&str> = chunks.iter().map(|b| b.id.as_str()).collect();
     assert_eq!(ids, ["guide:river:5:0", "guide:river:5:1", "guide:river:5:2"], "points 0-7, 7-14, 14-19");
@@ -454,7 +456,7 @@ fn long_river_splits_into_seamless_chunks() {
 
 #[test]
 fn short_river_gives_no_body() {
-    let guide = GuideWater { rivers: vec![River { id: 1, kind: "braid".into(), points: vec![[0.0, 0.0, 5.0, 10.0]] }], ..GuideWater::default() };
+    let guide = GuideWater { rivers: vec![River { id: 1, kind: "braid".into(), points: vec![[0.0, 0.0, 5.0, 10.0]], ..River::default() }], ..GuideWater::default() };
     assert!(guide_bodies(&guide, &RiverFlow::default(), 64).is_empty());
 }
 

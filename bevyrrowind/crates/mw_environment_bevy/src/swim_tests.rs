@@ -53,7 +53,7 @@ fn ground(x: f64, y: f64) -> WorldPos {
 /// frames of 1/60 s on a 1/60 s tick.
 fn app(swim_height_scale: Option<f32>) -> App {
     let frame = Duration::from_secs_f64(1.0 / 60.0);
-    let guide = GuideWater { rivers: vec![River { id: 1, kind: "river".into(), points: river_points() }], ..GuideWater::default() };
+    let guide = GuideWater { rivers: vec![River { id: 1, kind: "river".into(), points: river_points(), ..River::default() }], ..GuideWater::default() };
     let mut world = WaterWorld::new();
     world.insert(mw_world::ids::exterior(), WorldspaceWater::new(guide_bodies(&guide, &RiverFlow::default(), 64)));
     let mut app = App::new();
