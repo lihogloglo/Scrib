@@ -1,7 +1,8 @@
 # Crime adapter: Morrowind crime, law, stealth, locks and traps on `sf_crime` (`mw_crime`)
 
 Status: spec written 2026-11-10, revised 2026-11-26 (LW0e: reports at delivery, decision 14 split, options, open
-questions; plan in the [crime roadmap](../../../docs/roadmaps/crime.md), "decision N" = its §3); nothing built.
+questions; LW0f: jurisdictions; plan in the [crime roadmap](../../../docs/roadmaps/crime.md), "decision N" = its §3);
+nothing built.
 Framework: [crime.md](../../../superfargoth/docs/specs/crime.md),
 [crime-locks.md](../../../superfargoth/docs/specs/crime-locks.md). Also [stats-adapter.md](stats-adapter.md) (`bounty`
 counter, `MwGmst`, fatigue, `UseSkill`), [services-adapter.md](services-adapter.md) (stolen veto),
@@ -14,9 +15,11 @@ numbers at that commit, read from the raw sources 2026-11-10. **MM** = `mwmechan
 <!-- agent-summary -->
 > **Agent summary.** Bevy-free `mw_crime` implements the framework rule traits with OpenMW's numbers: ownership,
 > stolen map, offences, `commitCrime`, `reportCrime` split **at sight** (reporter, disposition, fight) and **at
-> delivery** (bounty, expulsion, guard alert) in both presets, the `iCrimeThreshold` ladder on one island-wide
-> jurisdiction, pay / jail, locks, traps, pickpocket. `awarenessCheck` is MA5's (`mw_ai`). **Classic quirks kept**:
-> any alarmed reporter in `fAlarmRadius` reports, seen or not; stolen entries never shrink; integer rolls `0..=99`.
+> delivery** (bounty, expulsion, guard alert) in both presets, the `iCrimeThreshold` ladder, **jurisdictions**
+> (Modern: a bounty per authority, Hlaalu, Redoran, Telvanni, Temple, Imperial, ..., from cells, guards and data
+> rows; Classic: vanilla's one), pay / jail, locks, traps, pickpocket. `awarenessCheck` is MA5's (`mw_ai`).
+> **Classic quirks kept**: any alarmed reporter in `fAlarmRadius` reports, seen or not; stolen entries never
+> shrink; integer rolls `0..=99`.
 <!-- /agent-summary -->
 
 ## Goal
@@ -30,14 +33,6 @@ and reports (A2), law and jail (A3), pickpocket, locks and traps. MA5 (`mw_ai`) 
 `WitnessQuery`. MA6 only turns a guard's `Stance` into AI directives (Pursue, combat).
 
 Each rule's `In` holds every number it reads (GMSTs, roll, distances); rolls come from the host's seeded roll.
-
-## What exists in the repo (2026-11-10)
-
-- `mw_stats` key `bounty`; S7 `GetPCCrimeLevel`/`SetPCCrimeLevel`/`ModPCCrimeLevel` (floor 0) are live but skip
-  `recordCrimeId` at 0 (`statsextensions.cpp` 463-493 call it): A2 closes this.
-- `functions.txt`: `PayFine`, `PayFineThief`, `GoToJail` `later`; `GetPCInJail` `stub`; `Lock`, `Unlock`,
-  `GetLocked` `live` (check them against "Locks").
-- `DerivedDisposition::input`: `crime_modifier` is a named TODO (A5); `fDispCrimeMod x bounty` is applied (MM 544).
 
 ## Data on references (A0)
 
@@ -131,7 +126,7 @@ disposition, `disp` the offence's disposition (victim value for the victim).
 
 - **Reporter** iff a reportable candidate in radius has `alarm >= 100` (MM 1316-1325; trespass: `intruder` bark).
   Classic quirk: seen or not. Modern: only a witness who saw or heard. `ReportRules::target` sends it to the nearest
-  `guard` by nav distance, through doors; a guard reporter is its own target, delivered next tick. Recognition:
+  `guard` of the crime's jurisdiction ("Jurisdictions") by nav distance, through doors, else the nearest `guard`; a guard reporter is its own target, delivered next tick. Recognition:
   Classic `Identified`, Modern per crime.md.
 - **Crime id**: the batch gets its `CrimeId` (OpenMW `newCrimeId`); each witness with a change keeps it (pardon key).
 - **Disposition** (integer cast, MM 1355-1390): Theft: `int(disp x alarmTerm)`. Pickpocket: guard with `alarm >=
@@ -149,9 +144,9 @@ disposition, `disp` the offence's disposition (victim value for the victim).
 
 **At delivery** (`ReportDelivered { report, guard }`):
 
-- **Bounty**: `bounty = max(0, bounty + amount)` on the guard's jurisdiction (the island-wide `bounty` stat) with
-  its `BountyCause`, via `CrimeCommand::AddBounty`, the S7 writer: `recordCrimeId` runs where OpenMW calls it (pay,
-  jail, a write reaching 0). A second report of the same crime adds only a cause.
+- **Bounty**: `bounty = max(0, bounty + amount)` on the report's jurisdiction (the crime's place, "Jurisdictions";
+  Classic: the one `bounty` stat) with its `BountyCause`, via `CrimeCommand::AddBounty`, the S7 writer:
+  `recordCrimeId` runs where OpenMW calls it (pay, jail, a write reaching 0). A second report of the same crime adds only a cause.
 - **Expulsion** (MM 1469-1505): a victim NPC whose primary faction the player is in expels the player
   (`expell(faction, true)`), else the offence's named faction.
 - **Guard alert**: `LawRules::stance` re-reads the bounty; MA6 turns it into directives. A cancelled report files
@@ -165,19 +160,18 @@ carries an assault crime id (the player attacked first); creatures are not murde
 ## Guards, pay and jail (A3)
 
 **Sight rule** (`ACT::updateCrimePursuit` 1153-1225, per frame): a `guard` not pursuing, not in combat, not Calmed,
-with `bounty >= iCrimeThreshold`, LOS and `awarenessCheck`: at `bounty >= iCrimeThreshold x
-iCrimeThresholdMultiplier` combat, else `AiPursue`; Alarmed and a new crime id (1177-1198); werewolves skipped.
+with `bounty >= iCrimeThreshold` (its own jurisdiction's), LOS and `awarenessCheck`: at `bounty >= iCrimeThreshold
+x iCrimeThresholdMultiplier` combat, else `AiPursue`; Alarmed and a new crime id (1177-1198); werewolves skipped.
 Witnesses with crime id `<= paidCrimeId` calm down (pursuit, combat, Alarmed, Fight, disposition modifier reset;
 1203-1223, `mwgui/dialogue.cpp` 797-801): framework `Pardon`. Ours is event-driven: AI29's notice asks
 `LawRules::stance`, MA6 acts on it.
 
-**Jurisdiction**: `JurisdictionRules::of` returns one island-wide jurisdiction on the default `bounty` stat, which
-Morrowind's dialogue and scripts read (owner Q3 pending, recommended). Classic ladder: `Ignore` below
+**Jurisdiction**: per authority in Modern, one in Classic ("Jurisdictions"). Classic ladder: `Ignore` below
 `iCrimeThreshold`, `Arrest` from it, `Attack` from `iCrimeThreshold x iCrimeThresholdMultiplier` with no murder test
 (ACT 1177-1198), no decay. Modern: the framework ladder and `crime.law.*` defaults, decay with the murder floor, heat.
 
-**Arrest** (`aipursue.cpp` 30-79): pursuit stops at bounty 0 or a dead or hidden target; the guard paths to the
-player (tolerance 100 units) and with LOS opens the arrest greeting. Ours opens the framework `ArrestSession`; its
+**Arrest** (`aipursue.cpp` 30-79; each bounty below is the session's jurisdiction's): pursuit stops at bounty 0 or a
+dead or hidden target; the guard paths to the player (tolerance 100 units) and with LOS opens the arrest greeting. Ours opens the framework `ArrestSession`; its
 screen is that **content dialogue** (DQ-15 hooks): `PayFine` = `ArrestOption` Pay, `PayFineThief` = Pay without
 confiscation, `GoToJail` = Jail, the refusal = Resist. Before each dialogue opens, `World::updateDialogueGlobals`
 (`mwworld/worldimp.cpp` 3490-3512) writes `PCHasCrimeGold = bounty <= gold`, `CrimeGoldDiscount`, `PCHasGoldDiscount = discount <= gold`,
@@ -197,14 +191,66 @@ int(bounty x fCrimeGoldTurnInMult)`, each floored to 1 when `bounty > 0` (names 
 over 100 ticks, fade in, `rest(days x 24)`, `advanceTime`, corprus worsenings skipped, Lua `jailTimeServed`.
 
 **Mapping** (crime.md "Reactions, arrest, jail"): `GoToJail` opens a `Sentence { days, place, clock }`:
-`LawRules::jail_days` is the formula above, `jail_place` = `release_place` = the closest `prisonmarker`, evidence =
-its cell's `stolen_goods`. Clock: `JailClock::PassTime` in solo in both presets (owner 2026-11-25: days pass as a
-rest does), `JailClock::Credit` in co-op. The jail screen is the local scene. `JailRules::served`: Classic = the skill
-loss hook; Modern = reputation hit, no skill loss (owner Q4 pending, recommended).
+`LawRules::jail_days` is the formula above, `jail_place` = `release_place` = the jurisdiction's `prisonmarker`
+("Jurisdictions"; Classic: the closest, as OpenMW), evidence = its cell's `stolen_goods`. Clock: `JailClock::PassTime`
+in solo in both presets (owner 2026-11-25: days pass as a rest does), `JailClock::Credit` in co-op. The jail screen is
+the local scene. `JailRules::served`: Classic = the skill loss hook; Modern = reputation hit, no skill loss (owner Q4
+2026-11-26).
 
 **Skill loss** (Classic hook): OpenMW does it in Lua via `SkillProgression`, source `jail`: -1 on every skill except
 Sneak and Security (documented, `files/data/scripts/omw/skillhandlers.lua` 131, 207); the per-day handler is not in
 this commit (`_onJailTimeServed` is only an engine hook, `mwlua/localscripts.hpp` 111). We port the documented rule.
+
+## Jurisdictions (A3b)
+
+Owner Q3 (2026-11-26): a Hla Oad bounty does not follow the player into Telvanni towns; TR needs the same. Modern:
+one bounty per **authority**; Classic: vanilla's one (`bounty`). `MwJurisdictions` (framework `JurisdictionRules`)
+resolves every cell once at content load into `MwJurisdictionMap`, so `at` is a lookup; mods and TR add rows only.
+Records `mw.crime.jurisdiction.<id>` (`bounty_stat = bounty.<id>`); "Holds" is a draft the A3b esm test checks:
+
+| Id | Authority (guards) | Holds |
+|---|---|---|
+| `imperial` | Imperial Legion, Vvardenfell District | Seyda Neen, Pelagiad, Ebonheart, Caldera, the Legion forts (Moonmoth, Buckmoth, Darius, Hawkmoth, Wolverine Hall); **the default** |
+| `hlaalu` | House Hlaalu (guards are Lawman members) | Balmora, Suran, ... |
+| `redoran` | House Redoran (Kinsman members) | Ald'ruhn, Maar Gan, ... |
+| `telvanni` | House Telvanni (Lawman members) | Sadrith Mora, Tel Aruhn, Tel Branora, Tel Mora, Vos, ... |
+| `temple` | Ordinators | Vivec, Ghostgate, ... |
+| `mournhold` | Royal Guard, High Ordinators (Tribunal) | Mournhold, Old Mournhold |
+| `solstheim` | Legion, East Empire Company (Bloodmoon) | Fort Frostmoth, Raven Rock, the Solstheim regions |
+
+**Key = the settlement, not `REGN`**: regions follow climate, not law (Ascadian Isles holds Vivec, Pelagiad and
+Suran). Morrowind names settlements in its cells: an exterior town cell's name, an interior's before the first comma
+("Balmora, Council Club" -> Balmora). **`at(place)`**, first hit wins:
+
+1. a **cell row** (interior name or grid): enclaves inside another authority's town;
+2. the **settlement**: its row, else the authority most of its guards enforce (`of_law` steps 1-2, over the guards
+   placed in its cells), so TR towns resolve with no row;
+3. an **interior** still open (dungeons): the exterior its exit doors lead to, through interior doors;
+4. an **exterior** with no settlement: its **region row** (Solstheim's -> `solstheim`; TR's provinces later);
+5. else **`imperial`**: Vvardenfell is an Imperial district, House law holds in House towns. Guardless villages (Hla
+   Oad, Gnaar Mok, Khuul, Dagon Fel) and Ashlander camps land here unless a row says otherwise.
+
+**`of_law(guard)`** (class `guard`, as A2), first hit wins: an **NPC row**; a **faction row** (Hlaalu, Redoran,
+Telvanni, Imperial Legion; none for Temple or East Empire Company, whose guards serve two places); else **its post**
+(`at` of its placed cell). Wolverine Hall's Legion guards enforce `imperial` in Telvanni Sadrith Mora, whose streets'
+crimes land in `telvanni`.
+
+**Single-value scripts and dialogue** read the **current** jurisdiction, first hit wins: the open `ArrestSession`'s;
+in dialogue with a law actor, its `of_law`; else the player's `CurrentJurisdiction` (travel resolves on arrival). So:
+`Get/Set/ModPCCrimeLevel`, the `PcCrimeLevel` filter, the arrest globals, `PayFine`, `PayFineThief`, `GoToJail`;
+`fDispCrimeMod x bounty` (MM 544) reads the bounty at the NPC's place.
+
+- **Writes touch the current one only** (Skyrim: per hold). Vanilla's are dialogue in place: Thieves Guild savants'
+  "price on your head" (`PayFineThief`, half price, `TGDiscountScript`; UESP) clear the jurisdiction they stand in;
+  a Morag Tong writ shown to a guard clears that guard's. A `MwCrimeScriptScope` row (script or info id -> `Current |
+  All | Jurisdiction(id)`) marks a full pardon; none until the A3b esm grep finds one.
+- **Jail**: each jurisdiction's `jail_place` = the closest `prisonmarker` whose cell resolves to it, else the closest
+  one (the Legion holds the Houses' prisoners); evidence = that cell's `stolen_goods`; a row may override.
+- **Spread**: none. A bounty stays where it was earned (Skyrim, RDR2); a `Wanted` fact may travel by gossip and lower
+  reputation, never another jurisdiction's bounty or stance (crime.md).
+- **Saves, preset switch**: an old save (only `bounty`) loading in Modern, or a Classic to Modern switch, moves it
+  with its causes to the jurisdiction at the player's position; Modern to Classic sums all into `bounty`.
+- **HUD**: the current jurisdiction's name and bounty (hidden at 0); the stats screen lists every nonzero one (LW17).
 
 ## Sleeping in a bed (A3)
 
@@ -290,7 +336,7 @@ Strings (`sNotifyMessage*`, `sKeyUsed`, `sLock*`, `sTrap*`, `sUnlocked`, `sTrapp
 | `reporters` | witnesses who saw or heard, `alarm >= 100` | any reportable actor in radius, `alarm >= 100` |
 | `report_cancel` | dead, downed, bribed, threatened, timeout | dead, downed (decided, open questions 1, 2) |
 | `recognition` | `Unknown`/`Description`/`Identified` with `Disguise` (owner Q2 2026-11-26) | always `Identified` |
-| `jurisdictions` | per jurisdiction (owner Q3 changed 2026-11-26; design in LW0f) | per jurisdiction (LW0f) |
+| `jurisdictions` | one per authority, `bounty.<id>` (owner Q3 2026-11-26, "Jurisdictions") | one, `bounty` (vanilla) |
 | `law` | framework ladder, decay, murder floor, heat | `iCrimeThreshold` ladder, no decay |
 | `locks` | `Minigame` ("auto" rolls), tier label, forcing (IN37) | `Roll` with `Impossible`, raw level, no forcing |
 | `pickpocket` | KCD2 timer window, "auto" rolls (owner Q1 2026-11-26) | roll (A4) |
@@ -322,7 +368,7 @@ GMSTs: `fCrimeStealing` 1, `iCrimeThreshold` 1000, `iCrimeThresholdMultiplier` 1
   permanent victim edits base.
 - **Fight**: assault witness, Fight 30, alarm 100, `iFightAttacking` 50, disp -30 (bias 16), distance bias 40: 106
   capped to 70, combat, base Fight 100; alarm 50: 53, 83 < 100, no combat.
-- **Law**: one jurisdiction for every guard; 999 ignore; 1000 pursue (LOS and awareness); 10000 attack with no
+- **Law**: Classic one jurisdiction for every guard; 999 ignore; 1000 pursue (LOS and awareness); 10000 attack with no
   murder on record; pursuit ends at 0; witnesses with id `<=` paid calm down and lose the modifier.
 - **Pay/jail**: 1550 -> 15 days; 50 -> 1; bounty 100, discount 0.5, turn-in 0.25, gold 99/100: `PCHasCrimeGold` 0/1,
   50, 25; bounty 1 -> both 1; `PayFine` confiscates, `PayFineThief` does not; solo `PassTime`.
@@ -332,15 +378,29 @@ GMSTs: `fCrimeStealing` 1, `iCrimeThreshold` 1000, `iCrimeThresholdMultiplier` 1
   `Impossible`, Modern narrowest window; quality 1.5: 52.5; probe cost 20: `x = 52`; uses 1 -> removed; a key
   unlocks and disarms, no trespass; owned once-locked object is trespass; Open spell emits `UnlockAttempted`; `Lock`
   on a never-locked object uses 100; level 30 tier = Apprentice (bounds 20/40/60/80); `max_hp(50) = 100`.
-- **Needs Morrowind.esm** (`#[ignore]`): GMST values above; the arrest greeting globals exist with those names.
+- **Jurisdictions** (synthetic cells, guards, rows): `at` order: cell row beats all; "Balmora, Council Club" takes
+  settlement Balmora; a guardless dungeon takes its door's exterior; a nameless exterior takes its region row, else
+  `imperial`; a settlement takes its guards' majority. `of_law`: faction Hlaalu -> `hlaalu`; a Temple guard by its
+  post. Hlaalu 100, Telvanni 0: `GetPCCrimeLevel` in Sadrith Mora 0, in Balmora 100, in a Hlaalu arrest session 100;
+  `SetPCCrimeLevel 0` clears only the current; an `All` scope row clears both. Classic: every `at` and `of_law` is the
+  one jurisdiction. Migration: old `bounty` 500 saved in Balmora loads as `bounty.hlaalu` 500; Modern to Classic sums;
+  jail takes the jurisdiction's marker, else the closest.
+- **Needs Morrowind.esm** (`#[ignore]`): GMST values above; the arrest greeting globals exist with those names; every
+  `guard` resolves by faction or post; prints the settlement table and the guardless settlements.
 
 ## Industry comparison
 
 | Engine | Law, report, jail | Ours |
 |---|---|---|
-| OpenMW | alarmed NPCs report at once, seen or not; one bounty; jail passes days, costs skills | Classic keeps it; **departs**: reports walk (owner) |
-| Skyrim | bounty per hold on sight; guard dialogue: pay, jail, resist; jail costs skill progress | **match**: arrest options; **departs**: one bounty (Q3), walked reports |
+| OpenMW | alarmed NPCs report at once, seen or not; one bounty (`PcCrimeLevel`); jail passes days, costs skills | Classic keeps it; **departs**: reports walk (owner); Modern per jurisdiction |
+| Skyrim | bounty per hold where committed, listed by hold; guard dialogue: pay, jail, resist; Thieves Guild deals per hold | **match**: Modern jurisdictions, guards enforce their own, TG clears the current one, arrest options; **departs**: walked reports |
+| TR, MWSE mods | TR: vanilla bounty; mods Regional Bounty (per region) and Factional Bounties (factions apart from the Legion) wrap it | **match**, as data, keyed by authority |
+| RDR2 | bounty per state where committed; any state's paid at any post office | **match** per place; **departs**: pay where earned |
 | KCD2 | witnesses run to a guard, can be stopped; face and clothes; fines, jail, reputation | **match**: Modern reports, recognition, jail without skill loss |
+
+Sources (2026-11-26): UESP Morrowind:Thieves Guild, Morrowind Mod:PayFine, Morrowind:Guard (house guards' factions),
+Skyrim:Crime; Nexus Morrowind mods 47285 (Regional Bounty), 51406 (Factional Bounties); RDR2 bounty guides (Prima,
+Shacknews).
 
 ## Build plan
 
@@ -349,7 +409,8 @@ One deliverable per slice; rows, order and checks: [crime roadmap](../../../docs
 - **A0** reference data, `MwCrimeGmst`: Stage 1. **A1** ownership, Classic stolen map: Stage 1. **A5** locks, traps,
   keys, `pick_term`, `max_hp`: Stage 1.
 - **A2** offences, `commitCrime`, `reportCrime` at sight and at delivery: Stage 3. **A3** ladder, pay, jail, skill
-  loss hook, bed: Stage 3.
+  loss hook, bed: Stage 3. **A3b** jurisdiction records and rows, `MwJurisdictionMap`, `of_law`, the current-
+  jurisdiction script mapping, migration: Stage 3, with A3.
 - **A4** pickpocket roll and window: Stage 4. **A8** options UI: Stage 5.
 - A6 dropped (decision 14, MA5); no A7 (host, saves, prompt are framework LW slices).
 
@@ -357,7 +418,7 @@ One deliverable per slice; rows, order and checks: [crime roadmap](../../../docs
 
 Framework and preset questions (minigame feel, headgear, one bounty, jail skill loss in Modern, stolen cool-down) are
 answered (owner 2026-11-26, crime roadmap §7): all as recommended except one bounty, changed to per jurisdiction
-(rewrite LW0f; the island-wide lines above are superseded until then).
+(written in LW0f: "Jurisdictions").
 
 1. **Can a Classic witness be bribed or threatened out of reporting?** **Decided (meta, 2026-11-26): no.** Bribe and Threat are Modern;
    Morrowind has no such dialogue, so Classic keeps its outcome.

@@ -11,10 +11,11 @@ Modern preset, lane done: pick locks with a skill-shaped minigame, probe traps, 
 loudly; the prompt shows owned items, lock tier, traps; shops refuse fresh stolen goods [1]. **Sneak**: one
 Skyrim-style eye shows how noticed you are; light, stance, speed and each person's senses decide; failed picks are
 heard [2]. A seen crime is **walked to the law** by a witness you can chase, pay or silence; a guard warns, arrests
-(pay, jail, resist, flee), pursues, searches, cools off; the bounty stays and the journal says who reported what [3].
+(pay, jail, resist, flee), pursues, searches, cools off; the bounty stays in that authority's jurisdiction (a Hla Oad
+bounty means nothing in Telvanni towns) and the journal says who reported what [3].
 Pick pockets under a risk meter, get warned off private rooms, hide your face, get frisked, fence hot goods [4].
 **Classic keeps** Morrowind's dice (locks, pickpocket, one seeded roll per sight check), permanent stolen flag, jail
-skill loss, one bounty; witnesses walk to report there too (owner 2026-11-25) [5].
+skill loss, one island-wide bounty; witnesses walk to report there too (owner 2026-11-25) [5].
 
 ## 2. Where we are (2026-11-25)
 
@@ -88,7 +89,7 @@ Owner checks `LW-n` go in `bevyrrowind/docs/visual-checks/crime.md` (new). `sf_c
 | LW0c | crime.md "Locks and traps": decisions 8-10 | docs | - | **done 2026-11-26** (new `crime-locks.md`) |
 | LW0d | crime.md ownership, jail, build plan, open questions | docs | LW0a-c | **done 2026-11-26** (crime.md ownership, jail `JailClock`, build plan, questions) |
 | LW0e | crime-adapter.md: decision 14, A2 at delivery, options | docs | LW0a, LW0b | **done 2026-11-26** (crime-adapter.md 28 KB; history in archive) |
-| LW0f | Per-jurisdiction bounties (owner Q3 changed 2026-11-26): crime-adapter.md jurisdictions as data (regions, settlements, factions), script single-value mapping; crime.md touches; research OpenMW + Tamriel Rebuilt, Skyrim holds, KCD2, RDR2 | docs | LW0e | doccheck |
+| LW0f | Per-jurisdiction bounties (owner Q3 changed 2026-11-26): crime-adapter.md jurisdictions as data (regions, settlements, factions), script single-value mapping; crime.md touches; research OpenMW + Tamriel Rebuilt, Skyrim holds, KCD2, RDR2 | docs | LW0e | **done 2026-11-26** (crime-adapter "Jurisdictions (A3b)", crime.md `JurisdictionRules { at, of_law }`) |
 
 ### Stage 1: locks, keys, traps, owned things
 
@@ -133,8 +134,9 @@ resist, flee), pursues, searches, cools off, bounty kept; the journal names the 
 | LW2 | `OffenceDef`, `assess` → reactions + `ReportPlan`, `CrimeLedger`, `Pardon`, `WitnessQuery` | `sf_crime` | LW0a | exact; no bounty at assess |
 | LW2b | `ReportState`, `Recognition`, heat record, pure transitions | `sf_crime` | LW2 | exact, cancel causes |
 | LW5 | Ladder, murder threshold, `ArrestSession`, options, `Sentence`, `JailRules`, decay | `sf_crime` | LW2 | exact, fake clock |
-| A2 | Offence table, `commitCrime`, `reportCrime` at delivery, `recordCrimeId` | `mw_crime` | LW2, LW0e | exact vs OpenMW |
-| A3 | Thresholds, `PayFine`/`PayFineThief`/`GoToJail`, Classic skill loss, bed rule | `mw_crime` | LW5, A2 | exact vs OpenMW |
+| A2 | Offence table, `commitCrime`, `reportCrime` at delivery to the crime's jurisdiction, `recordCrimeId` | `mw_crime` | LW2, LW0e | exact vs OpenMW |
+| A3 | Thresholds, `PayFine`/`PayFineThief`/`GoToJail` on the current jurisdiction, Classic skill loss, bed rule | `mw_crime` | LW5, A2, A3b | exact vs OpenMW |
+| A3b | Jurisdiction records + rows, `MwJurisdictionMap` (`at`/`of_law`), current-jurisdiction script/dialogue mapping, `MwCrimeScriptScope`, save/preset migration | `mw_crime` | LW5, A2 | exact; esm test prints the settlement table |
 | LW9 | `WitnessQuery` from AI8b, reports to AI22, bounty on delivery, `Pardon` | `scb`, `sf_ai_bevy` | LW2b, LW6, AI8b | stopped reporter files nothing |
 | LW14 | Arrest: guard claim, dialogue options, flee/surrender into AI29 heat | `scb`, `ui` | LW5, LW9, DQ-15 | headless per option |
 | LW15 | Jail: local scene, confiscation, days credited, release; sentence + reports saved | `scb` | LW14, LW7 | resume; clock unchanged |
@@ -197,7 +199,7 @@ AI43 (`Wanted` spread at gossip speed) and AI44 reputation complete it.
 **Q3 changed:** not one island-wide bounty: per-jurisdiction bounties (a Hla Oad bounty does not apply in Telvanni
 towns; Tamriel Rebuilt needs it too), Morrowind jurisdictions as data from regions, settlements and factions (Great
 House territories, Imperial legion towns); single-value script functions (`GetPCCrimeLevel`, `PayFine`...) read and
-write the jurisdiction the player is in (recommended; settle in LW0f).
+write the jurisdiction the player is in (settled in LW0f: crime-adapter "Jurisdictions (A3b)").
 
 1. **Lockpicking and pickpocketing minigames: which feel?** Recommended: lockpick = rotate to a sweet spot (Skyrim,
    KCD2), skill and pick quality widen it, a wrong turn jams and snaps the pick loudly; pickpocket = KCD2 hold to

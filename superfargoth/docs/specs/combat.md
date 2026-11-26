@@ -260,8 +260,8 @@ C12, decision 5, owner Q6. Fields on `Contact` and `Outcome`, no second pipeline
 ## Non-lethal and mercy
 
 C20, C21, decision 20 (owner 2026-11-26: fists hurt health, non-lethal damage at 0 downs, spare or finish as CP2077;
-research `gameplay-2026-11-25/combat-nonlethal.md`, C-R3). Q11-Q15 answered as recommended (owner 2026-11-26); Q10 (per-weapon tag)
-still open, recommended answer designed in.
+research `gameplay-2026-11-25/combat-nonlethal.md`, C-R3). Q10-Q15 answered as recommended (owner 2026-11-26; Q10: per-weapon tag
+plus per-attack override for chokes and stealth knock-outs, no global toggle).
 - **`Lethality { Lethal, NonLethal }`** (Q10): row field `lethality: Option<_>` (per-attack override: takedown, finisher)
   over the weapon's tag in the content's stats (fists, blunt, "subdue" items: `NonLethal`); default `Lethal`, no global
   toggle. Copied to `Contact` and `Outcome`; a buildup or DoT carries its hit's lethality (`sf_effects` request field).
@@ -420,4 +420,4 @@ Built: C1a, C1b, C1c parts 1-4, C4 soft aim, C4b, C2a, C2b. As built, tests and 
 ## Open questions
 
 None open. Questions 1-3 (co-op hit-stop, missing clips, poise numbers) are answered: [history](archive/combat-history.md)
-"Open questions answered (moved from combat.md 2026-11-26)". Non-lethal: Q11-Q15 answered (owner 2026-11-26), Q10 open: "Non-lethal and mercy".
+"Open questions answered (moved from combat.md 2026-11-26)". Non-lethal: Q10-Q15 answered (owner 2026-11-26): "Non-lethal and mercy".

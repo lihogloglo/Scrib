@@ -259,8 +259,9 @@ anim lane's. character-shapes.md S5 points at this roadmap.
    Enemies behave the same in every view; fairness comes from audio telegraphs, a hit-direction indicator and the
    view-independent token cap. (C6a, C19)
 
-**Answered (owner 2026-11-26, non-lethal; C-R3, decision 20): Q11-Q15 as recommended; Q10 still open** (the owner asked
-how CP2077 and others tag non-lethal weapons; meta answers from C-R3). Fixed: fists damage health; non-lethal damage at 0 health
+**Answered (owner 2026-11-26, non-lethal; C-R3, decision 20): Q10-Q15 as recommended** (Q10 confirmed after the
+C-R3 answer on how CP2077 and others tag non-lethal weapons: per-weapon tag + per-attack override for chokes and
+stealth knock-outs, no global toggle). Fixed: fists damage health; non-lethal damage at 0 health
 downs, never kills; spare or finish like CP2077; Morrowind's fatigue-first fists are Classic only. Recommended, designed as:
 
 10. **Non-lethal source:** a per-weapon tag (fists, blunt, "subdue" items are non-lethal) plus a per-attack override in the

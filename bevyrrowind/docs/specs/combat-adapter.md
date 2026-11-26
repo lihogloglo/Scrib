@@ -66,7 +66,7 @@ Every combat slot ends with a Morrowind clip fallback (`ClipFallback::Clip`) unl
 - **Classic**: fatigue is the Morrowind pool, never gates a start; the fatigue term scales hit chance, block and damage
   inside `mw_rules`.
 - **Fists (modern, decision 20)**: hand-to-hand damages health like any weapon (CP2077 close combat), tagged `NonLethal`
-  (Q10, pending owner), so a brawl ends in a knockout ("Non-lethal and mercy"). **Classic** (C5, named only, not designed
+  (Q10, owner 2026-11-26), so a brawl ends in a knockout ("Non-lethal and mercy"). **Classic** (C5, named only, not designed
   or built now): Morrowind's fatigue-first rule, fists hurt fatigue unless the victim is knocked down or paralysed, then
   health x `fHandtoHandHealthPer`; werewolf claws always health (OpenMW `apps/openmw/mwmechanics/combat.cpp` 478-530
   `getHandToHandDamage` @ `4e718b5`).
@@ -198,7 +198,7 @@ Tactics(
 
 ## Non-lethal and mercy (C22, C23)
 
-Framework side: combat.md "Non-lethal and mercy" (C20, C21); Q11-Q15 answered as recommended (owner 2026-11-26); Q10 open, recommended answer designed in.
+Framework side: combat.md "Non-lethal and mercy" (C20, C21); Q10-Q15 answered as recommended (owner 2026-11-26).
 - **Tags** (C22, Q10): `weapon_classes.ron` marks `HandToHand` and the blunt types (blunt 1H, blunt 2H close, blunt 2H
   wide) `NonLethal`; a record-id override list in the same file adds "subdue" items or a pack's own; blades, axes,
   spears, ranged and creature attacks stay `Lethal`. Spell damage is never a packet (effects-adapter.md): it kills.
@@ -330,7 +330,7 @@ generated default; **C8b** ranged sheets, ammo, speeds, recovery; **C8d** cast s
 
 1. Fists: Morrowind hand-to-hand hurts fatigue unless the victim is down (knockout brawls). Modern: health (ER), or
    fatigue first (non-lethal brawls)? Changes what the player can do: owner. Until answered: health.
-   Answered 2026-11-26 (owner, decision 20): modern = health with a non-lethal tag (Q10 pending); fatigue-first = Classic
+   Answered 2026-11-26 (owner, decision 20): modern = health with a non-lethal tag (Q10 answered 2026-11-26); fatigue-first = Classic
    only ("Health, stamina, fatigue").
 2. If AN32 shows daggers and longswords need distinct timings within `WeaponOneHand`, split the sheet by type (data).
 3. Veloren's ramping regen and re-stun buffer need framework fields: only if CB-10 shows stun-locks (C3a).

@@ -36,3 +36,13 @@ Test GMSTs: `fSneakSkillMult` 0.75, `fSneakBootMult` 0.5, `fSneakDistanceBase` 0
 - **Awareness** (MA5's cases, run in `mw_ai`): sneaking, Sneak 40 Agi 50 Luck 50, no boots, distance 500: `x = 45 x 1.5 = 67.5`; observer
   Sneak 30 Agi 40 Luck 40 in front: `y = 63`, target 4.5, roll 4 safe, 5 seen; behind: `y = 21`, target 46.5, roll 46 safe,
   47 seen; not sneaking always seen; Invisibility: 104.5 never seen; dead observer never.
+
+Moved verbatim from crime-adapter.md on 2026-11-26 (LW0f, size); the crime roadmap §2 keeps the current state.
+
+## What exists in the repo (2026-11-10)
+
+- `mw_stats` key `bounty`; S7 `GetPCCrimeLevel`/`SetPCCrimeLevel`/`ModPCCrimeLevel` (floor 0) are live but skip
+  `recordCrimeId` at 0 (`statsextensions.cpp` 463-493 call it): A2 closes this.
+- `functions.txt`: `PayFine`, `PayFineThief`, `GoToJail` `later`; `GetPCInJail` `stub`; `Lock`, `Unlock`,
+  `GetLocked` `live` (check them against "Locks").
+- `DerivedDisposition::input`: `crime_modifier` is a named TODO (A5); `fDispCrimeMod x bounty` is applied (MM 544).

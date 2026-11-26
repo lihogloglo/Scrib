@@ -134,14 +134,14 @@ Health-Magicka-Fatigue = `PoolAdjust { below_zero: true }`, inverted on end; For
   knockdown not wired yet. The training dummy's sheet health is set to 100.
 - **HUD** (built S5): bars from roles on the local player's sheet; `PlayerVitals` removed, magicka live.
 - **Dialogue** (built S6: `mw_rpg::stats`, host `DialogueSheets`; the neutral list: stats-as-built.md "S6"): `MwView::function` for `PcLevel`, `PcHealth`/`PcMagicka`/`PcFatigue`(`Percent`), the 8 attribute and 27
-  skill `Pc*` functions, `PcReputation`, `PcCrimeLevel` (= bounty), `PcExpelled`, speaker `Level`/`Reputation`/
+  skill `Pc*` functions, `PcReputation`, `PcCrimeLevel` (= the current jurisdiction's bounty, crime-adapter "Jurisdictions (A3b)"), `PcExpelled`, speaker `Level`/`Reputation`/
   `HealthPercent`, `RankRequirement`, `FactionRankDifference`; `player_rank` from groups; `PcClothingModifier` from the loadout (scaffold `StartingClothesFallback`). `PlayerStatsPlaceholder` gone.
 - **MWScript** (`mwscript/statsextensions.cpp` 81-490, 610-1100): `Get<Attr>`/`Get<Skill>` = modified; `Set<..>` = base;
   `Mod<..>` = base + delta; `Get<Dyn>` = current (magicka ≥ 0); `Set<Dyn>` = base, current = max (both flags);
   `Mod<Dyn>` = base + delta (≥ 0 except fatigue) and current + delta (both flags); `ModCurrent<Dyn>` = current + delta,
   fatigue may go below 0 and knocks down at ≤ 0; `Get<Dyn>GetRatio`; `GetLevel`/`SetLevel`; `Get/Set/ModReputation`;
   `GetPCRank`, `PCRaiseRank`, `PCLowerRank`, `PCJoinFaction`, `PCExpell(ed)`, `PCClearExpelled`, `Get/Set/ModPCFacRep`,
-  `RaiseRank`/`LowerRank` (NPC); `Get/Set/ModPCCrimeLevel` = bounty. `dagoth_ur_1` `ModHealth` workaround kept (OpenMW
+  `RaiseRank`/`LowerRank` (NPC); `Get/Set/ModPCCrimeLevel` = the current jurisdiction's bounty. `dagoth_ur_1` `ModHealth` workaround kept (OpenMW
   252-300). `functions.txt` statuses move to `live`.
   **As built S7 (2026-11-08, compiled + unit-tested 2026-11-09: UNTESTED in game (owner test pass 2026-11-10)):** `mw_script::statfn` decodes the 140 names into `StatFn` (value and
   faction argument positions) and the interpreter calls `Host::stat` (default `None` → `unhandled`, so other hosts are
