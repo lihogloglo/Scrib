@@ -599,6 +599,20 @@ First run with the real mover (`tests_seat.rs`): from the front with a clip that
 ledger IN2c5), which is every natural stance with the real clips (they start with the back to the seat). The walk
 intent of IN2c4 is therefore not final: IN2c4b gives it the path followers' constant-deceleration arrival.
 
+**As built (IN2c4b + IN2c6, 2026-11-26).** The approach walk now brakes onto the enter's start pose: `walk()` commands
+`ArrivalParams::speed` (the path followers' profile, `min(cruise, sqrt(2 a (dist - coast)))`, one formula shared with
+`PathFollower` in `sf_controller/src/path.rs`), with the coast predicted from the body's sensed planar speed
+(`ArrivalParams::coast_distance`). When the plan reads zero, `ApproachState::stopping` latches: from then on the body
+faces the target yaw and the position command stays alive to take up drift, so it never walks off again (no
+circling). The braking numbers are the body's own: `sf_action_bevy` `step_params` fills `CharacterParams::arrival`
+and `halflife_velocity` each tick from `ActionBody::params` (the half-life the mover slows down with), so hosts copy
+nothing. Real mover, default numbers (`tests_seat.rs`): front, left (90 deg off) and behind (180 deg off) all sit,
+the enter starting 69 / 114 / 116 ticks after the press, feet error 0; rule numbers unchanged. Real data (IN2c6,
+`mw_exterior_bevy/src/sit_repro_tests.rs`, ignored, needs an install): the owner's three seats, 7 stances each, all
+21 end `Entered`, with an approach from every stance but the one already on the clip's start pose. Open (ledger
+IN2c4b): the turn starts where the latch fires (a look question), the timeout margin near `max_m` and for the sneak
+gait is not measured, the enter gate's ratio counts position only.
+
 ## As built (IN33a, 2026-11-26)
 
 `sf_interaction/src/door.rs` (+ `tests_door.rs`, 8 exact tests): the design of "Slot kinds" Door as pure functions.

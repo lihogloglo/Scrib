@@ -3,7 +3,9 @@
 //! (`mw_player_bevy::rules`), baked clips (`exterior::player_clips`), seat clip sets and furniture
 //! defs (`mw_interaction_bevy::load_defs`). Per seat and stance it prints the `SeatReport` steps the
 //! use reaches, whether the body ran the sit rules, and the enter warp's correction ratio computed
-//! from the clip the alias binds. It asserts only that every use ends in a terminal report.
+//! from the clip the alias binds. It asserts (`IN2c6`) that every stance sits: `Approaching` then
+//! `Entered` from every stance off the enter clip's start pose (A-E, G), `Entered` with no approach
+//! from that pose (F).
 #![allow(clippy::default_trait_access, reason = "empty tag and disabled lists: this crate has no smallvec dependency")]
 
 use std::sync::Arc;
@@ -337,7 +339,7 @@ fn stances(seat: &Seat) -> Vec<(&'static str, Vec3, f32)> {
 
 /// Whether `step` ends a use attempt (anything but the steps on the way).
 fn terminal(step: &SeatStep) -> bool {
-    !matches!(step, SeatStep::Asked | SeatStep::Held | SeatStep::Offered { .. })
+    !matches!(step, SeatStep::Asked | SeatStep::Held | SeatStep::Offered { .. } | SeatStep::Approaching)
 }
 
 /// `interact.sit.enter`'s `refuse_ratio` from the framework's seat rules text.
@@ -374,8 +376,8 @@ fn warp_line(real: &Real, seat: &Seat, slot: u8, side: Side, (feet, yaw): (Vec3,
     )
 }
 
-/// One stance's use: its line, and whether it ended in a terminal report.
-fn run(real: &Real, seat: &Seat, (name, feet, yaw): (&str, Vec3, f32)) -> (String, bool) {
+/// One stance's use: its line, and the seat steps it reported (none: no Sit prompt).
+fn run(real: &Real, seat: &Seat, (name, feet, yaw): (&str, Vec3, f32)) -> (String, Vec<SeatStep>) {
     let mut app = app(real, seat);
     let priority = app.world().resource::<InteractionSettings>().0.priority_player;
     let e = spawn(&mut app, feet, yaw, priority);
@@ -389,7 +391,7 @@ fn run(real: &Real, seat: &Seat, (name, feet, yaw): (&str, Vec3, f32)) -> (Strin
         }
     }
     let Some(command) = command else {
-        return (format!("{} {name}: the focus offers no verb (no Sit prompt)", seat.record), false);
+        return (format!("{} {name}: the focus offers no verb (no Sit prompt)", seat.record), Vec::new());
     };
     let body = app.world().get::<ActionBody>(e).expect("the body");
     let settled = (body.loco.position.to_f64().as_vec3(), yaw);
@@ -418,11 +420,12 @@ fn run(real: &Real, seat: &Seat, (name, feet, yaw): (&str, Vec3, f32)) -> (Strin
         ran(ENTER),
         ran(LOOP),
     );
-    (line, last.is_some())
+    let steps = steps.into_iter().cloned().collect();
+    (line, steps)
 }
 
 #[test]
-#[ignore = "measurement: needs a Morrowind install and the game's bake; which step a player's Sit reaches per stance"]
+#[ignore = "needs a Morrowind install and the game's bake; the player's Sit reaches Entered from every stance on the real seats"]
 fn sit_repro_real_seats_per_stance() {
     let Some(real) = load() else { return };
     let seat_clips: Vec<&str> = real.clips.slots.iter().map(|c| c.slot.as_str()).filter(|s| mw_player_bevy::is_seat_clip(s)).collect();
@@ -431,15 +434,18 @@ fn sit_repro_real_seats_per_stance() {
     for seat in &real.seats {
         print_seat(seat, &real);
     }
-    let mut silent = Vec::new();
+    let mut wrong = Vec::new();
     for seat in &real.seats {
         for stance in stances(seat) {
-            let (line, ended) = run(&real, seat, stance);
+            let (line, steps) = run(&real, seat, stance);
             println!("{line}");
-            if !ended {
-                silent.push(format!("{} {}", seat.record, stance.0));
+            // Stance F stands on the enter clip's start pose: the enter starts with no walk.
+            let walks = !stance.0.starts_with('F');
+            let approached = steps.contains(&SeatStep::Approaching);
+            if steps.last() != Some(&SeatStep::Entered) || approached != walks {
+                wrong.push(format!("{} {}: {steps:.2?}", seat.record, stance.0));
             }
         }
     }
-    assert!(silent.is_empty(), "uses that ended in no terminal seat report: {silent:?}");
+    assert!(wrong.is_empty(), "stances that did not sit, or sat without (F: with) an approach: {wrong:#?}");
 }

@@ -782,12 +782,24 @@ fn the_exit_alias_is_latched_while_the_stand_up_plays() {
 // --- The approach (IN2c5): the real mover walks to the enter clip's start -----------------------
 
 /// Frames (one fixed tick each) from the sit press to the first `Approaching` report, the first
-/// tick in the enter, and the `Entered` report.
+/// tick in the enter, and the `Entered` report; the body's planar distance to the enter's start
+/// pose (m) and its speed (m/s) on the arrival tick (the frame before the enter).
 #[derive(Debug, Default)]
 struct Timeline {
     approaching: Option<usize>,
     enter: Option<usize>,
     entered: Option<usize>,
+    arrival: Option<(f32, f32)>,
+}
+
+/// The approach target of the chair's enter (its start pose, yaw 0).
+const START_POSE: Vec3 = Vec3::new(0.1, 0.0, 0.1);
+
+/// The planar distance to [`START_POSE`] and the speed of `p`'s body.
+fn dist_speed(app: &App, p: Entity) -> (f32, f32) {
+    let loco = &app.world().get::<ActionBody>(p).unwrap().loco;
+    let feet = loco.position.to_f64().as_vec3();
+    (Vec2::new(feet.x - START_POSE.x, feet.z - START_POSE.z).length(), loco.motion.velocity.length())
 }
 
 fn has_step(app: &App, step: &SeatStep) -> bool {
@@ -804,12 +816,14 @@ fn approach(at: Vec3, yaw: f32, stick: Option<usize>, max: usize) -> (App, Entit
     app.world_mut().write_message(sit_command());
     let mut t = Timeline::default();
     for frame in 1..=max {
+        let before = dist_speed(&app, p);
         app.update();
         if t.approaching.is_none() && has_step(&app, &SeatStep::Approaching) {
             t.approaching = Some(frame);
         }
         if t.enter.is_none() && mov(&app, p) == RuleKey::of(ENTER) {
             t.enter = Some(frame);
+            t.arrival = Some(before);
         }
         if t.entered.is_none() && has_step(&app, &SeatStep::Entered) {
             t.entered = Some(frame);
@@ -831,12 +845,19 @@ fn approach(at: Vec3, yaw: f32, stick: Option<usize>, max: usize) -> (App, Entit
 
 /// The walk-and-sit asserts of the two approach tests; `yaw_off` is the offer's (rounded) yaw gap.
 fn walks_then_sits(name: &str, at: Vec3, yaw: f32, yaw_off: f32) {
+    let offered = SeatStep::Offered { entry: Some(Side::Front), feet_to_seat_m: 1.2, yaw_off };
+    sits_after(name, at, yaw, |s| *s == offered);
+}
+
+/// [`walks_then_sits`] with the `Offered` report judged by `offered`.
+fn sits_after(name: &str, at: Vec3, yaw: f32, offered: impl Fn(&SeatStep) -> bool) {
     let (app, p, t) = approach(at, yaw, None, 480);
     let feet = app.world().get::<ActionBody>(p).unwrap().loco.position.to_f64().as_vec3();
     let err = feet.distance(Vec3::new(0.1, 0.0, 0.6));
     println!("{name}: ticks from the press {t:?}, feet error {err:.5} m");
-    let offered = SeatStep::Offered { entry: Some(Side::Front), feet_to_seat_m: 1.2, yaw_off };
-    assert_eq!(steps(&app, player(), p), vec![SeatStep::Asked, offered, SeatStep::Approaching, SeatStep::Entered], "{name}");
+    let trail = steps(&app, player(), p);
+    let [SeatStep::Asked, o, SeatStep::Approaching, SeatStep::Entered] = trail.as_slice() else { panic!("{name}: {trail:?}") };
+    assert!(offered(o), "{name}: {o:?}");
     assert!(ever(&app, p, SIT_APPROACH), "{name}");
     assert!(ever(&app, p, ENTER), "{name}");
     assert_eq!(mov(&app, p), RuleKey::of(LOOP), "{name}");
@@ -852,36 +873,54 @@ fn a_sit_from_in_front_facing_the_seat_walks_then_sits() {
 }
 
 /// The seated body faces -Z, its left is -X: 1.2 m there is (-1.1, 0, 0.6), facing the seat (+X,
-/// yaw pi/2). Measured 2026-11-26: the approach ends in `ApproachTimeout`, the body never sits.
-/// Prints, every 10 ticks from the press, the planar distance to the approach target (the enter's
-/// start pose: (0.1, 0, 0.1), yaw 0), the yaw gap, the mover's speed and yaw rate, the move.
-/// Once it arrives, the asserts are `walks_then_sits("left", .., PI / 2.0, centi(PI / 2.0))`.
+/// yaw pi/2): the walk there is 90 deg off the enter's start yaw (`IN2c5`: timed out before `IN2c4b`).
 #[test]
-#[ignore = "measurement: IN2c5 the real mover does not arrive"]
 fn the_same_from_the_left_side() {
+    walks_then_sits("left", Vec3::new(-1.1, 0.0, 0.6), PI / 2.0, centi(PI / 2.0));
+}
+
+/// 1.2 m from the enter's start pose (0.1, 0, 0.1) on its +Z side: the walk (-Z) is 180 deg off its
+/// start yaw 0 (the real enter clips start with the back to the seat), so the body turns half a
+/// circle on the spot at the end. It starts facing +Z, not -Z: facing -Z there, the stand-in enter
+/// lands 0.2 m from the seat and starts at once (its correction ratio counts no yaw), no approach.
+/// No chair collider here: the walk crosses the seat's place.
+#[test]
+fn an_approach_from_behind_the_start_pose_turns_half_a_circle_then_sits() {
+    sits_after("behind", Vec3::new(0.1, 0.0, 1.3), 0.0, |s| matches!(s, SeatStep::Offered { entry: Some(Side::Front), .. }));
+}
+
+/// Prints, every `every` ticks from the press, the planar distance to the approach target (the
+/// enter's start pose, yaw 0), the yaw gap, the mover's speed and yaw rate, the move.
+fn print_approach(name: &str, at: Vec3, yaw: f32, every: usize) {
     let mut app = app();
-    let p = spawn_facing(&mut app, 1, Vec3::new(-1.1, 0.0, 0.6), PI / 2.0, player(), PLAYER, 30);
+    let p = spawn_facing(&mut app, 1, at, yaw, player(), PLAYER, 30);
     frames(&mut app, 10);
     app.world_mut().write_message(sit_command());
-    let target = Vec3::new(0.1, 0.0, 0.1);
     let names = [("loco", "loco"), (SIT_APPROACH, "approach"), (ENTER, "enter"), (LOOP, "loop")];
     for tick in 0..=240 {
-        if tick % 10 == 0 {
+        if tick % every == 0 {
+            let (dist, speed) = dist_speed(&app, p);
             let loco = &app.world().get::<ActionBody>(p).unwrap().loco;
             let feet = loco.position.to_f64().as_vec3();
-            let dist = Vec2::new(feet.x - target.x, feet.z - target.z).length();
             let gap = (loco.motion.yaw + PI).rem_euclid(TAU) - PI;
-            let speed = loco.motion.velocity.length();
             let m = mov(&app, p);
-            let name = names.iter().find(|(id, _)| RuleKey::of(id) == m).map_or("other", |(_, n)| *n);
+            let move_name = names.iter().find(|(id, _)| RuleKey::of(id) == m).map_or("other", |(_, n)| *n);
             println!(
-                "tick {tick:3}: dist {dist:.3} m, yaw gap {gap:+.3} rad, speed {speed:.3} m/s, yaw rate {:+.3} rad/s, feet ({:.3}, {:.3}), {name}",
+                "{name} tick {tick:3}: dist {dist:.3} m, yaw gap {gap:+.3} rad, speed {speed:.3} m/s, yaw rate {:+.3} rad/s, feet ({:.3}, {:.3}), {move_name}",
                 loco.motion.angular_velocity, feet.x, feet.z
             );
         }
         app.update();
     }
-    println!("trail {:?}", steps(&app, player(), p));
+    println!("{name} trail {:?}", steps(&app, player(), p));
+}
+
+#[test]
+#[ignore = "measurement: IN2c4b approach distance / yaw gap / speed per 10 ticks"]
+fn the_approach_measured_from_the_front_left_and_behind() {
+    print_approach("front", Vec3::new(0.1, 0.0, -0.6), 0.0, 10);
+    print_approach("left", Vec3::new(-1.1, 0.0, 0.6), PI / 2.0, 10);
+    print_approach("behind", Vec3::new(0.1, 0.0, 1.3), 0.0, 10);
 }
 
 #[test]

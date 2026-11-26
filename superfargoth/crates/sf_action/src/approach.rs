@@ -7,7 +7,7 @@
 use glam::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use sf_anim::RootPose;
-use sf_controller::{Gait, LocomotionIntent};
+use sf_controller::{ArrivalParams, Gait, LocomotionIntent};
 
 use crate::command::{ActionClass, Command};
 use crate::ids::{RuleKey, TICK_HZ, TargetId};
@@ -16,12 +16,17 @@ use crate::state::{ActionState, CharacterParams};
 use crate::step::{Refusal, Refused, SeatSense, Sense, StepCtx, with_root_path};
 
 /// The slot an approach walks to ([`ActionState::approach`]): kept while it runs, so the ticks
-/// after the offer need no new one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// after the offer need no new one; and its braking.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ApproachState {
     pub target: TargetId,
     /// The slot index on the target (`sf_interaction::SlotRef::slot`).
     pub slot: u8,
+    /// The body's sensed planar speed last tick, m/s: its change is the coast prediction's rate.
+    pub last_speed: f32,
+    /// The braking plan reached zero ([`sf_controller::ArrivalParams::speed`] `None`): from then on
+    /// the body faces the target's yaw and never walks off facing elsewhere again (no circling).
+    pub stopping: bool,
 }
 
 /// Why a running approach ends this tick.
@@ -118,7 +123,7 @@ pub(crate) fn on_start(r: &CompiledRule, sense: &Sense) -> Option<ApproachState>
     if !matches!(r.rule.owner, Owner::Approach { .. }) {
         return None;
     }
-    sense.seat.map(|s| ApproachState { target: s.target, slot: s.slot })
+    sense.seat.map(|s| ApproachState { target: s.target, slot: s.slot, last_speed: sense.planar_speed, stopping: false })
 }
 
 /// The sensed slot, if it is the one held.
@@ -146,31 +151,40 @@ pub(crate) fn running(ctx: &StepCtx<'_>, state: &ActionState, cur: Option<usize>
 }
 
 /// The walk intent while rule `cur` is a running approach: a walk-gait velocity straight at the
-/// target, facing the way it walks, capped so one tick never overshoots (speed <= distance / tick);
-/// within `arrive_m`, zero velocity and the target's yaw (the mover turns in place). Sneaking, the
-/// sneak gait. `None` when `cur` is not an approach or its slot is not sensed (it ends this tick).
-pub(crate) fn intent(ctx: &StepCtx<'_>, state: &ActionState, cur: Option<usize>, sense: &Sense, mode: Mode) -> Option<LocomotionIntent> {
+/// target that brakes into it like a path follower's stop ([`sf_controller::ArrivalParams::speed`],
+/// the body's coast predicted from its sensed speed), also capped so one tick never overshoots
+/// (speed <= distance / tick), facing the way it walks; once the plan reached zero, the target's
+/// yaw (the mover turns in place) while the position command stays alive. Sneaking, the sneak
+/// gait. `None` when `cur` is not an approach or its slot is not sensed (it ends this tick).
+pub(crate) fn intent(ctx: &StepCtx<'_>, state: &mut ActionState, cur: Option<usize>, sense: &Sense, mode: Mode) -> Option<LocomotionIntent> {
     let r = ctx.rules.at(cur?);
-    let Owner::Approach { arrive_m, .. } = r.rule.owner else { return None };
+    if !matches!(r.rule.owner, Owner::Approach { .. }) {
+        return None;
+    }
     let seat = held_seat(state.approach, sense)?;
     let gait = if mode == Mode::Sneak { Gait::Sneak } else { Gait::Walk };
     let still = LocomotionIntent { gait, ..LocomotionIntent::IDLE };
     let Some(t) = target(ctx, r, &seat) else { return Some(still) };
-    Some(walk(ctx.params, mode, gait, t, arrive_m))
+    let held = state.approach.as_mut()?;
+    Some(walk(ctx.params, mode, gait, t, sense.planar_speed, held))
 }
 
-/// [`intent`] towards `t` (relative to the feet).
-fn walk(p: &CharacterParams, mode: Mode, gait: Gait, t: RootPose, arrive_m: f32) -> LocomotionIntent {
-    let d = planar(t.position);
-    let dist = d.length();
-    if dist <= arrive_m {
-        return LocomotionIntent { desired_facing: Some(t.yaw), gait, ..LocomotionIntent::IDLE };
-    }
+/// [`intent`] towards `t` (relative to the feet), the body at `speed` (sensed, m/s).
+fn walk(p: &CharacterParams, mode: Mode, gait: Gait, t: RootPose, speed: f32, held: &mut ApproachState) -> LocomotionIntent {
     #[allow(clippy::cast_precision_loss)]
     let per_tick = TICK_HZ as f32;
-    let speed = (p.gaits.get(gait).forward * p.profile(mode).speed_scale).min(dist * per_tick);
-    let dir = d / dist;
-    LocomotionIntent { desired_velocity: Vec3::new(dir.x, 0.0, dir.y) * speed, desired_facing: Some(dir.x.atan2(dir.y)), gait }
+    let rate = (speed - held.last_speed) * per_tick;
+    held.last_speed = speed;
+    let to = planar(t.position);
+    let dist = to.length();
+    let coast = ArrivalParams::coast_distance(p.halflife_velocity, speed, rate);
+    let cruise = p.gaits.get(gait).forward * p.profile(mode).speed_scale;
+    let planned = p.arrival.speed(gait, cruise, dist, coast);
+    held.stopping |= planned.is_none();
+    let dir = to.normalize_or_zero();
+    let v = planned.map_or(0.0, |v| v.min(dist * per_tick));
+    let facing = if held.stopping { t.yaw } else { dir.x.atan2(dir.y) };
+    LocomotionIntent { desired_velocity: Vec3::new(dir.x, 0.0, dir.y) * v, desired_facing: Some(facing), gait }
 }
 
 /// After the chooser: an approach that was running and is over answers its offer once, unless it

@@ -304,6 +304,13 @@ type StepQuery = (
     Option<&'static ActionAliases>,
 );
 
+/// The character's numbers for one step: `params` with the braking of the body's own mover
+/// ([`MoverParams::arrival`], and the velocity half-life it slows down with from `speed`, m/s), so
+/// an approach predicts the coast of the body that walks, not of [`CharacterParams`]' defaults.
+fn step_params(params: &CharacterParams, mover: &MoverParams, speed: f32) -> CharacterParams {
+    CharacterParams { arrival: mover.arrival, halflife_velocity: mover.springs.halflife_for(speed, 0.0), ..*params }
+}
+
 #[allow(clippy::needless_pass_by_value)]
 fn step_actions<G: GroundProbe + Resource>(
     rules: Option<Res<ActionRules>>,
@@ -320,8 +327,9 @@ fn step_actions<G: GroundProbe + Resource>(
             Some(a) => a,
             None => base,
         };
-        let ctx = StepCtx { rules: &rules.rules, slots, params: &c.params, source: c.id };
         let v = body.loco.motion.velocity;
+        let params = step_params(&c.params, &body.params, Vec3::new(v.x, 0.0, v.z).length());
+        let ctx = StepCtx { rules: &rules.rules, slots, params: &params, source: c.id };
         // Only a jump or up press can start a traversal: probe then, not every tick.
         let wants = [ActionClass::Jump, ActionClass::Up].into_iter().any(|a| c.command.pressed(a) || c.command.held(a));
         let obstacle = match &ground {

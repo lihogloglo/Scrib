@@ -2,7 +2,7 @@
 //! action state"). With `sf_controller::Locomotion` it is the whole gameplay body.
 
 use serde::{Deserialize, Serialize};
-use sf_controller::{Gait, GaitSpeeds};
+use sf_controller::{ArrivalParams, Gait, GaitSpeeds, SpringParams};
 
 use crate::command::ClassSet;
 use crate::ids::{ClockTime, MovesetKey, RuleKey, TargetId, Tick};
@@ -232,6 +232,12 @@ pub struct CharacterParams {
     pub normal: ModeProfile,
     pub sneak: ModeProfile,
     pub free_run: ModeProfile,
+    /// The body mover's braking into a stop (`sf_controller::MoverParams::arrival`): an
+    /// [`crate::Owner::Approach`] walk brakes onto its target with it.
+    pub arrival: ArrivalParams,
+    /// The body mover's velocity half-life (`MoverParams::springs.halflife_velocity`), s: the
+    /// approach predicts how far the body still coasts with it.
+    pub halflife_velocity: f32,
 }
 
 impl Default for CharacterParams {
@@ -249,6 +255,8 @@ impl Default for CharacterParams {
             normal: ModeProfile::default(),
             sneak: ModeProfile::default(),
             free_run: ModeProfile::default(),
+            arrival: ArrivalParams::default(),
+            halflife_velocity: SpringParams::default().halflife_velocity,
         }
     }
 }

@@ -506,3 +506,23 @@ fn seat_clip_slots_without_aliases_refuse() {
     assert!(enter_slots.is_empty(), "entered: {enter_slots:?}");
     assert!(seen.1.iter().skip(10).all(|&k| k == RuleKey::of("loco")), "{:?}", seen.1);
 }
+
+/// `IN2c4b`: a step's character numbers carry the braking of the body's own mover, so an approach
+/// predicts the coast of the body that walks: its arrival numbers, and the half-life it slows
+/// down with (the brake half-life while it moves, the velocity one at rest). The rest is the
+/// character's.
+#[test]
+fn a_step_takes_its_braking_numbers_from_the_bodys_mover() {
+    let character = CharacterParams { gravity: 18.0, ..CharacterParams::default() };
+    let mut mover = MoverParams::default();
+    mover.arrival.walk_deceleration = 9.0;
+    mover.springs.halflife_velocity = 0.07;
+    mover.springs.halflife_brake = Some(0.05);
+    let moving = step_params(&character, &mover, 1.5);
+    assert_eq!(moving.arrival, mover.arrival);
+    assert_eq!(moving.halflife_velocity.to_bits(), 0.05_f32.to_bits());
+    assert_eq!(step_params(&character, &mover, 0.0).halflife_velocity.to_bits(), 0.07_f32.to_bits());
+    mover.springs.halflife_brake = None;
+    assert_eq!(step_params(&character, &mover, 1.5).halflife_velocity.to_bits(), 0.07_f32.to_bits());
+    assert_eq!(moving, CharacterParams { arrival: mover.arrival, halflife_velocity: 0.05, ..character });
+}

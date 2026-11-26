@@ -49,6 +49,25 @@ impl ArrivalParams {
             Gait::Run | Gait::Sprint => self.run_deceleration,
         }
     }
+
+    /// The commanded speed `dist` meters before a stop, for a body that
+    /// would still coast `coast` meters with the command at zero
+    /// ([`Self::coast_distance`]): `min(cruise, sqrt(2·a·(dist − coast)))`
+    /// at `gait`'s deceleration. `None` below `cutoff_speed`: the plan is
+    /// at zero, the body coasts to rest (no creep).
+    pub fn speed(&self, gait: Gait, cruise: f32, dist: f32, coast: f32) -> Option<f32> {
+        let room = (dist - coast).max(0.0);
+        let v = cruise.min((2.0 * self.deceleration(gait) * room).sqrt());
+        (v >= self.cutoff_speed).then_some(v)
+    }
+
+    /// How far a velocity spring of half-life `halflife_velocity` (s) still
+    /// carries a body at `speed` (m/s, its rate `accel` m/s²) once the
+    /// command drops to zero, meters.
+    pub fn coast_distance(halflife_velocity: f32, speed: f32, accel: f32) -> f32 {
+        let y = halflife_to_damping(halflife_velocity) / 2.0;
+        (2.0 * speed / y + accel / (y * y)).max(0.0)
+    }
 }
 
 /// One waypoint.
@@ -181,8 +200,7 @@ impl PathFollower {
     /// How far the mover's velocity spring still carries the walker if the
     /// command dropped to zero now, meters.
     fn coast_distance(&self) -> f32 {
-        let y = halflife_to_damping(self.halflife_velocity) / 2.0;
-        (2.0 * self.plan_speed / y + self.plan_accel / (y * y)).max(0.0)
+        ArrivalParams::coast_distance(self.halflife_velocity, self.plan_speed, self.plan_accel)
     }
 
     /// The commanded speed `dist` meters before a stop node.
@@ -190,13 +208,9 @@ impl PathFollower {
         if self.stopping {
             return 0.0;
         }
-        let room = (dist - self.coast_distance()).max(0.0);
-        let v = self.speed.min((2.0 * self.arrival.deceleration(self.gait) * room).sqrt());
-        if v < self.arrival.cutoff_speed {
-            self.stopping = true;
-            return 0.0;
-        }
-        v
+        let v = self.arrival.speed(self.gait, self.speed, dist, self.coast_distance());
+        self.stopping = v.is_none();
+        v.unwrap_or(0.0)
     }
 
     pub fn target(&self) -> usize {

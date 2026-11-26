@@ -56,10 +56,13 @@ the camera follows the drawn body at frame rate and never feeds gameplay.
   walks the body to the enter clip's start pose (slot frame minus the clip's whole root travel), turns it in place,
   then `ExitOn::Arrived` chains into `interact.sit.enter`. Stick, Jump, 3 s or a target past 2.5 m end it with one
   `SeatRefused` (`ApproachCancelled | ApproachTimeout | ApproachTooFar`); numbers are rule data in `seat_rules.ron`.
-  The seat shell reports it as `SeatStep::Approaching` (game log `seat: player walks to ..`, IN2c5). **Known gap
-  (IN2c5, measured with the real mover):** the walk does not brake and faces its walk direction, so it arrives only
-  when that direction already is the target yaw; otherwise it overshoots, circles and ends in `ApproachTimeout`
-  (every natural stance with the real seat clips). Fix queued as IN2c4b (ledger interaction, IN2c5 line).
+  The seat shell reports it as `SeatStep::Approaching` (game log `seat: player walks to ..`, IN2c5). **The walk
+  brakes like a path follower** (IN2c4b): `walk()` commands `ArrivalParams::speed` (`sf_controller/src/path.rs`,
+  shared with `PathFollower`: `min(cruise, sqrt(2 a (dist - coast)))`), the coast predicted from the body's sensed
+  planar speed; when the plan reads zero, `ApproachState::stopping` latches, the body faces the target yaw and the
+  position command stays alive (no circling). The braking numbers are the body's mover's: `step_params`
+  (`sf_action_bevy/src/lib.rs`) fills `CharacterParams::arrival` and `halflife_velocity` each tick from
+  `ActionBody::params`. Real seats, real clips: every stance sits (`mw_exterior_bevy/src/sit_repro_tests.rs`, ignored).
 - **Slot aliases and seats** (AN26c): a rule names fixed slots (`interact.sit.enter|loop|exit`, `SEAT_RULES`); a character's
   `ActionAliases` (`sf_action_bevy/src/lib.rs:136`, `sf_action::SlotAliases` in `sf_action/src/alias.rs`) maps a rule slot to the clip
   slot to time and warp with (`Aliased` source in `step_actions`); `ActionOutput::slot` stays the rule's. The seat binder
