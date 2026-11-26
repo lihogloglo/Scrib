@@ -10,10 +10,12 @@
 //! `directive_drive`: the stack's serving directive drives the routine (`MA2d2`: `StayNear`, `GoTo`).
 //! `script_ai`: `MWScript` AI pushes onto the stacks and the reads' [`crate::script_ai::AiRuns`] (`MA2c2`).
 //! `head_track`: NPCs turn their heads to the player, `OpenMW`'s head tracking (`AN8b`).
+//! `in_view`: the tier allocator's `AiInView` from each player's `AiViewer` frustum (`MA20a`).
 
 pub mod directive_drive;
 pub mod directives;
 pub mod head_track;
+pub mod in_view;
 pub mod light_inputs;
 pub mod nav;
 pub mod noise_emitters;

@@ -455,6 +455,14 @@ returns to the anchor. Curious = face the stimulus; Suspicious walks one `react_
 it (no creep). Tunables `ai.perception.react_{step_m,retarget_m,hold_s,face_delay_s}` bound into
 `AiPerceptionSettings.react` (`sf_ai_bevy/src/perception.rs`). A Curious wanderer now stops to look.
 
+As built (MA20a, 2026-11-26): `mw_walkers_bevy/src/in_view.rs` writes the allocator's `AiInView` (FixedUpdate, before
+`AiAllocSystems::Allocate`, insert/remove on change) on every awake `AiActor` + `Mover` whose bounding sphere is inside
+any `AiViewer`'s frustum widened by `mw.ai.view.margin_m` (2 m) and within `mw.ai.view.max_m` (60 m, past sight's lose
+range; Guess). `AiViewer` (eye, rotation, vertical FOV, aspect: MassLOD viewer info) is gameplay data on the player's
+character: the host body's from `PlayerCamera::pose` + `Projection`; a remote player's later from its replicated look;
+never `ViewVisibility`. `sees` / `seen_by_any` / `AiViewers` are public for AI12 (unseen by every player). MA20b adds
+the dialogue pin from `mw_rpg_bevy`.
+
 ## Open questions
 
 None open. Decided 2026-11-08 (owner-delegated; `superfargoth/docs/research/ai-nav-decisions-2026-11-08.md` (e), (f),
