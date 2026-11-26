@@ -341,6 +341,8 @@ Front, a missing tier to the next lower.
 - **Knockdown / Death**: a forced move with `Owner::Physics`: `sf_action` emits `PhysicsTakeover { impulse, point }` and
   holds the move until the shell's hand-back; invulnerable while down, a roll-out window on the get-up. The content routes it
   to its ragdoll (Bevyrrowind: walkers' powered ragdoll or Delirium, combat-adapter.md).
+- **Physics tint**: a Medium reaction may add a Stagger tint over its clip (the clip stays the move and the fallback);
+  Large ends a running tint; Knockdown/Death promote it to the takeover: [physics-tint.md](physics-tint.md) "Hits".
 
 ## Animation integration
 
