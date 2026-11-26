@@ -352,26 +352,9 @@ serde round trip of `HitClaim` and `ClaimRefused`.
 
 ## Crate decision (N1 spike)
 
-Setup: two processes on one machine and on two machines on a LAN, an `sf_level` test level
-(`flat-slopes`, `ledges`), one capsule per player driven by commands on the fixed tick, 20 NPC
-capsules on the host. Link conditioning at 100 ms RTT, 20 ms jitter, 1 % loss. Candidates:
-**lightyear** (on replicon), and **replicon + a transport (renet2 or quinnet) + our own one-entity
-rollback**. Criteria, in order:
-
-1. **Bevy version lag**: on the Bevy we use at N1, and its history of lag (lightyear: 3-9 days, 11+
-   for 0.20 at R12 time).
-2. **Listen-server (host-client) quality**: the host plays at full quality with no self-network
-   loop costs.
-3. **Prediction of a non-Avian kinematic mover and move state**: our `rapier3d`-direct mover and
-   `ActionState`, replayed N ticks in one frame; no Avian dependency pulled in.
-4. **Build cost** (§8b): clean build delta and incremental rebuild of `sf_net` against the gates.
-5. **Bandwidth**: within the target above for 4 players and about 200 NPCs (extrapolated).
-6. **Transports**: UDP direct IP/LAN now (owner), a Steam path later (lightyear via aeronet;
-   renet2_steam), MIT/Apache.
-7. **Maintenance**: release cadence, open prediction bugs (R12 noted lightyear #1780).
-
-Decision rule: lightyear if it passes 1-4; otherwise replicon + transport + our own rollback for
-the one predicted entity. The pick and its numbers go in ARCHITECTURE.md §10.
+Spike pending: lightyear (on replicon) versus replicon + a transport (renet2 or quinnet) + our own one-entity rollback.
+Rule: lightyear if it passes Bevy lag, listen-server quality, non-Avian prediction and build cost; otherwise the second.
+Criteria, setup and link conditioning: [history](archive/net-history.md#crate-decision-n1-spike-moved-2026-11-26).
 
 Moved to [history](archive/net-history.md#industry-comparison).
 
