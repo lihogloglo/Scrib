@@ -281,3 +281,5 @@ Rows, depends and verification: combat roadmap Stage 5 and C14 in Stage 6.
 4. Magnitude falloff for area effects: needs an `Inflict` scale in `sf_effects` (E5), not taken by default (OpenMW).
 5. Which Morrowind spells are "big" (rooted), ammo recovery chance, bolt speeds per school: C0d (combat-adapter.md).
 6. Host fast-forward of client-fired projectiles and its cap: C0e (net.md "Hit authority").
+   Answered 2026-11-26 (C0e): fast-forward by the client's half RTT, capped at `net.combat.projectile_ff_max_ms` (150 ms,
+   Guess); net.md "Hit authority".

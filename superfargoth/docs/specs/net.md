@@ -127,7 +127,7 @@ simulates ahead and the host corrects. "Local" = each machine computes its own, 
 | Held item (carry) | predicted with its holder (kinematic in holder space) | simulate own | holder's snapshot + item id |
 | Thrown item | host after confirm | thrower pre-spawns, hands over on confirm | request up, body state down |
 | NPC AI, perception, threat, dialogue targets, NPC moves | host | interpolate | snapshot: `WorldPos`, facing, move id, start tick, clock rate, locomotion values, health, equipment |
-| Hits, damage, reactions, deaths, status effects | host | play reactions when the host event arrives (attacker side may predict hit-stop, then confirm) | events |
+| Hits, damage, reactions, deaths, status effects | host (player melee contacts are attacker-claimed, host-checked: "Hit authority") | claim own melee touches, predict own hit-stop; play reactions when the host event arrives | claims up; events down |
 | Dynamic props, debris, ragdolls, buoyancy | host (Rapier) | interpolate, never roll back | body state (`WorldPos`, rotation, velocity, asleep); ragdolls: per-body poses at a reduced rate |
 | Spawn, despawn, enable/disable, placement overlay | host | apply | overlay deltas per cell; live spawns |
 | Doors, levers, locks, seat and interaction claims, paired starts (`grab_check`) | host | request; predicted wind-up only | request/reply + state |
@@ -200,16 +200,64 @@ simulates ahead and the host corrects. "Local" = each machine computes its own, 
 
 ## Hit authority and lag compensation
 
-- The host decides every hit (R12 §3).
-- **Player → NPC**: the host tests the attacker's weapon socket track (baked, at the command tick)
-  against NPC hit shapes rewound to what that client saw: a ring buffer of each NPC's (`WorldPos`,
-  facing, move id, clock) per tick, about 250 ms deep. Hit shapes come from baked tracks too, so
-  rewinding stores state, not poses.
-- **NPC → player**: favour the defender. The host honours a dodge, parry or guard that the client
-  started at an earlier command tick, within a cap of about 150 ms.
-- **Player → player**: friendly fire is a world setting, off by default.
-- Hit-stop and reactions are presentation, applied when the host's hit event arrives (or predicted
-  on the attacker's side and confirmed).
+Adopted 2026-11-26 (combat decision 15, spec slice C0e; built in combat C7, net N4): **attacker-claimed hits with a host
+plausibility check** for player melee, host sweeps for the rest. The N0 rewind-first design is in the
+[archive](archive/net-history.md#hit-authority-n0-replaced-2026-11-26-by-c0e); its rewind buffer is the fallback below.
+
+- **Player melee: claimed.** The attacking client sweeps (combat.md "The per-tick pipeline" 5-6) on its own predicted
+  state against defenders as it sees them and sends each first touch on that tick's command packet (re-sent with the
+  unacked ones): `HitClaim { tick, attacker: PlayerId, defender (stable id), swing (move start tick), move_key, hit_row,
+  point (attacker-relative), region }`. The client predicts
+  only hit-stop and spark (combat.md open question 1); damage, reactions and deaths wait for the host.
+- **Host check**, run when the host applies that player's command for `tick` (a later claim, within
+  `claim_window_ms`, reads a short history of that player's move, swing, windows and root pose): (1) the tick is
+  within the window; (2) on the host's state of that player, `move_key` and `swing` are the running move and `hit_row` is
+  open at `tick`; (3) `point` lies within `reach_slack_m` of the host's weapon segment and within `range_slack_m` of the
+  defender's host hurt shapes, and the attacker-to-defender bearing within `angle_slack_deg` of the claim's; (4) it is the
+  first claim of `(attacker, swing, hit_row, defender)`, combat.md's per-pair rule; (5) the defender has no `IFrames` for
+  the row's flags at any host tick in `tick ± iframe_slack_ms` (doubt favours the defender). Pass: the host fills
+  `defender_state` (guard, parry, critical) from its own state, applies friendly fire (combat-delivery.md "Friendly
+  fire"; co-op switch off by default: player-on-player claims drop), runs `rules.resolve_contact`, applies the `Outcome`
+  and the attacker's hit-stop at `tick` (an accepted claim never corrects) and broadcasts it. Fail:
+  `ClaimRefused { tick, swing, hit_row, defender, reason }`; the predicted hit-stop reconciles like any misprediction
+  ("Prediction"); refusals counted per reason.
+- **NPC → player: host sweep, defender favoured.** An NPC contact on a player at host tick H waits that player's view
+  lag (half RTT + interpolation delay), capped at `defend_favour_ms`, and resolves against the player's state at H plus
+  that lag: a dodge, guard or parry started in answer to the swing they saw counts. (PvE: only the human can be
+  treated unfairly.) NPC → NPC and environment contacts: host, no wait.
+- **Projectiles: host entities, fast-forwarded.** A client's release command spawns the projectile on the host from its
+  release state at the command tick (origin, aim, strength), advanced at once by that client's half RTT capped at
+  `projectile_ff_max_ms`, each skipped tick swept against current host state; past the cap the shot starts late instead
+  of reaching further back. Client copies: combat-delivery.md "Net / co-op". Beams, areas and touch casts
+  start on the host when the command arrives; NPC shots are never fast-forwarded.
+- **Host state only:** pools, poise, buildup, tokens (combat-npc.md `TokenBook`), criticals, reactions, deaths, fates.
+- **Rewind fallback** (`net.combat.rewind`, off). Only if C7 measures the slacks refusing fair hits or
+  accepting visible misses. Check (3) then becomes an exact re-sweep of the claimed segment against the defender
+  rewound to what that client saw: a ring buffer of each NPC's (`WorldPos`, facing, move id, clock) per tick,
+  `rewind_depth_ms` deep. Hit shapes come from baked tracks too, so rewinding stores state, not poses.
+- **Cheating stance.** PvE co-op among friends; anti-cheat is a non-goal ("Goal"). The checks stop desync and obvious
+  cheats (reach, wrong move, repeats), not a determined cheater. PvP would need host sweeps with rewind (note only).
+
+**Tunables** (`net.combat.*`, net `Gameplay`, host settings; all `Guess` until C7 measures them under the N1 link
+conditioning): `.claim_window_ms` (ms, 0-250, 100), `.reach_slack_m` (m, 0-0.3, 0.05: the attacker's state is the host's
+own), `.range_slack_m` (m, 0-2, 0.75: about 150 ms of view lag at a 5 m/s run), `.angle_slack_deg` (deg, 0-90, 30),
+`.iframe_slack_ms` (ms, 0-100, 50), `.defend_favour_ms` (ms, 0-250, 150: R12's cap, kept), `.projectile_ff_max_ms` (ms,
+0-250, 150), `.rewind` (bool, false), `.rewind_depth_ms` (ms, 100-500, 250).
+
+Industry comparison (FromSoft, Destiny/Warframe, Overwatch, Source): [archive](archive/net-history.md#industry-comparison).
+
+**Reuse.** Bevy 0.20: nothing for hits. `lightyear` 0.31.0 (2026-10-21, Bevy 0.20): lag compensation only in
+`lightyear_avian3d` (`LagCompensationHistory`, `LagCompensationSpatialQuery` over Avian colliders), unusable with our
+Rapier-direct mover and baked-track hit shapes. `bevy_replicon` 0.45.8 (2026-11-24, Bevy 0.20): replication only, no
+rewind. So `HitClaim` and a pure `check_claim(history, claim, slacks) -> Result<(), Refusal>` in `sf_combat` are ours.
+
+**Tests (C7).** `check_claim` exact cases: on time accepts; late tick (`Late`), wrong move id or swing
+(`NotRunning`), row closed (`Window`), defender beyond the range slack (`Range`), bearing off (`Angle`), a second claim of
+the same (swing, row, defender) (`Duplicate`, while the next row accepts), defender rolling (`IFramed`), player defender
+with the co-op switch off (`Friendly`). Defender favour: a dodge inside the lag window i-frames the hit, one past the cap
+does not. Fast-forward: the host shot equals a spawn at the client tick advanced k ticks; the cap clamps k. Replay
+determinism: the same command and claim streams, arrival shuffled within a tick, give identical `Outcome`s and pools;
+serde round trip of `HitClaim` and `ClaimRefused`.
 
 ## Multi-region host simulation
 
@@ -337,7 +385,7 @@ Each slice is 1-2 steps, verified and committed before the next (R12 §4 outline
 | N1 | after M6 | crate spike (above) | crate picked, §10 entry |
 | N2 | after M6 | `sf_net`: host/join over UDP (direct IP, LAN discovery), handshake, `PlayerId`, remote players interpolated, net counters | 2 players walk Balmora together |
 | N3 | after M6 | predicted locomotion, jump, swim; reconciliation; net debug overlay | no visible correction at 100 ms RTT |
-| N4 | after M6 | predicted actions (attacks, dodge, traversal with warps); host hit authority, lag compensation; host spawn ids | two players fight one NPC; mantles stay correct |
+| N4 | after M6 | predicted actions (attacks, dodge, traversal with warps); attacker-claimed hits with host checks, projectile fast-forward (combat C7); host spawn ids | two players fight one NPC; mantles stay correct |
 | N5 | after M6 | multi-region host, physics regions, interest management, overlay per cell, props, carry and throw, ragdolls | players 5 km apart, host frame within budget |
 | N6 | after M7 | host-only MWScript and Lua with the context player; routed MessageBox and dialogue; container and barter requests; per-player menus | a scripted main-quest chain completes in co-op |
 | N7 | after M7 | host world save + per-player character, join in progress, reconnect, clock, rest vote | save, quit, resume with a guest |

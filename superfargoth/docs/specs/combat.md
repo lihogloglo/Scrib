@@ -328,8 +328,9 @@ Front, a missing tier to the next lower.
 
 ## Co-op
 
-Host-authoritative (action.md "Co-op readiness"). Client-predicted: own move starts, clocks, stamina costs, i-frames. Host
-only: sweeps, contacts, rules, pools, reactions, deaths, lock validity. `FightState` replicates beside `ActionState`.
+Host-authoritative (action.md "Co-op readiness"). Client-predicted: own move starts, clocks, stamina costs, i-frames, own
+hit-stop. Own melee contacts are claimed by the attacking client and checked by the host; host only: NPC sweeps, rules,
+pools, reactions, deaths, lock validity. `FightState` replicates beside `ActionState`.
 Poise, parry, criticals, buildup and push credit are host state. Hit authority: net.md "Hit authority" (C0e, decision 15).
 
 ## Tests
@@ -387,6 +388,7 @@ Built: C1a, C1b, C1c parts 1-4, C4 soft aim, C4b, C2a, C2b. As built, tests and 
 ## Open questions
 
 1. Co-op hit-stop on a client's own attacker: wait for the host's `HitLanded`, or predict? Decide at C7.
+   Answered 2026-11-26 (C0e): predicted from the client's own claim; net.md "Hit authority".
 2. Clips for heavy, charged, stagger tiers by side, guard-hit recoil (C2b: none; a guard walk too), backstep, running and jump
    attacks are missing from the free packs (R1 §5): buy a pack, prototype with Mixamo, or use the content's own clips? Needed by C2/C3, not C1.
    Answered 2026-11-26 (decision 6): Morrowind's own clips; missing moves as key-pose clips (AN37).

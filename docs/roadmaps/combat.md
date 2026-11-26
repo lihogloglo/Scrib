@@ -116,7 +116,7 @@ Each stage ends in something the player can use. Owner checks run in `level-spar
 | C0b | `combat-npc.md` (new spec, split from combat.md): tokens, picker table, skill, telegraph lint, threat cues, duelist, creatures; AI15 boundary, `unaware` feed | docs | C-R1 | doccheck; done 2026-11-26 |
 | C0c | `combat-delivery.md` (new spec, split from combat.md): projectile/beam/area sources, aim modes, cast slot, `EffectRequest::Launch` contract | docs | C0a | doccheck; done 2026-11-26 |
 | C0d | combat-adapter.md: weapon/armour → poise, damage types, resistances; 2H/spear/fist sheets; marksman; creature rigs | docs | C0a, AN32 | doccheck; done 2026-11-26 (windows wait for AN32/AN33) |
-| C0e | net.md "Hit authority": attacker-claimed + plausibility default, rewind as fallback | docs | C0a | doccheck |
+| C0e | net.md "Hit authority": attacker-claimed + plausibility default, rewind as fallback | docs | C0a | doccheck; done 2026-11-26 |
 | C-R1 | Research (Sonnet): Veloren `common/src/combat.rs` + `server/agent` (poise, tactics), licence headers; Bevy 0.20 check | research | - | `combat-veloren.md`, ledger line; done 2026-11-26 |
 
 ### Stage 1: the sword fight feels right on Morrowind clips

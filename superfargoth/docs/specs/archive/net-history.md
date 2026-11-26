@@ -10,6 +10,10 @@ Moved out of [net.md](../net.md) on 2026-10-26 to keep the spec under the doc bu
 | Prediction | Overwatch: local player only, fixed-tick commands, rollback; UE CMC saved moves; Unity Netcode prediction | own character only, fixed tick, replay unacked commands | **match** |
 | Interpolation | Source: ~100 ms interpolation of remote entities; lightyear hermite with velocities | ~100 ms, tuned in N3 | **match** |
 | Lag compensation | Source: rewind hitboxes to the shooter's view; Overwatch: favour the shooter with limits | rewind NPCs for player attacks; favour the defender for NPC attacks within 150 ms | **match**, defender side tuned for co-op |
+| FromSoft co-op (DS, ER) | P2P with a host; the attacker's game detects its hits [M: community reports, no official source]; victims report hits through their own roll | attacker detects, host checks | match; **ahead** on checks and defender favour |
+| Destiny, Warframe | client-authoritative damage for the player's own attacks, host/server sanity checks [M] | same, plus move id and once-per-swing | match |
+| Overwatch | favour the shooter: server rewinds hitboxes to the shooter's view within limits; projectiles on the server [M, Ford GDC 2017] | rewind as fallback; capped projectile fast-forward | match for PvE; behind for PvP (non-goal) |
+| Source engine | server rewinds hitboxes by the client's latency + interpolation (Valve "Lag Compensation") | fallback is the same design | match (fallback) |
 | Networked animation | UE: animation not replicated; montage root motion predicted | move id + clock replicated; pose rebuilt locally | **match** |
 | Interest management | UE replication graph / net relevancy; replicon visibility | worldspace + distance; overlay per streamed cell | **match** |
 | Progression | Enshrouded: world progress + personal character; Skyrim Together: one quest owner | Enshrouded model (owner) | **match** |
@@ -72,3 +76,33 @@ bake-adapter.md, animation-sources.md.
    modal message boxes) needs the context-player rules (N6), TES3MP's main pain; scripting.md's Lua
    API has the same `world.player()` singleton.
 
+
+## Hit authority (N0, replaced 2026-11-26 by C0e)
+
+net.md "Hit authority and lag compensation" before combat decision 15 (attacker-claimed hits, host plausibility check). The rewind buffer survives there as a fallback.
+
+- The host decides every hit (R12 §3).
+- **Player → NPC**: the host tests the attacker's weapon socket track (baked, at the command tick)
+  against NPC hit shapes rewound to what that client saw: a ring buffer of each NPC's (`WorldPos`,
+  facing, move id, clock) per tick, about 250 ms deep. Hit shapes come from baked tracks too, so
+  rewinding stores state, not poses.
+- **NPC → player**: favour the defender. The host honours a dodge, parry or guard that the client
+  started at an earlier command tick, within a cap of about 150 ms.
+- **Player → player**: friendly fire is a world setting, off by default.
+- Hit-stop and reactions are presentation, applied when the host's hit event arrives (or predicted
+  on the attacker's side and confirmed).
+
+Replaced rows (net.md "Ownership per system", "Milestone"):
+
+| System / state | Owner | Clients | On the wire |
+|---|---|---|---|
+| Hits, damage, reactions, deaths, status effects | host | play reactions when the host event arrives (attacker side may predict hit-stop, then confirm) | events |
+
+| Slice | When | Content | Done when |
+|---|---|---|---|
+| N4 | after M6 | predicted actions (attacks, dodge, traversal with warps); host hit authority, lag compensation; host spawn ids | two players fight one NPC; mantles stay correct |
+
+Replaced in combat.md "Co-op" (C0e):
+
+Host-authoritative (action.md "Co-op readiness"). Client-predicted: own move starts, clocks, stamina costs, i-frames. Host
+only: sweeps, contacts, rules, pools, reactions, deaths, lock validity. `FightState` replicates beside `ActionState`.
