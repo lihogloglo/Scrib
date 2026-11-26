@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 use crate::clip::{RAW, RotTrack, VecChannel, VecTrack, rebuild};
 use crate::distance::{DistanceRules, apply_distance};
 use crate::loop_cut::{LoopCut, LoopCutError, LoopCutRules};
+use crate::mirror::MirrorRules;
 use crate::pelvis_fit::{FitPlan, FitRig, PelvisFit, PelvisFitError, PelvisFitStats, fit_pose, pelvis_height};
 use crate::source::BoundSource;
 use crate::{
@@ -257,6 +258,13 @@ pub struct ClipRules {
     /// as before and the bake key doesn't change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pelvis_fit: Option<PelvisFit>,
+    /// Cook the clip mirrored (`mirror.rs`): a left-side take played as the
+    /// right-side one. Applied on the target rig only, after the root track
+    /// and the pelvis fit ([`crate::Retargeter::clip_post`]), with the target
+    /// profile's mirror pairs; [`cook_clip_report`] ignores it. Absent: the
+    /// clip cooks as before and the bake key doesn't change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mirror: Option<MirrorRules>,
 }
 
 impl ClipRules {

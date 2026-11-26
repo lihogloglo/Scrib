@@ -420,8 +420,7 @@ impl Compiler<'_> {
             pairs[usize::from(ja)] = jb;
             pairs[usize::from(jb)] = ja;
         }
-        let corrections = crate::mirror::corrections(self.skeleton, &pairs, spec.axis);
-        self.out.mirror = Some(MirrorTable { axis: spec.axis, pairs, corrections });
+        self.out.mirror = Some(MirrorTable::new(self.skeleton, pairs, spec.axis));
         Ok(())
     }
 

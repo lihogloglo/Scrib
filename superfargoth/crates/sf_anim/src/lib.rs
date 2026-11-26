@@ -33,6 +33,7 @@ pub mod ik;
 mod import;
 mod loop_cut;
 mod math;
+pub mod mirror;
 mod pelvis_fit;
 mod pose;
 mod retarget;
@@ -67,12 +68,13 @@ pub use ik::LimbSolver;
 pub use import::{Axis, SourceSpace, SpaceConverter, detect_root_motion_joint};
 pub use loop_cut::{LoopCut, LoopCutError, LoopCutRules};
 pub use math::{Trs, angle_between, nlerp, twist_angle};
+pub use mirror::{MirrorError, MirrorRules, MirrorTable, mirror_frame_clip};
 pub use pelvis_fit::{FitLeg, FitRig, HubEnd, PelvisFit, PelvisFitError, PelvisFitStats, STILL_M, fit_frame_clip};
 pub use pose::{
     BlendLayer, JointWeights, LocalPose, ModelPose, SoaTrs, apply_additive, blend, blend_in_place, blend_layers, local_to_model, make_additive,
     update_subtree,
 };
-pub use retarget::{RetargetChain, RetargetError, RetargetPair, RetargetRig, Retargeter, retarget_clip};
+pub use retarget::{PostReport, RetargetChain, RetargetError, RetargetPair, RetargetRig, Retargeter, retarget_clip};
 pub use rig::{
     Chain, FootSpec, Girdle, LegKind, Limb, LimbDesc, LimbHint, LimbKind, Measures, NeckHead, PoleHint, ProfileParts, RIG_PROFILE_FORMAT, RigError,
     RigHints, RigProfile, RigTemplate, Side, detect_profile,
@@ -152,6 +154,8 @@ mod fbik_tests;
 mod import_tests;
 #[cfg(test)]
 mod loop_cut_tests;
+#[cfg(test)]
+mod mirror_tests;
 #[cfg(test)]
 mod pelvis_fit_tests;
 #[cfg(test)]

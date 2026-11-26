@@ -11,7 +11,7 @@ use sf_anim::ik::FullBody;
 use sf_anim::{JointWeights, LimbSolver, RootMotionMode, SkeletonId};
 use sf_bake::ProductKey;
 
-use crate::asset::{Axis, BodyFit, FootGuards, GradeLean, GradeStride, LayerMode, SyncRole};
+use crate::asset::{BodyFit, FootGuards, GradeLean, GradeStride, LayerMode, SyncRole};
 
 /// A compiled number: constant or a parameter component.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -569,15 +569,8 @@ pub struct OpEntry {
     pub max_lod: u8,
 }
 
-/// Mirror data: per joint, its counterpart and the correction that maps
-/// the counterpart's reflected model transform back onto this joint's
-/// frame (so the rest pose mirrors onto itself).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MirrorTable {
-    pub axis: Axis,
-    pub pairs: Vec<u16>,
-    pub corrections: Vec<Affine3A>,
-}
+/// Mirror data (`sf_anim::mirror`, shared with the cook's mirror rule).
+pub use sf_anim::mirror::MirrorTable;
 
 /// A compiled graph.
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -50,7 +50,11 @@ use serde::{Deserialize, Serialize};
 use crate::cook::{ancestors, extract_root_motion, model_of, root_meta};
 use crate::ik::{LimbGoal, LimbSolver, bend_weight, solve_limb};
 use crate::math::{affine_rotation, nlerp, twist_angle};
-use crate::{Clip, CookError, CookSettings, FrameClip, LocalPose, ModelPose, RootMotionRules, Skeleton, Trs, cook_frames};
+use crate::mirror::{MirrorError, mirror_frame_clip};
+use crate::{
+    Clip, ClipRules, CookError, CookSettings, FrameClip, LocalPose, ModelPose, PelvisFitError, PelvisFitStats, RigProfile, RootMotionRules, Skeleton, Trs,
+    cook_frames,
+};
 
 /// One named joint chain of a rig, root first.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -97,6 +101,15 @@ pub struct RetargetPair {
     pub source: (usize, usize),
     /// Weight of `source.1`.
     pub alpha: f32,
+}
+
+/// What [`Retargeter::clip_post`] did besides cooking: per rule, its
+/// result or why it was not applied (the clip is then cooked without it).
+/// `None` without the rule.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PostReport {
+    pub pelvis_fit: Option<Result<PelvisFitStats, PelvisFitError>>,
+    pub mirror: Option<Result<(), MirrorError>>,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -558,19 +571,24 @@ impl Retargeter {
         Ok(cook_frames(&self.target, &frames, settings)?)
     }
 
-    /// [`Self::clip`] (`root` `None`) or [`Self::clip_with_root`], with
-    /// [`crate::ClipRules::pelvis_fit`] applied once, on the target's frames
-    /// with the target's rig profile, after the root track is made (the lift
-    /// moves the pelvis, never the track) and before they are cooked
-    /// (`pelvis_fit.rs`). Callers cook the source without the rule. Returns
-    /// the fit's result with the clip (`None` without `fit`).
-    pub fn clip_fitted(
+    /// The target-rig post-process: [`Self::clip`] (`root` `None`) or
+    /// [`Self::clip_with_root`], then on the target's frames, with the
+    /// target's rig profile, [`crate::ClipRules::pelvis_fit`] (after the root
+    /// track is made: the lift moves the pelvis, never the track;
+    /// `pelvis_fit.rs`), then [`crate::ClipRules::mirror`] (poses, root track,
+    /// side names; `mirror.rs`), then the cook. Only `rules.pelvis_fit` and
+    /// `rules.mirror` are read; callers cook the source without them. A rule
+    /// that can't apply (no profile, an additive clip for the mirror) is
+    /// reported and the clip cooked without it; an additive clip is never
+    /// fitted (no report).
+    pub fn clip_post(
         &self,
         clip: &Clip,
         root: Option<&RootMotionRules>,
-        fit: Option<(&crate::RigProfile, &crate::PelvisFit)>,
+        profile: Option<&RigProfile>,
+        rules: &ClipRules,
         settings: &CookSettings,
-    ) -> Result<(Clip, Option<Result<crate::PelvisFitStats, crate::PelvisFitError>>), RetargetError> {
+    ) -> Result<(Clip, PostReport), RetargetError> {
         if clip.skeleton != self.source.id() {
             return Err(RetargetError::SkeletonMismatch);
         }
@@ -579,12 +597,16 @@ impl Retargeter {
             Some(rules) => self.frames_with_root(&source, rules)?,
             None => self.frames(&source)?,
         };
-        let stats = fit.filter(|_| !frames.meta.additive).map(|(profile, fit)| crate::fit_frame_clip(&self.target, profile, &mut frames, fit));
+        let pelvis_fit = rules.pelvis_fit.as_ref().filter(|_| !frames.meta.additive).map(|fit| {
+            profile.ok_or(PelvisFitError::NoLegs).and_then(|p| crate::fit_frame_clip(&self.target, p, &mut frames, fit))
+        });
+        let mirror =
+            rules.mirror.as_ref().map(|m| profile.ok_or(MirrorError::NoProfile).and_then(|p| mirror_frame_clip(&self.target, p, m, &mut frames)));
         let mut out = cook_frames(&self.target, &frames, settings)?;
         if root.is_some() && out.root_motion.is_some() {
             root_meta(&mut out);
         }
-        Ok((out, stats))
+        Ok((out, PostReport { pelvis_fit, mirror }))
     }
 }
 

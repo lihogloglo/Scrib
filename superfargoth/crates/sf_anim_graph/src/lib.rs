@@ -27,7 +27,7 @@ mod compiled;
 mod distance;
 mod inertial;
 mod instance;
-mod mirror;
+use sf_anim::mirror;
 mod procedural;
 mod secondary;
 pub mod slot;

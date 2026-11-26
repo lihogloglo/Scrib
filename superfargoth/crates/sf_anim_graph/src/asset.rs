@@ -1140,14 +1140,8 @@ fn look_rejoin() -> f32 {
     105f32.to_radians()
 }
 
-/// The mirror plane's normal axis in character space.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Axis {
-    #[default]
-    X,
-    Y,
-    Z,
-}
+/// The mirror plane's normal axis (moved to `sf_anim::mirror`, shared with the cook's mirror rule).
+pub use sf_anim::mirror::Axis;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
