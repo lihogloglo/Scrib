@@ -55,6 +55,7 @@ pub mod anchors;
 pub mod cliffs;
 pub mod climate;
 pub mod climate_classes;
+pub mod climate_override;
 pub mod dem;
 pub mod filter;
 pub mod flood;
