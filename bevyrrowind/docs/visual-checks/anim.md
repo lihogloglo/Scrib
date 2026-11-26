@@ -29,7 +29,8 @@ Status: partial (owner 2026-11-26 sitting, run 2 on wk-balmora, dev exe 1c699df9
 seen): (5) YES, "planted feet seem to be planted". (4) NOT JUDGED: the keyboard has no walk input, so the walk clip
 and the walk->jog blend were never on screen ("the walk doesn't work because we don't have a specific button to just
 walk, but it's alright"); stays open until the player can walk. In passing: "the animations (jog and sprint) are
-still wonky, we'll have to find better ones (or generate them)". Run 1 (questions 1-3): awaiting owner.
+still wonky, we'll have to find better ones (or generate them)". Run 1 (questions 1-3): NOT ANSWERED at the same
+sitting: the review tool's UI was rejected (ANIM-6b); asked again once its overlay is redone.
 
 ## ANIM-9: sit/stand batch 1 candidates (AN26a)
 
@@ -41,7 +42,8 @@ C = candidates, G on a group (groups = `seat.<family>[.old].<piece>.<band>`; ver
 (4) G on `seat.floor.exit.front.seat14`: does any take stand up from the floor believably (no float, no snap)? yes/no
 (5) G on `seat.chair.old.loop.rest.seat48`: does any take read as an old person? yes/no
 Proof log: `browse grades: <n> clips graded, 0 gated` (136 clips in the folder) in last.log. Keeps = the hub sources and picks for AN26b.
-Status: awaiting owner (AN26a, uncommitted 2026-11-26).
+Status: awaiting owner (AN26a, uncommitted 2026-11-26). Skipped at the 2026-11-26 sitting: same tool, UI rejected
+(ANIM-6b); waits for the overlay redo.
 
 ## ANIM-6b: side-by-side group review in clip-preview (AN10)
 
@@ -52,7 +54,13 @@ Down to a walk activity, then G (V = unrated first if you like; verdicts land in
 (3) with 2 left, Y on one and M on the other: does the next group open by itself? yes/no
 (4) G again: back to one clip, one actor on the mark? yes/no
 Proof log: `clip-preview: group <id> <n> takes` (and `clip-preview: group row spacing ...`) in last.log.
-Status: awaiting owner (AN10, uncommitted 2026-11-26).
+Status: REJECTED (owner 2026-11-26 sitting, exe 1c699df9, `--browse` loco2): "woah that UI is terrible and it's hard to
+understand what's happening. No more wall of text in the test scenes please. I have no idea if my changes were
+validated or not...". Questions 1-4 not answered. Evidence (`%TEMP%/bw-owner-2026-11-26-1957/last.log`, 3 min): 9
+groups opened in list order, zero `browse verdict:` lines (every Y / N / M / Backspace / U / Z press prints one,
+refused ones too) and no `verdicts.toml` in loco2: no verdict key reached the tool, and nothing on screen said so.
+Follow-up before any further owner rating: overlay redo (clip name, verdict state, one line of keys, a visible
+confirmation on every verdict).
 
 
 ## ANIM-11: the player sits on a seat (AN26c2)
