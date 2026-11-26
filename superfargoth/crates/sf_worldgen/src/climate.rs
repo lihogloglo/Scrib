@@ -1,4 +1,4 @@
-//! Climate stage, part (a) + (b): air temperature and an upwind moisture-budget precipitation sweep.
+//! Climate stage, parts (a) to (c): air temperature, an upwind moisture-budget precipitation sweep, and moisture.
 //!
 //! **Temperature** is a linear lapse from the sea-level temperature plus an optional latitude term:
 //! `T = sea_temperature_c - lapse_k_per_km * vertical_scale * max(h, 0) / 1000 + latitude_k_per_km * north_km`, with
@@ -13,7 +13,13 @@
 //! conserves mass exactly: inflow + source = rain + outflow, up to rounding.
 //!
 //! Cells of one line are independent, so a line is processed in parallel (rayon, chunked) from the finished previous
-//! line only: the result is bit-identical on any thread count. The twelve values are tunables declared with unit,
+//! line only: the result is bit-identical on any thread count.
+//!
+//! **Moisture** (wetness 0..1) is the climatic aridity index `AI = P / PET`, with Holdridge's potential
+//! evapotranspiration `PET = pet_mm_per_c * biotemperature`, mapped to `AI / (1 + AI)`, then raised towards 1 by the
+//! log of the drainage area between two declared areas ([`moisture`]).
+//!
+//! The sixteen values are tunables declared with unit,
 //! range and source ([`declared_defaults`]); a params file gives them as a `[params]` table of
 //! `{ v, unit, min, max, source }` entries, as the height-curve params do.
 
@@ -45,7 +51,15 @@ pub const PARAM_NAMES: &[&str] = &[
     "fallout_km",
     "background_km",
     "inflow_saturation",
+    "pet_mm_per_c",
+    "drain_area_min_m2",
+    "drain_area_max_m2",
+    "drain_weight",
 ];
+
+/// Holdridge biotemperature: the air temperature clamped to 0..30 C.
+// tunables: const (maths: Holdridge's biotemperature definition, 0 and 30 C)
+const BIOTEMPERATURE_C: (f64, f64) = (0.0, 30.0);
 
 /// Wind components below this are snapped to zero, so the four axis winds have exactly zero side shift.
 // tunables: const (maths: float tolerance of sin/cos at multiples of 90 deg, about 1e-16)
@@ -172,6 +186,42 @@ pub fn declared_defaults() -> Vec<Declared> {
             "Industry(mapgen4 map.ts: wind enters the map at humidity 1)",
             "moisture of the air entering the grid, as a fraction of the capacity",
         ),
+        d(
+            "pet_mm_per_c",
+            58.93,
+            "mm/yr/C",
+            30.0,
+            90.0,
+            "Industry(Holdridge potential evapotranspiration, 58.93 x biotemperature)",
+            "potential evapotranspiration per degree of biotemperature",
+        ),
+        d(
+            "drain_area_min_m2",
+            1e5,
+            "m2",
+            1e3,
+            1e7,
+            "Guess",
+            "drainage area below which the ground gets no extra wetness",
+        ),
+        d(
+            "drain_area_max_m2",
+            1e9,
+            "m2",
+            1e7,
+            1e11,
+            "Guess",
+            "drainage area at which the extra wetness is full",
+        ),
+        d(
+            "drain_weight",
+            0.5,
+            "ratio",
+            0.0,
+            1.0,
+            "Guess",
+            "share of the remaining dryness a full drainage area makes wet",
+        ),
     ]
 }
 
@@ -190,6 +240,10 @@ pub struct Climate {
     pub fallout_km: f64,
     pub background_km: f64,
     pub inflow_saturation: f64,
+    pub pet_mm_per_c: f64,
+    pub drain_area_min_m2: f64,
+    pub drain_area_max_m2: f64,
+    pub drain_weight: f64,
 }
 
 impl Default for Climate {
@@ -215,6 +269,12 @@ impl Climate {
             crate::recipe::check_range(name, p.v, p.min, p.max)?;
             Ok(p.v)
         };
+        let (a0, a1) = (get("drain_area_min_m2")?, get("drain_area_max_m2")?);
+        if a1 <= a0 {
+            return Err(Error::Invalid(format!(
+                "climate: drain_area_max_m2 = {a1} must exceed drain_area_min_m2 = {a0}"
+            )));
+        }
         Ok(Self {
             lapse_k_per_km: get("lapse_k_per_km")?,
             sea_temperature_c: get("sea_temperature_c")?,
@@ -228,6 +288,10 @@ impl Climate {
             fallout_km: get("fallout_km")?,
             background_km: get("background_km")?,
             inflow_saturation: get("inflow_saturation")?,
+            pet_mm_per_c: get("pet_mm_per_c")?,
+            drain_area_min_m2: a0,
+            drain_area_max_m2: a1,
+            drain_weight: get("drain_weight")?,
         })
     }
 
@@ -490,5 +554,58 @@ pub fn precipitation(heights: &Grid, temperature: &Grid, c: &Climate) -> Result<
             data: p,
         },
         budget,
+    })
+}
+
+/// Wetness 0..1 per sample: climatic aridity (rain over potential evapotranspiration) raised towards 1 where much
+/// water drains through (the log of the drainage area).
+///
+/// `temperature` (C), `rain` (mm/yr, [`Rain::p`]) and `area_m2` (drainage area per sample, e.g. from
+/// [`crate::mfd::mfd_area`]) must have the same size. Below freezing the biotemperature, hence the evapotranspiration,
+/// is 0, so frozen ground reads wet: read moisture together with temperature.
+pub fn moisture(temperature: &Grid, rain: &Grid, area_m2: &[f64], c: &Climate) -> Result<Grid> {
+    let n = temperature.w * temperature.h;
+    if temperature.w != rain.w
+        || temperature.h != rain.h
+        || temperature.data.len() != n
+        || rain.data.len() != n
+        || area_m2.len() != n
+    {
+        return Err(Error::Invalid(format!(
+            "climate: temperature {}x{} ({} samples), rain {}x{} ({} samples) and area ({} samples) differ",
+            temperature.w,
+            temperature.h,
+            temperature.data.len(),
+            rain.w,
+            rain.h,
+            rain.data.len(),
+            area_m2.len()
+        )));
+    }
+    let (a0, a1) = (c.drain_area_min_m2, c.drain_area_max_m2);
+    let span = (a1 / a0).log10();
+    let data = temperature
+        .data
+        .par_iter()
+        .zip(rain.data.par_iter())
+        .zip(area_m2.par_iter())
+        .map(|((&t, &p), &a)| {
+            let pet = c.pet_mm_per_c * t.clamp(BIOTEMPERATURE_C.0, BIOTEMPERATURE_C.1);
+            let ai = p / pet.max(1.0);
+            let m_clim = ai / (1.0 + ai);
+            let m_drain = if a > 0.0 {
+                ((a / a0).log10() / span).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            // = m_clim + w * m_drain * (1 - m_clim), written so rounding keeps it monotone in both terms.
+            (1.0 - (1.0 - m_clim) * (1.0 - c.drain_weight * m_drain)).clamp(0.0, 1.0)
+        })
+        .collect();
+    Ok(Grid {
+        w: temperature.w,
+        h: temperature.h,
+        spacing: temperature.spacing,
+        data,
     })
 }

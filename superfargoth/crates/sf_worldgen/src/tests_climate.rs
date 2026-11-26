@@ -266,6 +266,10 @@ land_recycling = { v = 0.1, unit = "ratio", min = 0, max = 0.5, source = "Guess"
 fallout_km = { v = 8, unit = "km", min = 2, max = 20, source = "Guess" }
 background_km = { v = 500, unit = "km", min = 100, max = 1000, source = "Guess" }
 inflow_saturation = { v = 0.9, unit = "ratio", min = 0, max = 1, source = "Guess" }
+pet_mm_per_c = { v = 60, unit = "mm/yr/C", min = 30, max = 90, source = "Industry(Holdridge PET)" }
+drain_area_min_m2 = { v = 1e4, unit = "m2", min = 1e3, max = 1e7, source = "Guess" }
+drain_area_max_m2 = { v = 1e8, unit = "m2", min = 1e7, max = 1e11, source = "Guess" }
+drain_weight = { v = 0.4, unit = "ratio", min = 0, max = 1, source = "Guess" }
 "#;
 
 #[test]
@@ -274,8 +278,15 @@ fn parses_and_rejects_params_files() {
     assert_eq!(c.sea_temperature_c, 22.0);
     assert_eq!(c.wind_toward_deg, 270.0);
     assert_eq!(c.inflow_saturation, 0.9);
+    assert_eq!(c.pet_mm_per_c, 60.0);
+    assert_eq!(c.drain_area_max_m2, 1e8);
+    assert_eq!(c.drain_weight, 0.4);
     let missing = FILE.replace("fallout_km =", "# fallout_km =");
     assert!(Climate::parse_toml(&missing).is_err());
+    let missing = FILE.replace("drain_weight =", "# drain_weight =");
+    assert!(Climate::parse_toml(&missing).is_err());
+    let inverted = FILE.replace("v = 1e8,", "v = 1e7,").replace("v = 1e4,", "v = 1e7,");
+    assert!(Climate::parse_toml(&inverted).is_err());
     let unknown =
         format!("{FILE}extra = {{ v = 1, unit = \"m\", min = 0, max = 2, source = \"Guess\" }}\n");
     assert!(Climate::parse_toml(&unknown).is_err());
@@ -283,4 +294,70 @@ fn parses_and_rejects_params_files() {
     assert!(Climate::parse_toml(&range).is_err());
     assert_eq!(declared_defaults().len(), PARAM_NAMES.len());
     assert_eq!(Climate::default().lapse_k_per_km, 6.5);
+}
+
+/// One-sample grids of `t` and `p`, with drainage area `a`, through [`moisture`] at the defaults.
+fn m1(t: f64, p: f64, a: f64) -> f64 {
+    let c = Climate::default();
+    let g = |v| grid(1, 1, 1000.0, |_, _| v);
+    moisture(&g(t), &g(p), &[a], &c).unwrap().data[0]
+}
+
+fn close(a: f64, b: f64) {
+    assert!((a - b).abs() <= 1e-12, "{a} vs {b}");
+}
+
+#[test]
+fn moisture_matches_the_formula() {
+    // T 20: PET = 58.93 * 20 = 1178.6, so P 1178.6 gives AI 1 and m_clim 0.5.
+    close(m1(20.0, 1178.6, 1e4), 0.5);
+    close(m1(20.0, 1178.6, 1e7), 0.625);
+    close(m1(20.0, 1178.6, 1e9), 0.75);
+    close(m1(20.0, 1178.6, 1e12), 0.75);
+    close(m1(20.0, 0.0, 1e4), 0.0);
+}
+
+#[test]
+fn moisture_is_monotone_and_bounded() {
+    let c = Climate::default();
+    let n = 32;
+    // x = P step, y = T step.
+    let t = grid(n, n, 1000.0, |_, y| -10.0 + 45.0 * y as f64 / (n - 1) as f64);
+    let p = grid(n, n, 1000.0, |x, _| 5000.0 * x as f64 / (n - 1) as f64);
+    let ms: Vec<Grid> = [1e4, 1e7, 1e10]
+        .iter()
+        .map(|&a| moisture(&t, &p, &vec![a; n * n], &c).unwrap())
+        .collect();
+    for m in &ms {
+        for &v in &m.data {
+            assert!(v.is_finite() && (0.0..=1.0).contains(&v), "{v}");
+        }
+        for y in 0..n {
+            for x in 1..n {
+                assert!(m.data[y * n + x] >= m.data[y * n + x - 1], "P rise dries at ({x}, {y})");
+            }
+        }
+    }
+    for k in 1..ms.len() {
+        for i in 0..n * n {
+            assert!(ms[k].data[i] >= ms[k - 1].data[i], "area rise dries at {i}");
+        }
+    }
+}
+
+#[test]
+fn frozen_ground_reads_wet() {
+    // T -5: biotemperature 0, PET 0, floored to 1 mm/yr, so AI = 100.
+    close(m1(-5.0, 100.0, 1e4), 100.0 / 101.0);
+}
+
+#[test]
+fn moisture_refuses_mismatched_sizes() {
+    let c = Climate::default();
+    let t = grid(4, 3, 1000.0, |_, _| 10.0);
+    let p = grid(4, 3, 1000.0, |_, _| 500.0);
+    assert!(moisture(&t, &p, &[1e6; 12], &c).is_ok());
+    assert!(moisture(&t, &p, &[1e6; 11], &c).is_err());
+    let wide = grid(3, 4, 1000.0, |_, _| 500.0);
+    assert!(moisture(&t, &wide, &[1e6; 12], &c).is_err());
 }

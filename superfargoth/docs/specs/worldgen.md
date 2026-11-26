@@ -151,7 +151,7 @@ height; runs start noisy and stop at a finite time, not at strict equilibrium.
    the painted-ecotope equivalent): scale, add or pin temperature and precipitation per region after (b), blended over
    a border width. Wind direction and sea-level temperature are recipe data per world (`Guess` until tuned by eye).
    Air enters the grid at `climate.inflow_saturation` of the capacity (1: mapgen4 starts the wind at humidity 1;
-   0 = dry inflow). Slices: WG-E1a (a) + (b) and the hash test (built 2026-11-26); WG-E1b1 (c); WG-E1b2 (d), the table a
+   0 = dry inflow). Slices: WG-E1a (a) + (b) and the hash test (built 2026-11-26); WG-E1b1 (c) (built 2026-11-26; 16 declared values); WG-E1b2 (d), the table a
    rectilinear grid in TOML (temperature edges, precipitation edges, a class name per cell); WG-E1c overrides and the
    guide product. Cost: (a) + (b) 0.26-0.31 s on 6.4 M samples (measured at E1a, 16 threads; target under 1 s for the stage).
    *Material fields:* slope, curvature, flow, wetness, altitude, rock type, exposure, climate → splat inputs (the
