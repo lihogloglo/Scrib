@@ -62,6 +62,7 @@ use crate::stats::MwStats;
 mod global_scripts;
 mod local_scripts;
 mod persuasion;
+mod pin;
 mod services;
 pub mod service_list_screen;
 pub mod trade_screen;
@@ -1123,6 +1124,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, open_ui: Option<String>) {
                 .after(ScreenSystems::Input),
         );
     service_list_screen::add(app);
+    pin::add(app);
     // The Morrowind theme over the stock screens (content: the builtin mod's sheet).
     mw_boot_bevy::ui_theme::add(app);
 }

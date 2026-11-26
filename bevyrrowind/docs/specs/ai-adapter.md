@@ -471,6 +471,11 @@ character: the host body's from `PlayerCamera::pose` + `Projection`; a remote pl
 never `ViewVisibility`. `sees` / `seen_by_any` / `AiViewers` are public for AI12 (unseen by every player). MA20b adds
 the dialogue pin from `mw_rpg_bevy`.
 
+As built (MA20b, 2026-11-26): `mw_rpg_bevy/src/dialogue/pin.rs` inserts `AiPin(Pin::Dialogue)` on the speaker's `AiActor`
+when the private `ActiveTalk` appears or changes speaker and removes it when the talk ends (PostUpdate, run only on
+`resource_changed_or_removed::<ActiveTalk>`, so the next frame's `AiAllocSystems::Allocate` reads it). It removes only a pin
+it set: an actor already pinned (combat, scripted) keeps its pin and is not re-pinned if that pin ends mid-talk.
+
 ## Open questions
 
 None open. Decided 2026-11-08 (owner-delegated; `superfargoth/docs/research/ai-nav-decisions-2026-11-08.md` (e), (f),
