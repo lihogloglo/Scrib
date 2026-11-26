@@ -56,9 +56,8 @@ Vvardenfell [5]. **Classic** uses the same navigation (OpenMW navigates by navme
 7. **Runtime tile rebuild instead of TileCache carving** (UE navigation invokers, §1): a tile whose walkable inputs
    changed (destroyed wall, opened barricade) re-runs the same pure `nav.tiles` step on a worker and swaps atomically at
    a tick boundary; derived state, so only the cause event replicates. One code path with the bake, no layer format.
-   Doors stay poly-state flips with zero rebuilds (built idea, NV10a). Carving only if measured needed. A missing tile
-   (modded or generated world) uses the same path with a disk cache: **owner question 1** (it touches "nothing bakes
-   during play").
+   Doors stay poly-state flips with zero rebuilds (NV10a). Carving only if measured needed. A missing tile (modded or
+   generated world) uses the same path with a disk cache (owner 2026-11-26, Q1: amends "nothing bakes during play").
 8. **Swimming costs, not links** (§3): area `water` with a per-class cost (humanoid ×5, swimmers ×1); shore polys touch,
    so no link. Lakes and rivers at their own heights need per-water-body polygons from the world10x water bodies.
 9. **Two ground classes stay** (spec decision (a); Unity/UE ship 2-4): `huge` only when a real creature needs it.
@@ -126,6 +125,9 @@ Ends with: cliff racers circle Balmora's towers without clipping; slaughterfish 
 
 ### Stage 4: roads and long journeys (with AI10, AI46, travel TV19-TV21)
 
+**Pulled forward (order.md):** NV12a and NV12c run right after MA21, ahead of Stages 1-3: AI10 (AI Stage 2, a day in
+town) needs them.
+
 Ends with: a pilgrim walks Balmora to Caldera; leave and come back, and she's further along the road, appearing out of view.
 
 | ID | Deliverable | Crate | Depends | Verify |
@@ -141,7 +143,7 @@ Ends with: a pilgrim walks Balmora to Caldera; leave and come back, and she's fu
 |---|---|---|---|---|
 | NV10a | Door polys: closed = cost, locked = filtered unless admitted; zero rebuilds | `sf_nav`, `sf_nav_bevy` | MA21 | exact filter cases |
 | NV10b | Dirty-tile runtime rebuild: worker, budget, coalesced, atomic swap at tick boundary | `sf_nav_bevy`, `sf_nav_bake` | NV0b | rebuilt tile = offline bake bit for bit; ≤ budget |
-| NV10c | Missing-tile generation with disk cache (owner Q1) | `sf_nav_bevy` | NV10b, Q1 | generated = baked; second load reads cache |
+| NV10c | Missing-tile generation with disk cache (owner Q1, yes) | `sf_nav_bevy` | NV10b | generated = baked; second load reads cache |
 | NV15 | Destruction feed: `Destroyed` on walkable geometry marks tiles dirty | `sf_interaction_bevy` → `sf_nav_bevy` | NV10b, IN1 | broken barricade opens a path; owner NV-4 |
 
 **Parked:** lane graph for ambient traffic (UE Mass; revisit with ambient flows), tile-border HPA*, `huge` class,
@@ -166,11 +168,10 @@ world, NV-5 road traveller (with AI-11).
 | Worldgen (world10x) | `roads.json`, water bodies | NV12b, NV9e |
 | Streaming / seamless | SI3 portal anchors | NV5b |
 
-## 7. Owner questions (each with a recommended answer)
+## 7. Owner questions (answered 2026-11-26: both recommendations accepted)
 
-1. **Building navmesh during play:** may the game build a navmesh tile during play when one is missing (a modded or
-   generated area) or its walkable ground changed (a wall destroyed), cached to disk so it happens once? It touches the
-   "nothing bakes during play" rule. Recommended: yes, only for missing or changed tiles; the base set is still baked
-   once at install or world creation.
-2. **Swimming pursuers:** do guards and bandits swim after you (Morrowind does), or wait on the shore and throw spells?
-   Recommended: they swim, slower than on land; creatures that can't swim wait at the shore.
+1. **Building navmesh during play:** allowed only for a tile that is missing (modded or generated area) or whose walkable
+   ground changed (a destroyed wall), cached to disk so it happens once; the base set is still baked once at install or
+   world creation. This amends "nothing bakes during play" for nav tiles (DECISIONS 2026-11-26). (NV10b, NV10c)
+2. **Swimming pursuers:** guards and bandits swim after you, slower than on land; creatures that can't swim wait at the
+   shore. (NV9d area costs, AI lane pursuit)

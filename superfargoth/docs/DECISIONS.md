@@ -1998,3 +1998,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (owner, build-speed): the pre-PR gate runs in GitHub Actions (Windows runners, `ci.yml`), not on the laptop;
   sessions push a `ci/<name>` snapshot (`tools/ci_push.sh`) or a `wt/<name>` worktree branch. Worktrees always get their
   own target folder (cargo would reuse another checkout's builds). `cargo test` holds the queue only while compiling.
+- 2026-11-26 (owner, combat): `docs/roadmaps/combat.md` adopted: parry window + riposte in both views; symmetric ER poise
+  (replaces "every hit staggers"); slowed walk drawing/casting, big spells root; melee spares allies, projectiles/AoE/fire
+  hit anyone, co-op FF off; short warped finishers, no cutscenes; status buildup in framework, Morrowind ships none.
+- 2026-11-26 (owner, nav): nav tiles may be built during play only when missing or when their walkable ground changed,
+  cached to disk; the base set is baked once. **Amends "nothing bakes during play"** for nav tiles. Pursuers swim (slower),
+  non-swimmers wait at the shore (`docs/roadmaps/nav.md`).

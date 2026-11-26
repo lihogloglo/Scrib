@@ -111,7 +111,7 @@ Each stage ends in something the player can use. Owner checks run in `level-spar
 ### Stage 1: the sword fight feels right on Morrowind clips
 
 Ends with: a duel with the sparring partner on Morrowind swings, a still guard, backstep, knockdown and get-up, heavy
-charged attacks, running and rolling attacks, and heavy armour shrugging off a light hit.
+charged attacks, running and rolling attacks, heavy armour shrugging off a light hit; any NPC can be hit and killed.
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
@@ -122,6 +122,7 @@ charged attacks, running and rolling attacks, and heavy armour shrugging off a l
 | C3b | Heavy + charge from the `min attack`..`max attack` window | `sf_combat`, `mw_combat` | AN33 | charge release swaps clip; owner CB-4 |
 | C3c | Openers: running, rolling, backstep, jump attacks; typed i-frames | `mw_combat` data, `sf_action` | C3b | exact chains; owner CB-4 |
 | C3d | Second classes as data: `greatsword_2h`, `spear_2h`, `fist` on `WeaponTwoHand/TwoWide/HandToHand` | `mw_combat` data | C3b, C0d | no new code; owner CB-4b |
+| C17 | NPC and creature fighters without AI: `Fighter`, health from records, reactions, death via walkers ragdoll | `mw_combat`, `mw_walkers_bevy` | C2c | hit NPC reacts and dies; unblocks MA15, DQ-12, C16 |
 | C4c | Lock-on flick switching, combat shake | `sf_combat_bevy`, `sf_camera_bevy` | - | switch picks flicked side; owner CB-5c |
 
 ### Stage 2: parry, riposte, finishers, kick and hazards
@@ -201,24 +202,25 @@ anim lane's. character-shapes.md S5 points at this roadmap.
 | Lane | Combat needs | Combat provides |
 |---|---|---|
 | Anim | AN32-AN37, anim C4 (attack clip pass), anim C2 (locked strafe), AN40/AN41 physics tint | sheets, tiers, impulses, `Warp` targets |
-| AI | AI15, AI36, AI37, MA10; MA4 Fight/Flee; perception for alert sharing | C6a-f, C8e, C2c knockdown (AI41 downed flag), C15 noise |
+| AI | AI15, AI36, AI37, MA10; MA4 Fight/Flee; perception for alert sharing | C17 NPC fighters (MA15 no longer waits for MA10), C6a-f, C8e, C2c knockdown (AI41 downed flag), C15 noise |
 | Interaction | IN28 hazard/prop data, IN1 destruction stages, IN36 thrown props | C10 environment contact, C14 prop targets, poise (C3a) for IN36 |
 | Crime | LW2b offences, recognition | C16 assault/murder, C2e sneak-attack multiplier and takedown path |
-| Dialogue-quests | - | C15 hit/death events (DQ-12, `OnPCHitMe`), combat start for DQ-31 |
+| Dialogue-quests | - | C17 + C15 hit/death events (DQ-12, `OnPCHitMe`), combat start for DQ-31 |
 | Travel | - | C6/C8e for ambushes (TV9); mounted combat parked |
 | Nav | ring-slot reachability, LOS (AI36) | - |
 | Effects (no lane file) | A5b cast input, `EffectRequest::Launch`, status ticks | C8a/C8c delivery, C12 buildup |
 | Physics | character-shapes S1-S3, Delirium takeover | S5 hurt sweep |
 
-## 7. Owner questions (each with a recommended answer)
+## 7. Owner questions (answered 2026-11-26: every recommendation accepted)
 
-1. **Parry flavour:** a tight window when raising the guard (same button), riposte on parried or poise-broken foes, or a
-   plain block only? Recommended: the parry window, both views (Dark Messiah and Elden Ring both have it).
-2. **Player poise:** do heavy armour and heavy weapons let you shrug off light hits mid-swing? Recommended: yes (Elden Ring).
-3. **Moving while aiming or casting:** Recommended: slowed walk while drawing a bow or casting small spells; big spells root
-   you.
-4. **Friendly fire:** Recommended: melee swings pass through allies and companions; arrows, explosions and fire hurt anyone;
-   co-op friendly fire off by default.
-5. **Finishers:** Recommended: backstabs and ripostes deal heavy damage with a short warped finisher, never a cutscene.
-6. **Status buildup** (bleed, poison, frost filling a bar): Recommended: the framework supports it; Morrowind content ships
-   none at first (its on-strike enchantments and poisons stay instant effects), added per weapon later if wanted.
+1. **Parry:** a tight window on raising the guard, riposte on parried or poise-broken foes, in both views. (C2d, C2e)
+2. **Player poise:** heavy armour and weapons shrug off light hits mid-swing (Elden Ring). (C3a)
+3. **Moving while aiming or casting:** slowed walk while drawing a bow or casting small spells; big spells root. (C8b, C8d)
+4. **Friendly fire:** melee passes through allies and companions; arrows, explosions and fire hurt anyone; co-op friendly
+   fire off by default. (C8a, C8c, C10, C7)
+5. **Finishers:** backstabs and ripostes deal heavy damage with a short warped finisher, never a cutscene. (C2e)
+6. **Status buildup:** in the framework (C12); Morrowind content ships none at first (its on-strike enchantments and poisons
+   stay instant effects).
+
+**Open (C-R2, research running):** should first and third person share one combat mechanic? Stage 1-2 slices it may
+change are flagged when the research lands; no stage is rewritten before the owner answers.
