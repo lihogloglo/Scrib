@@ -333,6 +333,12 @@ Motion); doors, levers and workstations warp one contact frame onto the placed h
 idiom) with the contact stored as a clip event; the ladder is a looped cycle docked to an edge chain. Bevy 0.20 has no
 equivalent; our slot, IK and warp parts already cover the runtime.
 
+**As built (AN26a, 2026-11-26):** `generated/sit1` (scrib-motiongen `recipes/sit-batch1.toml` Kimodo loops, `sit-batch1-links.toml` MotionBricks): 6 family-bands (stool seat64, chair seat48 + seat54, bench seat48, floor seat14, old chair seat48) x 6 pieces = 36, 136 takes (enter/exit 4 variants each, loops <= 4); raw Kimodo takes in `sit1/_kimodo` (152, hidden from browse).
+Hubs added (provisional, ANIM-9): `sit.stool`, `sit.chair.seat54` (a family's second band gets its own `sit.<seat>.<band>` hub: the band changes the pose), `sit.bench`, `sit.floor`, `sit.chair@old`, `stand.idle@old`; source = best-graded rest take inside a Hips-height window, calmest frame of its middle third; `sit.bed_edge` waits for AN30.
+Loops are exact on their hub by a new `[[hub_loop]]` link job (link hub -> take start, take, link take end -> hub; README "Hub loops"). Sides: `front` = feet placement, `left` = from the seat's left front corner facing it, 90-degree turn-in (`dyaw` +90), exit.left ends there facing away.
+hubcheck: ends 0.0 deg / 0.0 cm on all 136; slide p95 median 22 (enter.front) / 44 (enter.left) / 26 / 48 (exits) / 15-19 (loops) cm/s, worst 198 (old chair exit.left), floor exits 85-105; grade 0 gated. 2 old-chair enter takes missed the hub (endpoint correction, 67 deg) and were set aside.
+**Height gap:** Kimodo seats the Hips at 0.53-0.57 m on every chair band whatever `pelvis_height` and cfg [2, 5] ask, puts the stool rest on the floor, and the floor family sits on the floor (Hips 0.10 m) under the seat14 top. Against band + 0.05 (the `sit.chair` offset): `sit.chair.seat54` Hips 0.569 m is 2 cm low (inside the 3 cm IK Guess), `sit.stool` 0.585 m is 10 cm low (AN26b: lift + leg IK, or another generator for high seats).
+
 ## Slices (one deliverable each)
 
 | Slice | Deliverable | Needs | Status |

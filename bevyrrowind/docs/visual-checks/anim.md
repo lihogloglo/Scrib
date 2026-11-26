@@ -26,6 +26,18 @@ knee buckle while walk blends into jog? (5) feet stay put on sidesteps and backp
 Proof log: `walkers feet: ... unplanted` and `head track: player body present` lines in last.log. A/B: graph guard
 `plant_speed` 0 (off). Status: awaiting owner (commit of AN1d, 2026-11-26).
 
+## ANIM-9: sit/stand batch 1 candidates (AN26a)
+
+Run: `owner_launch.sh clip-preview --browse "D:/Gamedev/Bevyrrowind/animation packs/generated/sit1"` (absolute folder),
+C = candidates, G on a group (groups = `seat.<family>[.old].<piece>.<band>`; verdicts land in `sit1/verdicts.toml`). Questions:
+(1) G on `seat.chair.enter.front.seat48`: does any take sit down without the hips sliding or the feet skating? yes/no
+(2) G on `seat.stool.enter.left.seat64`: does any take turn in 90 degrees and sit, feet stepping (not gliding)? yes/no
+(3) G on `seat.chair.loop.rest.seat48` then `.fidget`: does any loop restart without a visible pop at the seam? yes/no
+(4) G on `seat.floor.exit.front.seat14`: does any take stand up from the floor believably (no float, no snap)? yes/no
+(5) G on `seat.chair.old.loop.rest.seat48`: does any take read as an old person? yes/no
+Proof log: `browse grades: <n> clips graded, 0 gated` (136 clips in the folder) in last.log. Keeps = the hub sources and picks for AN26b.
+Status: awaiting owner (AN26a, uncommitted 2026-11-26).
+
 ## ANIM-6b: side-by-side group review in clip-preview (AN10)
 
 Run: `owner_launch.sh clip-preview --browse "D:/Gamedev/Bevyrrowind/animation packs/generated/loco2"` (absolute folder),
