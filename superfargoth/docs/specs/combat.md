@@ -1,6 +1,6 @@
 # Combat: feel layer, moveset sheets, rules seam
 
-Status (2026-11-26): C1a-C1c (lock-on parts 1-4), C4 soft aim, C4b, C2a, C2b built; design updated to `docs/roadmaps/combat.md` (C0a); NPC combat in [combat-npc.md](combat-npc.md) (C0b); C0c-e pending. ROADMAP 3.5. Game side:
+Status (2026-11-26): C1a-C1c (lock-on parts 1-4), C4 soft aim, C4b, C2a, C2b built; design updated to `docs/roadmaps/combat.md` (C0a); NPC combat in [combat-npc.md](combat-npc.md) (C0b); delivery in [combat-delivery.md](combat-delivery.md) (C0c); C0d-e pending. ROADMAP 3.5. Game side:
 `../../../bevyrrowind/docs/specs/combat-adapter.md`. Built on [action.md](action.md) (commands, windows, chooser, motion
 owners, co-op rules: referenced, not repeated); owns its build-plan row E1-E3. Slices **combat C1..C7** are not action.md's
 C1 (interactions).
@@ -15,7 +15,7 @@ lock-on or hit-stop) sit behind one seam (ARCHITECTURE §1b). Order and slices: 
 
 Non-goals: *whether* and *whom* to fight (`sf_ai`, AI15; C6 only decides how an engaged fighter fights, C0b), view-aware
 AI, paired clips and cutscene kills, damage numbers, weapon skills (later data), dismemberment and mounted combat (parked).
-Ranged and magic are in scope, designed in C0c ("Delivery (C8)").
+Ranged and magic are in scope, designed in [combat-delivery.md](combat-delivery.md) (C0c).
 
 Owner direction: Elden Ring in third person (2026-10-27); first person after Dark Messiah / Faithkeeper (kicks, directional
 and charged attacks, parries, environmental kills, finishers; 2026-11-15); swing direction from the movement keys (KCD2,
@@ -178,7 +178,7 @@ pub trait CombatRules: Send + Sync {
 - `Contact { attacker, defender, source, credit: Option<CharacterId>, move_key, hit: u8, strength, kind: TagId, mv, flags,
   guard_damage, poise, damage, push, critical: Option<CritKind>, point, direction, side, defender_state { guarded, parry,
   down, unaware, in_reaction, poise_broken } }`; `source: Sweep | Cone | Projectile | Beam | Area | Environment`
-  (Projectile, Beam, Area: C0c "Delivery (C8)").
+  (Projectile, Beam, Area: [combat-delivery.md](combat-delivery.md), C0c).
 - `Outcome { landed: bool, defender: PoolDelta, attacker: PoolDelta, guarded: bool, guard_break: bool, parried: bool,
   critical: Option<CritKind>, damage: SmallVec<[(DamageType, f32); 3]>, buildup: SmallVec<[(StatusId, f32); 2]>, tier_hint:
   Option<Tier>, events: SmallVec<[TagId; 2]> }`; `PoolDelta { health, stamina, poise }`. `guarded` and `parried` are the
@@ -213,7 +213,7 @@ replaces "every unguarded hit staggers".
   `poise_broken` for `combat.poise.broken_s` (riposte-eligible). No pool (dummy, classic): row tier, as built.
 - **Regen** after `regen_delay` from the last poise damage, at `regen_per_s`, through `rules.regen`.
 - Bosses: large max, `break_tier: Knockdown` (ER stance break). Guarded hits cost stamina, not poise. A break inside a
-  cast's `Armor` window cancels the cast (C8d, C0c).
+  cast's `Armor` window cancels the cast (C8d, [combat-delivery.md](combat-delivery.md)).
 - Tunables: `combat.poise.per_mv` (poise/mv, 0-100), `.regen_delay_s` (s, 0.5-5), `.regen_per_s` (max/s, 0.05-1),
   `.broken_s` (s, 0.3-3), `.knockdown_overflow` (x max, 0-2); all Guess.
 
@@ -374,7 +374,7 @@ action.md E1 = combat C1-C3 (windows, sheet, light/heavy/dodge/guard), E2 = C1c 
 
 Lane slices, order = `docs/roadmaps/combat.md` stages (depends and verify there): C2b2 still guard + regen delay; C2c
 backstep, knockdown; C2d parry; C2e criticals; C3a poise; C3b heavy + charge; C3c openers; C3d second classes; C4c
-third-person profile; C8a-e delivery (C0c); C9 kick; C10 hazards; C11 feint and morph; C12 damage packet; C13 Morrowind
+third-person profile; C8a-e delivery ([combat-delivery.md](combat-delivery.md), C0c); C9 kick; C10 hazards; C11 feint and morph; C12 damage packet; C13 Morrowind
 damage mapping; C14 prop targets; C15 hit and death events; C16 offences; C17 NPC fighters without AI; C18 first-person
 dodge; C19 threat cues.
 C6a-f and C19 are designed in [combat-npc.md](combat-npc.md) (C0b).
