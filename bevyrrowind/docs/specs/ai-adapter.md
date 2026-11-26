@@ -238,7 +238,10 @@ alone); `sync_ai_runs` copies it into the RPG host; `impl MwAi for View`. Fixed:
 Hello, Fight, Flee, Alarm (`aisetting.hpp`) are magnitude stats on the sheet (`sf_stats`, stats-adapter naming),
 initialised from the NPC/creature AIDT. As built (MA4a, 2026-11-26): `mw_stats` defs `hello`/`fight`/`flee`/`alarm`
 (indices 140-143, `MwIdx::ai_settings`, appended after the magnitudes), AIDT read unsigned, floor 0 and no cap (OpenMW
-`stat.cpp` 22-28: Hello is a distance and may pass 100). Considerations in `mw_ai::settings`:
+`stat.cpp` 22-28: Hello is a distance and may pass 100). As built (MA4e, 2026-11-26): persuasion reads the speaker's
+*base* Flee/Fight from its sheet (`mw_rpg::persuasion_input`; OpenMW @ 5f3aafb `mechanicsmanagerimp.cpp` 664-669/705-710
+`getBase`), so script `Set/ModFight` reach it, and writes the clamped 0..=100 nudge back as `SetBase` (`persuasion_ai_ops`,
+a `StatCommand` on the speaker); the unsaved `ai_settings` overlay and `Actor.ai` are gone. Considerations in `mw_ai::settings`:
 - **Greeting** (React drive): every 0.25 s, target within `Hello × iGreetDistanceMultiplier`, LOS and awareness
   (`actors.cpp` `updateGreetingState` 481-560); turn, look-at, Greeting bark from dialogue.
   As built (MA4c1, 2026-11-26): `mw_ai::settings::greeting_step(&mut GreetState, &GreetInput, &GreetGmst) ->

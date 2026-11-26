@@ -20,8 +20,8 @@
 
 use bevy_log::prelude::*;
 use mw_rpg::{
-    MwSheets, PersuasionKind, PersuasionOutcome, Target, persuasion_change, persuasion_input, persuasion_roll,
-    speechcraft_use,
+    MwSheets, PersuasionKind, PersuasionOutcome, Target, persuasion_ai_ops, persuasion_change, persuasion_input,
+    persuasion_roll, speechcraft_use,
 };
 use sf_records::{RecordDb, RecordId};
 use sf_rpg::{ActorKey, Attrs, RpgCommand, SessionState};
@@ -88,10 +88,11 @@ impl Rpg {
     /// One persuasion attempt by the conversation's player (`DialogueManager::persuade`): the
     /// roll, the speaker's disposition change (temporary now, permanent at [`Rpg::end_talk`]),
     /// the player's Speechcraft use (success: use 0, fail: use 1; a stat command), a successful
-    /// bribe's gold from the player to the speaker, an Intimidate or Taunt success's Fight/Flee
-    /// nudge. `tick`: the host's simulation tick at the request (seeds the roll with the speaker,
-    /// the player and the attempt count). Returns the reply topic to show; nothing changes on a
-    /// refusal.
+    /// bribe's gold from the player to the speaker, an Intimidate or Taunt success's new base
+    /// Fight/Flee on the speaker's sheet (a stat command; read from that sheet, so script
+    /// `ModFight` reaches it). `tick`: the host's simulation tick at the request (seeds the roll
+    /// with the speaker, the player and the attempt count). Returns the reply topic to show;
+    /// nothing changes on a refusal.
     pub fn persuade(
         &mut self,
         talk: &mut Talk,
@@ -111,14 +112,13 @@ impl Rpg {
             return Err(PersuadeRefused::NotEnoughGold);
         }
         let record_base = actor.base_disposition;
-        let ai = self.ai_settings.get(&speaker).copied().unwrap_or(actor.ai);
         let disposition = {
             let cx = self.content.disposition_ctx(&self.state, sheets, ctx.player, speaker, actor);
             self.content.disposition.disposition(&cx)
         };
         let roll = persuasion_roll(speaker, ctx.player, tick, talk.persuasion.attempts);
         let input =
-            persuasion_input(sheets, ctx.player, speaker, kind, disposition, ai, roll).ok_or(PersuadeRefused::NoStats)?;
+            persuasion_input(sheets, ctx.player, speaker, kind, disposition, roll).ok_or(PersuadeRefused::NoStats)?;
         let outcome = persuasion_change(&input, &self.content.gmst);
 
         let base = record_base + self.state.npcs.modifier(speaker);
@@ -128,6 +128,12 @@ impl Rpg {
             let ops = vec![speechcraft_use(t, outcome.success)];
             self.stat_commands.push(StatCommand::new(StatOwner::Player(pk), CauseKind::Dialogue, ops));
         }
+        // The new base Flee and Fight go on the speaker's sheet (`MA4e`), where script
+        // `GetFight` and the AI read them.
+        if let (Some(t), Some(nudge)) = (sheets.table(), outcome.ai) {
+            let ops = persuasion_ai_ops(t, nudge).to_vec();
+            self.stat_commands.push(StatCommand::new(StatOwner::Actor(speaker), CauseKind::Dialogue, ops));
+        }
         if outcome.gold > 0 {
             let count = u32::try_from(outcome.gold).unwrap_or(0);
             if let Some((holder, inv)) = self.character(&ctx, &Target::Player, sheets) {
@@ -136,13 +142,6 @@ impl Rpg {
             if let Some((holder, inv)) = self.character(&ctx, &Target::Speaker, sheets) {
                 let _ = inv.apply(RpgCommand::AddItem { holder, item: id(GOLD), count, attrs: Attrs::new() });
             }
-        }
-        if let Some(nudge) = outcome.ai {
-            debug!(
-                "persuasion: {speaker:?}'s base Flee {} / Fight {} (TODO(AI settings): kept unsaved, nothing reads them yet)",
-                nudge.flee, nudge.fight
-            );
-            self.ai_settings.insert(speaker, nudge);
         }
         Ok(Persuaded { outcome, roll, topic: id(kind.topic(outcome.success)) })
     }
@@ -457,8 +456,7 @@ mod tests {
 
         let tick = 1234;
         let roll = persuasion_roll(FARGOTH, PlayerId::HOST, tick, 0);
-        let ai = rpg.content.actors[&FARGOTH].ai;
-        let i = persuasion_input(&sheets, PlayerId::HOST, FARGOTH, PersuasionKind::Admire, disposition, ai, roll).unwrap();
+        let i = persuasion_input(&sheets, PlayerId::HOST, FARGOTH, PersuasionKind::Admire, disposition, roll).unwrap();
         let expected = persuasion_change(&i, &gmst);
         let commands = rpg.stat_commands.len();
         let p = rpg.persuade(&mut talk, PersuasionKind::Admire, &sheets, tick).unwrap();
@@ -506,5 +504,22 @@ mod tests {
         assert_eq!(talk.persuasion.attempts, 2);
         assert_eq!(talk.session.history().len(), lines + 1, "{:?}", talk.session.history().last());
         assert_eq!(enabled(&view), [true, true, true, paid == 0, paid == 0, false]);
+
+        // `MA4e`: Intimidate reads Fargoth's base Flee and Fight from his sheet and a success
+        // writes the new base there (after the player's Speechcraft use).
+        let host = View { c: &rpg.content, s: &rpg.state, g: &rpg.script_locals, sheets: &sheets };
+        let disposition = MwView::disposition(&host, &ctx);
+        let roll = persuasion_roll(FARGOTH, PlayerId::HOST, tick + 2, talk.persuasion.attempts);
+        let kind = PersuasionKind::Intimidate;
+        let i = persuasion_input(&sheets, PlayerId::HOST, FARGOTH, kind, disposition, roll).unwrap();
+        let commands = rpg.stat_commands.len();
+        let p = rpg.persuade(&mut talk, kind, &sheets, tick + 2).unwrap();
+        assert_eq!(p.outcome, persuasion_change(&i, &gmst));
+        let written: Vec<_> = rpg.stat_commands[commands..].iter().map(|c| (c.owner, c.ops.clone())).collect();
+        let speechcraft = (StatOwner::Player(HOST_KEY), vec![speechcraft_use(&sheets.table, p.outcome.success)]);
+        let mut want = vec![speechcraft];
+        want.extend(p.outcome.ai.map(|n| (StatOwner::Actor(FARGOTH), persuasion_ai_ops(&sheets.table, n).to_vec())));
+        eprintln!("intimidate: roll {roll}, {:?}", p.outcome);
+        assert_eq!(written, want);
     }
 }

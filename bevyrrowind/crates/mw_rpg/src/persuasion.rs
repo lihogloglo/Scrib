@@ -20,6 +20,12 @@
 //!   deliberate deviation is kept: a marginal Intimidate win (`|c| < iPerMinChange`) raises the
 //!   temporary disposition by `iPerMinChange` (Morrowind gave `x = 0, y = -iPerMinChange`).
 //!   All arithmetic is `f32` in `OpenMW`'s order and `int(...)` truncates toward zero, as `as`.
+//! - The AI settings live on the speaker's stat sheet (`MA4e`; `OpenMW` at `5f3aafb`,
+//!   `mechanicsmanagerimp.cpp` 664-669 and 705-710): the nudge reads the *base* Flee and Fight
+//!   (`getAiSetting(..).getBase()`, so script `SetFight`/`ModFight` reach it and spells don't) and
+//!   writes the new base, clamped to 0..=100 (`setAiSetting(index, int)` sets the base).
+//!   [`persuasion_input`] reads them from the sheet; [`persuasion_ai_ops`] is the host's write, the
+//!   same `SetBase` op script `ModFight` emits.
 //!
 //! **Randomness.** The only Rng call, `Misc::Rng::roll0to99(prng)`, is [`PersuasionInput::roll`]
 //! (0..=99): the caller draws it from the world's seeded stream, so this stays pure.
@@ -131,7 +137,7 @@ pub struct PersuasionInput {
     pub npc: PersuaderStats,
     /// The NPC's current derived disposition, clamped (`getDerivedDisposition(npc)`).
     pub disposition: i32,
-    /// The NPC's base Flee and Fight (`getAiSetting(..).getBase()`).
+    /// The NPC's base Flee and Fight from its sheet (`getAiSetting(..).getBase()`).
     pub npc_ai: AiNudge,
     /// `Misc::Rng::roll0to99`, drawn by the caller (0..=99).
     pub roll: u8,
@@ -416,21 +422,37 @@ pub fn persuader_stats(t: &MwTable, s: &SheetRead<'_>) -> PersuaderStats {
 
 /// The input for `player` persuading `speaker`. `disposition`: the speaker's current derived
 /// disposition (clamped [`crate::derived_disposition`]: a session's temporary changes are already in
-/// the base, see [`PersuasionSession`]); `npc_ai` and `roll` come from the caller.
-/// `None`: no stats, or a sheet is missing.
+/// the base, see [`PersuasionSession`]); the speaker's base Flee and Fight come from its sheet
+/// (see the module docs), `roll` from the caller. `None`: no stats, or a sheet is missing.
 pub fn persuasion_input(
     sheets: &dyn MwSheets,
     player: PlayerId,
     speaker: ActorKey,
     kind: PersuasionKind,
     disposition: i32,
-    npc_ai: AiNudge,
     roll: u8,
 ) -> Option<PersuasionInput> {
     let t = sheets.table()?;
     let pc = persuader_stats(t, &sheets.player(player)?.view(&t.table));
-    let npc = persuader_stats(t, &sheets.actor(speaker)?.view(&t.table));
-    Some(PersuasionInput { kind, player: pc, npc, disposition, npc_ai, roll })
+    let view = sheets.actor(speaker)?.view(&t.table);
+    let npc = persuader_stats(t, &view);
+    Some(PersuasionInput { kind, player: pc, npc, disposition, npc_ai: ai_base(t, &view), roll })
+}
+
+/// A sheet's base Flee and Fight (whole numbers on the sheet; a script `ModFight` may leave
+/// them outside 0..=100).
+#[allow(clippy::cast_possible_truncation, reason = "AI settings are whole numbers stored as f32 on the sheet")]
+fn ai_base(t: &MwTable, s: &SheetRead<'_>) -> AiNudge {
+    let [_, fight, flee, _] = t.idx.ai_settings;
+    AiNudge { flee: s.base(flee) as i32, fight: s.base(fight) as i32 }
+}
+
+/// The speaker's sheet writes for a success's [`PersuasionOutcome::ai`]: the new base Flee and
+/// Fight (`setAiSetting(index, int)`; the same op as script `SetFlee`/`ModFight`).
+#[allow(clippy::cast_precision_loss, reason = "AI settings are 0..=100")]
+pub fn persuasion_ai_ops(t: &MwTable, nudge: AiNudge) -> [StatOp; 2] {
+    let [_, fight, flee, _] = t.idx.ai_settings;
+    [StatOp::SetBase { stat: flee, value: nudge.flee as f32 }, StatOp::SetBase { stat: fight, value: nudge.fight as f32 }]
 }
 
 #[cfg(test)]

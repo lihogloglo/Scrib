@@ -166,7 +166,7 @@ fn player_sheet(t: &MwTable) -> Sheet {
     ])
 }
 
-/// Personality 40, Luck 50, Speechcraft 25, level 4.
+/// Personality 40, Luck 50, Speechcraft 25, level 4, Fight 30, Flee 20.
 fn npc_sheet(t: &MwTable) -> Sheet {
     let idx = &t.idx;
     sheet(t, StatOwner::Actor(SPEAKER), &[
@@ -174,6 +174,8 @@ fn npc_sheet(t: &MwTable) -> Sheet {
         StatOp::SetBase { stat: idx.attributes[7], value: 50.0 },
         StatOp::SetBase { stat: idx.skills[25], value: 25.0 },
         StatOp::CounterSet { stat: idx.level, value: 4.0 },
+        StatOp::SetBase { stat: idx.ai_settings[1], value: 30.0 },
+        StatOp::SetBase { stat: idx.ai_settings[2], value: 20.0 },
     ])
 }
 
@@ -250,8 +252,7 @@ fn disposition_input_from_sheets_and_records() {
 #[test]
 fn persuasion_input_from_sheets() {
     let sheets = Sheets::new();
-    let ai = AiNudge { flee: 20, fight: 30 };
-    let i = persuasion_input(&sheets, PlayerId::HOST, SPEAKER, PersuasionKind::Taunt, 50, ai, 17).unwrap();
+    let i = persuasion_input(&sheets, PlayerId::HOST, SPEAKER, PersuasionKind::Taunt, 50, 17).unwrap();
     let t = &sheets.table;
     let (pv, nv) = (sheets.host.view(&t.table), sheets.npc.view(&t.table));
     assert_eq!(
@@ -269,8 +270,11 @@ fn persuasion_input_from_sheets() {
     );
     assert_eq!((i.npc.personality, i.npc.luck, i.npc.speechcraft, i.npc.level), (40.0, 50.0, 25.0, 4));
     assert_eq!((i.npc.fatigue_current, i.npc.fatigue_max), (nv.current(t.idx.fatigue), nv.max(t.idx.fatigue)));
-    assert_eq!((i.kind, i.disposition, i.npc_ai, i.roll), (PersuasionKind::Taunt, 50, ai, 17));
-    assert!(persuasion_input(&sheets, PlayerId::HOST, ActorKey(8), PersuasionKind::Taunt, 50, ai, 17).is_none());
+    // The speaker's base Fight and Flee come from its sheet.
+    assert_eq!((i.kind, i.disposition, i.npc_ai, i.roll), (PersuasionKind::Taunt, 50, AI, 17));
+    assert!(persuasion_input(&sheets, PlayerId::HOST, ActorKey(8), PersuasionKind::Taunt, 50, 17).is_none());
+    // No stats table: persuasion has nothing to read (the host refuses it).
+    assert!(persuasion_input(&crate::NoSheets, PlayerId::HOST, SPEAKER, PersuasionKind::Taunt, 50, 17).is_none());
 }
 
 // ------------------------------------------------------------------ persuasion

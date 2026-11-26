@@ -44,8 +44,8 @@ pub use filter::{ActorFacts, MwDialogueRules, MwView, rank_name};
 pub use levelled::{LevelledRoll, initial_items, levelled_item};
 pub use persuasion::{
     AiNudge, PersuaderStats, PersuasionInput, PersuasionKind, PersuasionOutcome, PersuasionRatings, PersuasionSession,
-    persuader_stats, persuasion_change, persuasion_input, persuasion_ratings, persuasion_roll, session_perm_change,
-    speechcraft_use,
+    persuader_stats, persuasion_ai_ops, persuasion_change, persuasion_input, persuasion_ratings, persuasion_roll,
+    session_perm_change, speechcraft_use,
 };
 pub use result::{ResultCall, ResultEffect, ResultError, ResultRunner, Target};
 pub use api::{Checkpoint, GameOp, GameRun, GameView, MwWorld, ScriptVar};

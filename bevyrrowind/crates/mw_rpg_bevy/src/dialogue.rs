@@ -24,7 +24,7 @@ use bevy_input::prelude::*;
 use bevy_log::prelude::*;
 use bevy_enhanced_input::prelude::EnhancedInputPlugin;
 use mw_rpg::{
-    ActorFacts, AiNudge, BoundItems, DispositionExtras, DispositionInput, GlobalNumber, MwDialogue, MwDialogueRules, MwResults, MwSheets, MwSlot,
+    ActorFacts, BoundItems, DispositionExtras, DispositionInput, GlobalNumber, MwDialogue, MwDialogueRules, MwResults, MwSheets, MwSlot,
     MwAi, MwView, MwWorld, NoSheets, NpcStates, PersuasionSession, ResultCall, ResultEffect, ResultRunner, ResultState, ScriptVar, Target, VarType, clothing_value, rank_name, record_clothing_value,
 };
 use mw_walkers_bevy::script_ai::{AiPackageKind, AiRuns, ScriptAiPush};
@@ -166,8 +166,6 @@ impl DispositionModel for DerivedDisposition {
 struct Actor {
     facts: ActorFacts,
     base_disposition: i32,
-    /// The record's base Fight and Flee (`AIDT`), what persuasion's Intimidate and Taunt nudge.
-    ai: AiNudge,
     declared: HashMap<RecordId, VarType>,
 }
 
@@ -236,10 +234,6 @@ pub struct Rpg {
     /// AI package pushes scripts made (`MA2c2`), sent as [`ScriptAiPush`] messages by
     /// `send_ai_pushes`; the walkers stack them on the next fixed tick.
     ai_pushes: Vec<ScriptAiPush>,
-    /// Base Fight and Flee persuasion changed (Intimidate, Taunt), by actor; the record's
-    /// otherwise. TODO(AI settings, ROADMAP Phase 3 AI): no per-actor AI settings exist yet; move
-    /// these into them (saved, read by the AI) when they land. Unsaved until then.
-    ai_settings: HashMap<ActorKey, AiNudge>,
     /// Merchant purses on the game clock, saved as `sf/services` (`mw_saves_bevy`).
     pub services: WorldServices,
     /// Open trade sessions, by id and player (not saved: staged items never moved).
@@ -566,7 +560,6 @@ impl Rpg {
             events: Vec::new(),
             stat_commands: Vec::new(),
             ai_pushes: Vec::new(),
-            ai_settings: HashMap::new(),
             services: WorldServices::default(),
             sessions: ServiceSessions::new(),
             service_events: Vec::new(),
@@ -691,7 +684,6 @@ impl Rpg {
         let actor = Actor {
             facts: ActorFacts::from_npc(db, npc, cell),
             base_disposition: i32::from(npc.data.disposition),
-            ai: AiNudge { flee: i32::from(npc.ai_data.flee), fight: i32::from(npc.ai_data.fight) },
             declared,
         };
         self.content.actors.insert(key, actor);

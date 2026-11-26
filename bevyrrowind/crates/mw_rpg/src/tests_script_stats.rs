@@ -12,8 +12,8 @@ use tes3::esp::{AiData, Creature, Npc, NpcData, NpcStats};
 
 use crate::script_stats::mod_stat;
 use crate::{
-    ActorFacts, GlobalNumber, MwResults, MwSheets, MwWorld, ResultCall, ResultEffect, ResultRunner,
-    ResultState, ScriptVar, Target, VarType,
+    ActorFacts, AiNudge, GlobalNumber, MwResults, MwSheets, MwWorld, PersuasionKind, ResultCall, ResultEffect,
+    ResultRunner, ResultState, ScriptVar, Target, VarType, persuasion_ai_ops, persuasion_change, persuasion_input,
 };
 
 const FIGHTERS: &str = "fighters guild";
@@ -504,4 +504,45 @@ set e to \"nobody\"->GetHello",
             (Target::Player, vec![StatOp::SetBase { stat: flee, value: 20.0 }]),
         ]
     );
+}
+
+/// The host applying stat writes to the speaker's sheet (as the fixed tick applies a
+/// `StatCommand`).
+fn apply_to_speaker(w: &mut World, ops: &[StatOp]) {
+    let s = &mut w.sheets;
+    let inputs = Inputs::default();
+    let cause = Cause { kind: CauseKind::Script, source: None, tick: 0 };
+    let ctx = ApplyCtx { owner: StatOwner::Actor(SPEAKER), cause, inputs: &inputs };
+    assert_eq!(sf_stats::apply(&s.table.table, &s.rules, &mut s.speaker, ops, &ctx, &mut Vec::new()), 0);
+}
+
+/// `MA4e`: persuasion reads the speaker's base Fight from its sheet, so a script `ModFight 30`
+/// reaches an Intimidate success's nudge. Disposition 0 puts the target at `iPerMinChance` 5
+/// whatever the stats, so roll 0 succeeds with the minimum nudge `iPerMinChange` 10 (Flee +10,
+/// Fight -10).
+#[test]
+fn persuasion_nudges_from_the_scripted_fight() {
+    let mut w = World::new();
+    let intimidate = |w: &World| {
+        let input = persuasion_input(&w.sheets, PlayerId::HOST, SPEAKER, PersuasionKind::Intimidate, 0, 0).unwrap();
+        persuasion_change(&input, &MwGmst::vanilla()).ai
+    };
+    assert_eq!(intimidate(&w), Some(AiNudge { flee: 20, fight: 30 }), "AIDT Flee 10 + 10, Fight 40 - 10");
+    let r = run(&w, "ModFight 30");
+    for (target, ops) in &r.stats {
+        assert_eq!(*target, Target::Speaker);
+        apply_to_speaker(&mut w, ops);
+    }
+    assert_eq!(intimidate(&w), Some(AiNudge { flee: 20, fight: 60 }), "Fight 70 - 10");
+}
+
+/// `MA4e`: a persuasion nudge lands on the speaker's base AI settings, so script `GetFight` and
+/// `GetFlee` read it afterwards.
+#[test]
+fn persuasion_nudge_is_visible_to_get_fight() {
+    let mut w = World::new();
+    let ops = persuasion_ai_ops(&w.sheets.table, AiNudge { flee: 25, fight: 5 });
+    apply_to_speaker(&mut w, &ops);
+    let r = run(&w, "set a to GetFight\nset b to GetFlee");
+    assert_eq!((r.local("a"), r.local("b")), (5.0, 25.0));
 }
