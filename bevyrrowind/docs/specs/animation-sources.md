@@ -155,7 +155,7 @@ as opaque strings).
   `provenance` = source id, SPDX tag, redistributable. Missing file → drop; present file without the clip → drop
   (folded into the rules version). `base_anim`, `base_anim_female`, `base_animkna` share the path (no beast-leg fix).
 - Report: `bevyrrowind bake` prints a line per slot (source, or fallback and why); `bevyrrowind anim-sources` prints the
-  folder, files present/missing and per-slot choice. Tests: `mw_bake/tests/anim_sources_real_install.rs`.
+  folder, files present/missing and per-slot choice. Tests: `mw_bake/tests/it/anim_sources_real_install.rs`.
 - UAL1 `ClimbLedge_RM` is a 0.63 s top-out: root straight up 2.47 m (2.94 m on `base_anim`), no forward travel.
 - LAFAN1 (2026-10-26): BVH importer in `anim_importers()` (per-source `unit_scale`/`up` from the manifest as path
   overrides); source flag `root_from_pelvis` → `SourceRef::retarget_root` → `AnimRules::retarget_root`: cooked without
@@ -241,7 +241,7 @@ user). No gap.
   auto-align left each limb's twist arbitrary (arms twisted, feet flipped on the body). Every take starts in the actor's
   T-pose at frame 0: manifest `Source.rest_frame: Some(0)` → `sf_anim::BvhAnimImporter::with_rest_frame` makes that frame
   the skeleton rest (clips unchanged). 4 get-ups on `base_anim`: mean twist error 121-125 → 3-4 deg, wrong-side
-  knee/elbow bends 0, soles up at the end; UAL2 unchanged (0.8 deg). Measurements: `mw_bake/tests/lafan1_retarget_real_install.rs`.
+  knee/elbow bends 0, soles up at the end; UAL2 unchanged (0.8 deg). Measurements: `mw_bake/tests/it/lafan1_retarget_real_install.rs`.
   Get-up slots: `getup.supine` UAL2 `LayToIdle`, `getup.prone` UAL1 `Crawl_Exit` (LaFAN1 second), `getup.side_right`
   LaFAN1 trimmed to planted feet; `getup.side_left` dropped (walks 2.5 m once up).
 
@@ -275,7 +275,7 @@ play rate clamped 0.8-1.25. Gaits 1.6 / 4.5 / 7.0 m/s. Dance card: `superfargoth
 - **Graph** (`mw_graphs::build::gaits`, `Preset`): walk and run of the base-set stances blend the gait set over `speed`
   with the Morrowind directional set by `strafing` (locked on keeps backpedals/sidesteps); `Preset::Classic` builds the
   pre-A3 graph. Style seam (3.4d): `SourcesManifest::gait_slot` looks up `loco.<style>.<gait>.<part>`, then the base set.
-- **Measured** (`mw_graphs/tests/slope_walk.rs player_gaits`, retargeted onto `base_anim`): natural speeds walk 1.61,
+- **Measured** (`mw_graphs/tests/it/slope_walk.rs player_gaits`, retargeted onto `base_anim`): natural speeds walk 1.61,
   jog 5.32, sprint 7.85 m/s; rates walk 1.00, jog 0.92, sprint 0.94, walk stick 0.3 0.80 (clamp; stride 0.62); walk<->run
   switch +0.02/+0.03 cycle (one frame) at all 5 points. Heading drift per loop is not applied (`Match`: capsule-driven).
 

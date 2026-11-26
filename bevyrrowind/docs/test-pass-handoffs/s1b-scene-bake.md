@@ -25,7 +25,7 @@ bash bevyrrowind/tools/cargo_turn.sh clippy -p sf_scene --all-targets -- -D warn
 bash bevyrrowind/tools/cargo_turn.sh clippy -p sf_scene --features bake --all-targets -- -D warnings
 bash bevyrrowind/tools/cargo_turn.sh test -p mw_bake --lib scene
 bash bevyrrowind/tools/cargo_turn.sh clippy -p mw_bake --all-targets -- -D warnings
-bash bevyrrowind/tools/cargo_turn.sh test --release -p mw_bake --test scene_cells_real_install -- --ignored --nocapture
+bash bevyrrowind/tools/cargo_turn.sh test --release -p mw_bake --test it scene_cells_real_install:: -- --ignored --nocapture
 ```
 Hakari: new workspace-internal edges only (sf_scene -> sf_bake/sf_model/sf_terrain/sf_world under `bake`;
 mw_bake -> sf_scene; mw_bake dev -> sf_coords). No new external crates. sf_scene stays in final-excludes.

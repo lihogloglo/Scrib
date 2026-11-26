@@ -124,7 +124,7 @@ format v2 (S1c): cell-local chain indices, a material key per chain (content has
 NIF material, so two NIFs with the same texture and settings share it), the layer mask in the
 header, per-part spheres from each part's LOD0 vertices. The adapter itself is unchanged. Called
 by `bevyrrowind bake` after the de-light (it needs the alpha classes), then `scene::bake_chains` (C1); measurement:
-`cargo test --release -p mw_bake --test scene_cells_real_install -- --ignored --nocapture`.
+`cargo test --release -p mw_bake --test it scene_cells_real_install:: -- --ignored --nocapture`.
 
 ## Runtime (`mw_assets::cooked`, `view`)
 

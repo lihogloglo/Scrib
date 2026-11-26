@@ -171,7 +171,7 @@ of cooking statically. No `NiSkinPartition` in the install. 748 models cook to
 `Cooked::Skinned` in 4.4 s of CPU (58.5 MB); 7 skip (skeleton-only files such
 as `base_anim.nif`, a head whose morph has no target besides the base).
 
-Verify: `cargo test -p mw_nif`, `cargo test -p mw_bake --test skins_real_install -- --nocapture`,
+Verify: `cargo test -p mw_nif`, `cargo test -p mw_bake --test it skins_real_install:: -- --nocapture`,
 `cargo run --release -p mw_bake --example skin_report` (whole install).
 
 ## Keyframe conventions

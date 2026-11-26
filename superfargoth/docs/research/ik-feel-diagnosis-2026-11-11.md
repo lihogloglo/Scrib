@@ -7,7 +7,7 @@ Diagnosis only: no fix was made. Measurements: two `#[ignore = "measurement: ...
 `bevyrrowind/crates/mw_graphs/tests/slope_walk.rs` (real install, shipped humanoid graph, NPC mover):
 
 ```sh
-bash bevyrrowind/tools/cargo_turn.sh test --release -p mw_graphs --test slope_walk -- --ignored --nocapture player_without_foot_probes paused_updates_move_the_pose
+bash bevyrrowind/tools/cargo_turn.sh test --release -p mw_graphs --test it -- --ignored --nocapture slope_walk::player_without_foot_probes slope_walk::paused_updates_move_the_pose
 ```
 
 ## Verdict in one paragraph
@@ -248,5 +248,5 @@ for both). Straight-line rows match npc vs player to within 0.03 grade, 0.5° an
 4. *P-IK7 lean cap by grade*: saturate the grade input near 30° (beyond it, a climb, not a lean). Owner taste: ask with 1.
 5. *P-IK1c real-graph player test*: the baked humanoid graph under `avatar::feed` at 60 and 144 fps (closes 7).
 
-Command: `bash bevyrrowind/tools/cargo_turn.sh test --release -p mw_graphs --test slope_walk player_ik_vs_walkers --
+Command: `bash bevyrrowind/tools/cargo_turn.sh test --release -p mw_graphs --test it slope_walk::player_ik_vs_walkers --
 --ignored --nocapture` (needs a Morrowind install; ~2.5 min).

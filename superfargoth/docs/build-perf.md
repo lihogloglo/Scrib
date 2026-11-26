@@ -156,6 +156,13 @@ one `test --workspace` with nothing to compile still ran 290 s. Three changes, r
   (sf_ids): one job 23 min of build, slowest shard 13. The floor is the shard holding the app (every lib, ~15 min
   when all of them rebuild), so more runners stop paying after three or four. A job saves a cache entry only when
   it compiled something (three shards + clippy are ~6.9 GB of GitHub's 10 GB when all save).
+- **One integration test binary per crate** (ROADMAP 1.14, ci-4; first `mw_bake` 29 files, `mw_graphs` 6): a crate with
+  more than two integration test files keeps them in `tests/it/<file>.rs`, each a module of `tests/it/main.rs` (a new
+  file needs its `mod` line there), so cargo links one test executable where it linked one per file (no manifest
+  change: cargo finds `tests/<dir>/main.rs` by itself). One file: `cargo test -p <crate> --test it <file>::`;
+  measurements: `... --test it <file>:: -- --ignored --nocapture`. All the crate's integration tests now share one
+  process and its thread pool: a test that needs a fixed temp path, an environment variable or the working directory
+  for itself must not assume it runs alone.
 - **Worktrees** (`tools/worktree.sh`): own target per checkout, `C:\cargo-target\scrib-wt\<name>` via junctions.
   A shared target is unsafe: cargo hashes a path crate by its path relative to the workspace root and checks
   freshness by mtime, so two checkouts would reuse each other's artifacts. Not adopted yet: sccache to share the

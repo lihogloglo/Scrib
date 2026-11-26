@@ -1,7 +1,7 @@
 //! Look-at on the shipped humanoid graph (AN8): the `LookAt` op spreads the host's look
 //! target over chest, upper chest, neck and head. Each test runs a looking sim beside a free
 //! one (no target, same clock): standing idle, the differences are the op's. Skipped without
-//! the install. `cargo test -p mw_graphs --test look_at -- --nocapture` prints the measurements.
+//! the install. `cargo test -p mw_graphs --test it look_at:: -- --nocapture` prints the measurements.
 
 use glam::{Quat, Vec3, Vec4};
 use mw_anim::{Animation, rig};

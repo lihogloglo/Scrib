@@ -243,7 +243,7 @@ material input).
   filter per role) and no padding (wrapped UVs would sample the pad). The decoder crops partial blocks, so the cook
   can do it; today it's still `CookSkip::Unaligned`, served as shipped (fine for TGA/PNG, a raw unaligned BC DDS fails
   to load). Follow-up in `cook.rs`: encode them as RGBA8 KTX2.
-- **Sources** (`mw_bake/tests/texture_sources.rs`): every container above cooks the same from the BSA, the loose folder
+- **Sources** (`mw_bake/tests/it/texture_sources.rs`): every container above cooks the same from the BSA, the loose folder
   or a mod above both; the highest source's file wins; a normal companion from another source than its albedo is
   found and cooked. One stem in two extensions across sources (BSA `x.dds`, mod `x.tga`) is `Ambiguous`, served as
   shipped: a `.dds` and a `.tga` reference resolve to different files. A `.bmp` reference finds only `.bmp`

@@ -131,7 +131,7 @@ back to the capsule at the end; fixed (`Mover::snap` at the hand-back); owner: s
   (walk/run cycles), then a UAL clip (e.g. `Walk_Loop`, `Idle_Loop`); then `scene level-anim-ledges` (F11, mantle `ClimbUp_2m`) and `scene level-arena` (attacks).
 - Look for: trunk more upright than before (no arched lower back, neck not jutting forward, head level at rest); limbs, feet and
   hands as before. What is left is the clip's own style (Kimodo walk arches ~8 deg, clavicles low; UAL walk leans its upper spine).
-  The game's retargeted mantle and combat clips no worse (hands still on the lip, no new twist). Measured: `mw_bake/tests/generated_pose.rs`.
+  The game's retargeted mantle and combat clips no worse (hands still on the lip, no new twist). Measured: `mw_bake/tests/it/generated_pose.rs`.
 - Also (retarget-shoulders, anim.retarget v6): arms clear the chest in Kimodo walks (shoulders not pulled in, elbows out
-  like MW's own WalkForward); UAL arms ~4 deg wider, shoulders not shrugged in runs. Measured: `mw_bake/tests/generated_arms.rs`.
+  like MW's own WalkForward); UAL arms ~4 deg wider, shoulders not shrugged in runs. Measured: `mw_bake/tests/it/generated_arms.rs`.
 

@@ -6,7 +6,7 @@
 //! lift, the largest foot error after the leg IK, the frames lifted, the clip length, whether
 //! the candidate is mirrored and the fit's status. Then a summary (largest lift and foot
 //! error, min/max lift per family). Run with
-//! `cargo test -p mw_bake --test seat_fit_survey -- --ignored --nocapture`; skips without a
+//! `cargo test -p mw_bake --test it seat_fit_survey:: -- --ignored --nocapture`; skips without a
 //! Morrowind install or the generated `sit1` takes.
 #![allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::too_many_lines)]
 

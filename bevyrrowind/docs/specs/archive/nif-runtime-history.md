@@ -39,7 +39,7 @@ pose `actor_fx` turns each (`rig::billboard_joints`) so its world rotation
 is `billboard_rotation(camera)`, composing the rig's fresh local rotations
 up to the body.
 
-Census (`cargo test -p mw_bake --test actor_fx_real_install -- --nocapture`):
+Census (`cargo test -p mw_bake --test it actor_fx_real_install:: -- --nocapture`):
 1,310 `BODY` models carry no controllers, billboards or particles; 89 `CREA`
 models: 101 visibility controllers in 13 models (mostly particle emitters
 and death pieces), 30 material controllers in 6 (alpha: ghosts, Dagoth Ur,
@@ -53,7 +53,7 @@ into an outfit mesh (dwarven specter robe, all shown in practice);
 creature particles; controllers under `NiBSAnimationNode` follow the
 animation time too (none seen on creatures).
 
-Part census (`cargo test -p mw_bake --test creature_parts_real_install --
+Part census (`cargo test -p mw_bake --test it creature_parts_real_install:: --
 --nocapture`, dremora 2026-10-12): every triangle shape of the 89 `CREA`
 models against the cooked rig (`mesh.rig` LOD0) and against what the idle
 clip (from the files the bake layers) leaves shown. 331,292 source
@@ -116,7 +116,7 @@ files) use the static path's CPU simulation; only the anchoring is new.
 
 ## Array emitters, live emitters, emission clocks (as built 2026-10-12, particles2)
 
-Census: `cargo test -p mw_bake --test particles_real_install -- --nocapture`
+Census: `cargo test -p mw_bake --test it particles_real_install:: -- --nocapture`
 (all 7,319 vanilla NIFs): 678 particle controllers, 42 of them
 `NiBSPArrayController` (21 creature models and their `x` variants: atronachs,
 Dagoth Ur, dremora, ascended sleepers, bonewalker, dwarven specter), every one

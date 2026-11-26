@@ -3,7 +3,7 @@
 //! Every texture is rewrapped as `Role::Color` (the mix is what's measured; T3 assigns real roles).
 //! `MORROWIND_DIR` or the detected install.
 //!
-//! `cargo test --release -p mw_bake --test rewrap_real_install -- --ignored --nocapture`
+//! `cargo test --release -p mw_bake --test it rewrap_real_install:: -- --ignored --nocapture`
 #![allow(clippy::cast_precision_loss)]
 
 use std::collections::BTreeMap;

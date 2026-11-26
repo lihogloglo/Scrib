@@ -46,7 +46,7 @@ companion is read with the profile of the source its winning file comes from. Ba
 used by the cook's decode path, de-light, terrain and far bakes, picks the container by its bytes; block files go through
 the rewrap's reader (`:80`, so BC4/BC5/BC7 and KTX2 decode too), legacy uncompressed DDS by its bit masks plus P8
 (`:153`), DX10 and KTX2 uncompressed by table (`:180`, `:201`), TGA/BMP/PNG through `image`. Not read: HDR, signed,
-Basis, cubemaps, JPEG. Matrix test over BSA, loose and mod sources: `mw_bake/tests/texture_sources.rs`.
+Basis, cubemaps, JPEG. Matrix test over BSA, loose and mod sources: `mw_bake/tests/it/texture_sources.rs`.
 
 **ORM / `_spec` maps** (TS-2, 2026-11-13; textures-adapter.md §10): `plan_orms` (`cook.rs:358`) finds a base texture's
 `_spec` and reads it with its own source's profile: `wareya-pbr` = packed ORM, rewrapped through the block-exact R↔B swap

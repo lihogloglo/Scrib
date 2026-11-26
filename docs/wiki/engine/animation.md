@@ -46,7 +46,7 @@ and creature graphs are built in code, shipped as RON, and compiled at bake time
   Without the library the slots drop and the Morrowind sets play; weapon stances, sneak and swim keep them.
   `Preset::Classic` (`asset_for`, `:1133`) builds the pre-A3 graph (digest pinned in `mw_graphs/src/tests.rs`); nothing
   selects it yet. Style seam: `SourcesManifest::gait_slot` (`sources.rs:316`) looks up `loco.<style>.<gait>.<part>`,
-  then the base set. Tests: `mw_graphs/tests/gait_set.rs`; A1 tables `slope_walk player_gaits` (`A1_CLASSIC=1`: Morrowind).
+  then the base set. Tests: `mw_graphs/tests/it/gait_set.rs`; A1 tables `slope_walk player_gaits` (`A1_CLASSIC=1`: Morrowind).
 - **Sync groups across states** (`instance.rs:1489-1503`, `join` `:1611`): a member entering alone (an inertialized
   switch stops the old state at once) joins the last update's leader by markers or phase (UE sync groups keep their
   position across updates); with no member for an update the group forgets.
@@ -77,7 +77,7 @@ and creature graphs are built in code, shipped as RON, and compiled at bake time
   so the last frame is exactly the first moved by the loop's root delta. `cook_clip_report` (`cook.rs:341`) returns
   `LoopCut` (window, strides, seam errors before/after the fade, speed, turn) or a `LoopCutError` (clip left
   unlooped); `mw_bake::anim::cook_library_clip_report` (`anim.rs:157`). Rule absent: byte-identical cook. Used by
-  the gait slots (below). `anim.cook` step version 12. Measure: `mw_bake/tests/loop_cut.rs` (loco1 keep/maybe cycles). Preview:
+  the gait slots (below). `anim.cook` step version 12. Measure: `mw_bake/tests/it/loop_cut.rs` (loco1 keep/maybe cycles). Preview:
   `clip-preview --browse` cooks `*.cycle.*` takes with the cut (`clip_preview/cook.rs` `cook_report`), loops them in the slot
   (`LOOP_FOREVER`, no re-blend), overlay = `cut_text`, L = raw take A/B (`clip_preview/live.rs`).
 - **Retarget pose** (`superfargoth/crates/sf_character/src/align.rs:1-35`, rule at `:213`): auto-align turns limbs to the
@@ -91,7 +91,7 @@ and creature graphs are built in code, shipped as RON, and compiled at bake time
   a source's `pose_offsets` (Kimodo `generated`: clavicle −10.5°, upper arm +10.5° to keep the arm at T: its walks hold the
   clavicles that low) and `target_pose_offsets` for the Morrowind humanoid (upper arm +4° abduction, every source:
   bulky arm and chest meshes). Applied in `mw_bake/src/anim.rs:96` `library_rig` and `:109` `humanoid_target_map`.
-  Measure: `mw_bake/tests/generated_arms.rs` (`measure_generated_clavicle_offset` sets the source value).
+  Measure: `mw_bake/tests/it/generated_arms.rs` (`measure_generated_clavicle_offset` sets the source value).
 - **Generated clips** (Kimodo, MotionBricks) come in through the clip factory (`specs/motion-generation.md`).
 
 ## Bevy features used

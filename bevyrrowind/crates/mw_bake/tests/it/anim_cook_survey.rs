@@ -5,7 +5,7 @@
 //! (subject, rate, frames, max error, size, byte hash) for before/after
 //! comparisons; with `SURVEY_DIAG=1` classifies why clips over the error
 //! bound miss it. Ignored by default (about 2 min of CPU):
-//! `cargo test -p mw_bake --release --test anim_cook_survey -- --ignored --nocapture`.
+//! `cargo test -p mw_bake --release --test it anim_cook_survey:: -- --ignored --nocapture`.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;

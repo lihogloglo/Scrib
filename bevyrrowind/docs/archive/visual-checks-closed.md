@@ -2070,7 +2070,7 @@ AL-12 | confirmed (2026-11-05: vault works; a small hiccup before the vault, not
 - Look for: pelvis steady, no bob at step frequency; no deep crouch when running or sprinting (was ~95 mm at 4.5-7 m/s, now
   under 1 mm headless); feet don't slide; feet let go of the ground in a jump. Sprint plays the run cycle at 2.2x
   (4.75 steps/s): if it looks frantic, a sprint cycle is the fix, not a longer stride. Run strafes still skate (clip issue).
-  Numbers: `cargo test -p mw_graphs --test slope_walk gait_bands -- --ignored --nocapture`. Status: confirmed (owner 2026-10-27: "so much better"; movement feel follow-up under PL-2).
+  Numbers: `cargo test -p mw_graphs --test it slope_walk::gait_bands -- --ignored --nocapture`. Status: confirmed (owner 2026-10-27: "so much better"; movement feel follow-up under PL-2).
 
 AL-9 | confirmed | [anim-lab](../visual-checks/anim-lab.md) | Gait bands: pelvis steady, no sprint crouch, feet planted
 

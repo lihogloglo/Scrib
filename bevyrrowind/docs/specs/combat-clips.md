@@ -113,7 +113,7 @@ rows. Sets: aligned keys on the male keys, identity except beast HandToHand and 
 
 ## Creature attack clips (AN32b; AN33 cooks, C6f uses)
 
-Input AN32b (ledger animation; `mw_bake/tests/attack_clips_survey.rs`, ignored test `creature_attack_clips`): 89 creature
+Input AN32b (ledger animation; `mw_bake/tests/it/attack_clips_survey.rs`, ignored test `creature_attack_clips`): 89 creature
 rigs, 234 `Attack1-3` groups. Every group has only `Start`, `Hit`, `Stop`: no sections, no min / max attack, no sized
 follows. `.` = `mw.combat.clips.`; tactics and the lunge rule: combat-adapter.md "Creatures (C6f)".
 

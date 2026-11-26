@@ -5,7 +5,7 @@
 //! cap and under the default budget. Vanilla sources only (the mod list is loaded by the game's
 //! `bake`, not here). `MORROWIND_DIR` or the detected install.
 //!
-//! `cargo test --release -p mw_bake --test terrain_layers_real_install -- --ignored --nocapture`
+//! `cargo test --release -p mw_bake --test it terrain_layers_real_install:: -- --ignored --nocapture`
 #![allow(clippy::cast_precision_loss)]
 
 use std::time::Instant;

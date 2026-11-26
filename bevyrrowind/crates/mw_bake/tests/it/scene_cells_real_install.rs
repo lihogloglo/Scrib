@@ -3,7 +3,7 @@
 //! prints counts, sizes and time. Uses the default bake cache (a warm cache makes the first
 //! stages hits) or `SF_SCENE_CACHE=<dir>`; `MORROWIND_DIR` or the detected install.
 //!
-//! `cargo test --release -p mw_bake --test scene_cells_real_install -- --ignored --nocapture`
+//! `cargo test --release -p mw_bake --test it scene_cells_real_install:: -- --ignored --nocapture`
 #![allow(clippy::cast_precision_loss)]
 
 use std::collections::{BTreeMap, HashSet};

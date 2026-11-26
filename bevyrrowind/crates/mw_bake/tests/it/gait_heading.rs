@@ -21,7 +21,7 @@
 //! graph (`mw_graphs::sim`) in free movement at 1.6 m/s: the drawn pose's pelvis / chest
 //! facing and stance-foot sweep against the capsule's +Z travel, and the gait set's and
 //! directional set's weights. Run with
-//! `cargo test --release -p mw_bake --test gait_heading -- --ignored --nocapture`; skips
+//! `cargo test --release -p mw_bake --test it gait_heading:: -- --ignored --nocapture`; skips
 //! without a Morrowind install or the files.
 #![allow(clippy::cast_precision_loss, clippy::similar_names, clippy::too_many_lines)]
 

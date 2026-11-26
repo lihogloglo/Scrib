@@ -37,7 +37,7 @@
 //! ungated takes the loop cut could cut (`UNCUT` = no loop found, the whole take would play), and
 //! for forward gaits also the top 2 within that gait's graph speed band (`GAITS`). Speed and
 //! cadence are printed, not scored.
-//! Run with `cargo test -p mw_bake --test gait_diagnosis -- --ignored --nocapture`; skips
+//! Run with `cargo test -p mw_bake --test it gait_diagnosis:: -- --ignored --nocapture`; skips
 //! without a Morrowind install or the library.
 #![allow(clippy::cast_precision_loss, clippy::similar_names, clippy::too_many_lines, clippy::many_single_char_names)]
 

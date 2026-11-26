@@ -2,7 +2,7 @@
 //! per speed band, and a walk <-> run state switch keeping the foot phase (A1 measured a
 //! restart at the clip start, up to half a cycle off). Exact checks on blend weights and
 //! playheads; skipped without the install or the library's gait takes.
-//! `cargo test -p mw_graphs --test gait_set`.
+//! `cargo test -p mw_graphs --test it gait_set::`.
 
 use std::sync::Arc;
 

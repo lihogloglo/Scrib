@@ -49,7 +49,7 @@ slot allocator, the CPU cull/LOD twin, and `material.rs` with the 8 material cla
 - The S1b code **as written never compiled**: format v2 (S1c) superseded it the next day, and the first successful
   build of this area was the combined S1b+S1c tree of 2026-11-09 (see the S1c row).
 - **Open for the owner:** the Vvardenfell bake measurement
-  (`test --release -p mw_bake --test scene_cells_real_install -- --ignored --nocapture`, needs the install) against
+  (`test --release -p mw_bake --test it scene_cells_real_install:: -- --ignored --nocapture`, needs the install) against
   the `bake.md` gates, then the one `bake_scene` line in `mw_boot_bevy::bake` that actually wires the step into the
   game's bake. Until that line exists, no table is ever produced by `bevyrrowind bake`.
 - Handoff: `bevyrrowind/docs/test-pass-handoffs/s1b-scene-bake.md`.
