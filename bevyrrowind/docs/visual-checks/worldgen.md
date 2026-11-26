@@ -212,3 +212,4 @@ Look for: rivers in their beds (round 1: 27 m median hover, now 0.6 m), lake edg
 outline points short), rivers moving with the flow (flow-advected normals, speed from slope, foam above 1.5 m/s), no rocks
 or logs in the town, no Imperial towers, Balmora towers at corners. Known: roads stop at the town edge, bridges are gaps,
 no deck on the Odai crossing, lake/river optics borrow the coastal look, terrain detail may poke through narrow beds.
+Note 2026-11-26: rounds 1-3 were seen on `x10s-b2w` (launch line above); the chain's current folder is `x10hs-b2w` (HC-1 low shores), where round 4 launches after WG-W1g (`worldgen-hydrology.md` "Verification").
