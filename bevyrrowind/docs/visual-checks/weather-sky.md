@@ -438,6 +438,32 @@ fair-weather look. Near fog, ground fog banks and god rays are F2/F3, not this c
   Check: same view, clock paused; land keeps its moonlit blue, sky deep and under the land, Secunda readable. Say the
   values you keep. Status: awaiting owner.
 
+### EX-4: Overcast and storm by day (X2 weather EV bias + X3 cloud ambient)
+- Game location: `view "Balmora" --day 173 --hour 15 --weather overcast`, clock paused (P); stand in the square,
+  look along the street to the hills. Then `--weather thunderstorm`, then `--weather clear` as the reference.
+- Live arms: `set exposure.weather.k 0` (today's EV), the default, `set exposure.weather.k 1` (full compensation);
+  `set sky.cloud.ambient_nits 0` (no cloud floor) vs default.
+- Look for: overcast clearly darker than clear (~1.5 stops) but never darker than the night (EX-6); readable shade
+  under the deck, not flat grey; the storm darker than the overcast, still readable; lamps and windows may glow more
+  (accepted). The ramp after a `--weather` change takes a second or two, no pumping. Also rechecks WE-17 (rain).
+- Status: planned (after X1-X3).
+
+### EX-5: Dusk, sun -4° (X1 twilight hold)
+- Game location: `view "Balmora" --day 173 --hour 18.5 --weather clear` (sun near -4°; X0's table gives the exact hour),
+  clock running from 18:00 to 19:30, then paused at -4°; west over the Odai, then east over the town. Repeat
+  `--weather overcast` at 18:30.
+- Live arms: `set exposure.twilight.hold_deg -6` (close to today's fade) vs the default -2.
+- Look for: no dark dip between sunset and night: the ground never reads darker than at 03:30 (EX-6); the night sky
+  glow not lifting the sky above the land; sun shadows fading out cleanly. Overcast dusk dim, not black.
+- Status: planned (after X1-X3).
+
+### EX-6: Night reference, 03:30 (unchanged by X1-X3)
+- Game location: `view "Balmora" --day 173 --hour 3.5 --weather clear`, clock paused, the EX-1 view; then
+  `--weather overcast` and `--weather thunderstorm` at 03:30.
+- Look for: the night as signed off in EX-1 (X1-X3 must not change it: weather bias is 0 at night); overcast and storm
+  nights not brighter than the overcast day of EX-4. Answer: is the day/dusk/night order right (yes/no)?
+- Status: planned (after X1-X3).
+
 ### WE-17: World very dark under a cloud shadow and in rain (owner report 2026-11-24)
 - Game location: any exterior at midday, `--weather cloudy` (stand in a moving cloud shadow) and `--weather rain`.
 - Seen: the whole view drops very dark when a cloud shadow passes over the camera, and in rain. Not diagnosed: suspects

@@ -127,7 +127,7 @@ Highest first: rows 1-4 are drives, row 5 the stack, rows 6-7 run inside the ser
 | 5 | **Stack**, modern rank Quest > Script > Memory ([vendettas](ai-memory.md)) > Reaction (Search, Investigate, Confront, Report, Tidy) > Schedule > Record; `Errand`, `Operate` take their source's rank (stop operator `Record`, road traveller `Schedule`) | `Directive` drive, weight 1, floor 1 |
 | 6 | **Activity**: errand stage, operator post, schedule `UseSlot`, free-time pick (AI27) | HTN methods |
 | 7 | **Idle**: nothing scores above 0 (`DriveReason::Idle`), or the record default | |
-| - | **Overlays**: look-at, Glance, `BarkCue` (AI30), greeting | own channels |
+| - | **Overlays**: look-at, Glance, `BarkCue` (AI30; line picked and gated by [dialogue-rules.md](dialogue-rules.md) "Barks"), greeting | own channels |
 
 - **Scores decide; ranks are defaults.** Weights are IAUS levels in the shipped `sf.ai.drive` records (score, 0-10,
   Guess after Dave Mark's 1/2/3/5): a faint Notice (product < floor / weight) never beats content. Momentum and

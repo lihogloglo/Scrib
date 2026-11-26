@@ -107,7 +107,7 @@ pub struct OffenceDef {                // a record, kind "crime.offence"
     pub provoke: Provocation,          // fight amount for witnesses and victim (rules input)
     pub disposition: DispositionHit,   // for witnesses and victim (rules input)
     pub expels: ExpelRule,             // None | VictimFaction | NamedFaction
-    pub say: Option<RecordId>,         // witness bark topic
+    pub say: Option<RecordId>,         // witness bark concept (`BarkCue`, dialogue-rules.md "Barks")
 }
 ```
 
