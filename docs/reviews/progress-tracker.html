@@ -1,0 +1,449 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Scrib Progress Tracker</title>
+<!--
+  HOW TO UPDATE THIS PAGE
+  Everything shown comes from the JSON block below (id="progress-data"). Edit only that block:
+  counts per system (v done, a built awaiting owner, p in progress, o open specced, u open no spec, k parked),
+  "next" rows, "blocked", the owner check counts, the pace days, "generated" and "commit".
+  Milestone totals are stored in "milestones[].counts": keep them equal to the sum of their systems.
+  The commands used to make the counts are in "refresh". Update at each daily check sitting.
+-->
+<script type="application/json" id="progress-data">
+{
+"generated":"2026-11-26","commit":"1c699df9",
+"totals":{"systems":69,"laneRows":492,"checksAwaiting":56,"checksSeen":72,"checksBug":16,"checksPlanned":17,"checksDeferred":20},
+"states":[{"k":"v","label":"Done","desc":"Built and tested; confirmed by the owner where a look was asked for"},{"k":"a","label":"Built, awaiting owner","desc":"Built, but the owner has not confirmed it. Not validated"},{"k":"p","label":"In progress","desc":"Started, or seen by the owner and sent back for more work"},{"k":"o","label":"Open, specced","desc":"Not started; a spec or row describes it"},{"k":"u","label":"Open, no spec","desc":"Not started, no spec: size unknown"},{"k":"k","label":"Parked","desc":"Waits for the owner's go, or not scheduled"}],
+"milestones":[
+{"id":"play","name":"Playable game","def":"The loop a player needs: move, fight, talk, quest, loot, level, save, with NPCs that live, crime, and a world you can use. Counted: ROADMAP Phase 2 (2.1-2.8) plus the gameplay lanes of Phase 3 (AI, navigation, combat, crime, dialogue and quests, interaction stages 0-5, travel stages 0-2), physics and the clock. Rides, mounts and co-op are counted elsewhere.","counts":{"v":124,"a":10,"p":11,"o":234,"u":0,"k":12},"laneOpen":228,"estimate":{"kind":"range","text":"Rough estimate, lane slices only: 228 open slices is 3 to 15 working days of agent work at the pace measured on 11-25 and 11-26 (102 slices a day at best, about 16 at worst). Read it as a floor, not a date: the owner's checks, clips and cross-lane waits are not in it, and the parts with no slice list (UI, saves, audio, magic, crafting) cannot be estimated yet."}},
+{"id":"anim","name":"New animation system that works","def":"The animation lane (new walk and run, clip review tool, NPC styles, interaction clips, combat clips, physical stumbles) plus traversal, character bodies and first-person arms.","counts":{"v":25,"a":4,"p":3,"o":57,"u":0,"k":0},"laneOpen":55,"estimate":{"kind":"range","text":"Rough estimate, lane slices only: 55 open slices is 1 to 4 working days of agent work at the same measured pace. Read it as a floor, not a date: clips are judged by the owner batch by batch, and a rejected batch is redone."}},
+{"id":"wg","name":"Worldgen v1","def":"A generated world about ten times Vvardenfell: terrain, landforms, climate, water, settlements and roads through Magna Urbis, wilderness sites, forests and rocks. The docs do not define \"v1\"; every row the worldgen specs list is counted.","counts":{"v":37,"a":4,"p":5,"o":64,"u":3,"k":1},"laneOpen":0,"estimate":{"kind":"none","text":"Cannot be estimated yet: towns beyond Balmora 2.0, building styles and interiors have no row list, and each landform needs the owner's look."}},
+{"id":"bw","name":"Big world rendering","def":"Forests of single trees to the horizon on the generated world, and the far field of the vanilla island.","counts":{"v":3,"a":1,"p":1,"o":0,"u":0,"k":11},"laneOpen":0,"estimate":{"kind":"none","text":"Cannot be estimated yet: ten slices wait for the owner's go after the bench result."}},
+{"id":"fancy","name":"Fancy features","def":"Moving decks, real rides, mounts, ships, airships, swimming and floating things.","counts":{"v":8,"a":1,"p":1,"o":22,"u":5,"k":8},"laneOpen":21,"estimate":{"kind":"none","text":"Cannot be estimated yet: mounts are parked, ships and airships have no spec."}},
+{"id":"look","name":"Rendering and world look","def":"Lighting, shadows, sky, weather, water look, terrain, grass, textures (ROADMAP Phase 1 and the Phase 4 eye candy).","counts":{"v":3,"a":4,"p":12,"o":4,"u":2,"k":1},"laneOpen":0,"estimate":{"kind":"none","text":"Cannot be estimated: the tasks are large and open-ended, and end on the owner's eye."}},
+{"id":"perf","name":"Performance and stability","def":"The 8.3 ms frame target, streaming, doors, shader warm-up.","counts":{"v":0,"a":0,"p":7,"o":3,"u":0,"k":0},"laneOpen":0,"estimate":{"kind":"none","text":"Cannot be estimated: the frame target is a hard problem (H1), measured, not counted."}},
+{"id":"tools","name":"Engine, tools and CI","def":"Data and mods, bake, console, feature switches, build speed, docs.","counts":{"v":4,"a":1,"p":5,"o":2,"u":0,"k":1},"laneOpen":0,"estimate":{"kind":"none","text":"No estimate: ongoing upkeep."}},
+{"id":"else","name":"Everything else","def":"Parked or unplanned: co-op, Lua, classic option, setup screen, seamless doors, wishlist items without a spec.","counts":{"v":0,"a":0,"p":0,"o":0,"u":3,"k":12},"laneOpen":0,"estimate":{"kind":"none","text":"Not planned: parked or without a spec."}}
+],
+"systems":[
+{"id":"player","ms":"play","name":"Player movement, camera, controls","rows":"Camera \u00b7 Locomotion, action, controller","unit":"roadmap tasks","items":[{"id":"2.1","s":"p","t":"Walking, running, jumping, the camera and the \"use\" prompt work (PL-1 confirmed). Picking up loose items and the container window still need a pass"},{"id":"2.1b","s":"p","t":"Key bindings built. Left: everything \"hold\" by default, with a hold or toggle option per action"},{"id":"2.1c","s":"v","t":"Bug fixed: activators can be looked at and used again"}],"next":[["IV-1","Pick up loose items cleanly"],["IV-2","Container window: icons and Take with E"]],"blocked":["Owner checks on the player and UI list"],"checks":{"awaiting":10,"seen":10,"bug":1,"planned":0,"deferred":0},"counts":{"v":1,"a":0,"p":2,"o":0,"u":0,"k":0}},
+{"id":"ui","ms":"play","name":"HUD, inventory and game screens","rows":"UI, screens, CSS theme","unit":"roadmap tasks","items":[{"id":"2.2","s":"p","t":"Widget kit, theme, HUD, dialogue, journal, inventory, pause and options screens exist. Polish and the missing screens are left"}],"next":[["2.4","Quest and status lines on the HUD"]],"blocked":["No row list: the remaining screens are not broken into slices"],"counts":{"v":0,"a":0,"p":1,"o":0,"u":0,"k":0}},
+{"id":"menus","ms":"play","name":"Main menu, options, video","rows":"Menus, front end, options, video","unit":"roadmap tasks","items":[{"id":"2.2b","s":"p","t":"Settings built and the menu flow works (MF-1 confirmed 2026-11-23). The look is still crude; video playback is planned"}],"next":[["LK-1","Submenus overlap"],["LK-2","Continue button style"]],"blocked":[],"counts":{"v":0,"a":0,"p":1,"o":0,"u":0,"k":0}},
+{"id":"text","ms":"play","name":"Books, scrolls and text","rows":"Text, books, fonts","unit":"roadmap tasks","items":[{"id":"2.3","s":"p","t":"Text framework built. Morrowind book markup and message formatting are written but never tested in game"}],"next":[["2.3","Test books and message boxes in game"]],"blocked":[],"counts":{"v":0,"a":0,"p":1,"o":0,"u":0,"k":0}},
+{"id":"script","ms":"play","name":"Quest scripts (MWScript)","rows":"Scripting: MWScript (Luau is under \"Everything else\")","unit":"lane slices","note":"Dialogue lane, Stage 1. The script runtime itself was built before this roadmap; Fargoth's ring quest runs end to end (owner-confirmed).","next":[["DQ-6","Scripts react when you activate or equip things"],["DQ-8","Script message boxes with buttons"],["DQ-11","Balmora for 5 minutes with every script running, 0 errors"]],"blocked":["Waits for a free build slot (wave 1, next up)"],"stages":[{"name":"Stage 1: scripts run","counts":{"v":21,"a":0,"p":0,"o":12,"u":0,"k":0}}],"counts":{"v":21,"a":0,"p":0,"o":12,"u":0,"k":0},"items":[]},
+{"id":"dialogue","ms":"play","name":"Dialogue, journal and quests","rows":"RPG, dialogue, quests","unit":"lane slices","note":"Dialogue lane, Stages 2-6 (ROADMAP 2.4). Stage 6, writing tools for new content, is not scheduled and shown as parked.","next":[["DQ-12","Deaths and knockouts reach quests (needs combat C17)"],["DQ-17a","Quest log: status, objectives"],["DQ-23a","Lines picked by rules, the base for NPC barks"]],"blocked":["Combat C17 (NPCs can die) for DQ-12","Magic A5b for DQ-13"],"stages":[{"name":"Stage 2: quests that move the world","counts":{"v":0,"a":0,"p":0,"o":4,"u":0,"k":0}},{"name":"Stage 3: quest log and tracking","counts":{"v":1,"a":0,"p":0,"o":7,"u":0,"k":0}},{"name":"Stage 4: rule-based selection and barks","counts":{"v":1,"a":0,"p":0,"o":7,"u":0,"k":0}},{"name":"Stage 5: cinematic conversations","counts":{"v":1,"a":0,"p":0,"o":13,"u":0,"k":0}},{"name":"Stage 6: authoring for new content","counts":{"v":2,"a":0,"p":0,"o":0,"u":0,"k":7}}],"counts":{"v":5,"a":0,"p":0,"o":31,"u":0,"k":7},"items":[]},
+{"id":"saves","ms":"play","name":"Saves","rows":"Saves","unit":"roadmap tasks","items":[{"id":"2.5","s":"p","t":"Quick save and load and the save screen work (SV-2 confirmed, thumbnails missing). Review fixes C1-C10 done; decisions CH1, D1-D4 taken 2026-11-15"}],"next":[["SV-2","Save thumbnails"],["MA22","NPC state saved with the game (AI lane)"]],"blocked":[],"counts":{"v":0,"a":0,"p":1,"o":0,"u":0,"k":0}},
+{"id":"audio","ms":"play","name":"Audio","rows":"Audio","unit":"roadmap tasks","items":[{"id":"2.6","s":"p","t":"Sound cues, ambience, music, footsteps, voices and the mixer are built (AU-1/2 confirmed). Left: UI sounds, voices blocked by walls, barks"}],"next":[["MA4c3","NPC greetings in every build (voices are dev-only today)"],["2.6","UI sounds"]],"blocked":["AU-3 partial: NPCs greet only when very close"],"checks":{"awaiting":0,"seen":1,"bug":1,"planned":0,"deferred":0},"counts":{"v":0,"a":0,"p":1,"o":0,"u":0,"k":0}},
+{"id":"stats","ms":"play","name":"Character stats and factions","rows":"Stats: attributes, skills, pools, factions","unit":"roadmap tasks","items":[{"id":"2.7 stats","s":"a","t":"Attributes, skills, health, magicka, fatigue and factions built (S0-S7), tested without the game. Owner check HD-2 pending"}],"next":[],"blocked":["Owner check HD-2"],"counts":{"v":0,"a":1,"p":0,"o":0,"u":0,"k":0}},
+{"id":"magic","ms":"play","name":"Magic: spells, potions, enchantments","rows":"Magic effects","unit":"roadmap tasks","items":[{"id":"2.7 effects","s":"a","t":"Effect engine and the Morrowind effect list built (E1-E4b, A1-A5a), mostly tested without the game"},{"id":"A5b","s":"o","t":"Cast a spell from the keyboard, selected spell on the HUD"},{"id":"E5","s":"o","t":"Next effect slice of the spec"}],"next":[["A5b","Cast a spell in game"],["C8d","Cast animation and spell delivery (combat lane)"]],"blocked":[],"counts":{"v":0,"a":1,"p":0,"o":2,"u":0,"k":0}},
+{"id":"services","ms":"play","name":"Merchants, training, services","rows":"Services and trade","unit":"roadmap tasks","items":[{"id":"2.7 services","s":"a","t":"Barter, training and service lists built (SV1-SV3, TR1/TR2, A3), all untested in game. Owner checks PUI-SV3 and PUI-SV4 pending"},{"id":"A3b","s":"o","t":"Services follow-up slice"},{"id":"repair","s":"o","t":"Repair and spell-merchant services"}],"next":[["PUI-SV3","Owner tries barter and training"]],"blocked":["Owner checks PUI-SV3, PUI-SV4"],"counts":{"v":0,"a":1,"p":0,"o":2,"u":0,"k":0}},
+{"id":"crafting","ms":"play","name":"Crafting: alchemy, enchanting, spellmaking","rows":"Crafting","unit":"roadmap tasks","items":[{"id":"alchemy","s":"o","t":"Alchemy: designed, nothing built"},{"id":"enchanting","s":"o","t":"Enchanting and soul gems: designed, nothing built"},{"id":"spellmaking","s":"o","t":"Spellmaking: designed, nothing built"}],"next":[["CR1","Crafting core (13 planned slices: CR1-CR4, A0-A8)"]],"blocked":[],"note":"Three lines stand for 13 planned slices.","counts":{"v":0,"a":0,"p":0,"o":3,"u":0,"k":0}},
+{"id":"crime","ms":"play","name":"Crime, law, stealth, locks","rows":"Crime, law, stealth, locks and traps","unit":"lane slices","note":"ROADMAP 2.8. Stage 5 (Classic options) is not scheduled and shown as parked.","next":[["LW1","Things have owners; stolen goods are tracked"],["LW3","Locks and traps: pick, probe, force"],["A0","Morrowind's owner, lock, key and trap data loaded"]],"blocked":["Waits for a build slot (wave 2)","Witnesses and guards need AI Stage 3","One owner question has no recorded answer: one bounty for the whole island or one per region"],"stages":[{"name":"Stage 0: specs","counts":{"v":6,"a":0,"p":0,"o":0,"u":0,"k":0}},{"name":"Stage 1: locks, keys, traps, owned things","counts":{"v":0,"a":0,"p":0,"o":9,"u":0,"k":0}},{"name":"Stage 2: sneak","counts":{"v":3,"a":0,"p":0,"o":2,"u":0,"k":0}},{"name":"Stage 3: seen, reported, wanted","counts":{"v":0,"a":0,"p":0,"o":11,"u":0,"k":0}},{"name":"Stage 4: a thief's trade","counts":{"v":0,"a":0,"p":0,"o":7,"u":0,"k":0}},{"name":"Stage 5: Classic preset","counts":{"v":0,"a":0,"p":0,"o":0,"u":0,"k":1}}],"counts":{"v":9,"a":0,"p":0,"o":29,"u":0,"k":1},"items":[]},
+{"id":"combat","ms":"play","name":"Combat","rows":"Combat","unit":"lane slices","note":"ROADMAP 3.5. Built before this roadmap and not in the counts: sword attacks, guard, lock-on, soft aim and the roll (CB-1, 2, 3, 3a, 6 confirmed). Stage 7 (co-op, classic rules) is shown as parked.","next":[["AN32-35","Attacks timed on Morrowind's own clips (animation side, first)"],["C2b2","Guard that holds still and can be broken"],["C17","Every NPC and creature can be hit and killed"]],"blocked":["Animation Stage 5 (combat clips) comes first"],"checks":{"awaiting":2,"seen":1,"bug":0,"planned":1,"deferred":0},"stages":[{"name":"Stage 0: specs","counts":{"v":6,"a":0,"p":0,"o":0,"u":0,"k":0}},{"name":"Stage 1: the sword fight feels right on Morrowind clips","counts":{"v":0,"a":0,"p":0,"o":9,"u":0,"k":0}},{"name":"Stage 2: parry, riposte, finishers, kick and hazards","counts":{"v":0,"a":0,"p":0,"o":7,"u":0,"k":0}},{"name":"Stage 3: damage that means something, limbs that get hit","counts":{"v":0,"a":0,"p":0,"o":5,"u":0,"k":0}},{"name":"Stage 4: enemies that fight well","counts":{"v":0,"a":0,"p":0,"o":7,"u":0,"k":0}},{"name":"Stage 5: bows, throwing and spells","counts":{"v":0,"a":0,"p":0,"o":5,"u":0,"k":0}},{"name":"Stage 6: the world takes the hits","counts":{"v":0,"a":0,"p":0,"o":4,"u":0,"k":0}},{"name":"Stage 7: co-op and classic","counts":{"v":0,"a":0,"p":0,"o":0,"u":0,"k":2}}],"counts":{"v":6,"a":0,"p":0,"o":37,"u":0,"k":2},"items":[]},
+{"id":"ai","ms":"play","name":"NPC AI and daily life","rows":"AI","unit":"lane slices","note":"ROADMAP 3.10. Built before this roadmap and not in the counts: AI1-AI7 and Morrowind wandering (AI-2 confirmed).","next":[["MA7b","After you wait or sleep, NPCs stand where they would have walked to"],["AI10c3b","An NPC that walks into another cell stays in the world"],["AI12","NPCs go through doors"]],"blocked":["Sitting and beds wait for the sit clips (ANIM-9 awaiting owner)","Owner checks AI-1, AI-3, AI-13, AI-14, AI-15"],"checks":{"awaiting":5,"seen":2,"bug":0,"planned":0,"deferred":0},"stages":[{"name":"Stage 0: specs","counts":{"v":6,"a":0,"p":0,"o":0,"u":0,"k":0}},{"name":"Stage 1: NPCs see and hear","counts":{"v":38,"a":2,"p":0,"o":8,"u":0,"k":0}},{"name":"Stage 2: a day in town","counts":{"v":15,"a":2,"p":1,"o":9,"u":0,"k":0}},{"name":"Stage 3: NPCs notice and react","counts":{"v":0,"a":0,"p":0,"o":12,"u":0,"k":0}},{"name":"Stage 4: carrying and errands","counts":{"v":0,"a":0,"p":0,"o":4,"u":0,"k":0}},{"name":"Stage 5: traversal and 3D movers","counts":{"v":0,"a":0,"p":0,"o":4,"u":0,"k":0}},{"name":"Stage 6: combat tactics","counts":{"v":0,"a":0,"p":0,"o":4,"u":0,"k":0}},{"name":"Stage 7: followers and companions","counts":{"v":0,"a":0,"p":0,"o":6,"u":0,"k":0}},{"name":"Stage 8: memory, gossip, reputation","counts":{"v":0,"a":0,"p":0,"o":5,"u":0,"k":0}},{"name":"Stage 9: operators and road travellers","counts":{"v":0,"a":0,"p":0,"o":2,"u":0,"k":0}}],"counts":{"v":59,"a":4,"p":1,"o":54,"u":0,"k":0},"items":[]},
+{"id":"nav","ms":"play","name":"Navigation: how NPCs find their way","rows":"Navigation","unit":"lane slices","note":"ROADMAP 3.9. Built before this roadmap and not in the counts: the ground navmesh for the whole island (154k tiles) and door links (NV-1, NV-2 confirmed).","next":[["NV12c3","Roads between towns in the route graph"],["NV14","A stuck NPC frees itself"],["NV5a","Navmesh loaded around every player"]],"blocked":["Waits for a build slot (wave 2)"],"stages":[{"name":"Stage 0: specs and research","counts":{"v":5,"a":0,"p":0,"o":0,"u":0,"k":0}},{"name":"Stage 1: NPCs go everywhere you are, and never stay stuck","counts":{"v":0,"a":0,"p":0,"o":5,"u":0,"k":0}},{"name":"Stage 2: over walls, off ledges, into water","counts":{"v":0,"a":0,"p":0,"o":5,"u":0,"k":0}},{"name":"Stage 3: fliers and swimmers","counts":{"v":0,"a":0,"p":0,"o":4,"u":0,"k":0}},{"name":"Stage 4: roads and long journeys","counts":{"v":3,"a":0,"p":0,"o":5,"u":0,"k":0}},{"name":"Stage 5: a world that changes","counts":{"v":1,"a":0,"p":0,"o":4,"u":0,"k":0}}],"counts":{"v":9,"a":0,"p":0,"o":23,"u":0,"k":0},"items":[]},
+{"id":"interaction","ms":"play","name":"Using the world: doors, chairs, carrying, breaking, fire","rows":"Interaction, smart objects","unit":"lane slices","note":"ROADMAP 3.11. Stages 0-5 only; moving decks and mounts are under \"Fancy features\".","next":[["IN3","Beds and places to lean"],["IN35","Carry objects in third person"],["IN1","Crates and barrels break and spill"]],"blocked":["Owner checks IN-32 (activation), IN-33 (inner doors swing), ANIM-11 (sitting)","IN1 needs combat C2c and C3a"],"checks":{"awaiting":2,"seen":0,"bug":0,"planned":0,"deferred":0},"stages":[{"name":"Stage 0: specs","counts":{"v":4,"a":0,"p":0,"o":0,"u":0,"k":0}},{"name":"Stage 1: use the world","counts":{"v":4,"a":3,"p":0,"o":1,"u":0,"k":0}},{"name":"Stage 2: carry, throw, break, and the world hears it","counts":{"v":0,"a":0,"p":0,"o":12,"u":0,"k":0}},{"name":"Stage 3: light and fire","counts":{"v":0,"a":0,"p":0,"o":6,"u":0,"k":0}},{"name":"Stage 4: NPCs share the objects","counts":{"v":0,"a":0,"p":0,"o":3,"u":0,"k":0}},{"name":"Stage 5: mechanisms and ladders","counts":{"v":0,"a":0,"p":0,"o":2,"u":0,"k":0}}],"counts":{"v":8,"a":3,"p":0,"o":24,"u":0,"k":0},"items":[]},
+{"id":"travel","ms":"play","name":"Travel services: boats, striders, teleports (instant)","rows":"Travel","unit":"lane slices","note":"Travel lane, Stages 0-1. Real rides and mounts are under \"Fancy features\". The parked row is the mount research.","next":[["TV1","Travel network core: stops, operators, prices"],["TV5","Every travel service read from the game's records"],["TV15","Mark, Recall and the Intervention spells"]],"blocked":["Waits for a build slot (wave 3)"],"stages":[{"name":"Stage 0: specs and research","counts":{"v":4,"a":0,"p":0,"o":0,"u":0,"k":1}},{"name":"Stage 1: instant travel on every network","counts":{"v":0,"a":0,"p":0,"o":7,"u":0,"k":0}}],"counts":{"v":4,"a":0,"p":0,"o":7,"u":0,"k":1},"items":[]},
+{"id":"map","ms":"play","name":"World map, pins, compass","rows":"Map","unit":"lane slices","note":"Travel lane, Stage 2.","next":[["MAP1b","The map uncovers as you explore"],["MAP2a","Map image baked from the terrain"],["MAP3b","Map screen with fog, labels, pins"]],"blocked":["Waits for a build slot (wave 3)"],"stages":[{"name":"Stage 2: maps","counts":{"v":1,"a":0,"p":0,"o":10,"u":0,"k":0}}],"counts":{"v":1,"a":0,"p":0,"o":10,"u":0,"k":0},"items":[]},
+{"id":"physics","ms":"play","name":"Physics, ragdolls, cloth","rows":"Physics, ragdolls, cloth","unit":"roadmap tasks","items":[{"id":"3.2","s":"p","t":"Ragdolls: humans fall and die physically (PH-14, PH-15 confirmed). Morrowind creatures left"},{"id":"3.2b","s":"v","t":"Delirium physics adopted and on by default (DE-1 confirmed 2026-11-19)"},{"id":"3.3","s":"p","t":"Physics fixes 1-10 built (PH-11 partial: a hole in a floor). The player capsule slice waits for the owner"},{"id":"Cloth","s":"k","t":"Capes, banners, tents: parked"}],"next":[["3.2","Ragdolls for creatures"],["PH-11","Fix the walkable hole"]],"blocked":["Hard problem H4","Owner: player capsule slice"],"checks":{"awaiting":1,"seen":3,"bug":2,"planned":0,"deferred":2},"counts":{"v":1,"a":0,"p":2,"o":0,"u":0,"k":1}},
+{"id":"clock","ms":"play","name":"Game clock and calendar","rows":"Game clock","unit":"roadmap tasks","items":[{"id":"1.17","s":"p","t":"One clock drives everything (CK-1 confirmed). The calendar as data is left"}],"next":[["C3","Calendar from data"]],"blocked":[],"counts":{"v":0,"a":0,"p":1,"o":0,"u":0,"k":0}},
+{"id":"anim","ms":"anim","name":"Animation for gameplay","rows":"Animation","unit":"lane slices","items":[{"id":"3.8","s":"p","t":"Clip factory for ambient life: 268 generated clips so far, more batches queued (MG10b, MG7b, MG8)"}],"note":"Stage 1 is the new walk and run (ROADMAP 3.4c). Stage 3, style variety, is \"parked\" in the main roadmap (3.4d) but has rows here and sits in wave 6. Stage 5 is built in the combat lane's slot.","next":[["AN6","The chosen walk and run clips go into the game (owner check ANIM-1)"],["B4","Starts, stops and pivots"],["A5","Turning: the body follows the feet"]],"blocked":["Owner checks ANIM-1, ANIM-6b, ANIM-9, ANIM-11 and nine older animation-lab checks"],"checks":{"awaiting":13,"seen":2,"bug":0,"planned":2,"deferred":0},"stages":[{"name":"Stage 1: clean walk and run","counts":{"v":12,"a":1,"p":0,"o":9,"u":0,"k":0}},{"name":"Stage 2: the clip review and pick tool","counts":{"v":2,"a":1,"p":0,"o":5,"u":0,"k":0}},{"name":"Stage 3: NPC style variety","counts":{"v":3,"a":0,"p":0,"o":13,"u":0,"k":0}},{"name":"Stage 4: interaction clip families","counts":{"v":4,"a":1,"p":0,"o":12,"u":0,"k":0}},{"name":"Stage 5: combat on Morrowind clips","counts":{"v":0,"a":0,"p":0,"o":9,"u":0,"k":0}},{"name":"Stage 6: physics tint on Delirium","counts":{"v":3,"a":0,"p":0,"o":7,"u":0,"k":0}}],"counts":{"v":24,"a":3,"p":1,"o":55,"u":0,"k":0}},
+{"id":"locomotion","ms":"anim","name":"Traversal: climbing, vaulting, foot placement","rows":"Locomotion, action, controller","unit":"roadmap tasks","items":[{"id":"3.1","s":"p","t":"Climb over ledges, vault, brace against walls: built (AL-11 awaiting owner). Vault polish left"},{"id":"1.18","s":"v","t":"Foot placement keeps working while the game is paused (PL-8 confirmed)"}],"next":[["AL-11","Owner looks at the wall brace"]],"blocked":["PL-7 partial: stopping on slopes"],"counts":{"v":1,"a":0,"p":1,"o":0,"u":0,"k":0}},
+{"id":"characters","ms":"anim","name":"Character bodies, gear, rigs","rows":"Character, assembly, rig profile","unit":"roadmap tasks","items":[{"id":"3.4","s":"p","t":"Bodies and gear assemble at runtime. Twelve owner checks on skin, gear and hair are deferred to the phase that reworks them"}],"next":[],"blocked":["12 deferred checks"],"checks":{"awaiting":0,"seen":0,"bug":0,"planned":0,"deferred":12},"counts":{"v":0,"a":0,"p":1,"o":0,"u":0,"k":0}},
+{"id":"firstperson","ms":"anim","name":"First-person body and arms","rows":"First person","unit":"roadmap tasks","items":[{"id":"3.4b","s":"a","t":"First-person arms and body built (FP-1, FP-1b, FP-2a/b). None seen by the owner yet"},{"id":"FP-2c","s":"o","t":"Next arm slice"},{"id":"FP-3","s":"o","t":"Held items in first person"}],"next":[["FP-2c","Next arm slice"],["C18","Dodge in first person (combat lane)"]],"blocked":["Owner checks FP-1, FP-1b, FP-2, CB-5b"],"counts":{"v":0,"a":1,"p":0,"o":2,"u":0,"k":0}},
+{"id":"wgterrain","ms":"wg","name":"Terrain base: the island at 10x","rows":"World generation \u00b7 Terrain","unit":"spec rows","items":[{"id":"WG-S1","s":"v","t":"Height map and regions read from the source game"},{"id":"WG-V2","s":"v","t":"Town markers"},{"id":"HC-1","s":"v","t":"Height curve so towns sit near their rivers"},{"id":"WG-LOD","s":"v","t":"Ground shading stays the same when mesh detail switches (confirmed)"},{"id":"WG-X","s":"p","t":"Vvardenfell at 10x in the game: volcano, towns kept at 1:1, ground textures, flora. Owner: base OK, but empty, 26 fps, sprayed flora, blobby relief"},{"id":"WG-S2","s":"p","t":"Erosion look test: partial verdict"},{"id":"WG-SHARP","s":"p","t":"Sharp relief and cliff rock: owner asked for a rework"},{"id":"G1/G2","s":"a","t":"Generated ground drawn on the GPU with a CPU twin for physics (WG-G awaiting owner)"},{"id":"X6","s":"o","t":"The 10x world baked once as its own worldspace (today it is assembled at every load)"},{"id":"WG-N1","s":"o","t":"Ground materials from climate and geology"},{"id":"WG-4","s":"o","t":"Terrain storage at this scale"},{"id":"WG-6","s":"o","t":"Curvature of the world at distance"},{"id":"WG-7","s":"o","t":"View distance at scale: far shadows, water to the horizon, haze"},{"id":"WG-G1","s":"o","t":"A world from a sketch alone, no game data (generic proof)"},{"id":"WG-G2","s":"o","t":"Tamriel Rebuilt through the same path"}],"next":[["X6","Bake the 10x world once"],["WG-N1","Ground materials"]],"blocked":["Owner looks WG-G, WG-V"],"note":"The first plan's foundation rows WG-1, 2, 3, 5 carry no status in the spec and were overtaken by the \"same map at 10x\" path: not counted.","counts":{"v":4,"a":1,"p":3,"o":7,"u":0,"k":0}},
+{"id":"wglandforms","ms":"wg","name":"Landforms: cliffs, scarps, mesas, canyons","rows":"World generation (landforms spec)","unit":"spec rows","items":[{"id":"LF-0","s":"v","t":"Per-region measure of slopes and walkability"},{"id":"LF-1","s":"v","t":"Geology map"},{"id":"LF-A1","s":"v","t":"Vvardenfell rock units"},{"id":"LF-2/2b","s":"p","t":"Placed fault scarps: first try rejected (\"blades\"), second reads natural but faces too smooth"},{"id":"LF-3","s":"o","t":"Mesas, sea cliffs, caldera, lava lobes"},{"id":"LF-4","s":"o","t":"Canyons and terraces"},{"id":"LF-A2","s":"o","t":"Region landform table and intent masks"},{"id":"LF-calm","s":"o","t":"Calmer base relief, in three strengths"},{"id":"LF-5","s":"o","t":"Runtime detail: strata, blocks, ridges"},{"id":"LF-6","s":"o","t":"Rock materials per geology unit"},{"id":"LF-7","s":"o","t":"Exports for rocks and scatter"}],"next":[["LF-3","Mesas, sea cliffs, caldera"],["LF-2b","Harder faces on the scarps"]],"blocked":["Each landform needs the owner's look"],"counts":{"v":3,"a":0,"p":1,"o":7,"u":0,"k":0}},
+{"id":"wgclimate","ms":"wg","name":"Climate: temperature, rain, moisture, classes","rows":"World generation (climate stage)","unit":"spec rows","items":[{"id":"WG-E1a","s":"v","t":"Temperature and rain from the wind"},{"id":"WG-E1b1","s":"v","t":"Moisture"},{"id":"WG-E1b2","s":"v","t":"Climate classes as a data table"},{"id":"WG-E1c1","s":"v","t":"Per-region overrides"},{"id":"WG-E1c2","s":"v","t":"Overrides in the params file"},{"id":"WG-E1c3a","s":"v","t":"Climate saved as a product of the world"},{"id":"WG-E1c3b","s":"v","t":"First run on the real 10x island"}],"next":[["WG-E2i","Vegetation reads the climate (scatter)"]],"blocked":[],"note":"Data products with exact tests; no owner look is defined for this stage.","counts":{"v":7,"a":0,"p":0,"o":0,"u":0,"k":0}},
+{"id":"wgwater","ms":"wg","name":"Rivers, lakes, waterfalls","rows":"World generation (hydrology) \u00b7 Water (water bodies)","unit":"spec rows","items":[{"id":"WR-1","s":"v","t":"Magna Urbis water chain run on the 10x island"},{"id":"FL-4a","s":"v","t":"Rivers know where they join"},{"id":"FL-5a","s":"v","t":"Generated lakes and rivers answer \"is there water here\""},{"id":"FL-5b","s":"v","t":"A current carries a character"},{"id":"FL-5c","s":"a","t":"Swimming in any water, drifting with the current (WA-16 awaiting owner)"},{"id":"WG-W1a","s":"o","t":"Rivers never run through kept towns"},{"id":"WG-W1b","s":"o","t":"Water run aware of the towns"},{"id":"WG-W1c","s":"o","t":"Audit: nothing newly flooded or dried"},{"id":"WG-W1d","s":"o","t":"River ends and joins recorded"},{"id":"WG-W1e","s":"o","t":"Flow amount for moisture and plants"},{"id":"WG-W1f","s":"o","t":"Same result on every run"},{"id":"WG-W1g","s":"o","t":"Water in the default build chain"},{"id":"FL-1","s":"o","t":"Slower water near the banks"},{"id":"FL-2","s":"o","t":"River surface with its own flow, no ocean waves"},{"id":"FL-3","s":"o","t":"Baked flow field"},{"id":"FL-4b","s":"o","t":"Rivers fade into the water they join"},{"id":"FL-6a","s":"o","t":"Waterfalls detected at drops"},{"id":"FL-6b","s":"o","t":"Waterfall curtain, foam, mist"},{"id":"FL-7","s":"o","t":"Wading rings and a short wake"},{"id":"Rivers","s":"k","t":"Generated rivers reworked in one pass: carved bed, flow that reacts to things, particles (owner: later)"}],"next":[["WG-W1a","Rivers go round kept towns"],["FL-4b","River joins look right"]],"blocked":["Owner check WA-16; the rivers look (TN-2) is parked until the refactor"],"counts":{"v":4,"a":1,"p":0,"o":14,"u":0,"k":1}},
+{"id":"wgsettle","ms":"wg","name":"Settlements and roads (Magna Urbis)","rows":"World generation (settlements live in the sibling tool repo)","unit":"ledger rows","items":[{"id":"V-1","s":"v","t":"Magna Urbis vendored into the tool repo"},{"id":"ST-1","s":"v","t":"A town site exported from the game"},{"id":"ST-2","s":"v","t":"A town site exported from the 10x world"},{"id":"ST-3a","s":"v","t":"Town layout tool on Magna Urbis"},{"id":"ST-3b","s":"v","t":"A kept town claimed so new streets grow around it"},{"id":"SC-1","s":"v","t":"A town founded beside its river"},{"id":"SP-1a","s":"v","t":"Valley terraces prepared under a town"},{"id":"WR-2","s":"v","t":"Regional roads between 31 kept places and Balmora 2.0"},{"id":"S-2a","s":"v","t":"Roads stop at a laid-out town"},{"id":"TN-3","s":"v","t":"Balmora 2.0 on the low shore: works, tweaks later"},{"id":"TN-1","s":"a","t":"Balmora 2.0 street wall of Hlaalu buildings (awaiting owner)"},{"id":"S-2c","s":"a","t":"Regional roads meet the town's streets (TN-4 awaiting owner)"},{"id":"roads","s":"o","t":"Roads still route under kept towns: needs its own row after WG-W1b"},{"id":"towns","s":"u","t":"Every other town and village of the 10x world: no row list"},{"id":"cultures","s":"u","t":"Morrowind building styles and a kit of its buildings for the generator"},{"id":"doors","s":"u","t":"Doors and interiors of generated buildings (owner question, later)"}],"next":[["TN-4","Owner looks at the road join"],["WG-P3a","Kits fitted on generated lots (sites)"]],"blocked":["Owner checks TN-1, TN-4","No plan yet for towns beyond Balmora 2.0"],"checks":{"awaiting":4,"seen":8,"bug":0,"planned":2,"deferred":0},"checksNote":"All worldgen and rock checks together","counts":{"v":10,"a":2,"p":0,"o":1,"u":3,"k":0}},
+{"id":"wgsites","ms":"wg","name":"Wilderness sites: camps, ruins, waystations","rows":"World generation (sites spec)","unit":"spec rows","items":[{"id":"WG-P0","s":"v","t":"Sites spec written"},{"id":"WG-P1a","s":"o","t":"Site rules in the generator"},{"id":"WG-P1b","s":"o","t":"Site list for the world"},{"id":"WG-P1c","s":"o","t":"Roads reach the sites"},{"id":"WG-P1d","s":"o","t":"Game reads the site list"},{"id":"WG-V1","s":"o","t":"Every site can be reached on foot"},{"id":"WG-P2","s":"o","t":"Flat pads under sites"},{"id":"WG-V1b","s":"o","t":"Clearings: no trees on a site"},{"id":"WG-P3a","s":"o","t":"Buildings fitted on site lots"},{"id":"WG-P3b","s":"o","t":"Each site becomes a mod"},{"id":"WG-P1e","s":"o","t":"Waystations along the trunk roads"},{"id":"WG-NM1","s":"o","t":"Generated names"},{"id":"WG-NM2","s":"o","t":"Sites on the map"}],"next":[["WG-P1a","Site rules"],["WG-P1b","Site list"]],"blocked":["Queued after the water stage","Owner question: do sites hold gameplay (creatures, a chest) from the first look?"],"counts":{"v":1,"a":0,"p":0,"o":12,"u":0,"k":0}},
+{"id":"wgscatter","ms":"wg","name":"Forests and rocks placed over the world (scatter v2)","rows":"World generation (scatter spec)","unit":"spec rows","items":[{"id":"WG-E2 spec","s":"v","t":"Vegetation spec written"},{"id":"WG-E3 spec","s":"v","t":"Rocks spec written"},{"id":"WG-E2a","s":"o","t":"Species file"},{"id":"WG-E2b","s":"o","t":"Where each species likes to grow"},{"id":"WG-E2c","s":"o","t":"Stands, edges and clearings"},{"id":"WG-E2d","s":"o","t":"Clumped candidates"},{"id":"WG-E2e","s":"o","t":"Trees compete for room"},{"id":"WG-E2f","s":"o","t":"Lower layers by light"},{"id":"WG-E2g","s":"o","t":"Nothing in lakes and rivers"},{"id":"WG-E2h","s":"o","t":"Budgets per group; old scatter deleted"},{"id":"WG-E2i","s":"o","t":"Morrowind species and regions"},{"id":"WG-E2j","s":"o","t":"Saved once, read at load"},{"id":"WG-E2m","s":"o","t":"Measured counts and seconds"},{"id":"WG-E3a","s":"o","t":"Rock table"},{"id":"WG-E3b","s":"o","t":"Scree below cliffs"},{"id":"WG-E3c","s":"o","t":"Outcrops and field stones"},{"id":"WG-E3d","s":"o","t":"Rocks placed before trees"},{"id":"WG-E3e","s":"o","t":"Rock model and pose"},{"id":"WG-E3f","s":"o","t":"Morrowind rock rows"},{"id":"WG-E3m","s":"o","t":"Measured counts"}],"next":[["WG-E2a","Species file"],["WG-E2d","Clumped forests instead of sprayed trees"]],"blocked":["Specced, not queued","Three owner questions in the spec (harvest plants, water plants, source rock models)"],"counts":{"v":2,"a":0,"p":0,"o":18,"u":0,"k":0}},
+{"id":"wgrocks","ms":"wg","name":"Rock generation: boulders, cliff bands, caves","rows":"Rock generation","unit":"spec rows","items":[{"id":"RG-1","s":"v","t":"Boulder generator"},{"id":"RG-2","s":"v","t":"Rock variant library with collision"},{"id":"RG-2b","s":"v","t":"Library saved by the bake"},{"id":"RG-3","s":"v","t":"Rock viewer and material (seen: too smooth, led to RG-4)"},{"id":"RG-4","s":"v","t":"Sharp rock families (owner: \"amazing\")"},{"id":"RG-4b","s":"v","t":"Edge snap off, columnar rocks fixed"},{"id":"RG-8a","s":"p","t":"Hero formations, first try (owner: \"good\")"},{"id":"RG-3b","s":"o","t":"One shared rock and ground shader module"},{"id":"RG-5","s":"o","t":"Cliff bands"},{"id":"RG-6","s":"o","t":"Cliff streaming"},{"id":"RG-7","s":"o","t":"Cave mouths"},{"id":"RG-A1","s":"o","t":"Morrowind rock types and sizes"}],"next":[["WG-E3b","Scree fans below faces (scatter)"],["RG-A1","Morrowind rock types"]],"blocked":["Placement waits for scatter v2"],"counts":{"v":6,"a":0,"p":1,"o":5,"u":0,"k":0}},
+{"id":"bigworld","ms":"bw","name":"Millions of trees to the horizon","rows":"Big-world rendering","unit":"lane slices","items":[{"id":"BW-1","s":"v","t":"Core: tiles, tiers, packed instances"},{"id":"BW-2","s":"v","t":"Ceiling bench: the worst stand cost 13.97 ms against a 2 ms budget"},{"id":"BW-2b","s":"v","t":"Standard fixes priced: 1.84 ms once nothing is alpha-tested or casts into the sun shadows"},{"id":"BW-2c","s":"a","t":"Far tree cards tested once per frame instead of twice (FF-7 awaiting owner)"},{"id":"BW-2d","s":"k","t":"Bench arms for the shadow LOD and trimmed hulls"},{"id":"BW-3","s":"k","t":"Instances produced on the GPU"},{"id":"BW-4","s":"k","t":"Tree cards (impostors) and their atlas"},{"id":"BW-5","s":"k","t":"Real meshes up close, with crossfade and wind"},{"id":"BW-5b","s":"k","t":"Cheap shadows for far trees"},{"id":"BW-6","s":"k","t":"Tiles streamed without hitches"},{"id":"BW-7","s":"k","t":"Canopy bake for the far distance"},{"id":"BW-8","s":"k","t":"Canopy drawn to the horizon"},{"id":"BW-9","s":"k","t":"In the game on the generated world"},{"id":"BW-10","s":"k","t":"Measured at High and Low"}],"next":[["BW-3","GPU producer (first slice of Stage B)"],["BW-4","Tree cards"]],"blocked":["Stage B waits for the owner's go after the bench result","Nothing draws in game yet"],"note":"WISHLIST 17. Parked here means \"waits for the owner's go\", not dropped.","counts":{"v":3,"a":1,"p":0,"o":0,"u":0,"k":10}},
+{"id":"farfield","ms":"bw","name":"Far field, LOD and the static scene","rows":"Far field, LOD, precombine, static scene","unit":"roadmap tasks","items":[{"id":"1.8","s":"p","t":"Far-field tint and the Ghostfence far copy: FF-2 rejected (all green to the horizon), GF-1 partial"},{"id":"1.16","s":"k","t":"Static scene: frozen by the owner 2026-11-12 (parity only, about 1 ms of the walk)"}],"next":[["FF-2","Far LOD levels are never selected or tinted"],["GF-1","Ghostfence far copy"]],"blocked":["Second-tier hard problem: far-field LOD selection"],"note":"WISHLIST 1. Vanilla Morrowind trees stay on this path.","counts":{"v":0,"a":0,"p":1,"o":0,"u":0,"k":1}},
+{"id":"decks","ms":"fancy","name":"Standing and walking on moving things","rows":"Interaction (vehicles spec)","unit":"lane slices","note":"Travel lane Stage 3, built by the interaction lane. The base for rides, boats and mounts.","next":[["IN11c3a","Decks that pitch and roll"],["IN7","Seats on a moving thing"],["IN22","NPCs walk on a moving deck"]],"blocked":["Owner check PH-17 (movement feel after the physics reorder)"],"stages":[{"name":"Stage 3: standing, sitting and walking on moving things","counts":{"v":8,"a":1,"p":0,"o":11,"u":0,"k":0}}],"counts":{"v":8,"a":1,"p":0,"o":11,"u":0,"k":0},"items":[]},
+{"id":"rides","ms":"fancy","name":"Real silt strider and boat rides, ambushes","rows":"Travel","unit":"lane slices","note":"Travel lane Stages 4-5 (wave 5).","next":[["TV2","Routes baked from the navmesh"],["TV4","The ride itself: depart, travel, arrive, hold to skip"],["TV13","Boats as decks you walk on"]],"blocked":["Needs seats and passengers (IN7, IN24)"],"stages":[{"name":"Stage 4: real rides, striders and boats","counts":{"v":0,"a":0,"p":0,"o":7,"u":0,"k":0}},{"name":"Stage 5: risk on the road","counts":{"v":0,"a":0,"p":0,"o":3,"u":0,"k":0}}],"counts":{"v":0,"a":0,"p":0,"o":10,"u":0,"k":0},"items":[]},
+{"id":"mounts","ms":"fancy","name":"Mounts and riding","rows":"Travel \u00b7 Interaction (vehicles spec)","unit":"lane slices","note":"Travel lane Stage 6. Designed in the vehicles spec; nothing built.","next":[["TV-R2","Research: four-legged gaits and mount practice (parked)"],["IN25","How a mount moves and turns"]],"blocked":["The owner parked mount research on 2026-11-25"],"stages":[{"name":"Stage 6: mounts and riding the roads","counts":{"v":0,"a":0,"p":0,"o":0,"u":0,"k":8}}],"counts":{"v":0,"a":0,"p":0,"o":0,"u":0,"k":8},"items":[]},
+{"id":"ships","ms":"fancy","name":"Ships and small boats you steer","rows":"not in SYSTEMS.md","unit":"named features","items":[{"id":"SHP-0","s":"u","t":"Ships you sail: frozen by the owner 2026-11-25. The vessels spec is not written; ship questions are open"},{"id":"kind 3","s":"u","t":"Physics carts and rowboats (listed under \"Later\" in the travel roadmap)"},{"id":"timetable","s":"u","t":"Boats that run on a timetable (\"Later\")"}],"next":[],"blocked":["Owner decision: unfreeze ships","Needs buoyancy (3.7)"],"counts":{"v":0,"a":0,"p":0,"o":0,"u":3,"k":0}},
+{"id":"airships","ms":"fancy","name":"Airships and flying mounts","rows":"not in SYSTEMS.md","unit":"named features","items":[{"id":"airships","s":"u","t":"Airships: one line in the vehicles spec, no spec of their own, no rows"},{"id":"flying","s":"u","t":"Flying mounts and mounted combat (\"Later\" in the travel roadmap)"}],"next":[],"blocked":["Not started"],"counts":{"v":0,"a":0,"p":0,"o":0,"u":2,"k":0}},
+{"id":"swim","ms":"fancy","name":"Swimming, underwater, floating things","rows":"Water","unit":"roadmap tasks","items":[{"id":"3.6","s":"p","t":"Swimming: the movement half is built (WA-16 awaiting owner). The underwater look waits for the water-at-any-height design"},{"id":"3.7","s":"o","t":"Buoyancy: floating bodies, thrown items, corpses"}],"next":[["WA-16","Owner swims in a river"],["3.7","Buoyancy"]],"blocked":[],"counts":{"v":0,"a":0,"p":1,"o":1,"u":0,"k":0}},
+{"id":"sky","ms":"look","name":"Sky, lighting, anti-aliasing, exposure","rows":"Sky, lighting, DLSS, AO","unit":"roadmap tasks","items":[{"id":"1.3","s":"p","t":"Anti-aliasing when DLSS is off: built; translucent edge cases open"},{"id":"1.5","s":"v","t":"Ambient occlusion (confirmed; subtle by design)"},{"id":"1.26","s":"p","t":"Exposure and tone mapping: nights too bright, eye adaptation"},{"id":"1.27","s":"p","t":"Sun shafts through haze: confirmed 2026-11-23, cost not measured yet"},{"id":"GI","s":"p","t":"Bounced light from probes: three slices built, effect too weak to judge"},{"id":"Bloom","s":"a","t":"Bloom (RO-14 awaiting owner)"},{"id":"Foliage","s":"a","t":"Light through leaves (RO-15 awaiting owner)"},{"id":"1.24","s":"u","t":"Upscaling for AMD and Intel cards: research not started"},{"id":"RT","s":"k","t":"Ray tracing as the Ultra tier"}],"next":[["X1-X3","Exposure slices"],["1.24","Research which FSR runs everywhere"]],"blocked":["Second-tier hard problems: image quality under TAA and DLSS, GI"],"checks":{"awaiting":8,"seen":12,"bug":3,"planned":0,"deferred":1},"checksNote":"The rendering list also holds far-field and texture checks","counts":{"v":1,"a":2,"p":4,"o":0,"u":1,"k":1}},
+{"id":"shadows","ms":"look","name":"Shadows","rows":"Shadows","unit":"roadmap tasks","items":[{"id":"1.4","s":"p","t":"One shadow design, finished: soft shadows and character shadows built; seven checks confirmed, several open"},{"id":"1.12","s":"a","t":"Bug fixes from the owner's pass, built and awaiting the owner (LT-4, SH-20, TR-3, WE-5, DL-5, RO-16)"},{"id":"1.23","s":"o","t":"Only the lamps the eye notices cast shadows"}],"next":[["SH-23","Owner check"],["1.23","Lamp shadows by value"]],"blocked":["Hard problem H2","Two fixes parked until no lane is building (they rebuild all of Bevy)"],"checks":{"awaiting":3,"seen":7,"bug":4,"planned":0,"deferred":0},"counts":{"v":0,"a":1,"p":1,"o":1,"u":0,"k":0}},
+{"id":"lights","ms":"look","name":"Lamps and night brightness","rows":"Local lights","unit":"roadmap tasks","items":[{"id":"1.7","s":"p","t":"Night brightness: ambient retuned (LT-1 confirmed); night sky items left"},{"id":"Light rules","s":"p","t":"Lamp rules from openmw-rtx: short reach rejected by the owner, lamp glow awaiting owner"}],"next":[["NS-2..4","Night sky checks"]],"blocked":[],"checks":{"awaiting":0,"seen":3,"bug":0,"planned":0,"deferred":0},"counts":{"v":0,"a":0,"p":2,"o":0,"u":0,"k":0}},
+{"id":"weather","ms":"look","name":"Weather: clouds, fog, wind, rain","rows":"Weather","unit":"roadmap tasks","items":[{"id":"1.10","s":"v","t":"Black bands in fog: not reproduced, closed"},{"id":"Presets","s":"p","t":"Extra weather presets from data"}],"next":[["CL-5..8","Cloud shape passes (four planned looks)"]],"blocked":["Hard problem H3","Clouds \"still goofy\" (WE-15)"],"checks":{"awaiting":1,"seen":9,"bug":5,"planned":7,"deferred":3},"counts":{"v":1,"a":0,"p":1,"o":0,"u":0,"k":0}},
+{"id":"surface","ms":"look","name":"Wet ground, puddles, snow, ash, trails","rows":"Surface weather","unit":"roadmap tasks","items":[{"id":"Polish","s":"p","t":"Wetness, puddles, snow and ash cover, trails: W1-W6b built, most confirmed; W7 next"}],"next":[["W7","Next surface slice"]],"blocked":[],"counts":{"v":0,"a":0,"p":1,"o":0,"u":0,"k":0}},
+{"id":"water","ms":"look","name":"Water look: ocean, shore, foam","rows":"Water","unit":"roadmap tasks","items":[{"id":"Water","s":"p","t":"Water look pass (owner go 2026-11-17): shore waves faint, storm sea too tame, foam failed"},{"id":"Interior","s":"o","t":"Water inside buildings in the same water system (waits for the owner to pick it)"}],"next":[["WA-9","Surf and foam"],["WA-6","Storm sea"]],"blocked":["Hard problem H3"],"checks":{"awaiting":2,"seen":7,"bug":0,"planned":5,"deferred":0},"counts":{"v":0,"a":0,"p":1,"o":1,"u":0,"k":0}},
+{"id":"terrain","ms":"look","name":"Terrain","rows":"Terrain","unit":"roadmap tasks","items":[{"id":"1.6","s":"v","t":"Costly object-to-ground blending removed"},{"id":"W13","s":"u","t":"Rocks and foundations blending into the ground, done properly (wishlist 13): no spec"}],"next":[],"blocked":[],"note":"The terrain renderer is in use; it has no open task of its own beyond these.","counts":{"v":1,"a":0,"p":0,"o":0,"u":1,"k":0}},
+{"id":"groundcover","ms":"look","name":"Grass and small plants","rows":"Groundcover","unit":"roadmap tasks","items":[{"id":"Groundcover","s":"p","t":"A carpet of grass blades plus mesh plants, trampling, a style per region (owner: much better). Blades are still off by default"},{"id":"GC-W1","s":"o","t":"Plants under snow and ash (later)"}],"next":[["GC-3e2b","Live colour tuning"],["GC-3e3","Ground colour per pixel"],["default","Blades on by default after a cost check"]],"blocked":["Owner checks GC-3n, GC-M2"],"checks":{"awaiting":3,"seen":4,"bug":0,"planned":0,"deferred":0},"counts":{"v":0,"a":0,"p":1,"o":1,"u":0,"k":0}},
+{"id":"order","ms":"look","name":"Draw order: sky, clouds, fog, rain, glass","rows":"Render order","unit":"roadmap tasks","items":[{"id":"H3","s":"o","t":"Transparency and draw order across sky, clouds, fog and rain (hard problem H3; ROADMAP 1.8, 1.12)"}],"next":[],"blocked":["Reserved for the owner's strong agent"],"counts":{"v":0,"a":0,"p":0,"o":1,"u":0,"k":0}},
+{"id":"textures","ms":"look","name":"Textures: compression, streaming, normal maps","rows":"Textures","unit":"roadmap tasks","items":[{"id":"1.20","s":"p","t":"Compressed textures, normal maps and tangents built (T0-T4); streaming by distance in progress"},{"id":"De-light","s":"a","t":"Painted shadows removed from old textures at bake (awaiting owner)"}],"next":[["TS-1","Texture streaming"]],"blocked":[],"counts":{"v":0,"a":1,"p":1,"o":0,"u":0,"k":0}},
+{"id":"perf","ms":"perf","name":"Frame time: 120 fps on the laptop","rows":"Diagnostics, perf, gates","unit":"roadmap tasks","items":[{"id":"1.2","s":"p","t":"Frame budget and gates: every bench under 11 ms on 2026-10-28, then the target was raised to 8.3 ms"},{"id":"1.22","s":"p","t":"CPU plan to 8.3 ms (top priority since 2026-11-15)"},{"id":"1.25","s":"p","t":"CPU waste: every fix the audits named"},{"id":"1.21","s":"o","t":"One flaky streaming test"}],"next":[["1.22","CPU plan slices"],["1.25","Remaining waste fixes"]],"blocked":["Hard problem H1: towns are bound by the render thread"],"note":"WISHLIST 0.","counts":{"v":0,"a":0,"p":3,"o":1,"u":0,"k":0}},
+{"id":"streaming","ms":"perf","name":"World streaming, doors, stability","rows":"Coordinates, streaming, world","unit":"roadmap tasks","items":[{"id":"1.1","s":"p","t":"Stability first: crash fix, indoor weather sound and door fade built"},{"id":"1.9","s":"p","t":"Streaming and culling levers landed; stutter fixes ongoing"},{"id":"1.29","s":"p","t":"Bug: huge rocks inside an interior"},{"id":"1.19","s":"o","t":"Hidden bug: upload budget charged several times"},{"id":"1.30","s":"o","t":"Bug: 10 s of black when entering a house"}],"next":[["1.30","Door held at black"],["1.29","Rocks in the interior"]],"blocked":["Second-tier hard problem: hitches and pop-in"],"checks":{"awaiting":2,"seen":3,"bug":0,"planned":0,"deferred":2},"note":"WISHLIST 2.","counts":{"v":0,"a":0,"p":3,"o":2,"u":0,"k":0}},
+{"id":"warmup","ms":"perf","name":"Shader warm-up (no first-time hitches)","rows":"Pipeline warm-up","unit":"roadmap tasks","items":[{"id":"1.5b","s":"p","t":"Measured; reveal gate and parallel compile built; precompiled cache left"}],"next":[["W3","Next warm-up slice"]],"blocked":[],"counts":{"v":0,"a":0,"p":1,"o":0,"u":0,"k":0}},
+{"id":"mods","ms":"tools","name":"Game data, mods, file system","rows":"Records, mods, VFS","unit":"roadmap tasks","items":[],"next":[],"blocked":[],"note":"In use by the game. No open roadmap task; the mods demo is parked with Lua.","counts":{"v":0,"a":0,"p":0,"o":0,"u":0,"k":0}},
+{"id":"bake","ms":"tools","name":"Bake (one-time data preparation)","rows":"Bake","unit":"roadmap tasks","items":[],"next":[],"blocked":[],"note":"In use by the game. No roadmap task of its own; bake steps are added by other systems.","counts":{"v":0,"a":0,"p":0,"o":0,"u":0,"k":0}},
+{"id":"console","ms":"tools","name":"Developer console","rows":"Console","unit":"roadmap tasks","items":[{"id":"1.13","s":"p","t":"Console with commands, scripts and paste (CO-1); a few items left"},{"id":"1.13b","s":"a","t":"Faster time-lapse (awaiting owner)"}],"next":[],"blocked":[],"counts":{"v":0,"a":1,"p":1,"o":0,"u":0,"k":0}},
+{"id":"switches","ms":"tools","name":"Live feature switches","rows":"Feature switches","unit":"roadmap tasks","items":[{"id":"1.28","s":"p","t":"Every costly feature can be switched off live (FS-1 confirmed). Cost per switch is not shown yet"}],"next":[["1.28","Show each feature's cost"]],"blocked":[],"counts":{"v":0,"a":0,"p":1,"o":0,"u":0,"k":0}},
+{"id":"app","ms":"tools","name":"App structure and test levels","rows":"App crates, split, test levels","unit":"roadmap tasks","items":[{"id":"1.11","s":"v","t":"Thin game binary, split into 15 game crates"}],"next":[],"blocked":[],"counts":{"v":1,"a":0,"p":0,"o":0,"u":0,"k":0}},
+{"id":"build","ms":"tools","name":"Build speed and CI","rows":"not in SYSTEMS.md (ROADMAP 1.14)","unit":"roadmap tasks","items":[{"id":"1.14","s":"p","t":"Bevy is no longer rebuilt per crate; tests run outside the build queue; worktrees; CI as the backstop. Core splits left"},{"id":"Crates","s":"k","t":"\"Update all crates\" pass, once the particle crate supports Bevy 0.20"}],"next":[["R1-R3","Core crate splits"]],"blocked":[],"counts":{"v":0,"a":0,"p":1,"o":0,"u":0,"k":1}},
+{"id":"docs","ms":"tools","name":"Docs and process","rows":"not in SYSTEMS.md (ROADMAP Phase 0, 1.15)","unit":"roadmap tasks","items":[{"id":"0.1","s":"v","t":"Audit of what went wrong (2026-10-19)"},{"id":"0.2","s":"v","t":"Visual-check queue pass with the owner"},{"id":"0.5","s":"v","t":"Old portal spike deleted"},{"id":"0.3","s":"p","t":"Doc diet"},{"id":"0.4","s":"p","t":"Long specs split"},{"id":"0.6","s":"o","t":"Bug: two sessions can open the owner's game at once"},{"id":"1.15","s":"o","t":"Ideas to borrow from the earlier Godot project"}],"next":[["0.6","Lock for the owner's game launch"]],"blocked":[],"counts":{"v":3,"a":0,"p":2,"o":2,"u":0,"k":0}},
+{"id":"net","ms":"else","name":"Co-op for 2-4 players","rows":"Net, co-op","unit":"roadmap tasks + lane slices","items":[{"id":"N1-N8","s":"k","t":"Co-op: specced, parked. Every spec already follows the net-ready rules"}],"next":[],"blocked":["Parked by the owner"],"note":"The four lane rows are co-op travel (Stage 7). Combat's co-op row C7 is counted under Combat.","stages":[{"name":"Stage 7: co-op travel","counts":{"v":0,"a":0,"p":0,"o":0,"u":0,"k":4}}],"counts":{"v":0,"a":0,"p":0,"o":0,"u":0,"k":5}},
+{"id":"lua","ms":"else","name":"Lua scripting and the mods demo","rows":"Scripting: Luau","unit":"roadmap tasks","items":[{"id":"Lua","s":"k","t":"Lua beyond the first three slices, and the mods demo: parked"}],"next":[],"blocked":["Parked by the owner"],"counts":{"v":0,"a":0,"p":0,"o":0,"u":0,"k":1}},
+{"id":"rules","ms":"else","name":"Rule hooks (formula overrides)","rows":"Rule hooks","unit":"roadmap tasks","items":[{"id":"Rules","s":"k","t":"Formulas that mods can replace: Rust first, Lua later. Specced, parked"}],"next":[],"blocked":["Parked"],"counts":{"v":0,"a":0,"p":0,"o":0,"u":0,"k":1}},
+{"id":"classic","ms":"else","name":"Classic option","rows":"not in SYSTEMS.md (ROADMAP Phase 4)","unit":"roadmap tasks","items":[{"id":"Classic","s":"k","t":"Classic graphics preset and classic Morrowind rules behind the seams"}],"next":[],"blocked":["Built last by decision"],"note":"Classic rows in the lanes (crime A8, combat C5) are counted there, as parked.","counts":{"v":0,"a":0,"p":0,"o":0,"u":0,"k":1}},
+{"id":"setup","ms":"else","name":"First-run setup screen","rows":"Setup screen","unit":"roadmap tasks","items":[{"id":"Setup","s":"k","t":"Point the game at your Morrowind, pick mods, download, bake. Game-side draft only; the framework part has no spec"}],"next":[],"blocked":["Parked"],"counts":{"v":0,"a":0,"p":0,"o":0,"u":0,"k":1}},
+{"id":"portals","ms":"else","name":"Seamless doors (no loading fade)","rows":"Portals, interiors","unit":"roadmap tasks","items":[{"id":"Portals","s":"k","t":"Walk into interiors without a fade (wishlist 6): specced, parked"}],"next":[],"blocked":["Parked"],"counts":{"v":0,"a":0,"p":0,"o":0,"u":0,"k":1}},
+{"id":"crowd","ms":"else","name":"Crowds and living-world extras","rows":"not in SYSTEMS.md (ROADMAP Phase 4)","unit":"roadmap tasks","items":[{"id":"Crowd LOD","s":"k","t":"Far crowds drawn from baked animation: spike one creature first"},{"id":"Living world","s":"k","t":"Rivalries and nemesis-style memory: parked (its rows are AI Stage 8)"}],"next":[],"blocked":["Parked"],"counts":{"v":0,"a":0,"p":0,"o":0,"u":0,"k":2}},
+{"id":"wishes","ms":"else","name":"Wishlist items with no spec","rows":"WISHLIST 14, 15, 16","unit":"named features","items":[{"id":"W14","s":"u","t":"Rooms seen through windows from outside; sunlight through windows inside. A research slice comes first"},{"id":"W15","s":"u","t":"Character and face customisation"},{"id":"W16","s":"u","t":"NPCs taking transport between far towns (optional). Related rows exist (AI46, TV21) but it has no spec of its own"}],"next":[],"blocked":["Not started"],"counts":{"v":0,"a":0,"p":0,"o":0,"u":3,"k":0}}
+],
+"pace":{"fastRate":102,"slowRate":16,"note":"Lane slices marked done: 61 on 11-25, 102 on 11-26. The lane roadmaps were written on those two days, so earlier days have none. Slow rate for the estimates: the median day before the lanes closed 6 changelog lines; at 2.6 slices per line that is about 16 slices a day.","days":[
+{"date":"2026-11-17","commits":15,"changelog":21,"laneRows":0},
+{"date":"2026-11-18","commits":3,"changelog":6,"laneRows":0},
+{"date":"2026-11-19","commits":4,"changelog":6,"laneRows":0},
+{"date":"2026-11-20","commits":8,"changelog":2,"laneRows":0},
+{"date":"2026-11-21","commits":0,"changelog":0,"laneRows":0},
+{"date":"2026-11-22","commits":10,"changelog":20,"laneRows":0},
+{"date":"2026-11-23","commits":10,"changelog":6,"laneRows":0},
+{"date":"2026-11-24","commits":6,"changelog":3,"laneRows":0},
+{"date":"2026-11-25","commits":12,"changelog":10,"laneRows":61},
+{"date":"2026-11-26","commits":224,"changelog":53,"laneRows":102}
+]},
+"owner":{"checkAreas":[
+{"area":"Rendering, far field, textures","awaiting":7,"seen":10,"bug":3,"planned":0,"deferred":1},
+{"area":"Player, UI, menus","awaiting":10,"seen":10,"bug":1,"planned":0,"deferred":0},
+{"area":"Animation","awaiting":13,"seen":2,"bug":0,"planned":2,"deferred":0},
+{"area":"Shadows","awaiting":3,"seen":7,"bug":4,"planned":0,"deferred":0},
+{"area":"NPC AI and navigation","awaiting":5,"seen":2,"bug":0,"planned":0,"deferred":0},
+{"area":"Worldgen and rocks","awaiting":4,"seen":8,"bug":0,"planned":2,"deferred":0},
+{"area":"Weather and sky","awaiting":1,"seen":9,"bug":5,"planned":7,"deferred":3},
+{"area":"Water and terrain","awaiting":2,"seen":7,"bug":0,"planned":5,"deferred":0},
+{"area":"Grass","awaiting":3,"seen":4,"bug":0,"planned":0,"deferred":0},
+{"area":"Physics","awaiting":1,"seen":3,"bug":2,"planned":0,"deferred":2},
+{"area":"Streaming and doors","awaiting":2,"seen":3,"bug":0,"planned":0,"deferred":2},
+{"area":"Interaction","awaiting":2,"seen":0,"bug":0,"planned":0,"deferred":0},
+{"area":"Combat","awaiting":2,"seen":1,"bug":0,"planned":1,"deferred":0},
+{"area":"Lighting (GI, lamps)","awaiting":1,"seen":5,"bug":0,"planned":0,"deferred":0},
+{"area":"Audio","awaiting":0,"seen":1,"bug":1,"planned":0,"deferred":0},
+{"area":"Characters and gear","awaiting":0,"seen":0,"bug":0,"planned":0,"deferred":12}
+],"questions":[
+["Big world","Go or no go for Stage B (a forest in a test scene) after the bench result: the fixes are priced at 1.84 ms"],
+["Mounts","Mount research is parked since 2026-11-25; mounts cannot start before it"],
+["Ships","Ships are frozen; the ship questions are still open and the vessels spec is not written"],
+["Wilderness sites","Do sites hold gameplay (creatures, a chest) from the first look, or start as scenery?"],
+["Forests and rocks","Do harvest plants follow the same ecology? Do water plants come back? Only generated rocks, or the source rock models too?"],
+["Crime","One bounty for the whole island or one per region (no answer recorded in the lane file)"],
+["Physics","The player capsule slice waits for the owner"],
+["Water","Interior water in the shared water system waits for the owner to pick it"],
+["Low priority, main roadmap","Storm spill past region borders; a co-op guest importing a single-player character; buying the UAL2 clip pack"]
+]},
+"coverage":{"wishlist":[
+[0,"Performance is a feature","p","Performance and stability"],
+[1,"LODs, HLOD, impostors","p","Far field; Millions of trees"],
+[2,"Huge worlds: streaming and coordinates","p","World streaming"],
+[3,"Terrain: higher detail, erosion","p","Terrain; Worldgen landforms"],
+[4,"Water: ocean, any height, rivers","p","Water look; Rivers, lakes, waterfalls"],
+[5,"Weather and surfaces","p","Weather; Wet ground, snow, ash"],
+[6,"Seamless interior/exterior","k","Seamless doors"],
+[7,"Physics: bodies, ragdolls, cloth","p","Physics (cloth parked)"],
+[8,"Animation","p","Animation for gameplay"],
+[9,"Combat","p","Combat"],
+[10,"Textures: PBR and streaming","p","Textures"],
+[11,"Foliage look","a","Sky and lighting (light through leaves awaits the owner)"],
+[12,"Water look","p","Water look"],
+[13,"Object-terrain blending","u","Terrain (first try removed; no spec for the redo)"],
+[14,"Interiors seen through windows","u","Wishlist items with no spec"],
+[15,"Character customisation, faces","u","Wishlist items with no spec"],
+[16,"Long-distance NPC transit","u","Wishlist items with no spec"],
+[17,"Vegetation at scale","k","Millions of trees (waits for the owner's go)"]
+],"hard":[
+["H1","Town frame target: bound by the render thread","Open","Frame time"],
+["H2","Shadow quality","Open","Shadows"],
+["H3","Transparency and draw order across sky, clouds, fog, rain","Open","Draw order; Weather; Water look"],
+["H4","Ragdolls and held objects","Open","Physics"],
+["2nd tier","Far-field LOD selection (FF-2, GF-1)","Open","Far field"],
+["2nd tier","Hitches and pop-in after doors","Open","World streaming"],
+["2nd tier","Image quality under TAA and DLSS","Open","Sky and lighting"],
+["2nd tier","Bounced light (GI): real probe sampling","Open","Sky and lighting"],
+["Waiting","Lamp light cut (LT-4) and choppy character shadows (SH-20): fixes exist, wait for a slot","Fix built","Shadows"]
+]},
+"limits":[
+"Counts are rows, and rows differ a lot in size. A lane slice is a day or less of agent work; a main-roadmap task such as \"UI\" or \"CPU plan\" can be weeks. Never compare bars across units.",
+"\"Done\" means built and tested. Where the owner was asked to look, it counts as done only after the owner confirmed it; until then it is \"built, awaiting owner\".",
+"\"Open, no spec\" is a count of named things, not of work: their size is unknown.",
+"Sources for \"every system\": docs/SYSTEMS.md (51 rows), bevyrrowind/docs/ROADMAP.md (every phase, backlog and parked entry), superfargoth/docs/WISHLIST.md (18 headings), bevyrrowind/docs/hard-problems.md, plus the lane roadmaps in docs/roadmaps/. Something only mentioned in old chats or research docs may be absent.",
+"Lane counts: umbrella rows that were split into sub-rows are left out (MA2, MA2c, MA2d, MA4, MA4c, AI9, IN11); rows listed in two lanes are counted once (interaction stages 6-7 are counted from the travel lane; IN8 = AI14; MA5); pointer rows \"(anim)\", \"(ai)\" are skipped. One row with no done mark (AI8a) is counted as done because everything built on it is done.",
+"Work built before the lane roadmaps were written (basic combat, the navmesh, early AI) is not in the lane counts; each card says so.",
+"Worldgen rows come from several specs, the ledger and the sibling tool repo, with uneven marks. The first plan's rows WG-1, 2, 3, 5 have no status and are not counted. Treat the worldgen bar as the least reliable.",
+"Owner checks are classified from free-text status lines. The index heading says 64 awaiting; the lines themselves give the counts shown here.",
+"Time ranges are rough estimates from two days of lane work. Early slices were small and needed no owner look; later ones wait on clips, on other lanes and on the owner's checks, and only three lanes build at once."
+],
+"refresh":[
+"git rev-parse --short HEAD",
+"Lane rows: in each docs/roadmaps/\u003clane>.md, the table rows under \"## 4. Stages\". Done = the last cell holds \"done 2026-..\" (bold or not) or the deliverable starts with \"[x]\"",
+"grep -n \"^- \\[.\\]\" bevyrrowind/docs/ROADMAP.md",
+"awk '/^## Open checks index/{p=1} p && / \\| /' bevyrrowind/docs/visual-checks.md   (ID | status | file | title)",
+"git log --since=\"10 days ago\" --format=%ad --date=short | sort | uniq -c",
+"grep -o \"^- 2026-[0-9-]*\" bevyrrowind/docs/CHANGELOG.md | sort | uniq -c | head",
+"grep -n \"^- \\[.\\] \\*\\*BW\" docs/roadmaps/bigworld.md"
+]
+}
+</script>
+<style>
+/* Layout: one reading column; milestones as stacked state bars first, then the owner's queue, pace, every system, coverage, limits. */
+:root{
+  --bg:#f4f5f8; --surface:#ffffff; --ink:#15181e; --ink2:#586070; --line:#e1e4ea; --chip:#eceef3;
+  --s-v:#00b894; --s-a:#f47230; --s-p:#257de0; --s-o:#a2a8b3; --s-k:#586070;
+  --sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+  --display:"Segoe UI Variable Display","Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"Cascadia Code",Consolas,"SF Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0e1013; --surface:#17191d; --ink:#eceef2; --ink2:#9aa1ae; --line:#2a2e36; --chip:#22262d;
+  --s-v:#00a888; --s-a:#e76624; --s-p:#338ced; --s-o:#6c727e; --s-k:#9aa1ae; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#0e1013; --surface:#17191d; --ink:#eceef2; --ink2:#9aa1ae; --line:#2a2e36; --chip:#22262d;
+  --s-v:#00a888; --s-a:#e76624; --s-p:#338ced; --s-o:#6c727e; --s-k:#9aa1ae; color-scheme:dark }
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans)}
+.wrap{max-width:1080px;margin:0 auto;padding-block:28px 56px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:36px}
+h1{font:600 30px/1.15 var(--display);margin:0;letter-spacing:-.01em;text-wrap:balance}
+h2{font:600 21px/1.2 var(--display);margin:0;text-wrap:balance}
+h3{font:600 16px/1.3 var(--display);margin:0}
+p{margin:0}
+.muted{color:var(--ink2)}
+.small{font-size:13px}
+.id{font:12px/1.2 var(--mono);background:var(--chip);border-radius:4px;padding:2px 5px;white-space:nowrap;color:var(--ink)}
+header .lede{max-width:68ch;margin-top:8px}
+nav{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-size:14px}
+a{color:var(--s-p)} a:focus-visible,summary:focus-visible{outline:2px solid var(--s-p);outline-offset:2px;border-radius:4px}
+section{display:flex;flex-direction:column;gap:14px;min-width:0}
+.sechead{display:flex;flex-direction:column;gap:4px}
+.sechead p{max-width:72ch}
+
+/* legend */
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:14px;height:12px;border-radius:3px;flex:none;display:inline-block}
+.sw.v,.seg.v{background:var(--s-v)} .sw.a,.seg.a{background:var(--s-a)} .sw.p,.seg.p{background:var(--s-p)} .sw.o,.seg.o{background:var(--s-o)}
+.sw.u,.seg.u{background:repeating-linear-gradient(135deg,var(--s-o) 0 2px,transparent 2px 5px);box-shadow:inset 0 0 0 1px var(--s-o)}
+.sw.k,.seg.k{background:transparent;box-shadow:inset 0 0 0 1.5px var(--s-k);background-image:repeating-linear-gradient(90deg,transparent 0 4px,var(--surface) 4px 7px)}
+.sw.k,.seg.k{background:transparent;border:1.5px dashed var(--s-k);box-shadow:none}
+
+/* state bars */
+.bar{display:flex;gap:2px;height:22px;width:100%}
+.bar.sm{height:12px}
+.seg{min-width:4px;flex-basis:0}
+.seg:first-child{border-top-left-radius:4px;border-bottom-left-radius:4px}
+.seg:last-child{border-top-right-radius:4px;border-bottom-right-radius:4px}
+.bar.empty{border:1px dashed var(--line);border-radius:4px}
+.counts{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px;font-variant-numeric:tabular-nums}
+.counts span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.counts b{font-weight:600}
+
+/* milestones */
+.ms{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:flex;flex-direction:column;gap:10px}
+.ms .top{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:4px 16px}
+.ms .pct{font-variant-numeric:tabular-nums;color:var(--ink2);font-size:13px;white-space:nowrap}
+.ms .def{max-width:78ch}
+.est{font-size:13px;border-left:3px solid var(--line);padding-left:10px;max-width:78ch}
+.est.range{border-left-color:var(--s-p)}
+.mslist{display:flex;flex-direction:column;gap:12px}
+.minor{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:12px}
+
+/* how to read */
+.note{border:1px solid var(--line);border-radius:10px;padding:14px 18px;display:flex;flex-direction:column;gap:8px}
+.note ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:5px;max-width:80ch}
+
+/* tables */
+.scroll{overflow-x:auto;min-width:0}
+table{border-collapse:collapse;width:100%;font-size:13.5px;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:6px 10px 6px 0;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:600;color:var(--ink2);font-size:12px;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}
+td.n,th.n{text-align:right;padding-right:14px}
+.hbar{display:flex;align-items:center;gap:8px;min-width:120px}
+.hbar i{display:block;height:10px;border-radius:0 4px 4px 0;background:var(--s-a)}
+.qs{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:10px 24px;margin:0;padding:0;list-style:none}
+.qs li{display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--line);padding-top:8px}
+.qs b{font-weight:600}
+
+/* pace */
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr));gap:18px}
+.chart{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 14px 8px;min-width:0}
+.chart h3{font-size:14px}
+.chart svg{width:100%;height:auto;display:block;margin-top:6px}
+.chart .gl{stroke:var(--line);stroke-width:1}
+.chart .ax{stroke:var(--s-o);stroke-width:1}
+.chart text{fill:var(--ink2);font:11px var(--sans)}
+.chart text.val{fill:var(--ink);font-weight:600}
+.chart .b{fill:var(--s-p)} .chart .hit{fill:transparent}
+.chart .hit:hover + .b, .chart g:hover .b{opacity:.75}
+
+/* systems */
+details.group{border-top:2px solid var(--ink);padding-top:10px}
+details.group>summary{cursor:pointer;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;list-style:none}
+details.group>summary::-webkit-details-marker{display:none}
+details.group>summary h3{font-size:18px}
+details.group>summary::before{content:"+";font:600 16px var(--mono);width:14px;color:var(--ink2)}
+details.group[open]>summary::before{content:"\2212"}
+.syslist{display:flex;flex-direction:column;margin-top:8px}
+.sys{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:6px 24px;padding:12px 0;border-top:1px solid var(--line)}
+.sys .l,.sys .r{display:flex;flex-direction:column;gap:6px;min-width:0}
+.sys h4{font:600 15px/1.3 var(--sans);margin:0}
+.next{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px;font-size:13.5px}
+.next li{display:flex;gap:8px;align-items:baseline}
+.blk{font-size:13px}
+.blk b{font-weight:600;color:var(--s-a)}
+details.more{font-size:13px}
+details.more summary{cursor:pointer;color:var(--ink2)}
+.stg{display:grid;grid-template-columns:minmax(0,1fr) 110px auto;gap:4px 10px;align-items:center;margin-top:6px}
+.stg span.nm{overflow-wrap:anywhere}
+.items{margin:6px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px}
+.items li{display:grid;grid-template-columns:14px auto minmax(0,1fr);gap:6px;align-items:baseline}
+.items .sw{position:relative;top:1px}
+@media (max-width:720px){ .sys{grid-template-columns:minmax(0,1fr)} h1{font-size:25px} .stg{grid-template-columns:minmax(0,1fr) 70px auto} }
+
+#tip{position:fixed;z-index:20;pointer-events:none;background:var(--ink);color:var(--bg);font-size:12.5px;line-height:1.35;padding:6px 9px;border-radius:6px;max-width:260px}
+footer{border-top:1px solid var(--line);padding-top:14px;font-size:13px;color:var(--ink2)}
+code{font:12px var(--mono);background:var(--chip);padding:1px 4px;border-radius:3px;overflow-wrap:anywhere}
+.cmds{margin:6px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:4px}
+@media (prefers-reduced-motion:no-preference){ .seg{transition:opacity .12s} }
+.bar:hover .seg{opacity:.55} .bar:hover .seg:hover{opacity:1}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Scrib progress tracker</h1>
+    <p class="lede muted" id="lede"></p>
+    <nav aria-label="Sections"><a href="#milestones">Milestones</a><a href="#owner">Waiting on the owner</a><a href="#pace">Pace</a><a href="#systems">Every system</a><a href="#coverage">Wishlist and hard problems</a><a href="#limits">Limits</a></nav>
+  </header>
+
+  <section id="milestones">
+    <div class="sechead"><h2>How much is left</h2><p class="muted">Each bar is the rows of one goal, split by state. Width is a share of rows, not of work.</p></div>
+    <div class="legend" id="legend"></div>
+    <div class="note small" id="howto"></div>
+    <div class="mslist" id="msmain"></div>
+    <div class="minor" id="msminor"></div>
+  </section>
+
+  <section id="owner">
+    <div class="sechead"><h2>Waiting on the owner</h2><p class="muted" id="ownerlede"></p></div>
+    <div class="scroll"><table id="checks"></table></div>
+    <h3>Decisions and open questions</h3>
+    <ul class="qs" id="questions"></ul>
+  </section>
+
+  <section id="pace">
+    <div class="sechead"><h2>Pace, last ten days</h2><p class="muted" id="pacenote"></p></div>
+    <div class="charts" id="charts"></div>
+    <details class="more"><summary>Same numbers as a table</summary><div class="scroll"><table id="pacetable"></table></div></details>
+  </section>
+
+  <section id="systems">
+    <div class="sechead"><h2>Every system</h2><p class="muted">Grouped by goal. Left: where it stands. Right: what comes next and what holds it up. Open a card's details for its stages or task lines.</p></div>
+    <div id="groups" style="display:flex;flex-direction:column;gap:22px"></div>
+  </section>
+
+  <section id="coverage">
+    <div class="sechead"><h2>Wishlist and hard problems</h2><p class="muted">Every heading of the wishlist and every entry of the hard-problems file, and where it lives above.</p></div>
+    <div class="scroll"><table id="wish"></table></div>
+    <div class="scroll"><table id="hard"></table></div>
+  </section>
+
+  <section id="limits">
+    <div class="sechead"><h2>Limits of these numbers</h2></div>
+    <div class="note small"><ul id="limitlist"></ul>
+      <details class="more"><summary>Commands to refresh the data block</summary><ol class="cmds" id="cmds"></ol></details></div>
+  </section>
+
+  <footer id="foot"></footer>
+</div>
+<div id="tip" hidden></div>
+
+<script>
+(function(){
+var D=JSON.parse(document.getElementById('progress-data').textContent);
+var ST=D.states, KEYS=ST.map(function(s){return s.k}), LAB={}; ST.forEach(function(s){LAB[s.k]=s});
+function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function $(id){return document.getElementById(id)}
+function total(c){return KEYS.reduce(function(a,k){return a+c[k]},0)}
+function bar(c,cls){var t=total(c); if(!t) return '<div class="bar empty '+(cls||'')+'" role="img" aria-label="No rows of its own"></div>';
+  var lab=KEYS.filter(function(k){return c[k]}).map(function(k){return c[k]+' '+LAB[k].label.toLowerCase()}).join(', ');
+  return '<div class="bar '+(cls||'')+'" role="img" aria-label="'+esc(lab)+'">'+KEYS.map(function(k){return c[k]?'<span class="seg '+k+'" style="flex-grow:'+c[k]+'" data-tip="'+esc(c[k]+' of '+t+' &middot; '+LAB[k].label+'. '+LAB[k].desc)+'"></span>':''}).join('')+'</div>'}
+function counts(c){return '<div class="counts">'+KEYS.filter(function(k){return c[k]}).map(function(k){return '<span><i class="sw '+k+'"></i><b>'+c[k]+'</b> '+esc(LAB[k].label.toLowerCase())+'</span>'}).join('')+'</div>'}
+function pct(c){var t=total(c); return t?Math.round(100*c.v/t):0}
+
+// header
+var T=D.totals, big=D.milestones.slice(0,5);
+$('lede').innerHTML='Where the game stands on '+esc(D.generated)+': '+T.systems+' systems, '+T.laneRows+' gameplay slices tracked row by row, '+T.checksAwaiting+' owner checks waiting. Built is not the same as validated: anything the owner has not looked at yet is shown in its own colour.';
+$('legend').innerHTML=ST.map(function(s){return '<span data-tip="'+esc(s.desc)+'"><i class="sw '+s.k+'"></i>'+esc(s.label)+'</span>'}).join('');
+$('howto').innerHTML='<h3>How to read this</h3><ul>'+D.limits.slice(0,3).map(function(l){return '<li>'+esc(l)+'</li>'}).join('')+'<li>Time ranges are rough estimates and only cover work that is cut into slices. Where a goal has parts with no spec, it says "cannot be estimated yet". <a href="#limits">All limits</a></li></ul>';
+
+// milestones
+function msCard(m,minor){var t=total(m.counts);
+  return '<article class="ms"><div class="top"><h3>'+esc(m.name)+'</h3><span class="pct">'+t+' rows &middot; '+pct(m.counts)+'% done &middot; <a href="#g-'+m.id+'">systems</a></span></div>'+
+    (minor?'':'<p class="small muted def">'+esc(m.def)+'</p>')+bar(m.counts,minor?'sm':'')+counts(m.counts)+
+    '<p class="est '+m.estimate.kind+'">'+esc(m.estimate.text)+'</p></article>'}
+$('msmain').innerHTML=big.map(function(m){return msCard(m,false)}).join('');
+$('msminor').innerHTML=D.milestones.slice(5).map(function(m){return msCard(m,true)}).join('');
+
+// owner
+var areas=D.owner.checkAreas.slice().sort(function(a,b){return b.awaiting-a.awaiting}), mx=Math.max.apply(null,areas.map(function(a){return a.awaiting}));
+$('ownerlede').innerHTML=T.checksAwaiting+' visual checks are built and waiting for a look. Another '+T.checksSeen+' were seen and need follow-up or rework, '+T.checksBug+' show a known bug, '+T.checksPlanned+' are planned for work not built yet, '+T.checksDeferred+' are deferred.';
+$('checks').innerHTML='<thead><tr><th>Area</th><th>Awaiting the owner</th><th class="n">Seen, follow-up</th><th class="n">Known bug</th><th class="n">Planned</th><th class="n">Deferred</th></tr></thead><tbody>'+
+  areas.map(function(a){return '<tr><td>'+esc(a.area)+'</td><td><div class="hbar"><i style="width:'+(a.awaiting?Math.max(2,Math.round(140*a.awaiting/mx)):0)+'px"></i><b>'+a.awaiting+'</b></div></td><td class="n">'+a.seen+'</td><td class="n">'+a.bug+'</td><td class="n">'+a.planned+'</td><td class="n">'+a.deferred+'</td></tr>'}).join('')+
+  '<tr><td><b>All</b></td><td><b>'+T.checksAwaiting+'</b></td><td class="n"><b>'+T.checksSeen+'</b></td><td class="n"><b>'+T.checksBug+'</b></td><td class="n"><b>'+T.checksPlanned+'</b></td><td class="n"><b>'+T.checksDeferred+'</b></td></tr></tbody>';
+$('questions').innerHTML=D.owner.questions.map(function(q){return '<li><b>'+esc(q[0])+'</b><span class="small">'+esc(q[1])+'</span></li>'}).join('');
+
+// pace
+function chart(title,key){var days=D.pace.days, W=300,H=150,L=30,R=6,Tp=18,B=22, max=Math.max.apply(null,days.map(function(d){return d[key]}))||1;
+  var step=Math.pow(10,Math.floor(Math.log(max)/Math.LN10)); var top=Math.ceil(max/step)*step; if(top/step>5) {step*=2; top=Math.ceil(max/step)*step}
+  var pw=(W-L-R)/days.length, y=function(v){return Tp+(H-Tp-B)*(1-v/top)}, s='';
+  for(var g=0;g<=top;g+=step){s+='<line class="'+(g?'gl':'ax')+'" x1="'+L+'" x2="'+(W-R)+'" y1="'+y(g)+'" y2="'+y(g)+'"/><text x="'+(L-5)+'" y="'+(y(g)+4)+'" text-anchor="end">'+g+'</text>'}
+  var imax=0; days.forEach(function(d,i){if(d[key]>days[imax][key])imax=i});
+  days.forEach(function(d,i){var x=L+i*pw+1, w=pw-2, v=d[key], yy=y(v), h=y(0)-yy, r=Math.min(4,h);
+    s+='<g data-tip="'+esc(d.date+': '+v+' '+title.toLowerCase())+'"><rect class="hit" x="'+(L+i*pw)+'" y="'+Tp+'" width="'+pw+'" height="'+(H-Tp-B)+'"/>';
+    if(v) s+='<path class="b" d="M'+x+' '+y(0)+'V'+(yy+r)+'q0 -'+r+' '+r+' -'+r+'h'+(w-2*r)+'q'+r+' 0 '+r+' '+r+'V'+y(0)+'z"/>';
+    s+='</g>';
+    if(v&&(i===imax||i===days.length-1)) s+='<text class="val" x="'+(x+w/2)+'" y="'+(yy-4)+'" text-anchor="middle">'+v+'</text>';
+    if(i%3===0||i===days.length-1) s+='<text x="'+(x+w/2)+'" y="'+(H-6)+'" text-anchor="middle">'+d.date.slice(5)+'</text>'});
+  return '<div class="chart"><h3>'+esc(title)+'</h3><svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+esc(title)+' per day">'+s+'</svg></div>'}
+$('charts').innerHTML=chart('Commits','commits')+chart('Changelog lines','changelog')+chart('Lane slices done','laneRows');
+$('pacenote').innerHTML=esc(D.pace.note);
+$('pacetable').innerHTML='<thead><tr><th>Day</th><th class="n">Commits</th><th class="n">Changelog lines</th><th class="n">Lane slices done</th></tr></thead><tbody>'+D.pace.days.map(function(d){return '<tr><td>'+d.date+'</td><td class="n">'+d.commits+'</td><td class="n">'+d.changelog+'</td><td class="n">'+d.laneRows+'</td></tr>'}).join('')+'</tbody>';
+
+// systems
+function sysCard(s){var t=total(s.counts), more='';
+  if(s.stages&&s.stages.length){more+='<div class="stg">'+s.stages.map(function(g){var tt=total(g.counts);return '<span class="nm">'+esc(g.name)+'</span>'+bar(g.counts,'sm')+'<span class="muted">'+g.counts.v+' of '+tt+' done</span>'}).join('')+'</div>'}
+  if(s.items&&s.items.length){more+='<ul class="items">'+s.items.map(function(i){return '<li><i class="sw '+i.s+'" data-tip="'+esc(LAB[i.s].label)+'"></i><span class="id">'+esc(i.id)+'</span><span>'+esc(i.t)+'</span></li>'}).join('')+'</ul>'}
+  var chk=s.checks?('<p class="small muted">Owner checks: '+s.checks.awaiting+' awaiting'+(s.checks.seen?', '+s.checks.seen+' need follow-up':'')+(s.checks.bug?', '+s.checks.bug+' known bug'+(s.checks.bug>1?'s':''):'')+(s.checks.planned?', '+s.checks.planned+' planned':'')+(s.checks.deferred?', '+s.checks.deferred+' deferred':'')+(s.checksNote?' ('+esc(s.checksNote)+')':'')+'</p>'):'';
+  return '<div class="sys"><div class="l"><h4>'+esc(s.name)+'</h4>'+bar(s.counts,'sm')+(t?counts(s.counts):'<p class="small muted">No rows of its own</p>')+
+    '<p class="small muted">'+(t?t+' '+esc(s.unit)+' &middot; ':'')+'Systems map: '+esc(s.rows)+'</p>'+(s.note?'<p class="small muted">'+esc(s.note)+'</p>':'')+
+    (more?'<details class="more"><summary>'+(s.stages&&s.stages.length?'Stages':'Task lines')+(s.stages&&s.stages.length&&s.items&&s.items.length?' and task lines':'')+'</summary>'+more+'</details>':'')+'</div>'+
+    '<div class="r">'+(s.next&&s.next.length?'<ul class="next">'+s.next.map(function(n){return '<li><span class="id">'+esc(n[0])+'</span><span>'+esc(n[1])+'</span></li>'}).join('')+'</ul>':'<p class="small muted">No next row named</p>')+
+    (s.blocked&&s.blocked.length?'<p class="blk"><b>Held up by</b> '+s.blocked.map(esc).join('; ')+'</p>':'')+chk+'</div></div>'}
+$('groups').innerHTML=D.milestones.map(function(m,i){var ss=D.systems.filter(function(s){return s.ms===m.id});
+  return '<details class="group" id="g-'+m.id+'"'+(i<5?' open':'')+'><summary><h3>'+esc(m.name)+'</h3><span class="muted small">'+ss.length+' systems &middot; '+total(m.counts)+' rows &middot; '+pct(m.counts)+'% done</span></summary><div class="syslist">'+ss.map(sysCard).join('')+'</div></details>'}).join('');
+
+// coverage
+$('wish').innerHTML='<thead><tr><th>Wishlist</th><th>Feature</th><th>State</th><th>Where on this page</th></tr></thead><tbody>'+D.coverage.wishlist.map(function(w){return '<tr><td><span class="id">&sect;'+w[0]+'</span></td><td>'+esc(w[1])+'</td><td style="white-space:nowrap"><i class="sw '+w[2]+'"></i> '+esc(LAB[w[2]].label)+'</td><td>'+esc(w[3])+'</td></tr>'}).join('')+'</tbody>';
+$('hard').innerHTML='<thead><tr><th>Hard problem</th><th>What</th><th>State</th><th>Where on this page</th></tr></thead><tbody>'+D.coverage.hard.map(function(w){return '<tr><td><span class="id">'+esc(w[0])+'</span></td><td>'+esc(w[1])+'</td><td>'+esc(w[2])+'</td><td>'+esc(w[3])+'</td></tr>'}).join('')+'</tbody>';
+$('limitlist').innerHTML=D.limits.map(function(l){return '<li>'+esc(l)+'</li>'}).join('');
+$('cmds').innerHTML=D.refresh.map(function(l){return '<li><code>'+esc(l)+'</code></li>'}).join('');
+$('foot').innerHTML='Generated '+esc(D.generated)+' &middot; git commit <span class="id">'+esc(D.commit)+'</span> &middot; data block at the top of this file: update it at each daily check sitting.';
+
+// open a group when its link is followed
+function openHash(){var el=location.hash&&document.getElementById(location.hash.slice(1)); if(el&&el.tagName==='DETAILS') el.open=true}
+window.addEventListener('hashchange',openHash); openHash();
+
+// tooltip
+var tip=$('tip');
+function show(e){var t=e.target.closest&&e.target.closest('[data-tip]'); if(!t){tip.hidden=true;return}
+  tip.innerHTML=t.getAttribute('data-tip'); tip.hidden=false;
+  var x=Math.min(e.clientX+12,window.innerWidth-tip.offsetWidth-8), y=e.clientY+14; if(y+tip.offsetHeight>window.innerHeight-8) y=e.clientY-tip.offsetHeight-10;
+  tip.style.left=Math.max(8,x)+'px'; tip.style.top=Math.max(8,y)+'px'}
+document.addEventListener('pointermove',show); document.addEventListener('pointerdown',show);
+document.addEventListener('scroll',function(){tip.hidden=true},true);
+})();
+</script>
