@@ -83,6 +83,8 @@ pub fn decide(ws: &WorldState, stack: &[Directive], lib: &Library, rng: u64, tra
   Predicates, inputs and operators come from a registered vocabulary; unknown names fail at load with a report.
 - **World state** is typed slots, not strings: names resolve to indices once at load. Plans record which keys they
   read, so a change marks them dirty.
+- **Followers** ([followers.md](followers.md), AI0d): `Follow` becomes `Follow { leader, slot, rules }` (AI38); it is a
+  row-5 directive at its source's rank, player commands are its params, its leash shapes row 1.
 
 ## Directives (the §1b seam)
 

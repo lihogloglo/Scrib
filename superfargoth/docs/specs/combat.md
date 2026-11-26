@@ -273,7 +273,8 @@ research `gameplay-2026-11-25/combat-nonlethal.md`, C-R3). Marks Q10-Q15: pendin
     `combat.downed.knockout_s`.
   - *Yielded* (Q11): only from a `Yield { who }` command sent by AI37 (humans, its morale threshold; C6 never yields);
     health kept, slot `react.yield` (cower), weapon sheathed, `until: None`.
-  - Hits while Downed: `Lethal` -> death; `NonLethal` -> Knockout, `until` restarts. C2c's "invulnerable while down" is
+  - Hits while Downed: `Lethal` -> death, unless `always_recover` (essential NPCs, companions by default: followers.md),
+    which restarts the Knockout instead; `NonLethal` -> Knockout, `until` restarts. C2c's "invulnerable while down" is
     a standing fighter's poise knockdown (health > 0), not `Downed`: a downed foe is fragile (CP2077).
   - Exits (Q13): **Recovered** (Knockout past `until`: C2c get-up, health `.wake_health` x max; Yielded: no hostile within
     `.leave_m` for `.leave_s`, AI resumes the routine, content lowers disposition) emits `Spared { who, credit }`;

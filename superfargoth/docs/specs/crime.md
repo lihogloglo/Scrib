@@ -113,7 +113,8 @@ pub struct OffenceDef {                // a record, kind "crime.offence"
 
 `OffenceAttempt { offender: PlayerId, kind: RecordId, victim: Option<ActorKey>, subject: Option<ObjectKey>,
 arg: i32, faction: Option<RecordId>, tick }` is the one input, emitted by gameplay code (takes, doors, hits, kills,
-pickpocketing, beds, forced locks, spells).
+pickpocketing, beds, forced locks, spells). A follower acting on its leader's command (`AttackTarget` on a non-hostile,
+followers.md) files the attempt with the leader as `offender`; its own unordered acts stay its own (LW10 `Culprit`).
 `assess(&OffenceCtx) -> Assessment { per_witness: Vec<WitnessReaction>, reports: ReportPlan }` is pure and adds **no
 bounty** in either preset: bounty lands only when a report is delivered ("Reports and recognition"). Departs from the
 2026-11-10 text, which added `Assessment.bounty` at assess (decision 2).

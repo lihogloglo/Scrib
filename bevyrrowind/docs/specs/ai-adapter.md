@@ -159,6 +159,8 @@ Records' AI_W/AI_T/AI_E/AI_F/AI_A (with CNDT cells) and the MWScript functions p
 | `StartCombat` / Fight | *Combat* drive target | C6 operators | `StopCombat`, death, target lost |
 | Pursue (guards), AvoidDoor, Face, Cast, Breathe | operators or drives (`aipursue.cpp`, `aiavoiddoor.cpp`, `aiface.cpp`, `aicast.cpp`, `aibreathe.cpp`) | modern | as OpenMW |
 
+AI_E/AI_F framework side (slots, catch-up, commands, Classic `FollowRules` with `commandable: false`): [followers.md](../../../superfargoth/docs/specs/followers.md).
+
 As built (MA2a, 2026-11-26): `mw_ai::packages::directives(&[AiPackage], &PackageCtx) -> PackageDirectives`
 (`RecordDirective { index, spec, extra }` in record order + `skipped` with reasons). `PackageCtx` = origin record id,
 spawn `home`, a `PackageResolver` (actor, placement). AI_W -> `StayNear` (idle table in `PackageExtra`, from
