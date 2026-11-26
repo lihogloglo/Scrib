@@ -97,13 +97,17 @@ formula), no ambushes, exploration-only reveal; operators are replaced here too 
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| MAP0 | New spec `map.md`: layers, `MapReveal`, pins, pyramid, compass/guidance, profiles | docs | TV0 | doccheck |
+| MAP0 | New spec `map.md`: layers, `MapReveal`, pins, pyramid, compass/guidance, profiles | docs | TV0 | **done 2026-11-26** (map.md 27.2 KB; ui-adapter "Map (MAP5)") |
 | MAP1 | `MapReveal` core: bitset per layer, reveal radius/region, discovery events, save | `sf_map` | MAP0 | exact; round trip |
-| MAP2 | Map bake: hillshade, tint, coast, roads, settlements, names into a tile pyramid | `sf_map`, `mw_bake` | MAP0 | log bake ms, MiB; owner MAP-1 |
-| MAP3 | Map screen: pan/zoom, fog, places, pins, `ShowMap`/`FillMap` | `sf_ui_screens`, `mw_rpg_bevy` | MAP1, MAP2 | view-model; owner MAP-2 |
-| MAP4 | Compass strip (Morrowind: places only) | `sf_ui_screens` | MAP1 | owner MAP-3 |
-| MAP5 | Morrowind painted profile + reveal rule (owner Q3) | `mw_*` data | MAP2, MAP3 | owner MAP-4 |
-| TV16 | Opt-in "travel anywhere discovered", off by default, gated | `sf_travel_bevy` | MAP3, TV10 | exact: off; gated |
+| MAP1b | `sf_map_bevy` plugin: reveal from the player's position, discovery events, save section `sf/map` | `sf_map_bevy` | MAP1 | headless: reveal + save round trip |
+| MAP2a | Map bake framework steps: hillshade, tint, coast, roads, places into a BC7 KTX2 tile pyramid (`MapStyle` data) | `sf_map_bake` | MAP0 | exact synthetic heightfield; log bake ms, MiB |
+| MAP2b | Map bake game wiring (Morrowind inputs, cache by input hash) | `mw_bake` | MAP2a | log bake ms, MiB; owner MAP-1 |
+| MAP3a | Map view-model and pins (pan/zoom state, fog, places, pin add/remove, saved) | `sf_map` | MAP1 | exact view-model |
+| MAP3b | `MapScreen`: tiles, fog `UiMaterial`, labels, pins | `sf_ui_screens` | MAP3a, MAP2a | owner MAP-2 |
+| MAP3c | `ShowMap`/`FillMap`, `EnableMapMenu` | `mw_rpg_bevy`, `mw_scripts_bevy` | MAP3b | exact per function |
+| MAP4 | Compass strip (Morrowind: places only) | `sf_ui_screens` | MAP1b | owner MAP-3 |
+| MAP5 | Morrowind painted profile + reveal rule (owner Q3) | `mw_*` data | MAP2b, MAP3c | owner MAP-4 |
+| TV16 | Opt-in "travel anywhere discovered", off by default, gated | `sf_travel_bevy` | MAP3b, TV10 | exact: off; gated |
 
 ### Stage 3: standing, sitting and walking on moving things (interaction lane, framework)
 

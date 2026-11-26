@@ -243,7 +243,8 @@ in dialogue with a law actor, its `of_law`; else the player's `CurrentJurisdicti
 - **Writes touch the current one only** (Skyrim: per hold). Vanilla's are dialogue in place: Thieves Guild savants'
   "price on your head" (`PayFineThief`, half price, `TGDiscountScript`; UESP) clear the jurisdiction they stand in;
   a Morag Tong writ shown to a guard clears that guard's. A `MwCrimeScriptScope` row (script or info id -> `Current |
-  All | Jurisdiction(id)`) marks a full pardon; none until the A3b esm grep finds one.
+  All | Jurisdiction(id)`) marks a full pardon; none until the A3b esm grep finds one. **Decided (meta 2026-11-26):**
+  a savant clears only its own jurisdiction; Classic keeps one bounty, so it clears all.
 - **Jail**: each jurisdiction's `jail_place` = the closest `prisonmarker` whose cell resolves to it, else the closest
   one (the Legion holds the Houses' prisoners); evidence = that cell's `stolen_goods`; a row may override.
 - **Spread**: none. A bounty stays where it was earned (Skyrim, RDR2); a `Wanted` fact may travel by gossip and lower

@@ -116,6 +116,23 @@ Framework: `superfargoth/docs/specs/menus.md` and `video.md`; research
   settings window categories and their option sets (map: `docs/research/openmw-settings-window-2026-11-11.md`: Prefs, Audio, Controls, Video [Video, Detail Level, Water, Lights, Shadows], Scripts, Language); the
   modern option keeps the framework pages. Same settings and screen, only the grouping.
 
+### Map (MAP5)
+
+Framework: `superfargoth/docs/specs/map.md` ("Adapter contract"). Not built.
+
+- **Layer:** one `MapLayer` for the Vvardenfell exterior (bounds from the generated world; mod worldspaces later).
+- **Places:** every named exterior cell becomes a `MapPlace` (name and `match_name` = cell name, discover `Inside`
+  the cell's footprint, kind from a data table of name rules: city, town, stronghold, dungeon, shrine); places never
+  reveal fog. Travel stops point at them (travel-adapter "Stops get a place"). Regions: `REGN` records, geometry from
+  each exterior cell's region field rasterised by `map.regions`.
+- **Style:** `mw.map.style.painted` (parchment hillshade, ink coast and roads, game icons); a vanilla height-relief
+  profile is open question 1 of map.md.
+- **Reveal:** Classic: exploration only, reveal cell = one exterior cell, painted on entry, no compass. Modern:
+  `map.reveal.radius_m` plus `RevealRecord`s from bought region maps and guides (owner Q3, 2026-11-25), compass on,
+  places only (`QuestMarkers::None`).
+- **Scripts:** `ShowMap "prefix"` -> `Discover { NamePrefix }`, `FillMap` -> `Discover { All }` (labels, not fog;
+  OpenMW file + commit cited in MAP3c); `EnableMapMenu` -> the map screen availability flag (chargen).
+
 ## Books and scrolls: markup → rich text
 
 - BOOK text is simplified HTML (verify the tag set over every BOOK record): `<DIV ALIGN=...>`,
