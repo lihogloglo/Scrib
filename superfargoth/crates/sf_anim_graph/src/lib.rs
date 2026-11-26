@@ -31,6 +31,7 @@ use sf_anim::mirror;
 mod procedural;
 mod secondary;
 pub mod slot;
+pub mod style;
 #[cfg(feature = "bake")]
 pub mod steps;
 mod sync;
@@ -58,5 +59,7 @@ pub use slot::{LateClip, MontageClip, MontageId, MontageStatus, NoticeKind, Slot
 
 #[cfg(all(test, feature = "bake"))]
 mod creature_tests;
+#[cfg(all(test, feature = "bake"))]
+mod style_tests;
 #[cfg(all(test, feature = "bake"))]
 mod tests;

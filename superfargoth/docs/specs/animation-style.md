@@ -337,6 +337,19 @@ per tier (High, 4060 laptop) into `docs/ledger/perf.md`.
 | AN22b | Walkers and player carry the profile; mover reads `gait_speed` | `mw_walkers_bevy` | AN20, AN21, AN22a | counts; owner ANIM-8 |
 | AN23 | Measurement: style µs per tier, High, 4060 laptop | tests | AN22b | `#[ignore = "measurement"]`; perf ledger |
 
+## As built
+
+- **AN14a (2026-11-26), `sf_anim_graph::style`:** as designed above, with these differences. `StyleTable::parse` is
+  behind the crate's `bake` feature (`ron` is optional there); every type is postcard-serialisable, so the runtime
+  either loads a cooked table or the glue turns the feature on (AN22a decides). `choose` takes
+  `ChooseParams { hold_ticks, hysteresis }` in place of the bare `hold_ticks` (a condition without `exit` uses
+  `enter - hysteresis`); every change of the active class waits for the hold, the identity updates at once.
+  `StyleTable::initial(p, tick)` gives the state at spawn and load (first entering row, else the identity, no hold).
+  `resolve` stops at a `Fallback::Identity` or at the end of the `Class` chain and returns `None`: the identity
+  class is resolved by the caller (AN14b's two remaps). The `smooth.*` tunables are `Net::Gameplay`, not
+  `Presentation`: the profile they smooth is host state. `injury_side` keeps its last side while the injury decays;
+  `snap` with no injury sets `Center`. `gait_speed` is AN15b; `mw_graphs::gait_slot` does not delegate yet (AN14b).
+
 ## Open questions (taste and scope; each with a recommendation)
 
 1. **Ambient drunks** (answered, owner via meta-5, 2026-11-26): not at launch. The first game's NPCs never drink, so
