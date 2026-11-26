@@ -13,13 +13,14 @@ Sources: `../research/npc-ai-2026-11-08.md` §4, §5.2-5.3, §7.4 (approved); `.
 [locomotion.md](locomotion.md) "Local avoidance"; [net.md](net.md) "Net-ready rules".
 
 <!-- agent-summary -->
-> **Agent summary (2026-11-11).** Draft; NV1 (`sf_nav` core) and NV2 (`sf_nav_recast`) built ("Build plan"). Recast/Detour
-> navmesh per worldspace, agent class and nav region, baked once by `sf_bake` (`nav.tiles`); two classes (humanoid, large).
-> Doorways are baked door polygons switched at runtime by area/flags; prop carving (TileCache) is opt-in later (owner:
-> patches are not "baking during play"). Tiles stream with a fixed nav ring around gameplay anchors. Routing:
-> worldspace graph (door links) → per-space route graph (NV12) → Detour over resident tiles → corridor → our ORCA (+ navmesh
-> wall lines), on the fixed tick (NV7a). Backend behind `NavBackend`: `navmesh-rs` (NV0 verdict).
-> Read next: "Data model", "Routing", "Streaming", "Build plan".
+> **Agent summary (2026-11-26).** Draft; NV1-NV4c, NV6-NV8, NV11a-d1, NV12a built ("Build plan"). Recast/Detour
+> navmesh per worldspace, ground class and nav region, baked once by `sf_bake` (`nav.tiles`); two ground classes
+> (humanoid, large). Fliers use a clearance height field, swimmers a water-body volume ("Volumes", NV13). Doorways are
+> baked door polygons switched by area/flags; a tile whose walkable ground changed, or a missing one, is rebuilt by the
+> bake's own step on a worker, off the frame, cached ("Runtime rebuild", NV10). Tiles stream with a fixed nav ring
+> around gameplay anchors. Routing: worldspace graph (door links) → per-space route graph (NV12) → Detour over resident
+> tiles → corridor → our ORCA (+ wall lines), on the fixed tick (NV7a), watched by the stuck monitor (NV14).
+> Read next: "Data model", "Routing", "Volumes", "Build plan" (order = `docs/roadmaps/nav.md`).
 <!-- /agent-summary -->
 
 ## Goal
@@ -27,30 +28,32 @@ Sources: `../research/npc-ai-2026-11-08.md` §4, §5.2-5.3, §7.4 (approved); `.
 Every non-player mover (NPCs, creatures, followers, escorts) gets paths that respect the same collision the mover
 collides with, inside one worldspace and across door links, whether the door is seamless or fade-only. The same
 graphs serve quest markers and the compass. Host-only for gameplay; clients route locally for UI only ("Co-op").
-Non-goals: flying 3D navigation (fliers steer with probes), flow fields (RTS tool), a lane graph for city crowds (UE
-ZoneGraph; later if measured), navmesh authoring tools (data comes from the bake; overrides are mods).
+Fliers and swimmers are in scope ("Volumes", roadmap decision 2). Non-goals: flow fields (RTS tool), a lane graph for
+city crowds (UE ZoneGraph; later if measured), navmesh authoring tools (data comes from the bake; overrides are mods).
 
 ## Owner decisions this spec implements (2026-11-08)
 
 | Decision | Here |
 |---|---|
 | Layering and the split `sf_nav` + `sf_ai` (+ planned `sf_interaction`) | this crate set; ai.md |
-| Runtime tile patches for doors and props are fine; they are not "baking during play" | "Runtime patches" |
+| Runtime tile patches for doors and props are fine; they are not "baking during play" | "Runtime rebuild" |
 | Spike `navmesh-rs` first; C++ recastnavigation FFI is the accepted fallback | NV0, "Backend" |
 | Seamless interiors optional per door / per pack: AI works with seamless and fade-only doors | "Doors" |
 | No multiplayer ceiling; gameplay never depends on graphics settings | "Streaming" (fixed nav ring), "Co-op" |
 | Steam Deck is the floor | "Budgets" |
-| Delegated 2026-11-08: two agent classes; doors by poly flags, no prop carving by default; client UI routes | "Data model", "Runtime patches", "Co-op" |
+| Delegated 2026-11-08: two agent classes; doors by poly flags, no prop carving by default; client UI routes | "Data model", "Runtime rebuild", "Co-op" |
 | Owner 2026-11-11: NPCs climb, mantle and vault with the player's own moves (guards can follow onto roofs); later, after NV9: bake-time auto links from ledges in the mover's mantle/vault/drop envelopes, per class (UE NavLink generation, Unity auto off-mesh links) | NV9b (planned) |
+| Owner 2026-11-26 (nav roadmap §7): fliers and swimmers in scope; tiles built in play only when missing or changed, off the frame, cached; NPCs swim after you, non-swimmers wait | "Volumes", "Runtime rebuild" |
 
 ## Canonical technique
 
 **Recast voxel navmesh generation + Detour tiled navmesh queries** (Mononen; used by UE, Unity, Godot, OpenMW),
-tiled and baked offline, with **TileCache** layers for runtime obstacles, **off-mesh connections** for links the
+tiled and baked offline, a tile rebuilt on a worker when its inputs change (UE dynamic regeneration), **off-mesh connections** for links the
 mesh can't express, a **road/route graph** above the navmesh ("Route graph"; HPA*, Botea et al. 2004, only on a measured need), and **path corridor +
 reciprocal velocity obstacles** for following and local avoidance (Detour `dtPathCorridor`; ORCA, van den Berg 2011).
 Deviation: we keep our own ORCA (`sf_controller::avoid`, deterministic, tested) instead of DetourCrowd's sampled
-avoidance, and take only `PathCorridor` and `LocalBoundary` from Detour.
+avoidance, and take only `PathCorridor` and `LocalBoundary` from Detour. Fliers: a clearance height field searched in
+2D with a vertical profile (Horizon Zero Dawn); swimmers: water-body volumes ("Volumes").
 
 ## Reuse (Bevy, then crates, then our own)
 
@@ -58,9 +61,7 @@ avoidance, and take only `PathCorridor` and `LocalBoundary` from Detour.
 - **`navmesh-rs` 0.2.2** (MIT OR Apache-2.0 + zlib, pure Rust Recast + Detour + DetourCrowd + TileCache, bit-exact
   with upstream `9f4ce644`; one author): **adopted (NV0, 2026-11-11)**, pinned `=0.2.2`, features `libm`
   (cross-platform determinism) + `polyref64`, vendored with one own patch (`superfargoth/vendor/README.md`), behind
-  `NavBackend` in `sf_nav_recast`. NV0 baked all our cooked collision with no failures; full bake ≈ 55 s at 16
-  threads, over the 45 s slot (NV4 tunes). [Spike report](../research/navmesh-spike-nv0-2026-11-11.md). Fallback
-  (not needed): recastnavigation through a vendored `cc` build.
+  `NavBackend` in `sf_nav_recast`. [Spike report](../research/navmesh-spike-nv0-2026-11-11.md).
 - Rejected (research §5.2): `rerecast` (no tiles; re-check at "update all"), `landmass` (glam 0.30 + `dodgy_2d`, no
   dynamic obstacles; its islands idea becomes nav regions), `vleue_navigator`/`polyanya` (2D/layered),
   `oxidized_navigation` (archived), `bevy_northstar`/flow-field crates (grids). `petgraph` covers the graphs.
@@ -69,6 +70,9 @@ avoidance, and take only `PathCorridor` and `LocalBoundary` from Detour.
   workspace) and `pathfinding` (MIT OR Apache-2.0; `Ord` costs, so f64 needs a wrapper) were rejected for this query:
   both fix their own tie-break, neither seeds a search mid-edge or ends at a virtual goal without mutating the graph.
   Own ~100-line A* in the NV11b pattern (`world_graph.rs` `Open`: `total_cmp` + index tie-break), CSR-style arrays.
+- **Volumes, rebuild, stuck (NV0b, 2026-11-26):** Bevy 0.20 ships no navigation; `navmesh-rs` stays (its tilecache and
+  crowd modules are references); no crate does 3D flight volumes (`rerecast` 1.0, `landmass` 0.9, `vleue_navigator`
+  0.17, `bevy_northstar` 0.8; `oxidized_navigation` stale): field, swim band, rebuild queue, stuck monitor are ours.
 - Our own: the thin glue (types, trait, graphs, query service, streaming, debug draw); no Recast/Detour rewrite.
 
 ## Data model
@@ -102,10 +106,8 @@ adapter's `AreaTable` (`sf.nav.area`), `PolyFlags` (WALK, SWIM, DOOR, JUMP, AVOI
   `OneWay`); dynamic door state (open, locked) comes from the host each tick.
 - **Door polygons** (bake product): the bake drops door leaves from the geometry and marks each doorway footprint with
   a convex area volume (`door`), so every doorway has its own polygons, listed per tile as `DoorPolys { door, polys }`.
-- **Runtime obstacles** (not saved, NV10, opt-in): `NavObstacle { id, ws, shape: Cylinder | Box }`, a TileCache carve.
-
-`LinkId` does not exist yet (`DoorLinks` is a `Vec<DoorLink>`): `sf_world` gains a stable `LinkId` (hash of both
-ends' worldspace and frame) in NV11, since the AI saves routes by link.
+- **Runtime changes** (not saved): dirty and missing tiles rebuilt by the bake step ("Runtime rebuild", NV10b-c); a
+  `NavObstacle` carve only if measured needed. **Height field and water bodies** (fliers, swimmers): "Volumes".
 
 ## Interfaces
 
@@ -114,19 +116,11 @@ ends' worldspace and frame) in NV11, since the AI saves routes by link.
 `poly_state` / `set_poly_state` (doors: `setPolyArea`/`setPolyFlags`, no rebuild), and read-only debug accessors
 (NV3) `tile_summaries` (key, bytes, polygons per resident tile) and `tile_geometry` (a tile's polygons with wall
 edges, region-local, built on request), and corridor moves (`is_valid_poly`, `closest_point_on_poly`,
-`move_along_surface`, `corridor_corners`, `repair_corridor`, NV8). Still to add: local boundary (`dtLocalBoundary`, NV7b), `set_obstacle` / `clear_obstacle` /
-`rebuild_dirty` (TileCache, NV10, opt-in), and bake-side `read_tile_blob` (NV4a: a blob's polygons with edge links:
+`move_along_surface`, `corridor_corners`, `repair_corridor`, NV8). Still to add: local boundary (`dtLocalBoundary`, NV7b), tile
+swap for rebuilds (`add_tile` over a resident key, NV10b; no TileCache API), and bake-side `read_tile_blob` (NV4a: a blob's polygons with edge links:
 wall, in-tile polygon, or portal to a tile side). The bake's adapter seam (`sf_nav_bake`, built NV4a):
 
-```rust
-/// The adapter's geometry for the bake: the same cooked collision the mover uses. Reads go through `cx`.
-pub trait NavGeometrySource: Send + Sync {
-    fn regions(&self, ws: &WorldspaceId) -> Vec<NavRegion>;            // plan time: origin + XZ extent per region
-    fn tile_input(&self, cx: &mut RunCx, ws: &WorldspaceId, class: &AgentClass, bounds: &NavTileBounds)
-        -> Result<NavTileSource, BakeError>;                            // TileInput + DoorVolume { door, volume }
-    fn links(&self, cx: &mut RunCx, ws: &WorldspaceId) -> Result<NavLinks, BakeError>; // links + door approaches
-}
-```
+Methods `regions`, `tile_input` (`TileInput` + `DoorVolume`s), `links`, + `water_bodies` (NV13c); the code is the reference.
 
 A **test double** (`GridBackend`: a walkable-cell grid with exact A*) lives in `sf_nav` so the core, `sf_ai` and the
 adapter test without Recast. Queries the AI calls (all take the actor's worldspace; there is no global
@@ -174,20 +168,39 @@ markers (seamless §4.2; it replaces OpenMW's scattered `positionFor` calls).
 - **Gate**: a cold bake of every navmesh for the first pack, both classes, stays within the "few minutes" rule on the
   High reference; measured in NV4; over it, coarsen exterior humanoid tiles (`large` is cheap).
 
-## Runtime patches (not a bake)
+## Runtime rebuild (not a bake; NV10, roadmap decision 7)
 
-The baked tiles are the base layer; the host patches them at runtime (owner decision 2), cheapest mechanism first
-(decisions (b)):
-- **Doors: polygon state, no rebuild** (Recast demo's door flags, OpenMW's door area). A shut door sets its
+The baked tiles are the base layer; the host changes them at runtime, cheapest mechanism first, **always off the frame**
+(owner 2026-11-26; CONTRIBUTING "Design constraints": never a stall while playing):
+- **Doors: polygon state, no rebuild** (NV10a; Recast demo's door flags, OpenMW's door area). A shut door sets its
   `DoorPolys` to area `door_closed` (cost, still pathable: the NPC opens it); a locked door adds flag `LOCKED`, which
   every filter excludes unless the query's per-agent predicate admits it (keys, scripted rights). Filters are per
   query, so the mesh is shared. Applied at a tick boundary.
-- **Large movable props: no carving by default.** Vanilla has none; small items and bodies are left to ORCA and the
-  mover (Unity: moving obstacles are avoided, not planned around). NV10 adds TileCache carving **opt-in per record**
-  (`carves_nav`, adapter, default off) for a body at rest above a size threshold ("carve only stationary"), layers
-  baked only for tiles that can host one. Rebuilds: worker, per-tick budget, coalesced per tile, ≥ 250 ms apart per
-  tile (OpenMW), applied at a tick boundary in tile-key order.
-- Door state and obstacles are derived (door overlay, prop transforms): not saved, recomputed on load.
+- **Changed walkable inputs: rebuild the tile** (NV10b; UE dynamic regeneration). A cause event `NavDirty { ws, aabb }`
+  (NV15: `Destroyed` on walkable geometry; any adapter emitter) marks every ground and field tile whose bounds + border
+  it touches. A worker re-runs the same pure `nav.tiles` step over `NavGeometrySource` on the live world (bake inputs +
+  save overlay): the result equals an offline bake of that state bit for bit, one code path, no layer format.
+  **Coalesced**: one job per `TileKey`; a mark during a job bumps the generation and requeues once; ≥
+  `ai.nav.rebuild.min_interval_ms` apart per tile (OpenMW). **Budget**: `ai.nav.rebuild.workers`, nearest an anchor
+  first; a tile ≈ 3.75 ms single-thread (215.8 s / 57,516 humanoid tiles, cold-bake mean; NV-R1 measures), so a broken
+  wall's ~4 tiles take ~15 ms on one worker. The old tile serves until the **swap**: current-generation results apply
+  at the next fixed-tick boundary, ≤ `ai.nav.rebuild.max_swaps` per tick, in `TileKey` order (decision 15); then the
+  door overlay re-applies, corridors in the tile repair from the agent's position (as NV8 `repair_start`; else a new
+  request, the failed-replan gate re-arms on a tile change), and sliced jobs that visited it restart.
+- **Missing tiles** (NV10c; owner Q1; modded or generated area, a bake older than a mod): the same worker path, at a
+  loading screen for the arrival ring, else requested `ai.nav.rebuild.prefetch_m` past the ring's load radius; still
+  missing when needed = `Partial` at its edge, never a main-thread wait. **Disk cache**: key = blake3 over (step
+  version, backend format, class params, the tile's input hashes, overlay entries in its bounds), in the bake store's
+  runtime namespace: a second load hits, any input change misses (LRU cap `ai.nav.rebuild.cache_mib`). A save's
+  changed tiles re-derive the same way on load.
+- **Carving** (TileCache, `carves_nav`): only if NVM measures props blocking what ORCA and the stuck monitor can't
+  absorb (old design: [archive](archive/nav-history.md#moved-from-navmd-2026-11-26-nv0b)).
+- **Net, saves**: host-only, derived: only the cause event replicates; clients keep baked tiles for UI routes; nothing
+  saved. **Tunables** (Guess): `ai.nav.rebuild.workers` 1 (1-4), `ai.nav.rebuild.max_swaps` 4 per tick (1-32),
+  `ai.nav.rebuild.min_interval_ms` 250 ms (0-5000, OpenMW), `ai.nav.rebuild.prefetch_m` 64 m (0-512),
+  `ai.nav.rebuild.cache_mib` 256 MiB (16-4096). **Tests**: NV10a door cases, zero rebuilds; NV10b removed wall box =
+  offline bake bytes, three marks = one rebuild, swaps in key order, a corridor through it repairs; NV10c generated =
+  baked, second load a cache hit, main thread does only the swap.
 
 ## Streaming
 
@@ -197,7 +210,7 @@ The baked tiles are the base layer; the host patches them at runtime (owner deci
   §4.2.4): what an NPC can path must not depend on a client's settings, and a headless server uses the same ring.
   R0 itself is fixed too (only R1-R3 scale; streaming.md fix in the decisions note). Per class: see "Agent classes".
 - Requests ride the streaming scheduler's per-frame budgets (streaming.md "Scheduler and budgets"); a tile is a bake
-  store read and `add_tile`, no generation.
+  store read and `add_tile`; a missing one is built off the frame ("Runtime rebuild", NV10c).
 - Route graphs and the `WorldGraph` are resident for every worldspace (small), so tier-1/0 actors and long routes
   never need tiles outside the ring.
 - Memory: ≤ 64 MiB of tiles on the Floor (NVM calibrates; OpenMW's 256 MiB cache is a ceiling, not a target).
@@ -218,6 +231,23 @@ target → **ORCA** with navmesh wall segments → `LocomotionIntent` → mover.
 from, goal, filter, priority, tick)` in a priority queue (combat and player-visible first) feed sliced jobs (node
 budget per slice, time budget per tick); results apply at the next tick boundary in `RequestId` order. Tiles not
 resident: `Partial` to the ring edge plus the route-graph journey. Tests use a synchronous inline mode.
+
+### Stuck monitor (NV14; roadmap decision 10)
+
+On the fixed tick after the corridor (logic `sf_nav::stuck`, system in `sf_nav_bevy`), per actor that wants to move
+(intent speed > 0; not in a link traversal, a door queue or a deliberate wait): progress = drop in remaining corridor
+distance over `ai.nav.stuck.window_s`; under `ai.nav.stuck.min_progress_m` it escalates one step per window, in order:
+**repath** (new request from where it stands, past the failed-replan gate once) → **corridor repair** (NV8
+`repair_start`) → **snap** to the nearest poly (≤ `ai.nav.stuck.snap_m`, ahead on the corridor) only when no viewer
+sees it (the fade-only door's watch test, AI12; seen = it waits up to `ai.nav.stuck.seen_wait_s`) → **fail** to the
+planner: `NavEvent::Stuck { actor, reason: NoProgress | RepathFailed(PathStatus) | NoPoly | Seen }`. Progress resets
+the ladder. Fliers and swimmers take the same steps on 3D progress (snap = nearest field or band cell). Counters
+`nav.stuck/min` and per step in `nav.stats` and BRP feed NVM; windows count ticks (deterministic, host-only).
+Industry: UE `UPathFollowingComponent` block detection (`BlockDetectionDistance` over `BlockDetectionSampleCount`
+samples → `Blocked`), universal. **Tunables** (Guess): `ai.nav.stuck.window_s` 1.5 s (0.25-10),
+`ai.nav.stuck.min_progress_m` 0.5 m (0.05-5), `ai.nav.stuck.snap_m` 2 m (0.25-10), `ai.nav.stuck.seen_wait_s` 10 s
+(1-120). **Tests (NV14, headless)**: an agent pinned by a collider the mesh lacks emits repath, repair, snap, fail on
+exact ticks; a seen agent never snaps and fails `Seen`; a walking agent and one in a door queue never trip.
 
 ## Route graph (`sf_nav::route_graph`, NV12; spec NV0b1 2026-11-26)
 
@@ -330,6 +360,46 @@ unloaded and appearing along the path ([CK Persistence](https://ck.uesp.net/wiki
 LOD-unaware schedules (ai roadmap 13). **Differ** from HPA* (Botea 2004): authored/generated graph, not tile borders
 (kept only on a measured need). **Ahead** of OpenMW/Morrowind, where actors outside the processing range freeze.
 
+## Volumes: fliers and swimmers (NV13; roadmap decision 2)
+
+Fliers and swimmers never use the navmesh (ground classes swim on its `water` polys, decision 8). Both read one
+class-free **height field** per worldspace, rasterised in the `nav.tiles` pass from the same `NavGeometrySource`
+triangles (Horizon Zero Dawn, GDC 2017 "Putting the AI back into air"; it rejected octrees and layered navmeshes on
+memory and query cost). HZD's `min_safe_height` = `floor` + the class's clearance, added at query: one field, all classes.
+
+- **Classes** (`sf.nav.agent`): `AgentClass` gains `medium: Ground | Air | Water` (default `Ground`; only ground classes
+  bake Recast tiles) and, for `Air`, `clearance_m`, `max_climb_deg`, `max_dive_deg`, `max_altitude_m` (content). The
+  adapter maps actors to classes and cost profiles (ai-adapter "Navigation": `Flies` → flier, `Swims` without `Walks` →
+  swimmer, amphibious = ground with `water` ×1). **Levitation** = class swap to the adapter's flier class (new flight
+  query); at its end, ground class at `nearest` within `ai.nav.levitate.land_search_m` (none: it falls, retries on landing).
+- **`FieldTile`** (subject `Field { ws, x, z }`, LZ4, 64 × 64 cells of `ai.nav.field.cell_m`): `base_m: f32`; per cell
+  in decimetres over it `floor: u16` (top of the solid under the flight gap: terrain + prop tops), `ceil: u16`
+  (`max_height`, underside above the gap; `MAX` = open sky), `bed: u16` (solid top under the covering water surface;
+  `MAX` = no data); mips (floor and bed = max of 4, ceil = min). Flight gap: above the topmost span under open sky
+  (adapter flag: exteriors), else the tallest open gap. No actors. ≤ 32 KiB raw per 128 m tile, KBs in LZ4 (NV13d).
+- **`WaterBody`** (`NavGeometrySource::water_bodies(cx, ws) -> Vec<WaterBodyInput>`, a recorded dependency): `{ id: u32,
+  ws, surface_m: f32, extent: Aabb2 }`; the bed sampler is the field's `bed`; a cell under two bodies takes the higher
+  surface. Morrowind: one body per space (ai-adapter); generated worlds: one per lake or river (NV9e). **No bed data**
+  (open sea past the last cell, an empty tile) = deep, `bed = surface - ai.nav.water.default_depth_m`: shallow would
+  strand swimmers at every map edge, nothing solid is there, and a finite depth bounds the band and dive steering.
+- **Flight query** (NV13b; a job kind of the sliced query service, same `RequestId` order, `PathResult` with 3D
+  waypoints): 8-connected A* at mip `k = ceil(log2(radius / cell_m))`, a cell's floor = max of its 3 × 3 (dilation ≥
+  radius); cost = metres + `ai.nav.flight.climb_cost` × metres climbed; a gap under `height + 2 clearance` is a wall;
+  past `ai.nav.flight.fine_m` two mips coarser, replanned on approach. **Vertical profile**: `floor + clearance` per
+  waypoint, under `ceil - clearance` and `floor + max_altitude_m`, climb and dive angles limited by a forward and a
+  backward pass; over water the floor is at least the surface. **Ray-clear shortcuts**: string-pull to the farthest
+  waypoint whose segment (cell DDA) stays above floor + clearance.
+- **Swim query** (NV13c): cells in the extent with `surface - bed ≥ height + ai.nav.water.margin_m` (deeper than the
+  body), same A* and shortcuts; waypoints clamped into `[bed + r, surface - r]`; a goal out of the water = `Partial` at
+  the nearest band cell. Field tiles stream on demand like `large`, within `ai.nav.field.ring_m`; `nav.draw field|water`.
+- **Tunables** (Guess): `ai.nav.field.cell_m` 2 m (0.5-8, bake), `ai.nav.field.ring_m` 512 m (128-2048),
+  `ai.nav.flight.climb_cost` 2 ratio (1-10), `ai.nav.flight.fine_m` 128 m (32-1024), `ai.nav.water.default_depth_m`
+  30 m (2-500), `ai.nav.water.margin_m` 0.5 m (0-5), `ai.nav.levitate.land_search_m` 4 m (0.5-20).
+- **Tests (exact, synthetic)**: NV13a two box towers: floor/ceil per cell, mip maxima, bed kept under a bridge deck,
+  KB per tile printed; NV13b never under floor + clearance, the gap over the summit when `climb_cost` says so, one
+  segment on open ground, under a ceiling; NV13c exact basin cell set, a fish stays in the band, shore goal `Partial`,
+  no bed = `default_depth_m`; NV13d (measurement) field bake s and MiB for Vvardenfell, query µs. Budget: path queries.
+
 ## Crowds and avoidance (`sf_controller::avoid`)
 
 - ORCA stays ours (DECISIONS 2026-10-12 orca). Added: **static obstacle lines** from `LocalBoundary` (navmesh edges
@@ -359,9 +429,7 @@ LOD-unaware schedules (ai roadmap 13). **Differ** from HPA* (Botea 2004): author
 
 Bevy gizmos, off by default: `nav.draw tiles|links|doors|obstacles|paths <actor>|boundary <actor>|coarse|graph`.
 `nav.stats` prints tiles resident per class, MiB, queue depth, ms per tick, rebuilds; BRP serves the same as JSON.
-Automated checks use log lines only (no visual judgement by agents). Built in NV3: `tiles`, `paths [actor]`, `off`,
-`nav.stats`, BRP `sf_nav/stats`; the other layers print the slice that builds their data, counters not yet kept
-print `n/a`.
+Automated checks use log lines only (no visual judgement by agents). Layers whose slice is not built print it.
 
 ## Co-op and saves (net-ready rules)
 
@@ -382,19 +450,26 @@ are re-issued by the AI after load.
 |---|---|---|
 | Path queries (worker) | ≤ 0.30 ms | ≤ 0.50 ms |
 | Corridor + ORCA, tier 1-2 (main) | ≤ 0.20 ms | ≤ 0.25 ms |
-| Tile rebuilds (worker) | ≤ 0.10 ms | ≤ 0.20 ms |
-| Tile residency | ≤ 64 MiB | ≤ 128 MiB |
+| Tile rebuild swaps (main; the rebuild itself runs on `ai.nav.rebuild.workers`) | ≤ 0.05 ms | ≤ 0.05 ms |
+| Tile residency (height-field tiles included) | ≤ 64 MiB | ≤ 128 MiB |
 
 These scale with the host's CPU tier (ai.md "Tiers and budget"), never with the graphics preset.
 
 ## Industry comparison
 
 **Match** UE, Unity, Godot and OpenMW on Recast generation, agent classes as data, area costs and filters, runtime
-obstacles (door poly state, carving opt-in), off-mesh links, a coarse graph above the navmesh, Detour corridor
+changes (door poly state; dirty tiles rebuilt, as UE dynamic regeneration), off-mesh links, a coarse graph above the navmesh, Detour corridor
 following, RVO-family avoidance (ours ORCA, deterministic) and debug display. **Differ** from OpenMW on when it is
-built (baked per tile, mod-aware; nothing bakes during play); **ahead** of OpenMW across load doors (`WorldGraph`,
+built (baked per tile, mod-aware; in play only missing or changed tiles, off the frame, cached); **ahead** of OpenMW across load doors (`WorldGraph`,
 fade links only unseen; Bethesda's out-of-view teleport). Full table and sources:
 [archive](archive/nav-history.md#industry-comparison-table-moved-from-navmd-at-nv4a).
+
+| Part (NV0b) | Industry | Ours | Verdict |
+|---|---|---|---|
+| Fliers | HZD height field + 2D A*; UE, Unity, OpenMW: no flight planner (UE plugins: octrees) | the HZD field | **match** HZD |
+| Swimmers | OpenMW swim-flagged polys; UE/Unity surface navmesh | swim polys + water-body band | **match**, **ahead** on depth |
+| Rebuild | UE dynamic generation + invokers; Unity async `UpdateNavMesh`; Detour TileCache; OpenMW async + disk cache | bake step per tile on a worker, swap, cache | **match** UE, OpenMW |
+| Stuck | UE `UPathFollowingComponent` blocked detection; Bethesda unseen teleport | window → repath → repair → snap → fail | **match** |
 
 **Route graph (NV12):** coarse routing on a road/path graph with lane-location progress, as UE ZoneGraph + Mass LOD and
 GTA V/RDR2 path nodes, not tile-border HPA*; tier 0 advances by time (Bethesda unloaded Travel packages, KCD2), ahead
@@ -407,77 +482,23 @@ One deliverable plus its test per slice; research and building are separate.
 | Slice | Deliverable | Test |
 |---|---|---|
 | **NV0-NV4a** (**done 2026-11-11**) | spike, `sf_nav` core, `sf_nav_recast`, `sf_nav_bevy`, `sf_nav_bake` steps | rows with their tests: [archive](archive/nav-history.md#done-build-plan-rows-moved-from-navmd-at-nv4a) |
-| **NV4b** Morrowind bake (**done 2026-11-11**) | adapter `NavGeometrySource` (cooked collision, terrain, water, doors), `bevyrrowind bake` wiring | cold bake time and MiB per class on the first pack (the "Bake" gate) |
-| **NV4c** game wiring (**built 2026-11-17**, player-ring scaffold until NV5) | `sf_nav_bevy` in the game: `NavPlugin`, baked tiles into `NavMeshes`, draw frame from the floating origin, BRP `sf_nav/stats` | owner check NV-1 (tiles drawn over Seyda Neen) |
-| **NV5** streaming | nav ring residency per gameplay anchor and open portal, per class on demand (needs seamless SI3) | residency set exact for scripted anchor paths; `large` tiles absent with no large actor; unload hysteresis |
-| **NV6** query service (**built 2026-11-17**) | worker queue, slicing, tick-boundary results, partial results at the ring edge | ordering and budget exact; sync mode equals async results |
-| **NV7a** fixed tick (**built 2026-11-17**) | NPC drive (path follower, ORCA, mover) in `FixedUpdate` + render interpolation | headless: walker positions identical at 30 and 144 fps for the same ticks |
+| **NV4b-NV8** (**built 2026-11-11..18**) | Morrowind bake, game wiring, query service, fixed tick, corridor | rows: [archive](archive/nav-history.md#moved-from-navmd-2026-11-26-nv0b) |
+| **NV5a-b** streaming | a: ring per gameplay anchor, per class on demand, `NavRingScaffold` removed; b: open-portal anchors (SI3) | roadmap Stage 1 |
 | **NV7b** ORCA walls | obstacle lines in `sf_controller::avoid` | agent never crosses a wall segment; batch = single bit for bit |
-| **NV8** corridor (**built 2026-11-18**) | `PathCorridor` feeding `PathFollower`; repair after a push | headless walk around a pillar and through a door frame, nothing stuck |
-| **NV9** links + areas | off-mesh links (jump, drop, ladder, pathgrid) and area costs per class | path takes the cheaper area; link traversal events in order |
-| **NV10** runtime patches | door poly state (area/flags); opt-in TileCache carving (`carves_nav`, at rest), rebuild budget | shut door raises cost with zero rebuilds, locked blocks except for an admitted agent; carve rebuilds per tick ≤ budget |
-| **NV11** worldspace graph (split a-d 2026-11-26, owner unparked: built headless before portals) | `LinkId` (a, done), `WorldGraph` (b), `portal_query` (c), Bevy resource built from `DoorLinks` (d1), hearing propagation through it (d2 = AI8c3) (supersedes seamless SI13) | exact routes on a synthetic 3-space graph; LOS through an open seamless opening, none through fade links |
+| **NV9a-e** links + areas ("Links", NV0c) | a: traversal contract; b: auto drop/jump links per class envelope; c: interaction slots (IN43); d: pathgrid links, area costs per class; e: per-water-body swim polys | roadmap Stage 2 |
+| **NV10a-c** runtime rebuild ("Runtime rebuild") | a: door poly state; b: dirty-tile rebuild + swap; c: missing tiles + disk cache | its Tests; roadmap Stage 5 |
+| **NV11** worldspace graph (a-d1 **built 2026-11-26**) | `LinkId`, `WorldGraph`, `portal_query`, Bevy resource (d1); d2 hearing through it = AI8c3 | exact 3-space routes; LOS only through open seamless links |
 | **NV12** route graph (split a-f by NV0b1 2026-11-26; "Route graph") | a: `RouteGraph` core + builder (`sf_nav`, + `blake3` dep); b: `roads.json` source; c: Morrowind source (`mw_bake`); d: Detour-measured `cost_m`, `nav.coarse` deleted; e: `journey` over route graphs + `WorldGraph`; f: `sf_nav_bevy` resource `NavRouteGraphs` + `nav.routes` console | a: "Route graph" Tests; b: exact graph from a fixture; c: Balmora-Caldera route exists; d: cost within the Detour band; e: exact 3-space journey; f: headless load |
+| **NV13a-d** volumes ("Volumes") | a: field bake; b: flight query; c: water bodies + swim query; d: measurement | its Tests; roadmap Stage 3 |
+| **NV14** stuck monitor ("Stuck monitor") | escalation ladder, `NavEvent::Stuck`, `nav.stuck/min` | its Tests; roadmap Stage 1 |
+| **NV15** destruction feed | `Destroyed` on walkable geometry → `NavDirty` (`sf_interaction_bevy` → `sf_nav_bevy`) | roadmap Stage 5 |
 | **NVM** measurement | Floor and High sweep: bake time and MiB per class, query and ORCA ms at 60 Hz (Balmora, Vivec canton, Census Office); stuck counts near props | owner runs; numbers into "Budgets"; class or carving revisits |
 
-Order: NV0 → NV1 → NV2 → NV3 → NV4a → NV4b → NV4c → NV6 → NV7a → NV8 (→ AI6) → NV5 → NV7b (DECISIONS 2026-11-17: NV5 and seamless SI3 no longer gate AI6) → NV9 → NV10 → NV11 → NV12; NVM
-after NV8. NV11 replaces seamless SI13 (M9b); NV7a lands before AI6.
+Order = `docs/roadmaps/nav.md` stages ([roadmap](../../../docs/roadmaps/nav.md) §4; depends and verify live there; NV12a
+and NV12c run ahead of Stages 1-3). NV11 replaces seamless SI13 (M9b). Owner checks: NV-3 fliers and swimmers (NV13),
+NV-4 changing world (NV10b, NV15), NV-5 road traveller (NV12, with AI-11).
 
-**As built** (full notes: [archive/nav-history.md](archive/nav-history.md)). **NV1**: the trait as in "Interfaces",
-search state in the job (one backend serves many workers). **NV2**: one Detour mesh per (worldspace, class, region),
-region-local f32; per-job `DetachedQuery` (vendored patch); synthetic town at the NV0 calibration: 4.6 ms per tile,
-`nearest` 1.2 µs, a 115 m path 48 µs. **NV3**: `sf_nav_bevy` (`NavMeshes`, `nav.stats` / `nav.draw`, BRP
-`sf_nav/stats`, gizmos behind `debug`); not wired into the game yet. **NV4a**: `sf_nav_bake` steps as in "Bake";
-door polygons by area + centroid in the door volume; `nav.coarse` is an HPA* stub (straight-line costs until NV12).
-**NV4c**: `sf_nav::ring::NavRing` (tile set per class and region around one anchor, load/unload radii, nearest-first
-reads, re-plans only on a tile or worldspace change) + `sf_nav_bevy::residency::NavRingPlugin` (store reads by `nav.tiles`
-subject, cap per frame); tunables `ai.nav.ring.*`; game side `mw_walkers_bevy::nav` (humanoid only, anchor = first
-`Gameplay` streaming anchor). Scaffold `NavRingScaffold`, removed by NV5.
-**NV6**: `sf_nav::service::QueryService` (per-tick node allowances fixed before jobs run, so serial, reordered and parallel
-runs give the same replies; a job finished in tick t is ready at t+1; ring-edge goals become `Partial` via `NavCoverage`,
-which `NavRing` implements) + `sf_nav_bevy::queries::NavQueryPlugin` (`FixedFirst` publish, `FixedUpdate` run, replies in a
-map keyed by `RequestId`, not a Message: staggered AI polls its id). Scaffold `NavQueryOnMain`: slices run inside the tick.
-**NV7a**: NPC drive + ORCA + mover in `FixedUpdate` (`ControllerSystems::Drive` → `Step`, after the player's move, before
-`PhysicsSystems::Step`); `Mover` keeps the tick's start/end poses, `ControllerSystems::Interpolate` draws them by overstep
-(the player's `TickPose`, now in `sf_controller::frame`). **NV8**: `sf_nav::corridor::PathCorridor` (`move_along_surface`,
-local repair by bounded partial search when pushed past `repair_drift_m` or on an invalid start polygon, lookahead
-trimming, periodic topology optimization, visibility shortcutting, string-pulled corners) + `sf_nav_recast::corridor`
-and `GridBackend` implementations; `sf_controller::PathFollower::set_corridor_corners` preserves spring state across
-ticks; `sf_nav_bevy::corridor::NavCorridorPlugin` (`NavCorridor`, `NavSystems::Corridor` in `FixedUpdate` inside
-`ControllerSystems::Drive`, `.before(NavSystems::Queries)` (`NavSystems::Publish` runs earlier, in `FixedFirst`, so the `.after(Publish)` in code is a no-op), tunables `ai.nav.corridor.*`).
-
-**NV11a** (2026-11-26): `sf_world::LinkId(u64)` (`records.rs`; serde hex text / u64 binary like `PlacementId`),
-`DoorLink::id()`: blake3 (64-bit cut) over tag `sf.door_link.id/1`, `two_way`, each end's length-prefixed worldspace,
-position quantised to 1 mm (absolute f64), normalised quaternion to 1e-4 with sign canonical (q == -q); two-way ends
-sorted, one-way kept in order; arrival, door and extent excluded (retuning keeps the id). Golden `49e3c99d02b35c8f`.
-`DoorLink::find(&[DoorLink], id)` / `DoorLinks::get` are linear (NV11b's graph builds the index).
-
-**NV11b** (2026-11-26): `sf_nav::world_graph`: `WorldGraph::build(links, approach, flags)` (adapter gives approach
-points and `LinkFlags` SEAMLESS / FADE_ONLY / ONE_WAY; links without an approach end or duplicate ids are skipped and
-counted), `route(from, to, door_state, &RouteRules { speed_mps, traverse, unlock })` -> `WorldRoute { links, cost_s,
-legs, final_walk_s }` (serde). Cost = seconds: straight walk to each departure approach point + traverse
-(`SEAMLESS_TRAVERSE_S` 3, `FADE_TRAVERSE_S` 1, Guess, overridable) + straight walk to the goal; A* with heuristic 0
-outside the goal's space (admissible, not consistent: re-expansion on improvement); ties by `(LinkId, side)`; locked
-refused unless `unlock`, closed passable; one-way leaves only from `a`. Same-space route empty. Door state is per link,
-not per side; fade-only visibility is the traverse step's (AI12); straight in-space costs until NV12.
-
-**NV11c** (2026-11-26): `sf_nav::portal_query`: `map(loc, link, from: LinkSide)` / `map_direction` (side explicit:
-both ends may share a worldspace); `WorldGraph::path_distance(a, b, &PathRules { max_hops, closed_door_m, door_state })`
--> `PortalPath { metres, links, closed_doors }` (straight legs through opening centres, every link carries sound, a
-non-open link counts in `closed_doors` and costs `closed_door_m` when choosing, not in `metres`; hop-bounded Dijkstra);
-`WorldGraph::line_of_sight(a, b, door_state, &impl LosProvider)` -> `Los::{Clear, Blocked, BlockedByLink}`: across
-spaces only through one seamless open link joining them directly, aimed at the point where the line crosses the door
-plane (must lie inside the opening), then viewer -> point and mapped point -> target. `DoorState::openness()` (Open 1).
-`GraphLink` keeps its `DoorLink`; `WorldGraph::door_link(id)` is the index. Gaps: sight crosses one link; the LOS
-provider must ignore the door leaf at the plane; `PortalPath` doesn't name the opening; `Cost::Walk` waits NV12.
-
-**NV11d1** (2026-11-26): `sf_nav_bevy::world_graph`: `NavWorldGraph`, `NavWorldGraphStats`, `NavLinkRules` (boxed
-`approach` / `flags`; defaults `arrival_approach` = the end's `arrival.pos`, `classic_flags` = FADE_ONLY, + ONE_WAY when
-not two-way), `NavDoorStates` (unreported link = Closed: routes pass, sight blocked), `NavWorldGraphPlugin<R>` reading
-any host links resource through an accessor (`NavWorldGraphPlugin::new(|l: &DoorLinks| &l.0)`: no `sf_world_bevy`
-edge into the thin shell); rebuild in `Update` set `NavSystems::WorldGraph` only on change, logs `nav: world graph N
-links (M skipped)`; console `nav.links`. The game adds the plugin (not part of `NavPlugin`); game approach points
-(pathgrid nodes) and seamless flags are a later adapter slice (MA21).
+**As built** NV1-NV11d1: [archive](archive/nav-history.md#moved-from-navmd-2026-11-26-nv0b) (moved 2026-11-26); NV12a: "Route graph".
 
 ## Open questions
 

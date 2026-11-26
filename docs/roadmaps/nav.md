@@ -85,7 +85,7 @@ Vvardenfell [5]. **Classic** uses the same navigation (OpenMW navigates by navme
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| NV0b | nav.md: Goal (non-goal removed), "Volumes" (field, water bodies, queries), "Runtime rebuild", stuck monitor | docs | - | doccheck |
+| NV0b | nav.md: Goal (non-goal removed), "Volumes" (field, water bodies, queries), "Runtime rebuild", stuck monitor | docs | - | doccheck; done 2026-11-26 |
 | NV0b1 | nav.md "Route graph" section (NV12 spec) (**done 2026-11-26**) | docs | - | doccheck |
 | NV0c | nav.md "Links": traversal contract (handoff event, failure cost), auto drop/jump envelopes, interaction slots | docs | NV0b | doccheck |
 | NV0d | ai-adapter.md "Navigation": PGRD road chains, water bodies, fliers/swimmers classes, PGRD fallback removal | docs | NV0b | doccheck; done 2026-11-26 |
@@ -136,7 +136,7 @@ Ends with: a pilgrim walks Balmora to Caldera; leave and come back, and she's fu
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| NV12a | `RouteGraph` core + builder: nodes, polyline edges with walk-metre cost, A*, position-at-time, nearest road point (nav.md "Route graph") | `sf_nav` | NV0b1 | the spec's "Tests (NV12a)" list, all exact |
+| NV12a | `RouteGraph` core + builder: nodes, polyline edges with walk-metre cost, A*, position-at-time, nearest road point (nav.md "Route graph") (**done 2026-11-26**: 14 exact tests; 50k grid route 3.8 ms avg, 15 ms worst) | `sf_nav` | NV0b1 | the spec's "Tests (NV12a)" list, all exact |
 | NV12b | Generated-world source: `roads.json` → `RouteInput` (field layout confirmed here) | `sf_nav_bake`, `sf_worldgen` reader | NV12a | exact node/edge/kind set from a fixture; postcard bytes stable |
 | NV12c | Morrowind source: exterior pathgrid chains between settlements + door approach nodes | `mw_bake` | NV12a, MA21 | Balmora → Caldera anchor route is `Graph`, not `Direct`; door nodes counted per space; node/edge/point counts printed vs "Budgets" |
 | NV12d | Bake-measured edge costs (Detour walk per edge into `cost_m`, class bit cleared on failure), `nav.coarse` + `CoarseGraph` deleted | `sf_nav_bake` | NV12b or NV12c | every `cost_m` ≥ `length_m`; failing class cleared on a synthetic wall; clamp count printed |
