@@ -81,6 +81,7 @@ pub mod resample;
 pub mod roads;
 pub mod run;
 pub mod scatter;
+pub mod scatter_fields;
 pub mod scatter_species;
 pub mod shade;
 pub mod stamps;

@@ -232,6 +232,10 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
   count), `[columns]` = 14 numeric columns (range inside the declared one, `species_declared`) + 6 `hat_*` columns,
   `[classes."<name>"] stems_per_ha` over the 12 shipped class defaults, `[[species]]` rows (a value only in a declared
   column; a left-out value takes the declared default, checked against the file's column range). 6 tests.
+- **WG-E2b** (2026-11-27, `scatter_fields.rs`): trait `Fields` (`sample(x, y) -> FieldSample`, `class_names`);
+  `NeutralFields` (one sample) and `GridFields` (f32 rasters in the guide frame, row 0 north, `check()`; bilinear, the
+  class by nearest sample, the aspect blended as a unit vector across north). `hat` (NaN -> 0, step hats exact);
+  `Suitability::new(species, class_names)` = minimum of the hats, 0 outside the class list. 6 tests.
 
 ## Tunables
 
