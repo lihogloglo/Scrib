@@ -82,7 +82,7 @@ Gaps kept on purpose: no global alarm state; no open-ended NPC goals that can br
    search N s, return) → `Confront` (dialogue demand: "put that back") → `Report` (run to a guard or bell; interruptible;
    on arrival an `OffenceObserved`) → `Tidy` → `Flee`. Heavy rungs are directives on the stack, so saves and tiers
    already cover them.
-6. **Remember** (AI25). One `Fact` per `(culprit, kind, owner)` with a counter and `last_at` (ai.md fact store), so
+6. **Remember** (AI25). One `Fact` per `(culprit, kind, owner)` with a counter and `last_at` (fact store, [ai-memory.md](ai-memory.md)), so
    repeated vandalism over weeks is one fact whose value climbs; saves stay bounded.
 7. **Consequences** (AI25). `ConsequenceRules` (records): fact thresholds → effects (disposition delta, price
    modifier, refuse service, ban from premises, grudge directive Nemesis-style, bounty only through crime). Shipped

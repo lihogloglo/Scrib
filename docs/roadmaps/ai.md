@@ -90,7 +90,7 @@ Stages 1-3 in order; 4-9 start as their other-lane needs land (cross-lane: `orde
 | AI0g | `PerceptionProfile` per individual: multipliers + timed states; Morrowind mapping in ai-adapter (DECISIONS 2026-11-25) | docs | AI0b | **done 2026-11-25** (ai.md 195-235, ai-adapter 105-134) |
 | AI0c | ai.md interrupt table, build order, tier additions, 3D movers, industry fixes (KCD = BTs, not GOAP) | docs | - | **done 2026-11-26** (ai.md "Interrupt contract", 3D movers, tiers, industry) |
 | AI0d | Followers and companions section (directive, commands, stealth, downed; adapter `AI_F`/`AI_E`) | docs | - | **done 2026-11-26** (new `followers.md`) |
-| AI0e | ai.md "Memory": gossip, reputation per faction and settlement | docs | - | review |
+| AI0e | ai.md "Memory": gossip, reputation per faction and settlement | docs | - | **done 2026-11-26** (new `ai-memory.md`) |
 | AI0f | ai.md errands, `Operate`, link-operator contract | docs | AI0c | review |
 
 ### Stage 1: NPCs see and hear
@@ -141,7 +141,7 @@ Ends with: a Balmora guard spots a sneaking player in light, not in shadow, chec
 | MA4 | Hello/Fight/Flee/Alarm considerations; greeting via AI8 (split a-d 2026-11-26) | `mw_ai` | AI7, AI8b | exact vs OpenMW |
 | MA4a | Hello/Fight/Flee/Alarm stats on the sheet from AIDT (appended defs) | `mw_stats` | - | **done 2026-11-26** (indices 140-143, `MwIdx::ai_settings`; floor 0, no cap as OpenMW) |
 | MA4b | `Get/Set/Mod{Hello,Fight,Flee,Alarm}` script functions on the sheet | `mw_script`, `mw_rpg` | MA4a | **done 2026-11-26** (2 script tests; mw_rpg 129) |
-| MA4e | Persuasion reads Fight/Flee from the sheet, not the record (`mw_rpg_bevy/src/dialogue.rs:662` reads `ai_data`), so script Set/Mod reach it | `mw_rpg_bevy` | MA4b | exact: ModFight changes the persuasion nudge |
+| MA4e | Persuasion reads Fight/Flee from the sheet, not the record (`mw_rpg_bevy/src/dialogue.rs:662` reads `ai_data`), so script Set/Mod reach it | `mw_rpg_bevy` | MA4b | **done 2026-11-26** (base Flee/Fight from the sheet, nudge written back as `SetBase`; overlay map gone, saves untouched; mw_rpg 135, mw_rpg_bevy 80) |
 | MA4c | Greeting consideration (`updateGreetingState`: Hello x `iGreetDistanceMultiplier`, LOS, awareness) + game turn/look-at (split 1/2 2026-11-26) | `mw_ai`, `mw_walkers_bevy` | MA4a, AI8b | exact vs OpenMW; headless greet |
 | MA4c1 | Pure greeting state machine `mw_ai::settings::greeting_step` (OpenMW `updateGreetingState`) | `mw_ai` | MA4a | **done 2026-11-26** (14 exact tests; GMSTs 6 / 4 / 512 confirmed) |
 | MA4c2 | Game: NPCs turn/look at and greet the player (Greeting bark via dialogue) from MA4c1 | `mw_walkers_bevy`, `mw_rpg_bevy` | MA4c1, AI8b | headless greet |
@@ -297,6 +297,10 @@ optional `sf_crowd` (Q2), Nemesis content.
 4. **Storms empty the streets** (commoners shelter; guards, travellers stay)? Recommended: yes in Modern.
 5. **Companion opinions:** remarks on your deeds, and may they leave? Recommended: remarks yes; leaving only where a
    pack's content says so.
+6. **Can the player silence gossip?** Recommended: yes in Modern: bribe or intimidate makes one holder drop one fact;
+   people already told keep it; no planting lies (ai-memory.md). Pending owner (asked 2026-11-26).
+7. **Does a companion told to wait, wait forever?** Recommended: yes; a pack can add a timeout (Skyrim: home after
+   3 days). **8. Companions per player in Modern?** Recommended: 4, no cap in Classic (followers.md). Pending owner.
 
 Owner answers 2026-11-25: Q1 a Skyrim-style sneak eye (how noticed you are overall), no per-NPC markers. Q2 later (parked). Q3 yes, except NPCs whose
 schedule works at night (guards, night trades). Q4 yes, and people find cover where they can. Q5 much later (parked).

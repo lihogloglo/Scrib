@@ -153,7 +153,7 @@ last-known-position search. Crime only raises it (`HeatRaise { player, jurisdict
 SeenWanted }`); AI29 cools it while the guards have lost the player and ends the pursuit at zero, or on `Pardon`.
 Losing the guards never lowers the bounty.
 
-**The ladder** (`LawRules::stance(&LawCtx { bounty, murder_on_record, jurisdiction }) -> Stance`, pure): the highest
+**The ladder** (`LawRules::stance(&LawCtx { bounty, murder_on_record, wanted_known, jurisdiction }) -> Stance`, pure; `wanted_known` = this guard holds a `Wanted` fact, ai-memory.md, which `SeenWanted` needs): the highest
 step with `from <= bounty`, else `Ignore`; `Attack` at `bounty >= kill_on_sight`, and only with a murder on record while `kill_needs_murder` (Modern, owner);
 Classic clears it: Morrowind attacks at `iCrimeThreshold` x `iCrimeThresholdMultiplier` (crime-adapter).
 `Warn` gives `crime.law.warn_window_s` to comply, then `Arrest`; at `Pursue` guards chase on sight. Fleeing and
@@ -235,7 +235,7 @@ the player; until answered, as `Identified`). Classic: always `Identified`.
   bounty to 0, goods confiscated, `Pardon`, fade to `jail_place`, a short local scene (`crime.jail.scene_s`). One rule,
   clock by session: `PassTime` in solo (days pass as a rest does, owner 2026-11-25), `Credit` in co-op (the shared clock
   never moves; the days count for the jailed player only). Then `JailRules::served(days, &PlayerView) ->
-  Vec<RpgCommand>`: Modern = reputation hit, no skill loss (Classic hook keeps Morrowind's); release at
+  Vec<RpgCommand>`: Modern = reputation hit (a `Jailed` fact, ai-memory.md), no skill loss (Classic hook keeps Morrowind's); release at
   `release_place`. A saved `Sentence` resumes. **Departs** from the old Co-op 6 (time skipped for one player).
 - **Fines on the way out**: `ServiceKind` offers `crime.pay` (thieves' guild style: pay without being arrested)
   and `crime.clear` (script/quest effect: `Clear { jurisdiction }`) reuse services.md; an adapter script can call

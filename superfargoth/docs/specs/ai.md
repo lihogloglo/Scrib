@@ -12,14 +12,15 @@ fixed-tick systems, executor glue to `sf_action`/`sf_controller`, debugger, cons
 > **Agent summary (2026-11-26).** Directives (packages, schedules, quest orders) → utility drives → one shared HTN
 > method library → executors writing `Command` + `LocomotionIntent`; host-only, fixed tick. "Interrupt contract" says
 > who pre-empts whom and how plans resume. Tiers 2/1/0 under fixed host-CPU caps; tier 0 is a planner-free state
-> machine, so outcomes are tier-invariant. Graded perception, a Nemesis-style fact store, an LLM seam (later).
+> machine, so outcomes are tier-invariant. Graded perception, a Nemesis-style fact store with gossip ([ai-memory.md](ai-memory.md)), an LLM seam (later).
 <!-- /agent-summary -->
 
 ## Goal
 
 NPCs and creatures that follow content directives predictably, react, fight, travel across worldspaces (seamless or
 fade doors), keep routines off-screen and remember players. Morrowind's packages and settings are adapter data.
-Non-goals: an LLM in the core, GOAP, flow fields, classic executors and combat (later seams), economy/rumour kits.
+Non-goals: an LLM in the core, GOAP, flow fields, classic executors and combat (later seams), economy kits. Gossip is
+in scope, bounded: [ai-memory.md](ai-memory.md).
 
 ## Owner decisions this spec implements (2026-11-08)
 
@@ -123,7 +124,7 @@ Highest first: rows 1-4 are drives, row 5 the stack, rows 6-7 run inside the ser
 | 2 | **Pursue**: guard heat, chase to LKP (AI29) | drive, weight 4 |
 | 3 | **Converse**: a talk opens (pins tier 2) | drive, weight 3 |
 | 4 | **Notice**: a concern, a Curious or Suspicious band | drive, weight 2; Glance/Bark as overlays, heavy rungs push a `Reaction` directive |
-| 5 | **Stack**, modern rank Quest > Script > Memory > Reaction (Search, Investigate, Confront, Report, Tidy) > Schedule > Record | `Directive` drive, weight 1, floor 1 |
+| 5 | **Stack**, modern rank Quest > Script > Memory ([vendettas](ai-memory.md)) > Reaction (Search, Investigate, Confront, Report, Tidy) > Schedule > Record | `Directive` drive, weight 1, floor 1 |
 | 6 | **Activity**: errand stage, operator post, schedule `UseSlot`, free-time pick (AI27) | HTN methods |
 | 7 | **Idle**: nothing scores above 0 (`DriveReason::Idle`), or the record default | |
 | - | **Overlays**: look-at, Glance, `BarkCue` (AI30), greeting | own channels |
@@ -289,7 +290,7 @@ unless noted; `hearing_mul` and the other `PerceptionProfile` / `PerceptionState
 | `alert_hold_s` / `decay_delay_s`; decay Curious / Suspicious / Searching | 6 / 3; 0.10 / 0.05 / 0.02 | 0-60, 0-1 |
 | `noise_gain` / `noise_cap` / `noise_confidence` / `closed_door_m` | 0.5 / 0.65 / 0.5 / 8 | 0-1, 0-50 |
 | storm `weather_mask` / `weather_sight_mul` | 0.6 / 0.6 | 0-1 |
-| `notify_speed_mps` / `notify_react_s` / `notify_confidence_mul` / `notify_max_hops` (gossip, decision 8) | 6 / 0.8 / 0.7 / 3 | 0.5-50, 0-5, 0-1, 0-8 |
+| `notify_speed_mps` / `notify_react_s` / `notify_confidence_mul` / `notify_max_hops` (hop rule reused by gossip, [ai-memory.md](ai-memory.md)) | 6 / 0.8 / 0.7 / 3 | 0.5-50, 0-5, 0-1, 0-8 |
 | `asleep_wake_m` / `groggy_s` | 12 / 4 | 0-100, 0-30 |
 | `distraction_ttl_s` / `alert_alertness` (gain mul from Suspicious up) / `groggy_alertness` (AI8a) | 10 / 1.5 / 0.5 | 0-60, 0-4, 0-1 |
 | `light_search_m` / `light_rays` / `dark_threshold` | 15 / 2 / 0.15 | 1-60, 0-4, 0-1 |
@@ -338,23 +339,10 @@ unless noted; `hearing_mul` and the other `PerceptionProfile` / `PerceptionState
 | Thief (Dark Engine) / The Dark Mod | per-AI vision and hearing abilities and search diligence; TDM per-AI `acuity_vis` / `acuity_aud` | **match** (`PerceptionProfile`, `search_ttl`) |
 | Cyberpunk 2077 | per-NPC sense preset record (`sensePreset`, e.g. `Senses.Relaxed`) | **match** (profile presets are records) |
 | MGSV | per-soldier gear and time of day change perception (night-vision goggles, helmets) | **match** (`darkness` from a state or preset) |
-## Memory and relationships (Nemesis-style; owner decision 7)
+## Memory, gossip and reputation (owner decision 7, lane decision 8)
 
-A host-side **fact store**, the social layer every NPC queries and systems append to.
-- `Fact { id, kind: FactKindId, subject: ActorRef, object: FactObject /* PlayerKey | ActorRef | Faction | Placement */,
-  value: i32, salience: f32, at: GameTime, decay: Decay }`, kinds as records. Per-NPC facts are bounded (default 32;
-  lowest salience evicted), salience decays per kind; world facts (crime records, faction relations) are compacted.
-- **Relationships**: `Relation { a, b: ActorRef | PlayerKey, affinity, fear, rivalry, history: SmallVec<FactId> }`,
-  updated by fact-kind rules. Players are keyed by `PlayerKey` (the character), so memory survives sessions and works
-  for any number of players.
-- **Nemesis-style** `MemoryRules` (content): encounters (defeated by, fled from, spared), rivalry escalating to a
-  vendetta (a `Memory` directive: seek, ambush), survivor returns, promotions via `sf_stats` groups. The framework
-  ships store, decay, queries and events. Saved in `sf/aimemory` (one segment: see "Saves"); dialogue filters and scripts read facts.
-- **Vendettas may cross worldspaces, bounded** (decisions (g); Nemesis ambushes, Skyrim's hired thugs): the host picks
-  an encounter point near the target player (a link end or route node out of every player's view) within `max_hops`
-  and `ttl`; the actor travels on tier 0 and is promoted out of view, then seeks/ambushes. Only actors the quest-safety
-  validator allows; a target `PlayerKey` offline pauses the directive (never retargets); expiry returns the actor via
-  its stack. Other memory goals stay local.
+Fact store, Nemesis-style relations and vendettas, bounded gossip, reputation per settlement and faction, and
+`ConsequenceRules`: [ai-memory.md](ai-memory.md) (AI13, AI43, AI44, AI25). Saved in `sf/aimemory` (see "Saves").
 
 ## Smart objects (`sf_interaction`, planned, own spec)
 
@@ -436,7 +424,7 @@ facts, tiers, paths, claims. 6: per-player awareness and memory. 7: stable ids. 
 ## Saves
 
 Sections (owner-keyed, versioned, save.md): `sf/ai` per actor (directive stack, schedule cursor, tier-0
-`LogicalState`, current activity and claim, drive and running directive id) and `sf/aimemory` (facts, relations). Not
+`LogicalState`, current activity and claim, drive and running directive id) and `sf/aimemory` (facts, relations: [ai-memory.md](ai-memory.md)). Not
 saved: plans, traces, awareness, path requests, `DirectiveDone` events (rebuilt on load; promotion resolve places
 actors). Belongs to the one state registry when it exists (vision §4.2.3).
 - **Section names are single-segment:** `sf_save::SectionKey::family` is the name up to the first `/`, so `sf/ai/...`
@@ -481,7 +469,7 @@ Per-actor **trace ring buffer** (64 decisions: tick, tier, drive and considerati
 | Smart objects | Sims, UE Smart Objects, Skyrim furniture, A-Life smart terrains | `sf_interaction` | **match** (planned) |
 | Perception | UE AI Perception; OpenMW `awarenessCheck` | per player, through doors | **match** |
 | Off-screen LOD | UE MassLOD caps, Bethesda process levels, A-Life, KCD | 3 tiers, global cap, resolve | **match** |
-| Memory | Shadow of Mordor Nemesis; Bethesda crime per faction | fact store + `MemoryRules` | **match** |
+| Memory | Nemesis, KCD2 town reputation, RDR2 witnesses: [ai-memory.md](ai-memory.md) | fact store, gossip, reputation | **match** |
 | LLM NPCs | inZOI/ACE on-device, Mantella out of process, Where Winds Meet chatbots | advisor over validated options | **differ** (choices only) |
 | Debugging | UE Gameplay Debugger + Visual Logger, Guerrilla in-game HTN view | trace from slice 1 | **match**; recording later (P2) |
 
