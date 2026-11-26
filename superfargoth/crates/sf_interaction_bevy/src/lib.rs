@@ -93,6 +93,9 @@ pub use door::{Door, DoorChanged, DoorMoved, DoorRest, DoorSweep, DoorSweeps, Do
 pub use focus::{FocusCandidates, FocusState, PlayerFocus};
 pub use seat::{EndPoseFree, EndPoseTest, InteractionUser, SeatClips, SeatPhase, SeatSystems, SeatUse, SeatUses, seat_target};
 pub use seat_clips::{SIT_ENTER, SIT_EXIT, SIT_LOOP, SeatClipSets, SeatClipSystems, SeatSet, bind_seat_clips};
+/// The Bevy-free core, for crates that read or write this shell's messages without their own
+/// dependency on it (`sf_interaction::DoorChanged`, `UserKey`).
+pub use sf_interaction;
 
 // --- Tunables ---------------------------------------------------------------------------------
 

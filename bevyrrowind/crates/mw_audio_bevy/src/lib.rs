@@ -4,6 +4,8 @@
 //! - Listener: `SpatialListener` on the door-using camera (first and third person alike).
 //! - Doors: a load door the player opens plays its `DOOR` open sound beside the camera, as a
 //!   child of it, so the sound travels with the player through the load.
+//! - Swinging doors: each toggle of a swing door (the door shell's `DoorChanged`: an approved
+//!   `open` / `close` by any user, or close-behind) plays the door's open or close sound at it.
 //! - Loop emitters: lights with a sound and vanilla sound activators (`mw_audio::loop_script`)
 //!   get a `LoopEmitter` child when their cell's near level spawns (a placement-spawner hook,
 //!   like `scripts.rs`'s); they unload with the cell. `emitter_census` logs how many are loaded
@@ -23,7 +25,6 @@
 //!   [`voices::LipSync`] loudness on the speaker. Without this plugin nobody can say Hello, so no
 //!   NPC greets (`OpenMW`: a greeting whose `say` fails goes straight to Done).
 //! - Boots: an NPC's footsteps follow the boots it wears (`mw_actors` auto-equip, weight class).
-//! - Swinging doors: activating a non-load door plays its open, then its close sound, at the door.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -100,6 +101,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, vfs: &Vfs) {
         .insert_resource(music)
         .insert_resource(MwAudio { doors: sounds.doors, footsteps: sounds.footsteps })
         .add_message::<sf_interaction_bevy::UseApproved>()
+        .add_message::<sf_interaction_bevy::DoorChanged>()
         .init_resource::<CombatMusic>()
         .init_resource::<Mood>()
         .add_systems(PostStartup, move |spawners: Option<ResMut<PlacementSpawners>>| hook_emitters(spawners, &emitters))
@@ -109,6 +111,7 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, vfs: &Vfs) {
                 attach_listener,
                 music_mood,
                 door_sounds.after(sf_interaction_bevy::ActivationSystems::Default),
+                swing_door_sounds.after(sf_interaction_bevy::DoorSystems::Default),
                 add_footsteps,
                 anim_footsteps,
                 footsteps,
@@ -119,15 +122,10 @@ pub fn add(app: &mut App, db: Option<Arc<RecordDb>>, vfs: &Vfs) {
     #[cfg(feature = "dev")]
     if let Some(db) = db {
         app.insert_resource(Boots { rules: mw_actors::equip::EquipRules::from_db(&db), db: Arc::clone(&db) })
-            .init_resource::<SwingDoors>()
             .add_plugins(voices::VoicePlugin { db })
             .add_systems(
                 Update,
-                (
-                    boots_footwear.after(add_footsteps).before(anim_footsteps).before(footsteps),
-                    swing_door_sounds.after(sf_interaction_bevy::ActivationSystems::Default),
-                )
-                    .before(sf_audio_bevy::AudioSystems),
+                boots_footwear.after(add_footsteps).before(anim_footsteps).before(footsteps).before(sf_audio_bevy::AudioSystems),
             );
     }
 }
@@ -153,7 +151,8 @@ fn music_mood(time: Res<Time<Real>>, combat: Res<CombatMusic>, mut mood: ResMut<
     }
 }
 
-/// The open sound of a load door the player activated (swinging doors: [`swing_door_sounds`]).
+/// The open sound of a load door the player activated (swing doors sound from their toggles:
+/// [`swing_door_sounds`]).
 fn door_sounds(
     mut approved: MessageReader<sf_interaction_bevy::UseApproved>,
     placements: Option<Res<sf_script_bevy::ScriptPlacements>>,
@@ -359,38 +358,25 @@ fn boots_footwear(boots: Res<Boots>, mut steps: Query<(&mut Footsteps, &sf_chara
     }
 }
 
-/// Named scaffold `SwingDoors`: which swinging (non-load) doors are open, flipped on each
-/// activation, so the sounds alternate open / close. Doors don't move yet; removal path: the
-/// door swing (doors.rs) owns the open state and its open / close starts play the sounds.
-#[cfg(feature = "dev")]
-#[derive(Resource, Default)]
-struct SwingDoors(std::collections::HashSet<sf_script::Handle>);
-
-/// The open or close sound of a swinging door the player activated, at the door.
-#[cfg(feature = "dev")]
+/// The open or close sound of one swing door toggle (`DoorChanged`: any user, or close-behind),
+/// at the door; the door shell owns the open state, so the message's `open` picks the cue. Only
+/// swing doors register with the shell, so a load door never gets here.
 #[allow(clippy::needless_pass_by_value)]
 fn swing_door_sounds(
-    mut approved: MessageReader<sf_interaction_bevy::UseApproved>,
+    mut changed: MessageReader<sf_interaction_bevy::DoorChanged>,
     placements: Option<Res<sf_script_bevy::ScriptPlacements>>,
-    links: Option<Res<DoorLinks>>,
     audio: Res<MwAudio>,
-    mut open: ResMut<SwingDoors>,
     cams: Query<&GlobalTransform, With<mw_doors_bevy::DoorUser>>,
     mut play: MessageWriter<PlaySound>,
 ) {
-    let (Some(placements), Some(links)) = (placements, links) else { return };
-    for o in approved.read().filter(|o| o.activation.actor == sf_script_bevy::PLAYER && runs_default(DefaultAction::TravelDoor, o.verb)) {
-        let target = o.activation.target;
-        let Some(door) = placements.get(target) else { continue };
+    let Some(placements) = placements else {
+        changed.clear();
+        return;
+    };
+    for sf_interaction_bevy::DoorChanged(change) in changed.read() {
+        let Some(door) = placements.get(sf_script::Handle(change.placement.0)) else { continue };
         let Some(sounds) = audio.doors.get(&RecordId::new(&door.record)) else { continue };
-        if is_load_door(&links, target) {
-            continue;
-        }
-        let opening = open.0.insert(target);
-        if !opening {
-            open.0.remove(&target);
-        }
-        let Some(cue) = (if opening { &sounds.open } else { &sounds.close }).clone() else { continue };
+        let Some(cue) = (if change.open { &sounds.open } else { &sounds.close }).clone() else { continue };
         let (Ok(cam), Some(player)) = (cams.single(), placements.player.as_ref()) else { continue };
         #[allow(clippy::cast_possible_truncation)]
         let offset = Vec3::from_array(std::array::from_fn(|i| (door.position[i] - player.position[i]) as f32));
@@ -726,6 +712,9 @@ pub mod voices {
         Some(Envelope::from_samples(decoder, channels, rate, ENVELOPE_HZ))
     }
 }
+
+#[cfg(test)]
+mod door_tests;
 
 #[cfg(all(test, feature = "dev"))]
 mod tests {

@@ -27,10 +27,11 @@ is an event and an `info!` line.
 - **Game glue** (`mw_audio_bevy::add`, `lib.rs:79`, called at `mw_exterior_bevy/src/exterior.rs:226`): listener on the
   door-using camera; door open sound travels with the player through a load; `LoopEmitter` children spawned with the
   cell's near level and unloaded with it (`emitter_census` logs counts); explore/battle music; footsteps from clip
-  `SoundGen` text keys (graph `footstep` events), else a `StrideTimer`.
+  `SoundGen` text keys (graph `footstep` events), else a `StrideTimer`; a swing door's open or close sound on each toggle
+  (`swing_door_sounds`, from the door shell's `DoorChanged`, IN33c3; travel doors: `door_sounds`).
 - **Dev-feature only** (`mw_audio_bevy` `dev`, `VoicePlugin` `lib.rs:492`): NPC voices (the Hello the walker greeting asks
-  for, answered by `say_hellos` `lib.rs:547` on the fixed tick; idle chatter, `SayVoice`, `LipSync`), NPC boots,
-  swinging door sounds. Without them no NPC greets (nobody can say Hello). Gated until the owner hears them (visual-checks AU-3..AU-5).
+  for, answered by `say_hellos` `lib.rs:547` on the fixed tick; idle chatter, `SayVoice`, `LipSync`), NPC boots.
+  Without them no NPC greets (nobody can say Hello). Gated until the owner hears them (visual-checks AU-3..AU-5).
 
 ## Bevy features used
 `bevy_audio` (default features off in the workspace, `Cargo.toml:24`), `SpatialListener`, messages for audio events.

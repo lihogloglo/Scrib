@@ -7,7 +7,7 @@ license.workspace = true
 publish = false
 
 [features]
-# NPC voices, boots-weighted footsteps, swinging-door sounds: dev builds until the owner hears
+# NPC voices, boots-weighted footsteps: dev builds until the owner hears
 # them (visual-checks AU-3..AU-5); the app's `dev` turns it on.
 dev = ["dep:bevy_tasks", "dep:mw_actors", "dep:mw_rpg", "dep:mw_walkers_bevy", "dep:sf_character_bevy", "dep:sf_rpg", "dep:tes3"]
 

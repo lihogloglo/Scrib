@@ -275,6 +275,18 @@ before the door leaves `SwingDoors`, the pivot is put at the rest of the shell's
 `Doors::get`, `DoorState::resting(state.open, state.sign)`), written only when it differs: a door that leaves R0
 mid-swing ends where `save_rest`'s blob says it is. The far proxy's closed pose is unchanged (not in IN33).
 
+### As built (IN33c3, 2026-11-26)
+
+`mw_audio_bevy::swing_door_sounds` (`Update`, after `DoorSystems::Default`, before the audio systems, in every
+build) reads the shell's `DoorChanged` and plays the door record's `DoorSounds` cue, `open` or `close` from the
+message's `open`, at the door (`SoundAt::Point(camera + (door - player))`, as before). Any toggle sounds: the
+player's, later an NPC's, a close-behind (written on the fixed tick, heard on the next frame). A record without that
+cue, an unloaded placement or a missing camera plays nothing; without `ScriptPlacements` the reader is cleared. The
+dev-only `SwingDoors` scaffold of AU-5 (a set flipped on each player activation, because doors did not move) is
+deleted: the shell owns the open state. Travel doors keep `door_sounds`. `sf_interaction_bevy` re-exports its core
+(`pub use sf_interaction;`, as `sf_physics_bevy` does) so a crate that reads or writes its messages needs no
+dependency of its own on the core.
+
 ## World rules mapping (IN41, IN38, IN19)
 
 **Material rows** (`sf.interact.material` + a pattern table in `mw_interaction`, checked against the install at cook,
