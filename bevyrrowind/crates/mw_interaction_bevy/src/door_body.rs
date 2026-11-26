@@ -3,6 +3,14 @@
 //! The shell (`sf_interaction_bevy::Doors`) publishes the leaf's world frame; this module puts the
 //! door's kinematic body there and hangs the visuals on that body:
 //!
+//! - **Blocked sweeps** ([`block_sweeps`], `FixedUpdate`, between `DoorSystems::Plan` and
+//!   `::Commit`): a moving swing door whose leaf's next pose would overlap a character's capsule
+//!   (`Layer::CHARACTER`, strict overlap) is held for that tick (`DoorSweeps::block`): it pauses
+//!   while someone stands in its path and resumes from the same point when they leave, so its
+//!   kinematic body is never driven into a character (the core's rule, slice `IN33a`: blocked =
+//!   pause; `OpenMW` undoes the rotation step when a door hits an actor,
+//!   `apps/openmw/mwworld/worldimp.cpp`, the same visible result). Only characters block: static
+//!   walls and frames overlap leaves all the time, and props are pushed by the sweep.
 //! - **Bodies** ([`move_bodies`], `FixedUpdate`, after `DoorSystems::Commit`, before
 //!   `PhysicsSystems::Step`): each `DoorMoved` of a resident swing door whose body is in sets the
 //!   body's kinematic target to the leaf pose (a swing step: the step sweeps it there and pushes
@@ -24,8 +32,10 @@ use bevy_time::{Fixed, Time};
 use bevy_transform::components::Transform;
 use sf_coords::WorldTransform;
 use sf_interaction::Frame;
-use sf_interaction_bevy::{DoorMoved, Doors};
+use sf_interaction_bevy::{DoorMoved, DoorSweeps, Doors};
+use sf_physics_bevy::sf_physics::Layer;
 use sf_physics_bevy::{Physics, PhysicsStreaming};
+use sf_world::PlacementId;
 
 use crate::door::{DoorPivot, DoorPivots, SwingDoors};
 
@@ -35,6 +45,34 @@ use crate::door::{DoorPivot, DoorPivots, SwingDoors};
 #[must_use]
 pub fn leaf_pose(closed: &WorldTransform, object: &Frame, leaf: &Frame) -> WorldTransform {
     WorldTransform { pos: closed.pos.offset(leaf.translation - object.translation), rotation: leaf.rotation, scale: closed.scale }
+}
+
+/// Holds each moving swing door whose leaf's next pose overlaps a character (module docs).
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn block_sweeps(
+    mut sweeps: ResMut<DoorSweeps>,
+    swing: Res<SwingDoors>,
+    doors: Res<Doors>,
+    streaming: Option<Res<PhysicsStreaming>>,
+    physics: Option<ResMut<Physics>>,
+    mut blocked: Local<Vec<PlacementId>>,
+) {
+    let (Some(streaming), Some(mut physics)) = (streaming, physics) else { return };
+    if sweeps.iter().next().is_none() {
+        return;
+    }
+    for (id, sweep) in sweeps.iter() {
+        let (Some(door), Some(shell)) = (swing.get(id), doors.get(id)) else { continue };
+        let Some(body) = streaming.body(&door.worldspace, id) else { continue };
+        let Some(world) = physics.world_mut(&door.worldspace) else { continue };
+        world.refresh_queries();
+        if world.body_overlaps_at(body, leaf_pose(&door.transform, &shell.object, &sweep.next), Layer::CHARACTER) {
+            blocked.push(id);
+        }
+    }
+    for id in blocked.drain(..) {
+        sweeps.block(id);
+    }
 }
 
 /// Each `DoorMoved` of a resident swing door moves its body (module docs).

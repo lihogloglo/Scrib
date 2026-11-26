@@ -228,6 +228,18 @@ tracks the body last seen) is teleported to `Door::leaf()` when the door is not 
 follows the body's pose interpolated by the fixed step's overstep (the item pivot rule; a write only when it
 changed), or the shell's leaf when physics is off. Only doors in `SwingDoors` (R0) are visited.
 
+### As built (IN33c2b2, 2026-11-26)
+
+`door_body::block_sweeps` runs on the fixed tick between `DoorSystems::Plan` and `Commit`: for each planned step of a
+resident swing door whose body is in, it asks `PhysicsWorld::body_overlaps_at(body, leaf_pose(next), Layer::CHARACTER)`
+(after `refresh_queries`, a no-op unless a body was inserted since the last step) and holds the step with
+`DoorSweeps::block` on a hit. A door therefore pauses while a character's capsule is in its leaf's path and resumes
+from the same point when the path is free; its kinematic body is never driven into a character (the core's "blocked =
+pause"; OpenMW undoes the rotation step when a door hits an actor, `apps/openmw/mwworld/worldimp.cpp`, the same visible
+result). Only `Layer::CHARACTER` blocks: walls and frames overlap vanilla leaves all the time, props and bodies are
+pushed by the sweep. A capsule shows where its character was one tick earlier (capsules are targeted after the
+movers, which run after the step). Without physics nothing blocks.
+
 ## World rules mapping (IN41, IN38, IN19)
 
 **Material rows** (`sf.interact.material` + a pattern table in `mw_interaction`, checked against the install at cook,

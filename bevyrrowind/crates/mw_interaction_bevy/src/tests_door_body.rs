@@ -6,15 +6,16 @@ use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
 use bevy_app::App;
-use bevy_math::Affine3A;
+use bevy_ecs::message::Messages;
+use bevy_math::{Affine3A, Vec3};
 use bevy_time::{TimePlugin, TimeUpdateStrategy};
 use bevy_transform::components::Transform;
 use glam::Quat;
 use sf_controller::{CollisionBuilder, StaticShape, SurfaceId};
 use sf_coords::WorldTransform;
 use sf_interaction::{DOOR_STATE_OWNER, DoorState, VERB_OPEN};
-use sf_interaction_bevy::{DoorRest, Doors, InteractionSettings, UseApproved};
-use sf_physics_bevy::sf_physics::BodyId;
+use sf_interaction_bevy::{DoorMoved, DoorRest, Doors, InteractionSettings, UseApproved};
+use sf_physics_bevy::sf_physics::{BodyDesc, BodyId, BodyKind, Layer, ShapeRef};
 use sf_physics_bevy::{Physics, PhysicsHook, PhysicsPlugin, PhysicsShapeSource, PhysicsStreaming};
 use sf_script_bevy::sf_script::{Handle, ScriptRuntime};
 use sf_script_bevy::{Activated, PLAYER, Scripts, ScriptsPlugin};
@@ -190,6 +191,94 @@ fn a_body_inserted_after_a_restored_rest_takes_the_open_pose() {
     let now = pose(&app, body);
     assert!(same_rotation(now.rotation, open.rotation), "body {:?} open {:?}", now.rotation, open.rotation);
     assert!(open.pos.delta_f32(now.pos).length() < 1e-4, "body at {:?}", now.pos);
+}
+
+/// The open leaf's rotation, from a free swing in a second app.
+fn open_rotation() -> Quat {
+    let mut app = physics_app();
+    let closed = stream_door(&mut app);
+    wait_body(&mut app);
+    approve_open(&mut app);
+    for _ in 0..swing_ticks(&app) + 10 {
+        app.update();
+    }
+    assert!(!moving(&app), "the free swing ended");
+    shell_pose(&app, &closed).rotation
+}
+
+/// A kinematic capsule stand-in on `layer` on the +x wing's path: 0.6 m from the hinge along the
+/// leaf at half the swing (0.42 m off the closed panel, hit at about 15 degrees).
+fn capsule_in_path(app: &mut App, closed: &WorldTransform, layer: Layer) -> BodyId {
+    let half = closed.rotation.slerp(open_rotation(), 0.5);
+    let at = WorldTransform { pos: closed.pos.offset(half * Vec3::new(0.6, 1.0, 0.0)), rotation: Quat::IDENTITY, scale: Vec3::ONE };
+    let desc = BodyDesc::new(BodyKind::Kinematic, at, ShapeRef::Capsule { r: 0.3, half: 0.6 }, layer);
+    app.world_mut().resource_mut::<Physics>().world_mut(&ws()).expect("a world").insert(&desc)
+}
+
+fn state_t(app: &App) -> f32 {
+    app.world().resource::<Doors>().get(DOOR).expect("registered").state.t
+}
+
+fn overlaps_character(app: &App, body: BodyId) -> bool {
+    let world = app.world().resource::<Physics>();
+    let world = world.world(&ws()).expect("a world");
+    world.body_overlaps_at(body, pose(app, body), Layer::CHARACTER)
+}
+
+#[test]
+fn a_capsule_in_the_path_pauses_the_door_and_it_resumes() {
+    let mut app = physics_app();
+    let closed = stream_door(&mut app);
+    let body = wait_body(&mut app);
+    let capsule = capsule_in_path(&mut app, &closed, Layer::CHARACTER);
+    for _ in 0..2 {
+        app.update();
+    }
+    assert!(!overlaps_character(&app, body), "the closed panel is free of the capsule");
+    approve_open(&mut app);
+    let ticks = swing_ticks(&app);
+    let mut cursor = app.world().resource::<Messages<DoorMoved>>().get_cursor();
+    let mut last = Vec::new();
+    for i in 0..ticks + 30 {
+        app.update();
+        assert!(!overlaps_character(&app, body), "frame {i}: the body was driven into the capsule");
+        let moved = cursor.read(app.world().resource::<Messages<DoorMoved>>()).filter(|m| m.placement == DOOR).count();
+        if i >= ticks + 20 {
+            last.push((state_t(&app), moved));
+        }
+    }
+    assert!(moving(&app), "the door is still moving (paused)");
+    let angle = closed.rotation.angle_between(pose(&app, body).rotation).to_degrees();
+    println!("paused at {angle:.2} degrees, t = {}", state_t(&app));
+    assert!(angle > 0.0 && angle < 45.0, "paused angle {angle}");
+    let t0 = last[0].0;
+    assert!(last.iter().all(|&(t, _)| t.to_bits() == t0.to_bits()), "t changed while blocked: {last:?}");
+    assert!(last.iter().all(|&(_, n)| n == 0), "DoorMoved written while blocked: {last:?}");
+    assert!(app.world_mut().resource_mut::<Physics>().world_mut(&ws()).expect("a world").remove(capsule), "the capsule was live");
+    for _ in 0..ticks + 10 {
+        app.update();
+    }
+    assert!(!moving(&app), "the swing ended");
+    let open = closed.rotation.angle_between(pose(&app, body).rotation).to_degrees();
+    assert!((open - 90.0).abs() < 1.0, "open angle {open}");
+}
+
+#[test]
+fn a_prop_in_the_path_does_not_block_the_door() {
+    let mut app = physics_app();
+    let closed = stream_door(&mut app);
+    let body = wait_body(&mut app);
+    capsule_in_path(&mut app, &closed, Layer::PROP);
+    for _ in 0..2 {
+        app.update();
+    }
+    approve_open(&mut app);
+    for _ in 0..swing_ticks(&app) + 10 {
+        app.update();
+    }
+    assert!(!moving(&app), "the swing ended");
+    let open = closed.rotation.angle_between(pose(&app, body).rotation).to_degrees();
+    assert!((open - 90.0).abs() < 1.0, "open angle {open}");
 }
 
 #[test]

@@ -18,6 +18,7 @@
 //!   registers and swings it. Log: `interact: N swing doors indexed in <worldspace> cell (x, y, z)`.
 //! - **Door bodies** ([`door_body`]): each swing step of the shell (`DoorMoved`) moves the door's
 //!   kinematic body to the leaf (a restored rest teleports it, also for a body inserted later),
+//!   a step whose leaf would overlap a character's capsule is held (the door pauses in their path),
 //!   and the [`DoorPivot`] follows the body's interpolated pose each frame (the shell's leaf
 //!   without physics).
 //! - **Player user** ([`input`]): the player body gets an `InteractionUser` (`PLAYER`, the live
@@ -131,6 +132,7 @@ pub fn add_with_defs(app: &mut App, defs: FurnitureDefs) {
         .add_systems(Update, input::prompt.in_set(FocusUpdate).after(mw_player_bevy::FocusRay))
         .add_systems(FixedUpdate, input::candidates.after(InteractionSystems::Apply).before(InteractionSystems::Focus))
         .add_systems(FixedUpdate, input::commands.after(InteractionSystems::Focus).before(InteractionSystems::Activate))
+        .add_systems(FixedUpdate, door_body::block_sweeps.after(DoorSystems::Plan).before(DoorSystems::Commit))
         .add_systems(FixedUpdate, door_body::move_bodies.after(DoorSystems::Commit).before(PhysicsSystems::Step))
         .add_systems(Update, (door_body::pose_new_bodies, door_body::follow_pivots).chain().after(PhysicsSystems::Stream));
 }
