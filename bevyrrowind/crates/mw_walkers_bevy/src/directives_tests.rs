@@ -5,7 +5,7 @@ use std::sync::Arc;
 use bevy_app::{App, Update};
 use bevy_ecs::prelude::*;
 use mw_world::ids::exterior;
-use sf_ai::{DirectiveKind, DirectiveSource, DirectiveSpec, DirectiveStack, GameTime};
+use sf_ai::{DirectiveKind, DirectiveSource, DirectiveSpec, DirectiveStack, GameTime, Limit};
 use sf_ai_bevy::{AiActor, AiDirectives};
 use sf_character::CharacterState;
 use sf_character_bevy::{Character, CharacterPlacement};
@@ -16,7 +16,7 @@ use sf_records::{RecordDb, RecordId};
 use sf_world::{Location, PlacementId};
 use tes3::esp::{AiFollowPackage, AiPackage, AiTravelPackage, AiWanderPackage, Creature, FixedString, Npc};
 
-use super::{AiPackageExtras, seed_directives};
+use super::{AiPackageExtras, Renewing, seed_directives};
 use crate::walkers::{ActorSpace, WalkerContent};
 
 const WANDERER: &str = "test_wanderer";
@@ -134,4 +134,37 @@ fn empty_records_get_an_empty_stack_and_targets_resolve_to_spawned_actors() {
     assert_eq!(s.len(), 1, "the player follow is skipped");
     assert_eq!(s.top().map(|d| &d.spec.kind), Some(&DirectiveKind::Follow(ActorKey(11))));
     assert!(app.world().get::<AiPackageExtras>(guard).expect("extras").0.is_empty());
+}
+
+/// `MA2d4`: [`Renewing`] notes each repeat's new id (one that is not a repeat, none) and the
+/// extras follow it.
+#[test]
+fn renewing_notes_each_repeat_and_the_extras_follow() {
+    let t0 = GameTime { day: 1, minute: 0 };
+    let mut s = DirectiveStack::new(ActorKey(1), t0);
+    let home = Location::new(exterior(), WorldPos::ORIGIN);
+    let kind = DirectiveKind::StayNear { home, radius: 3.0 };
+    let policy = Renewing::default();
+    let once = DirectiveSpec::new(kind.clone(), DirectiveSource::Record).limit(Limit::For { minutes: 10 });
+    let first = s.push(once, t0, &policy, &mut Vec::new());
+    let again = DirectiveSpec::new(kind, DirectiveSource::Record).repeating().limit(Limit::For { minutes: 30 });
+    let second = s.push(again, t0, &policy, &mut Vec::new());
+    let wander = mw_ai::packages::PackageExtra::Wander(mw_ai::Wander {
+        distance: 3.0,
+        duration_hours: 0.5,
+        game_hour: 0,
+        idle_chances: [5; 8],
+        repeat: true,
+    });
+    let mut extras = AiPackageExtras(vec![(first, wander.clone()), (second, wander.clone())]);
+    s.advance(GameTime { day: 1, minute: 50 }, &policy, &mut Vec::new());
+    let renewed = policy.take();
+    assert_eq!(renewed.len(), 1, "only the repeating one came back: {renewed:?}");
+    let (old, new) = renewed[0];
+    assert_eq!(old, second);
+    assert_eq!(s.top().map(|d| d.id), Some(new));
+    assert!(policy.take().is_empty(), "taken once");
+    extras.follow(&renewed);
+    assert_eq!(extras.get(new), Some(&wander));
+    assert_eq!(extras.get(second), None);
 }

@@ -292,22 +292,6 @@ fn wander_goals_stay_in_range_and_cover_allowed_nodes() {
     }
 }
 
-#[test]
-fn scaffold_expires_and_repeats_in_game_hours() {
-    let graph = interior(&lattice(3, 128));
-    let home = graph.position(4);
-    let mut wander = no_idles(0.0);
-    wander.duration_hours = 2.0;
-    wander.repeat = false;
-    let mut s = WanderDriver::new(WanderPlanner::new(wander, home), 2.0, 3);
-    assert!(!s.update(Some(&graph), home, 0.1, 1.5).expired);
-    let out = s.update(Some(&graph), home, 0.1, 1.0);
-    assert!(out.expired && out.intent == sf_controller::LocomotionIntent::IDLE);
-    wander.repeat = true;
-    let mut s = WanderDriver::new(WanderPlanner::new(wander, home), 2.0, 3);
-    assert!((0..10).all(|_| !s.update(Some(&graph), home, 0.1, 1.0).expired));
-}
-
 /// Flat ground at height 0.
 struct Flat;
 
@@ -361,7 +345,7 @@ fn mover_walks_scaffold_paths_on_flat_ground() {
     let (mut walks, mut worst_track, mut worst_end) = (0, 0.0f32, 0.0f32);
     let mut was_walking = false;
     for _ in 0..(60 * 90) {
-        let out = scaffold.update(Some(&graph), loco.position, dt, 0.0);
+        let out = scaffold.update(Some(&graph), loco.position, dt);
         if out.walking && !was_walking {
             line = std::iter::once(loco.position)
                 .chain(scaffold.follower().unwrap().nodes.iter().map(|n| n.pos))
@@ -405,7 +389,7 @@ fn stuck_walks_are_given_up_and_replanned() {
     let mut walked = 0;
     let mut first_give_up = None;
     for i in 0..200 {
-        let out = s.update(Some(&graph), home, dt, 0.0);
+        let out = s.update(Some(&graph), home, dt);
         walked += usize::from(out.walking);
         if s.stuck_count() == 1 && first_give_up.is_none() {
             first_give_up = Some(i);
@@ -441,7 +425,7 @@ fn blocked_edges_are_routed_around() {
     let mut resumed = false;
     for _ in 0..2000 {
         let edge = s.follower().map(|f| (f.target(), f.nodes.clone()));
-        s.update(Some(&graph), a, 0.1, 0.0);
+        s.update(Some(&graph), a, 0.1);
         if let Some((t, nodes)) = edge.filter(|_| s.follower().is_none() && s.stuck_count() > 0)
             && t < nodes.len()
             && nodes[t].pos == b
@@ -480,7 +464,7 @@ fn first_leg_give_ups_start_at_the_next_nearest_node() {
     let mut resumed = false;
     for _ in 0..2000 {
         let edge = s.follower().map(|f| (f.target(), f.nodes.clone()));
-        s.update(Some(&graph), pos, 0.1, 0.0);
+        s.update(Some(&graph), pos, 0.1);
         if let Some((0, nodes)) = edge.filter(|_| s.follower().is_none() && s.stuck_count() > 0)
             && nodes[0].pos == a
         {
@@ -519,7 +503,7 @@ fn off_grid_give_ups_avoid_the_blocked_heading() {
     for _ in 0..6000 {
         let edge = s.follower().map(|f| f.nodes[0].pos);
         let given_up = s.stuck_count();
-        s.update(None, home, 0.1, 0.0);
+        s.update(None, home, 0.1);
         if let (None, Some(f)) = (edge, s.follower()) {
             // A new walk: away from every heading given up here (that it remembers).
             let heading = home.delta_f32(f.nodes[0].pos).with_y(0.0).normalize();
@@ -644,7 +628,7 @@ fn htn_wander_on_navmesh_stays_within_radius_and_rolls_exact_idles() {
             nav: nav_state,
         };
         let mut trace = TraceEntry::new(tick, 2);
-        let out = driver.step_htn(Some(&graph), &ctx, &cfg, 0.0, Some(&mut trace));
+        let out = driver.step_htn(Some(&graph), &ctx, &cfg, Some(&mut trace));
 
         if out.plan_outcome == Some(PlanOutcome::Planned) {
             assert_eq!(trace.methods.len(), 1);
@@ -768,7 +752,7 @@ fn htn_wander_on_navmesh_stays_within_radius_and_rolls_exact_idles() {
             nav: NavMoveState::Following,
         };
         let mut trace = TraceEntry::new(i, 2);
-        let out = stuck_driver.step_htn(Some(&graph), &ctx, &cfg, 0.0, Some(&mut trace));
+        let out = stuck_driver.step_htn(Some(&graph), &ctx, &cfg, Some(&mut trace));
         // The pause after a give-up is a plain stand: `wander_stand`.
         if give_up_tick.is_some() && out.plan_outcome == Some(PlanOutcome::Planned) && out.nav == NavCommand::Stop {
             assert_eq!(trace.methods[0].method, vocab_stand);
@@ -825,11 +809,11 @@ fn navmesh_walk_left_mid_way_continues_on_the_pathgrid() {
         dt: 0.1,
         nav: NavMoveState::Idle,
     };
-    let out = driver.step_htn(Some(&graph), &ctx, &ExecConfig::default(), 0.0, None);
+    let out = driver.step_htn(Some(&graph), &ctx, &ExecConfig::default(), None);
     assert!(matches!(out.nav, NavCommand::MoveTo { .. }), "{:?}", out.nav);
     assert!(driver.is_walking());
     // Off the navmesh from here on: the next fallback step walks a pathgrid route at once.
-    let out = driver.update_fallback(Some(&graph), home, 0.1, 0.0, &ExecConfig::default());
+    let out = driver.update_fallback(Some(&graph), home, 0.1, &ExecConfig::default());
     assert!(out.walking, "stalled on the navmesh MoveTo");
     assert!(driver.follower().is_some());
     assert!(out.intent.desired_velocity.length() > 0.1, "{:?}", out.intent.desired_velocity);
@@ -903,7 +887,7 @@ fn navmesh_give_ups_remember_the_goal_not_pathgrid_edges() {
             nav: nav_state,
         };
         let stuck = driver.stuck_count();
-        let out = driver.step_htn(Some(&graph), &ctx, &cfg, 0.0, None);
+        let out = driver.step_htn(Some(&graph), &ctx, &cfg, None);
         if driver.stuck_count() > stuck {
             match out.path {
                 PathState::Failed(PathFailure::NoPath) => no_path += 1,

@@ -61,7 +61,8 @@ pub fn walk_speed(speed_attribute: f32, min_units: f32, max_units: f32) -> f32 {
 pub struct Wander {
     /// Wander radius around home, meters. 0 stands in place.
     pub distance: f32,
-    /// Game hours until the package ends; 0 never ends.
+    /// Game hours until the package ends; 0 never ends. The directive's `Limit` counts it
+    /// (`MA2d4`), not the wander driver.
     pub duration_hours: f32,
     /// Authored time of day; inert (as in `OpenMW`).
     pub game_hour: u8,

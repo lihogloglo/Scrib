@@ -2,7 +2,7 @@
   "about": "Per-crate ratchet of tools/tunables-census.mjs --check: a crate's T count may only go down. Rewrite with --update-baseline only when counts went down (a migration slice).",
   "totals": {
     "rows": 2858,
-    "T": 1228,
+    "T": 1227,
     "C": 1136,
     "?": 494
   },
@@ -399,7 +399,7 @@
       "tunables": []
     },
     "mw_walkers_bevy": {
-      "T": 15,
+      "T": 14,
       "?": 2,
       "C": 10,
       "tunables": [
@@ -416,8 +416,7 @@
         "src/walkers.rs AI_SLEEP_RADIUS_M",
         "src/walkers.rs AI_WAKE_RADIUS_M",
         "src/walkers.rs DORMANT_SIGNIFICANCE",
-        "src/walkers.rs PROCESS_MARGIN",
-        "src/walkers.rs TIMESCALE"
+        "src/walkers.rs PROCESS_MARGIN"
       ]
     },
     "mw_water": {

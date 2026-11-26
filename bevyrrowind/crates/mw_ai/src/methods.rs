@@ -31,7 +31,7 @@ use std::sync::{Arc, OnceLock};
 
 use sf_ai::{
     BitKey, ExecConfig, ExecContext, ExecGait, ExecOutput, IntKey, Library, MethodDef, MethodId,
-    FaceTarget, MoveOperatorIds, NavCommand, NavMoveState, OP_FACE, OP_MOVE_TO, OP_WAIT,
+    FaceTarget, MoveOperatorIds, NavMoveState, OP_FACE, OP_MOVE_TO, OP_WAIT,
     OperatorBindings, OperatorKind,
     OperatorStatus, Operators, PlanRunner, StateKeys, TaskDef, TaskId, TraceEntry, WorldState,
     htn::{EffectDef, PredicateDef, SubtaskDef},
@@ -349,9 +349,6 @@ pub struct WanderOutput {
     /// Idle group while standing (0 = plain `Idle`, 2..=9 = `IdleN`).
     pub idle_variant: Option<u8>,
     pub walking: bool,
-    /// The package's duration ran out (and it does not repeat): the caller
-    /// moves on to the next AI package. The actor stands meanwhile.
-    pub expired: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -382,6 +379,10 @@ impl FallbackWalk {
 }
 
 /// Morrowind `AI_W` wander driver over [`sf_ai::exec::PlanRunner`] (`MA3`).
+///
+/// It counts no duration (`MA2d4`): the `AI_W` duration is the directive's `Limit` on the actor's
+/// stack, the one count `OpenMW` keeps too (`aiwander.cpp` @ 5f3aafb, 233-234 and 378: the
+/// package's `mRemainingDuration`); the stack ending it makes the walker stand.
 #[derive(Clone, Debug)]
 pub struct WanderDriver {
     pub planner: WanderPlanner,
@@ -391,8 +392,6 @@ pub struct WanderDriver {
     pub tuning: WanderTuning,
     worldspace: WorldspaceId,
     rng: fastrand::Rng,
-    hours_left: f32,
-    expired: bool,
     /// The goal of the last walk given up as stuck.
     abandoned: Option<WorldPos>,
     current_goal: Option<WorldPos>,
@@ -432,7 +431,6 @@ impl WanderDriver {
         worldspace: WorldspaceId,
         vocab: Arc<WanderVocabulary>,
     ) -> Self {
-        let hours_left = planner.wander.duration_hours;
         let state = WorldState::new(&vocab.state_keys);
         Self {
             planner,
@@ -440,8 +438,6 @@ impl WanderDriver {
             tuning: WanderTuning::default(),
             worldspace,
             rng: fastrand::Rng::with_seed(seed),
-            hours_left,
-            expired: false,
             abandoned: None,
             current_goal: None,
             current_first_target: None,
@@ -473,10 +469,6 @@ impl WanderDriver {
 
     pub fn runner(&self) -> &PlanRunner {
         &self.runner
-    }
-
-    pub fn expired(&self) -> bool {
-        self.expired
     }
 
     /// Walks given up for lack of progress so far.
@@ -581,24 +573,6 @@ impl WanderDriver {
         true
     }
 
-    fn advance_hours(&mut self, game_hours: f32) {
-        if self.planner.wander.duration_hours > 0.0 && !self.expired {
-            self.hours_left -= game_hours;
-            if self.hours_left <= 0.0 {
-                if self.planner.wander.repeat {
-                    self.hours_left += self.planner.wander.duration_hours;
-                } else {
-                    self.expired = true;
-                    self.runner.clear();
-                    self.choosing = true;
-                    self.fallback_walk = None;
-                    self.current_goal = None;
-                    self.current_first_target = None;
-                }
-            }
-        }
-    }
-
     fn choose_next_step(&mut self, graph: Option<&PathGraph>, pos: WorldPos) -> WanderStep {
         let mut step = self
             .planner
@@ -671,19 +645,10 @@ impl WanderDriver {
         graph: Option<&PathGraph>,
         ctx: &ExecContext,
         cfg: &ExecConfig,
-        game_hours: f32,
         trace: Option<&mut TraceEntry>,
     ) -> ExecOutput {
         self.fallback_walk = None;
         self.worldspace = ctx.location.worldspace.clone();
-        self.advance_hours(game_hours);
-        if self.expired {
-            return ExecOutput {
-                nav: NavCommand::Stop,
-                idle_variant: Some(0),
-                ..ExecOutput::default()
-            };
-        }
 
         let was_choosing = self.choosing;
         if was_choosing {
@@ -746,16 +711,15 @@ impl WanderDriver {
         out
     }
 
-    fn standing(&self, variant: Option<u8>) -> WanderOutput {
+    fn standing(variant: Option<u8>) -> WanderOutput {
         WanderOutput {
             intent: LocomotionIntent::IDLE,
             idle_variant: variant,
             walking: false,
-            expired: self.expired,
         }
     }
 
-    /// Advances by `dt` real seconds and `game_hours` game hours in pathgrid fallback mode
+    /// Advances by `dt` real seconds in pathgrid fallback mode
     /// (for fliers/swimmers or when no navmesh tile is resident at `pos`). `cfg` is the executor
     /// config (`ai.exec.*`): its stuck timeout and progress threshold drive the fallback walk's
     /// per-node stuck check, its face tolerance the fallback's [`PlanRunner`].
@@ -765,14 +729,9 @@ impl WanderDriver {
         graph: Option<&PathGraph>,
         pos: WorldPos,
         dt: f32,
-        game_hours: f32,
         cfg: &ExecConfig,
     ) -> WanderOutput {
         let fallback = fallback_exec_cfg(cfg);
-        self.advance_hours(game_hours);
-        if self.expired {
-            return self.standing(Some(0));
-        }
         // A navmesh walk carried over from `step_htn` (the actor left the resident navmesh
         // mid-walk) has no pathgrid route to follow here: choose again instead of standing on a
         // `MoveTo` nothing drives.
@@ -854,7 +813,7 @@ impl WanderDriver {
                     );
                     let pause = self.tuning.give_up_pause(&mut self.rng);
                     self.bind_idle(0, pause);
-                    return self.standing(Some(0));
+                    return Self::standing(Some(0));
                 }
                 let ctx = ExecContext {
                     location: Location::new(self.worldspace.clone(), pos),
@@ -875,7 +834,6 @@ impl WanderDriver {
                     intent: out.intent,
                     idle_variant: out.idle_variant,
                     walking: true,
-                    expired: false,
                 };
             }
 
@@ -898,11 +856,11 @@ impl WanderDriver {
                 .operator
                 .is_some_and(|o| o.status == OperatorStatus::Running)
             {
-                return self.standing(exec_out.idle_variant);
+                return Self::standing(exec_out.idle_variant);
             }
             self.choosing = true;
         }
-        self.standing(Some(0))
+        Self::standing(Some(0))
     }
 
     /// [`Self::update_fallback`] with the default executor config ([`ExecConfig::default`], the
@@ -912,9 +870,8 @@ impl WanderDriver {
         graph: Option<&PathGraph>,
         pos: WorldPos,
         dt: f32,
-        game_hours: f32,
     ) -> WanderOutput {
-        self.update_fallback(graph, pos, dt, game_hours, &ExecConfig::default())
+        self.update_fallback(graph, pos, dt, &ExecConfig::default())
     }
 }
 

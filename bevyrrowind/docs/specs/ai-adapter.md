@@ -212,6 +212,13 @@ stands (`isWithinMaxRange` 23-29). Tunables `mw.ai.travel.{end_tolerance_m, fini
 `retry_s` (Guess 2 s). Follow/Escort/Use/Fight/Custom, GoTo into another worldspace or off the navmesh: routine as
 today (debug log). Gaps -> MA2d4.
 
+As built (MA2d4, 2026-11-26): StayNear home = actor position at the directive's first serve with no reaction owning
+(OpenMW `aiwander.cpp` 293-297 `mInitialActorPosition`), in `DirectiveDrive` by id, not saved (re-taken on the first
+serve after load/respawn); `directives::Renewing` (MorrowindPolicy + renewal ids) moves extras + home to a repeat's new
+id; `WanderDriver` keeps no AI_W timer (the stack's `Limit` is the one count); a StayNear (radius > 0) on an actor
+without `Walker` gets `walkers::new_walker`; an empty stack makes the walker stand (`DirectiveDrive::stands`,
+`aisequence.cpp` 264-268).
+
 As built (MA2c1, 2026-11-26): `mw_script::aifn` (`AiFn`, `AiCall` Wander/Travel/Escort/Follow/PackageDone/
 CurrentPackage, OpenMW type ids), `Host::ai(target, &AiCall) -> Option<f64>` (`None` = unhandled), rows live.
 `mw_rpg::script_ai`: `GameOp::Ai { target, push: AiPush }`, `AiPush::package()` rebuilds the exact `tes3` record

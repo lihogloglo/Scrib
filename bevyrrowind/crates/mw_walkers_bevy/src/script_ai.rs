@@ -6,11 +6,13 @@
 //!
 //! - **The push** is mapped as a record package is ([`mw_ai::packages::directive`]: same home,
 //!   resolver and extras as [`crate::directives::seed_directives`]), from where the actor stands
-//!   now, with a [`DirectiveSource::Script`] source, and pushed through [`MorrowindPolicy`]
+//!   now, with a [`DirectiveSource::Script`] source, and pushed through [`mw_ai::MorrowindPolicy`]
 //!   (`OpenMW` `AiSequence::stack`: an actual package cancels the cancellable ones, so a script
 //!   travel ends the record wander). A push for an actor with no entity or no stack yet (not
 //!   spawned, not seeded) is dropped with a `debug!`; its target not resolving is skipped as a
-//!   record package's is.
+//!   record package's is. A repeat the push's clock step renews keeps its extras and home
+//!   ([`crate::directives::Renewing`], `MA2d4`); a wander's home is where the actor stands when
+//!   it first serves ([`crate::directive_drive`]).
 //! - **The reads** port `OpenMW`'s `AiSequence::execute` (`aisequence.cpp` @ 5f3aafb, lines
 //!   258-372): each AI tick an actor runs (not [`sf_controller_bevy::Dormant`]), an empty stack
 //!   sets the last package to none (:264-268) and leaves done as it was; otherwise the serving
@@ -26,7 +28,6 @@ use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
 use bevy_log::{debug, info};
-use mw_ai::MorrowindPolicy;
 use mw_ai::packages::{PackageCtx, PackageExtra, directive};
 use sf_ai::{DirectiveDone, DirectiveEnd, DirectiveId, DirectiveKind, DirectiveSource, DirectiveStack, GameTime};
 use sf_ai_bevy::{AiActor, AiDirectives};
@@ -38,7 +39,8 @@ use sf_sky_bevy::GameClock;
 use sf_world::Location;
 use tes3::esp::AiPackage;
 
-use crate::directives::{AiPackageExtras, SpawnedActors};
+use crate::directive_drive::{DirectiveDrive, follow_renewals};
+use crate::directives::{AiPackageExtras, Renewing, SpawnedActors};
 use crate::walkers::ActorSpace;
 
 /// A script's AI package for `actor`'s stack, as the record struct with the same meaning
@@ -146,7 +148,15 @@ pub(crate) fn apply_script_pushes(
     mut pushes: MessageReader<ScriptAiPush>,
     store: Option<ResMut<AiDirectives>>,
     clock: Option<Res<GameClock>>,
-    mut actors: Query<(Entity, &AiActor, &ActorSpace, &Mover, Option<&Character>, Option<&mut AiPackageExtras>)>,
+    mut actors: Query<(
+        Entity,
+        &AiActor,
+        &ActorSpace,
+        &Mover,
+        Option<&Character>,
+        Option<&mut AiPackageExtras>,
+        Option<&mut DirectiveDrive>,
+    )>,
     placed: Query<(&Character, &CharacterPlacement)>,
 ) {
     if pushes.is_empty() {
@@ -161,8 +171,10 @@ pub(crate) fn apply_script_pushes(
     let now = clock.map_or_else(GameTime::default, |c| GameTime::from(c.now));
     let (mut stacked, mut dropped) = (0_usize, 0_usize);
     let mut events = Vec::new();
+    let policy = Renewing::default();
     for push in pushes.read() {
-        let Some((_, _, space, mover, character, extras)) = by_key.get(&push.actor).and_then(|e| actors.get_mut(*e).ok())
+        let Some((_, _, space, mover, character, mut extras, mut drive)) =
+            by_key.get(&push.actor).and_then(|e| actors.get_mut(*e).ok())
         else {
             debug!("script ai: {:?} has no walker; the push is dropped", push.actor);
             dropped += 1;
@@ -187,7 +199,8 @@ pub(crate) fn apply_script_pushes(
             }
         };
         spec.source = DirectiveSource::Script;
-        let id = stack.push(spec, now, &MorrowindPolicy, &mut events);
+        let id = stack.push(spec, now, &policy, &mut events);
+        follow_renewals(&policy, drive.as_deref_mut(), extras.as_mut(), stack);
         if let Some(mut extras) = extras {
             extras.0.retain(|(d, _)| stack.get(*d).is_some());
             if extra != PackageExtra::None {

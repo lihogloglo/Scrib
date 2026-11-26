@@ -84,8 +84,6 @@ use sf_world_bevy::{
 };
 use tes3::esp::{Creature, CreatureFlags, Npc};
 
-/// Morrowind's default timescale: game seconds per real second.
-const TIMESCALE: f32 = 30.0;
 /// Hover height of flying creatures over the ground, metres (cliff racers glide low).
 const FLY_HOVER: f32 = 1.5;
 /// Half size of the square around a mover whose streaming cells must all be
@@ -409,6 +407,14 @@ struct Setup {
     fit_to_body: bool,
 }
 
+/// The walk speed `attach` gives a record character (m/s); none for other characters.
+pub(crate) fn record_walk_speed(content: &WalkerContent, character: &Character) -> Option<f32> {
+    match character {
+        Character::Record { id, .. } => Some(setup_of(content, id).speed),
+        Character::Recipe(_) => None,
+    }
+}
+
 fn setup_of(content: &WalkerContent, id: &RecordId) -> Setup {
     // A leveled list (LEVC) walks as the creature (or NPC) it shows: the same
     // pick `MwActors::recipe` dresses it with.
@@ -548,37 +554,7 @@ fn attach(
         let walk_speed = setup.speed;
         let wanders = setup.wander.is_some();
         if let Some(wander) = setup.wander {
-            let seed = entity.to_bits() ^ 0x5741_4C4B;
-            let vocab = vocab
-                .as_ref()
-                .map_or_else(mw_ai::wander_library, |v| v.0.clone());
-            let mut planner = WanderPlanner::new(wander, position);
-            planner.idle_mult = content.idle_mult;
-            let driver = WanderDriver::with_vocab(
-                planner,
-                walk_speed,
-                seed,
-                location.worldspace.clone(),
-                vocab,
-            );
-            let key = if location.worldspace == mw_world::ids::exterior() {
-                CellKey::exterior_at(position)
-            } else {
-                CellKey::interior(location.worldspace.as_str())
-            };
-            e.insert((
-                Walker {
-                    driver,
-                    variant: None,
-                    key,
-                    held_intent: None,
-                    on_navmesh: None,
-                },
-                Avoider {
-                    max_speed: walk_speed * 1.5,
-                    ..Avoider::default()
-                },
-            ));
+            e.insert(new_walker(entity, wander, &location, walk_speed, Some(content.idle_mult), vocab.as_deref()));
         }
         // AI8i: every ground actor that perceives (or wanders) gets the navmesh corridor and the
         // perception reactions (search, walk back to its post), with or without a wander: guards
@@ -593,6 +569,36 @@ fn attach(
             ));
         }
     }
+}
+
+/// A wanderer's [`Walker`] and its [`Avoider`] as [`attach`] gives them at spawn (and the
+/// directive drive to an actor a `StayNear` serves without one, `MA2d4`): the wander of `wander`
+/// around `at`, at `walk_speed`; `idle_mult` is `fIdleChanceMultiplier` (`None`: the planner's
+/// default).
+pub(crate) fn new_walker(
+    entity: Entity,
+    wander: Wander,
+    at: &Location,
+    walk_speed: f32,
+    idle_mult: Option<f32>,
+    vocab: Option<&WanderVocab>,
+) -> (Walker, Avoider) {
+    let seed = entity.to_bits() ^ 0x5741_4C4B;
+    let vocab = vocab.map_or_else(mw_ai::wander_library, |v| v.0.clone());
+    let mut planner = WanderPlanner::new(wander, at.pos);
+    if let Some(mult) = idle_mult {
+        planner.idle_mult = mult;
+    }
+    let driver = WanderDriver::with_vocab(planner, walk_speed, seed, at.worldspace.clone(), vocab);
+    let key = if at.worldspace == mw_world::ids::exterior() {
+        CellKey::exterior_at(at.pos)
+    } else {
+        CellKey::interior(at.worldspace.as_str())
+    };
+    (
+        Walker { driver, variant: None, key, held_intent: None, on_navmesh: None },
+        Avoider { max_speed: walk_speed * 1.5, ..Avoider::default() },
+    )
 }
 
 /// Movers an outside system owns ([`Held`]: dead, knocked down, a physics
@@ -761,7 +767,6 @@ fn drive(
     let exec_cfg = exec_settings.map_or_else(ExecConfig::default, |s| s.config);
     let wander_tuning = wander_settings.map_or_else(WanderTuning::default, |s| s.tuning);
     let dt = time.delta_secs().min(0.1);
-    let hours = dt * TIMESCALE / 3600.0;
     for (
         entity,
         mover,
@@ -780,6 +785,18 @@ fn drive(
             // AI8i: the reaction drives the actor (MA2d2: or a directive's walk, a `GoTo`); the
             // wander stays paused where it was.
             walker.held_intent = None;
+            continue;
+        }
+        if directive.is_some_and(crate::directive_drive::DirectiveDrive::stands) {
+            // MA2d4: no package left on its stack (`OpenMW`: an empty `AiSequence` runs
+            // nothing): it stands where it is, facing where it faces.
+            if let Some(nav) = corridor.as_deref_mut() {
+                clear_corridor_goal(nav, queries.as_deref_mut());
+            }
+            let stand = LocomotionIntent { desired_facing: Some(mover.loco.motion.yaw), ..LocomotionIntent::IDLE };
+            intent.0 = stand;
+            walker.held_intent = Some(stand);
+            avoider.travel = Vec3::ZERO;
             continue;
         }
         let pos = mover.loco.position;
@@ -815,7 +832,7 @@ fn drive(
                     (walker.driver.stuck_count(), walker.driver.current_edge(pos));
                 let out = walker
                     .driver
-                    .step_htn(graph, &ctx, &exec_cfg, hours, entry.as_mut());
+                    .step_htn(graph, &ctx, &exec_cfg, entry.as_mut());
                 if walker.driver.stuck_count() > stuck {
                     let _ = give_ups.record(entity, mover, edge, ground.probe());
                     modes.navmesh_give_ups += 1;
@@ -864,7 +881,7 @@ fn drive(
                 clear_corridor_goal(nav, queries.as_deref_mut());
             }
             let (stuck, edge) = (walker.driver.stuck_count(), walker.driver.current_edge(pos));
-            let out = walker.driver.update_fallback(graph, pos, dt, hours, &exec_cfg);
+            let out = walker.driver.update_fallback(graph, pos, dt, &exec_cfg);
             if walker.driver.stuck_count() > stuck {
                 let kind = give_ups.record(entity, mover, edge, ground.probe());
                 if let Some((from, to)) = edge {

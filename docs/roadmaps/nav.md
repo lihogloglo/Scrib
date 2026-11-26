@@ -110,7 +110,7 @@ Ends with: a guard follows you over a 1.2 m wall, drops off a ledge, swims a can
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| NV9a | Link contract: `TraverseKind` on arrival → handoff event, release, failure cost | `sf_nav`, `sf_nav_bevy` | NV0c | link events in order; failed link avoided |
+| NV9a | Link contract: `TraverseKind` on arrival → handoff event, release, failure cost; an actor reaching a link at tier 1 is pinned to tier 2 for the traversal (ai.md AI0f `TraverseLink`) | `sf_nav`, `sf_nav_bevy` | NV0c | link events in order; failed link avoided |
 | NV9b | Bake-time auto drop/jump-down links per class envelope | `sf_nav_bake` | NV9a | exact links on a synthetic ledge level |
 | NV9c | Interaction links: ladders, ledges, vault edges from `sf_interaction` slots | `sf_nav_bake`, `mw_bake` | NV9a, IN43 | exact; owner with AI33 (AI-7) |
 | NV9d | Pathgrid links the mesh misses; area costs per class (water, hazard, path) | `mw_bake`, `sf_nav` | NV9a | path takes the cheaper area |
@@ -141,7 +141,7 @@ Ends with: a pilgrim walks Balmora to Caldera; leave and come back, and she's fu
 | NV12c1 | `nav.routes` step + `RouteSource` seam (`sf_nav_bake`) (**done 2026-11-26**: `RouteBake`, `RouteInput`, bake tunables `ai.nav.route.simplify_m`/`door_connect_m`; 6 exact tests, sf_nav_bake 11 pass) | `sf_nav_bake` | NV12a | baked = builder output, shuffled input same bytes, reads/params re-bake, `None` = zero bytes, format prefix |
 | NV12c2 | Morrowind `RouteSource` (`mw_bake`): ai-adapter.md "Route source" rules 1-8; `approach_point` moved to Bevy-free `mw_ai::nav`, MA21 calls it (**done 2026-11-26**: 10 exact tests; real install 8794 nodes / 17712 edges / 1.31 MiB, 220 components; **Balmora → Caldera `Unreachable`**: vanilla has 148 exterior PGRDs, settlements only, so no inter-town roads; open question for NV12d) | `mw_bake`, `mw_ai`, `mw_exterior_bevy` | NV12c1, MA21, NV0d | Balmora → Caldera anchor route is `Graph`; door nodes = `WorldGraph` approaches; component histogram printed |
 | NV12c3 | Inter-town edges for the Morrowind route graph: vanilla exterior PGRDs cover settlements only (NV12c2: 220 components), so components are bridged by Detour walks on the baked humanoid navmesh between the nearest anchor/door nodes of neighbouring components (kind `Path`, measured cost; NV12d's walk machinery); road LTEX under a walk may later mark it `Road` | `mw_bake`, `sf_nav_bake` | NV12c2, NV12d | Balmora → Caldera anchor route is `Graph` (measurement assert); bridged-component histogram printed; worst route time on the joined graph |
-| NV12d | Bake-measured edge costs (Detour walk per edge into `cost_m`, class bit cleared on failure), `nav.coarse` + `CoarseGraph` deleted | `sf_nav_bake` | NV12b or NV12c | every `cost_m` ≥ `length_m`; failing class cleared on a synthetic wall; clamp count printed |
+| NV12d | Bake-measured edge costs (Detour walk per edge into `cost_m`, class bit cleared on failure; edge times include link traversal time, ai.md AI0f), `nav.coarse` + `CoarseGraph` deleted | `sf_nav_bake` | NV12b or NV12c | every `cost_m` ≥ `length_m`; failing class cleared on a synthetic wall; clamp count printed |
 | NV12e | `journey`: one A* over route graphs + `WorldGraph` door hops (interiors = straight clique) | `sf_nav` | NV12a | exact 3-space journey; locked door reroutes; ties by id |
 | NV12f | `NavRouteGraphs` resource from `nav.routes` products, `nav.routes` console | `sf_nav_bevy` | NV12a | headless load, counts logged |
 

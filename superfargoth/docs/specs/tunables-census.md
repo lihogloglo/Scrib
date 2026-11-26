@@ -139,30 +139,30 @@ Found while reviewing; the migration slice of each system greps its own files fo
 Written by `node tools/tunables-census.mjs` (do not edit by hand; edit the rules table at the top of the script).
 Per system, then per crate: the T and ? rows in full, the C rows as one line. Paths are relative to the crate.
 
-Sources: 1657 consts, 946 `Default` fields, 225 shader consts (98 of them T: each needs a uniform before it can be live). Opt-outs (`// tunables: const (reason)`): 447.
+Sources: 1701 consts, 932 `Default` fields, 225 shader consts (97 of them T: each needs a uniform before it can be live). Opt-outs (`// tunables: const (reason)`): 519.
 
 | System | Candidates | T | C | ? |
 |---|---:|---:|---:|---:|
-| ai-nav | 183 | 23 | 143 | 17 |
-| animation-characters | 206 | 127 | 64 | 15 |
+| ai-nav | 215 | 23 | 175 | 17 |
+| animation-characters | 208 | 127 | 66 | 15 |
 | app-diag | 79 | 35 | 32 | 12 |
 | audio | 43 | 36 | 1 | 6 |
 | effects | 56 | 11 | 44 | 1 |
-| feel-camera-combat | 207 | 153 | 13 | 41 |
-| other | 378 | 71 | 239 | 68 |
-| physics | 147 | 126 | 8 | 13 |
+| feel-camera-combat | 210 | 153 | 16 | 41 |
+| other | 391 | 72 | 245 | 74 |
+| physics | 147 | 125 | 9 | 13 |
 | shadows-lights-gi | 50 | 35 | 12 | 3 |
-| sky-weather-surface | 660 | 306 | 179 | 175 |
-| statics-lod-farfield | 114 | 66 | 35 | 13 |
-| streaming-exterior | 293 | 93 | 178 | 22 |
-| terrain-water | 305 | 137 | 98 | 70 |
+| sky-weather-surface | 660 | 305 | 180 | 175 |
+| statics-lod-farfield | 114 | 64 | 37 | 13 |
+| streaming-exterior | 295 | 68 | 205 | 22 |
+| terrain-water | 283 | 114 | 99 | 70 |
 | textures | 21 | 10 | 6 | 5 |
-| ui | 86 | 52 | 7 | 27 |
-| **total** | **2828** | **1281** | **1059** | **488** |
+| ui | 86 | 50 | 9 | 27 |
+| **total** | **2858** | **1228** | **1136** | **494** |
 
 ## ai-nav
 
-### mw_ai (19: T 5, C 12, ? 2)
+### mw_ai (40: T 5, C 33, ? 2)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -174,9 +174,9 @@ Sources: 1657 consts, 946 `Default` fields, 225 shader consts (98 of them T: eac
 | src/wander.rs:34 | DEFAULT_IDLE_SECONDS | `5.0` | ? |  |
 | src/wander.rs:41 | START_RADIUS | `1.0` | T |  |
 
-Stays const: PRIORITY_WANDER_FACE (opt-out: HTN method priority ordering: face > idle > walk > stand), PRIORITY_WANDER_IDLE (opt-out: HTN method priority ordering: face > idle > walk > stand), PRIORITY_WANDER_WALK (opt-out: HTN method priority ordering: face > idle > walk > stand), PRIORITY_WANDER_STAND (opt-out: HTN method priority ordering: face > idle > walk > stand), WanderTuning.walk_backstop_mult (opt-out: bound from mw.ai.wander.walk_backstop_mult in mw_walkers_bevy), WanderTuning.walk_slack_s (opt-out: bound from mw.ai.wander.walk_slack_s in mw_walkers_bevy), WanderTuning.same_goal_m (opt-out: bound from mw.ai.wander.same_goal_m in mw_walkers_bevy), WanderTuning.give_up_pause_min_s (opt-out: bound from mw.ai.wander.give_up_pause_min_s in mw_walkers_bevy), WanderTuning.give_up_pause_jitter_s (opt-out: bound from mw.ai.wander.give_up_pause_jitter_s in mw_walkers_bevy), NOWHERE (sentinel/derived), GOAL_TRIES (small index), BLOCKED_EDGES (small index).
+Stays const: PRIORITY_WANDER_FACE (opt-out: HTN method priority ordering: face > idle > walk > stand), PRIORITY_WANDER_IDLE (opt-out: HTN method priority ordering: face > idle > walk > stand), PRIORITY_WANDER_WALK (opt-out: HTN method priority ordering: face > idle > walk > stand), PRIORITY_WANDER_STAND (opt-out: HTN method priority ordering: face > idle > walk > stand), WanderTuning.walk_backstop_mult (opt-out: bound from mw.ai.wander.walk_backstop_mult in mw_walkers_bevy), WanderTuning.walk_slack_s (opt-out: bound from mw.ai.wander.walk_slack_s in mw_walkers_bevy), WanderTuning.same_goal_m (opt-out: bound from mw.ai.wander.same_goal_m in mw_walkers_bevy), WanderTuning.give_up_pause_min_s (opt-out: bound from mw.ai.wander.give_up_pause_min_s in mw_walkers_bevy), WanderTuning.give_up_pause_jitter_s (opt-out: bound from mw.ai.wander.give_up_pause_jitter_s in mw_walkers_bevy), NOWHERE (sentinel/derived), AGGRESSIVE_AT (opt-out: OpenMW formula threshold, not a knob), FIGHT_DISTANCE_BASE (opt-out: vanilla GMST fallback; the game reads its records), FIGHT_DISTANCE_MULTIPLIER (opt-out: vanilla GMST fallback; the game reads its records), FIGHT_DISP_MULT (opt-out: vanilla GMST fallback; the game reads its records), WEREWOLF_FIGHT_MOD (opt-out: vanilla GMST fallback; the game reads its records), FLEE_AT (opt-out: OpenMW formula threshold, not a knob), FLEE_ACTION_COOLDOWN_S (opt-out: OpenMW constant, ported rule), FLEE_BLIND_RUN_S (opt-out: OpenMW constant, ported rule), FLEE_TRIGGER_ANY_DISTANCE (opt-out: OpenMW constant, ported rule), AI_FLEE_HEALTH_MULT (opt-out: vanilla GMST fallback; the game reads its records), AI_FLEE_FLEE_MULT (opt-out: vanilla GMST fallback; the game reads its records), WEREWOLF_LEVEL_TO_ATTACK (opt-out: vanilla GMST fallback; the game reads its records), WEREWOLF_FLEE_MOD (opt-out: vanilla GMST fallback; the game reads its records), FLEE_DISTANCE (opt-out: vanilla GMST fallback; the game reads its records), GREET_UPDATE_INTERVAL_S (opt-out: OpenMW constant, ported rule), GREET_INITIAL_DELAY (opt-out: OpenMW constant, ported rule), GREET_TURN_EPSILON_RAD (opt-out: OpenMW constant, ported rule), GREET_SMOOTH_TURN_MIN_RAD (opt-out: OpenMW constant, ported rule), GREET_DISTANCE_MULTIPLIER (opt-out: vanilla GMST fallback; the game reads its records), GREET_DURATION (opt-out: vanilla GMST fallback; the game reads its records), GREET_DISTANCE_RESET (opt-out: vanilla GMST fallback; the game reads its records), GOAL_TRIES (small index), BLOCKED_EDGES (small index).
 
-### sf_ai (88: T 3, C 84, ? 1)
+### sf_ai (89: T 3, C 85, ? 1)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -185,9 +185,9 @@ Stays const: PRIORITY_WANDER_FACE (opt-out: HTN method priority ordering: face >
 | src/htn.rs:66 | SEARCH_TRIES | `4096` | ? |  |
 | src/trace.rs:37 | DEFAULT_TRACE_CAP | `256` | T |  |
 
-Stays const: AllocConfig.full_margin_m (opt-out: bound from ai.alloc.full_margin_m in sf_ai_bevy; Guess: a few strides, MassLOD-style buffer), AllocConfig.reduced_margin_m (opt-out: bound from ai.alloc.reduced_margin_m in sf_ai_bevy; Guess: wider outer band, MassLOD-style buffer), AllocConfig.full_decide_s (opt-out: bound from ai.alloc.full_decide_s in sf_ai_bevy; source: ai.md tier 2 "5-10 Hz"), AllocConfig.reduced_decide_s (opt-out: bound from ai.alloc.reduced_decide_s in sf_ai_bevy; source: ai.md tier 1 "~1 Hz"), PLANAR_EPS_SQ (opt-out: degenerate zero-length planar vector epsilon), TIMER_EPS_S (opt-out: sub-microsecond timer epsilon for fixed-tick countdown), ExecConfig.stuck_timeout_s (opt-out: bound from ai.exec.stuck_timeout_s in sf_ai_bevy), ExecConfig.progress_min_m (opt-out: bound from ai.exec.progress_min_m in sf_ai_bevy), ExecConfig.face_tolerance_rad (opt-out: bound from ai.exec.face_tolerance_rad in sf_ai_bevy), ExecConfig.arrive_dist_m (opt-out: bound from ai.exec.arrive_dist_m in sf_ai_bevy), VISIBILITY_MODIFIERS_CAPACITY (layout/math/id), MAX_LIGHT_RAYS (opt-out: capacity: ai.md caps light_rays at 4; the tunable is LightConfig.light_rays), VisibilityFactors.light (opt-out: neutral input: full light, the target hides nothing), VisibilityFactors.speed_mps (opt-out: neutral input: standing still), VisibilityFactors.size (opt-out: identity ratio: a standard humanoid), VisibilityFactors.noise_mul (opt-out: identity ratio: unscaled noise), VisibilityFactors.disguise (opt-out: neutral input: no disguise), LightConfig.light_search_m (opt-out: bound from ai.perception.light_search_m in sf_ai_bevy; ai.md table), LightConfig.light_rays (opt-out: bound from ai.perception.light_rays in sf_ai_bevy; ai.md table), LightConfig.dark_threshold (opt-out: bound from ai.perception.dark_threshold in sf_ai_bevy; ai.md table), LightConfig.roof_sky_mul (opt-out: bound from ai.perception.roof_sky_mul in sf_ai_bevy; Guess: indirect skylight under an open-sided roof), LightConfig.light_falloff_exp (opt-out: bound from ai.perception.light_falloff_exp in sf_ai_bevy; Guess, UE4/Frostbite window uses 4), FULL (opt-out: ai.md: Alerted is level 1, the top of the 0..1 meter), CERTAIN (opt-out: ai.md: a sighting, touch or hit places the target exactly; confidence is 0..1), AwarenessConfig.curious (opt-out: bound from ai.awareness.curious in sf_ai_bevy), AwarenessConfig.suspicious (opt-out: bound from ai.awareness.suspicious in sf_ai_bevy), AwarenessConfig.searching (opt-out: bound from ai.awareness.searching in sf_ai_bevy), AwarenessConfig.band_hysteresis (opt-out: bound from ai.awareness.band_hysteresis in sf_ai_bevy), AwarenessConfig.alert_hold_s (opt-out: bound from ai.awareness.alert_hold_s in sf_ai_bevy), AwarenessConfig.decay_delay_s (opt-out: bound from ai.awareness.decay_delay_s in sf_ai_bevy), AwarenessConfig.decay_curious (opt-out: bound from ai.awareness.decay_curious in sf_ai_bevy), AwarenessConfig.decay_suspicious (opt-out: bound from ai.awareness.decay_suspicious in sf_ai_bevy), AwarenessConfig.decay_searching (opt-out: bound from ai.awareness.decay_searching in sf_ai_bevy), AwarenessConfig.noise_gain (opt-out: bound from ai.awareness.noise_gain in sf_ai_bevy), AwarenessConfig.noise_cap (opt-out: bound from ai.awareness.noise_cap in sf_ai_bevy), AwarenessConfig.noise_confidence (opt-out: bound from ai.awareness.noise_confidence in sf_ai_bevy), AwarenessConfig.asleep_wake_m (opt-out: bound from ai.awareness.asleep_wake_m in sf_ai_bevy), AwarenessConfig.groggy_s (opt-out: bound from ai.awareness.groggy_s in sf_ai_bevy), AwarenessConfig.max_entries (opt-out: bound from ai.awareness.max_entries in sf_ai_bevy), AwarenessConfig.distraction_ttl_s (opt-out: bound from ai.awareness.distraction_ttl_s in sf_ai_bevy; Guess), AwarenessConfig.alert_alertness (opt-out: bound from ai.awareness.alert_alertness in sf_ai_bevy; Guess), AwarenessConfig.groggy_alertness (opt-out: bound from ai.awareness.groggy_alertness in sf_ai_bevy; Guess), AwarenessConfig.notify_speed_mps (opt-out: bound from ai.awareness.notify_speed_mps in sf_ai_bevy; Guess), AwarenessConfig.notify_react_s (opt-out: bound from ai.awareness.notify_react_s in sf_ai_bevy; Guess), AwarenessConfig.notify_confidence_mul (opt-out: bound from ai.awareness.notify_confidence_mul in sf_ai_bevy; Guess), AwarenessConfig.notify_max_hops (opt-out: bound from ai.awareness.notify_max_hops in sf_ai_bevy; Guess), IDENTITY (opt-out: identity ratio: 1.0 leaves the global tunable unchanged, ai.md), MAX_HALF_DEG (opt-out: maths: a half-angle never exceeds a full circle's half, ai.md "≤ 180°"), PERCEPTION_STATES_CAPACITY (layout/math/id), SightConfig.sight_range_m (opt-out: bound from ai.perception.sight_range_m in sf_ai_bevy; Guess), SightConfig.lose_sight_range_m (opt-out: bound from ai.perception.lose_sight_range_m in sf_ai_bevy; Guess), SightConfig.near_m (opt-out: bound from ai.perception.near_m in sf_ai_bevy; Guess), SightConfig.central_half_deg (opt-out: bound from ai.perception.central_half_deg in sf_ai_bevy; Guess), SightConfig.peripheral_half_deg (opt-out: bound from ai.perception.peripheral_half_deg in sf_ai_bevy; Guess), SightConfig.peripheral_mul (opt-out: bound from ai.perception.peripheral_mul in sf_ai_bevy; Guess), SightConfig.rate (opt-out: bound from ai.perception.rate in sf_ai_bevy; Guess), SearchConfig.search_ttl_s (opt-out: bound from ai.perception.search_ttl_s in sf_ai_bevy; Guess), SearchConfig.search_error_m (opt-out: bound from ai.perception.search_error_m in sf_ai_bevy; Guess), SearchConfig.search_widen_mps (opt-out: bound from ai.perception.search_widen_mps in sf_ai_bevy; Guess), PLANAR_EPS_SQ (opt-out: maths: planar coincidence epsilon, as exec's PLANAR_EPS_SQ), ReactConfig.step_m (opt-out: bound from ai.perception.react_step_m in sf_ai_bevy; Guess: a few strides, AC/Hitman suspicious walk), ReactConfig.retarget_m (opt-out: bound from ai.perception.react_retarget_m in sf_ai_bevy; Guess: about one stride of target motion), ReactConfig.hold_s (opt-out: bound from ai.perception.react_hold_s in sf_ai_bevy; Guess: keeps the goal from flickering), ReactConfig.face_delay_s (opt-out: bound from ai.perception.react_face_delay_s in sf_ai_bevy; Guess: human reaction ~0.2-0.3 s), AI_VERSION (layout/math/id), SearchPatternConfig.ring_points (opt-out: bound from ai.perception.search_ring_points in sf_ai_bevy; Guess), SearchPatternConfig.look_half_deg (opt-out: bound from ai.perception.search_look_half_deg in sf_ai_bevy; Guess), SearchPatternConfig.uncertain_mul (opt-out: bound from ai.perception.search_uncertain_mul in sf_ai_bevy; Guess), SearchPatternConfig.inner_frac (opt-out: bound from ai.perception.search_inner_frac in sf_ai_bevy; Guess), LOOK_SALT (opt-out: format: hash salt separating look draws from ring draws), ROT_SALT (opt-out: format: hash salts separating the ring rotation from slot draws), SLOT_SALT (opt-out: format: hash salts separating the ring rotation from slot draws), BITS (opt-out: maths: f32 mantissa width), AT_EYE_M (opt-out: maths: below this distance the target sits at the eye, any direction counts as central), SightBudget.skip_gain (opt-out: bound from ai.perception.skip_gain in sf_ai_bevy; Guess), SightBudget.sight_period_s (opt-out: bound from ai.perception.sight_period_s in sf_ai_bevy; Guess), SightBudget.tier1_period_s (opt-out: bound from ai.perception.tier1_period_s in sf_ai_bevy; Guess), SightBudget.max_rays_per_tick (opt-out: bound from ai.perception.max_rays_per_tick in sf_ai_bevy, Floor tier; Guess), SightBudget.sight_cache_s (opt-out: bound from ai.perception.sight_cache_s in sf_ai_bevy; Guess), SightBudget.cache_move_m (opt-out: bound from ai.perception.cache_move_m in sf_ai_bevy; Guess), M1 (opt-out: maths: splitmix64 constants), M2 (opt-out: maths: splitmix64 constants), GOLDEN (opt-out: maths: splitmix64 golden-ratio increment), TRACE_LEN (layout/math/id).
+Stays const: AllocConfig.full_margin_m (opt-out: bound from ai.alloc.full_margin_m in sf_ai_bevy; Guess: a few strides, MassLOD-style buffer), AllocConfig.reduced_margin_m (opt-out: bound from ai.alloc.reduced_margin_m in sf_ai_bevy; Guess: wider outer band, MassLOD-style buffer), AllocConfig.full_decide_s (opt-out: bound from ai.alloc.full_decide_s in sf_ai_bevy; source: ai.md tier 2 "5-10 Hz"), AllocConfig.reduced_decide_s (opt-out: bound from ai.alloc.reduced_decide_s in sf_ai_bevy; source: ai.md tier 1 "~1 Hz"), RANK_IDX_BITS (opt-out: layout: low bits of a packed rank key hold the entry index), PLANAR_EPS_SQ (opt-out: degenerate zero-length planar vector epsilon), TIMER_EPS_S (opt-out: sub-microsecond timer epsilon for fixed-tick countdown), ExecConfig.stuck_timeout_s (opt-out: bound from ai.exec.stuck_timeout_s in sf_ai_bevy), ExecConfig.progress_min_m (opt-out: bound from ai.exec.progress_min_m in sf_ai_bevy), ExecConfig.face_tolerance_rad (opt-out: bound from ai.exec.face_tolerance_rad in sf_ai_bevy), ExecConfig.arrive_dist_m (opt-out: bound from ai.exec.arrive_dist_m in sf_ai_bevy), VISIBILITY_MODIFIERS_CAPACITY (layout/math/id), MAX_LIGHT_RAYS (opt-out: capacity: ai.md caps light_rays at 4; the tunable is LightConfig.light_rays), VisibilityFactors.light (opt-out: neutral input: full light, the target hides nothing), VisibilityFactors.speed_mps (opt-out: neutral input: standing still), VisibilityFactors.size (opt-out: identity ratio: a standard humanoid), VisibilityFactors.noise_mul (opt-out: identity ratio: unscaled noise), VisibilityFactors.disguise (opt-out: neutral input: no disguise), LightConfig.light_search_m (opt-out: bound from ai.perception.light_search_m in sf_ai_bevy; ai.md table), LightConfig.light_rays (opt-out: bound from ai.perception.light_rays in sf_ai_bevy; ai.md table), LightConfig.dark_threshold (opt-out: bound from ai.perception.dark_threshold in sf_ai_bevy; ai.md table), LightConfig.roof_sky_mul (opt-out: bound from ai.perception.roof_sky_mul in sf_ai_bevy; Guess: indirect skylight under an open-sided roof), LightConfig.light_falloff_exp (opt-out: bound from ai.perception.light_falloff_exp in sf_ai_bevy; Guess, UE4/Frostbite window uses 4), FULL (opt-out: ai.md: Alerted is level 1, the top of the 0..1 meter), CERTAIN (opt-out: ai.md: a sighting, touch or hit places the target exactly; confidence is 0..1), AwarenessConfig.curious (opt-out: bound from ai.awareness.curious in sf_ai_bevy), AwarenessConfig.suspicious (opt-out: bound from ai.awareness.suspicious in sf_ai_bevy), AwarenessConfig.searching (opt-out: bound from ai.awareness.searching in sf_ai_bevy), AwarenessConfig.band_hysteresis (opt-out: bound from ai.awareness.band_hysteresis in sf_ai_bevy), AwarenessConfig.alert_hold_s (opt-out: bound from ai.awareness.alert_hold_s in sf_ai_bevy), AwarenessConfig.decay_delay_s (opt-out: bound from ai.awareness.decay_delay_s in sf_ai_bevy), AwarenessConfig.decay_curious (opt-out: bound from ai.awareness.decay_curious in sf_ai_bevy), AwarenessConfig.decay_suspicious (opt-out: bound from ai.awareness.decay_suspicious in sf_ai_bevy), AwarenessConfig.decay_searching (opt-out: bound from ai.awareness.decay_searching in sf_ai_bevy), AwarenessConfig.noise_gain (opt-out: bound from ai.awareness.noise_gain in sf_ai_bevy), AwarenessConfig.noise_cap (opt-out: bound from ai.awareness.noise_cap in sf_ai_bevy), AwarenessConfig.noise_confidence (opt-out: bound from ai.awareness.noise_confidence in sf_ai_bevy), AwarenessConfig.asleep_wake_m (opt-out: bound from ai.awareness.asleep_wake_m in sf_ai_bevy), AwarenessConfig.groggy_s (opt-out: bound from ai.awareness.groggy_s in sf_ai_bevy), AwarenessConfig.max_entries (opt-out: bound from ai.awareness.max_entries in sf_ai_bevy), AwarenessConfig.distraction_ttl_s (opt-out: bound from ai.awareness.distraction_ttl_s in sf_ai_bevy; Guess), AwarenessConfig.alert_alertness (opt-out: bound from ai.awareness.alert_alertness in sf_ai_bevy; Guess), AwarenessConfig.groggy_alertness (opt-out: bound from ai.awareness.groggy_alertness in sf_ai_bevy; Guess), AwarenessConfig.notify_speed_mps (opt-out: bound from ai.awareness.notify_speed_mps in sf_ai_bevy; Guess), AwarenessConfig.notify_react_s (opt-out: bound from ai.awareness.notify_react_s in sf_ai_bevy; Guess), AwarenessConfig.notify_confidence_mul (opt-out: bound from ai.awareness.notify_confidence_mul in sf_ai_bevy; Guess), AwarenessConfig.notify_max_hops (opt-out: bound from ai.awareness.notify_max_hops in sf_ai_bevy; Guess), IDENTITY (opt-out: identity ratio: 1.0 leaves the global tunable unchanged, ai.md), MAX_HALF_DEG (opt-out: maths: a half-angle never exceeds a full circle's half, ai.md "≤ 180°"), PERCEPTION_STATES_CAPACITY (layout/math/id), SightConfig.sight_range_m (opt-out: bound from ai.perception.sight_range_m in sf_ai_bevy; Guess), SightConfig.lose_sight_range_m (opt-out: bound from ai.perception.lose_sight_range_m in sf_ai_bevy; Guess), SightConfig.near_m (opt-out: bound from ai.perception.near_m in sf_ai_bevy; Guess), SightConfig.central_half_deg (opt-out: bound from ai.perception.central_half_deg in sf_ai_bevy; Guess), SightConfig.peripheral_half_deg (opt-out: bound from ai.perception.peripheral_half_deg in sf_ai_bevy; Guess), SightConfig.peripheral_mul (opt-out: bound from ai.perception.peripheral_mul in sf_ai_bevy; Guess), SightConfig.rate (opt-out: bound from ai.perception.rate in sf_ai_bevy; Guess), SearchConfig.search_ttl_s (opt-out: bound from ai.perception.search_ttl_s in sf_ai_bevy; Guess), SearchConfig.search_error_m (opt-out: bound from ai.perception.search_error_m in sf_ai_bevy; Guess), SearchConfig.search_widen_mps (opt-out: bound from ai.perception.search_widen_mps in sf_ai_bevy; Guess), PLANAR_EPS_SQ (opt-out: maths: planar coincidence epsilon, as exec's PLANAR_EPS_SQ), ReactConfig.step_m (opt-out: bound from ai.perception.react_step_m in sf_ai_bevy; Guess: a few strides, AC/Hitman suspicious walk), ReactConfig.retarget_m (opt-out: bound from ai.perception.react_retarget_m in sf_ai_bevy; Guess: about one stride of target motion), ReactConfig.hold_s (opt-out: bound from ai.perception.react_hold_s in sf_ai_bevy; Guess: keeps the goal from flickering), ReactConfig.face_delay_s (opt-out: bound from ai.perception.react_face_delay_s in sf_ai_bevy; Guess: human reaction ~0.2-0.3 s), AI_VERSION (layout/math/id), SearchPatternConfig.ring_points (opt-out: bound from ai.perception.search_ring_points in sf_ai_bevy; Guess), SearchPatternConfig.look_half_deg (opt-out: bound from ai.perception.search_look_half_deg in sf_ai_bevy; Guess), SearchPatternConfig.uncertain_mul (opt-out: bound from ai.perception.search_uncertain_mul in sf_ai_bevy; Guess), SearchPatternConfig.inner_frac (opt-out: bound from ai.perception.search_inner_frac in sf_ai_bevy; Guess), LOOK_SALT (opt-out: format: hash salt separating look draws from ring draws), ROT_SALT (opt-out: format: hash salts separating the ring rotation from slot draws), SLOT_SALT (opt-out: format: hash salts separating the ring rotation from slot draws), BITS (opt-out: maths: f32 mantissa width), AT_EYE_M (opt-out: maths: below this distance the target sits at the eye, any direction counts as central), SightBudget.skip_gain (opt-out: bound from ai.perception.skip_gain in sf_ai_bevy; Guess), SightBudget.sight_period_s (opt-out: bound from ai.perception.sight_period_s in sf_ai_bevy; Guess), SightBudget.tier1_period_s (opt-out: bound from ai.perception.tier1_period_s in sf_ai_bevy; Guess), SightBudget.max_rays_per_tick (opt-out: bound from ai.perception.max_rays_per_tick in sf_ai_bevy, Floor tier; Guess), SightBudget.sight_cache_s (opt-out: bound from ai.perception.sight_cache_s in sf_ai_bevy; Guess), SightBudget.cache_move_m (opt-out: bound from ai.perception.cache_move_m in sf_ai_bevy; Guess), M1 (opt-out: maths: splitmix64 constants), M2 (opt-out: maths: splitmix64 constants), GOLDEN (opt-out: maths: splitmix64 golden-ratio increment), TRACE_LEN (layout/math/id).
 
-### sf_ai_bevy (33: T 3, C 26, ? 4)
+### sf_ai_bevy (37: T 3, C 30, ? 4)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -195,13 +195,13 @@ Stays const: AllocConfig.full_margin_m (opt-out: bound from ai.alloc.full_margin
 | src/gizmos.rs:36 | LINE_STEP | `0.17` | T |  |
 | src/gizmos.rs:38 | TEXT_LIFT | `2.1` | ? |  |
 | src/gizmos.rs:39 | RING_RADIUS | `0.55` | T |  |
-| src/lib.rs:113 | AiPlugin.timings | `true` | ? | bool |
+| src/lib.rs:129 | AiPlugin.timings | `true` | ? | bool |
 | src/perception_gizmos.rs:70 | ARC_SEGMENTS_FULL | `48.0` | ? |  |
 | src/perception_gizmos.rs:81 | TEXT_LIFT | `2.45` | ? |  |
 
-Stays const: HearingConfig.closed_door_m (opt-out: bound from ai.perception.closed_door_m), DEFAULT_TRACE_LINES (small index), AiLightInputs.sky (opt-out: input default: full daylight, the identity until the host writes it), AiLightInputs.interior (opt-out: input default: full daylight, the identity until the host writes it), DRAW_DISTANCE_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), NOISE_WINDOW_S (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), NOISE_CAPACITY (layout/math/id), GROUND_LIFT_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), TEXT_SIZE (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), LINE_STEP (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), SELECTED_RING_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), LKP_RADIUS_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), HELD_RING_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), GOAL_CROSS_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), LIGHT_ABOVE_HEAD_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), LIGHT_DOT_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), NOISE_SPOT_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), FADED (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), VISIBILITY_UNMODELLED (opt-out: maths: the identity of the visibility factor), RAY_QUEUE_CAPACITY (opt-out: capacity: fixed-size request queue, ~10x the 48-actor tier-2 load; overflow refuses), SIGHT_CACHE_CAPACITY (opt-out: capacity: fixed-size (observer, target), RAY_BATCH_SCRATCH (opt-out: capacity: ray scratch per batch, the max_rays_per_tick range's top), MIN_RAY_M (opt-out: maths: a segment shorter than this reaches its end), AiRays.queue (opt-out: capacities, the consts above), AiRays.refused (opt-out: a counter's start), AiRays.light_cast (opt-out: a counter's start).
+Stays const: AiAllocStats.tick (opt-out: state: the tick counter starts before the first tick), AiAllocPlugin.timings (opt-out: switch the host passes, like AiPlugin::timings), MICROS_PER_S (opt-out: maths: seconds to microseconds), HearingConfig.closed_door_m (opt-out: bound from ai.perception.closed_door_m, ai.perception.noise_max_hops), HearingConfig.max_hops (opt-out: bound from ai.perception.closed_door_m, ai.perception.noise_max_hops), DEFAULT_TRACE_LINES (small index), AiLightInputs.sky (opt-out: input default: full daylight, the identity until the host writes it), AiLightInputs.interior (opt-out: input default: full daylight, the identity until the host writes it), DRAW_DISTANCE_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), NOISE_WINDOW_S (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), NOISE_CAPACITY (layout/math/id), GROUND_LIFT_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), TEXT_SIZE (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), LINE_STEP (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), SELECTED_RING_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), LKP_RADIUS_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), HELD_RING_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), GOAL_CROSS_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), LIGHT_ABOVE_HEAD_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), LIGHT_DOT_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), NOISE_SPOT_M (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), FADED (opt-out: layout: dev-only perception overlay draw size/range, not gameplay), VISIBILITY_UNMODELLED (opt-out: maths: the identity of the visibility factor), RAY_QUEUE_CAPACITY (opt-out: capacity: fixed-size request queue, ~10x the 48-actor tier-2 load; overflow refuses), SIGHT_CACHE_CAPACITY (opt-out: capacity: fixed-size (observer, target), RAY_BATCH_SCRATCH (opt-out: capacity: ray scratch per batch, the max_rays_per_tick range's top), MIN_RAY_M (opt-out: maths: a segment shorter than this reaches its end), AiRays.queue (opt-out: capacities, the consts above), AiRays.refused (opt-out: a counter's start), AiRays.light_cast (opt-out: a counter's start).
 
-### sf_nav (19: T 3, C 15, ? 1)
+### sf_nav (25: T 3, C 21, ? 1)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -210,7 +210,7 @@ Stays const: HearingConfig.closed_door_m (opt-out: bound from ai.perception.clos
 | src/types.rs:13 | MAX_CLASSES | `8` | T |  |
 | src/types.rs:16 | MAX_AREAS | `64` | T |  |
 
-Stays const: CORNER_PRUNE_DIST_M (opt-out: Detour dtPathCorridor findCorners 1 cm pruning epsilon), MAX_CORRIDOR_POLYS (opt-out: corridor polygon cap matching RecastConfig::max_path), VISIBILITY_OVERSHOOT_M (opt-out: Detour optimizePathVisibility 1 cm ray overshoot past the next corner), VISIBILITY_CLEAR_T (opt-out: Detour optimizePathVisibility `t > 0.99` clear-ray acceptance), CorridorConfig.max_corners (opt-out: bound from ai.nav.corridor.max_corners in sf_nav_bevy), CorridorConfig.lookahead_polys (opt-out: bound from ai.nav.corridor.lookahead_polys in sf_nav_bevy), CorridorConfig.optimize_range_m (opt-out: bound from ai.nav.corridor.optimize_range_m in sf_nav_bevy), CorridorConfig.topology_period_s (opt-out: bound from ai.nav.corridor.topology_period_s in sf_nav_bevy), CorridorConfig.repair_drift_m (opt-out: bound from ai.nav.corridor.repair_drift_m in sf_nav_bevy), CorridorConfig.repair_nodes (opt-out: bound from ai.nav.corridor.repair_nodes in sf_nav_bevy), BLOB_VERSION (layout/math/id), EPS (layout/math/id), FIELD_BITS (layout/math/id), FIELD_MASK (layout/math/id), EDGE_BISECT_STEPS (opt-out: maths: bisection precision, far below any tile or snap size).
+Stays const: CORNER_PRUNE_DIST_M (opt-out: Detour dtPathCorridor findCorners 1 cm pruning epsilon), MAX_CORRIDOR_POLYS (opt-out: corridor polygon cap matching RecastConfig::max_path), VISIBILITY_OVERSHOOT_M (opt-out: Detour optimizePathVisibility 1 cm ray overshoot past the next corner), VISIBILITY_CLEAR_T (opt-out: Detour optimizePathVisibility `t > 0.99` clear-ray acceptance), CorridorConfig.max_corners (opt-out: bound from ai.nav.corridor.max_corners in sf_nav_bevy), CorridorConfig.lookahead_polys (opt-out: bound from ai.nav.corridor.lookahead_polys in sf_nav_bevy), CorridorConfig.optimize_range_m (opt-out: bound from ai.nav.corridor.optimize_range_m in sf_nav_bevy), CorridorConfig.topology_period_s (opt-out: bound from ai.nav.corridor.topology_period_s in sf_nav_bevy), CorridorConfig.repair_drift_m (opt-out: bound from ai.nav.corridor.repair_drift_m in sf_nav_bevy), CorridorConfig.repair_nodes (opt-out: bound from ai.nav.corridor.repair_nodes in sf_nav_bevy), BLOB_VERSION (layout/math/id), EPS (layout/math/id), FIELD_BITS (layout/math/id), FIELD_MASK (layout/math/id), RouteBuildRules.simplify_m (opt-out: bound from ai.nav.route.simplify_m in sf_nav_bake, NV12f; Guess), RouteBuildRules.door_connect_m (opt-out: bound from ai.nav.route.door_connect_m in sf_nav_bake, NV12f; Guess), ROUTE_GRAPH_FORMAT (layout/math/id), MAX_EDGE_M (opt-out: format: f32 offset precision), ROUTE_ID_POS_STEP (opt-out: format: id quantum), DEFAULT_GRID_CELL_M (opt-out: bound from ai.nav.route.grid_cell_m in sf_nav_bevy, NV12f; Guess), EDGE_BISECT_STEPS (opt-out: maths: bisection precision, far below any tile or snap size).
 
 ### sf_nav_bake (1: T 0, C 1, ? 0)
 
@@ -281,7 +281,7 @@ Stays const: BASIS (sentinel/derived), PRIME (sentinel/derived), HEAD (small ind
 
 Stays const: EPSILON (layout/math/id), BIPED (sentinel/derived), SWIMS (sentinel/derived), FLIES (sentinel/derived), WALKS (sentinel/derived).
 
-### mw_walkers_bevy (25: T 15, C 8, ? 2)
+### mw_walkers_bevy (27: T 15, C 10, ? 2)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -303,7 +303,7 @@ Stays const: EPSILON (layout/math/id), BIPED (sentinel/derived), SWIMS (sentinel
 | src/walkers.rs:101 | AI_WAKE_RADIUS_M | `110.0` | T |  |
 | src/walkers.rs:103 | AI_SLEEP_RADIUS_M | `122.0` | T |  |
 
-Stays const: MISSING_AMBIENT (opt-out: data fallback: mirrors the renderer's missing-AMBI grey, not a trade-off), BALLS_KEPT (small index), MAX_TRANSITIONS (opt-out: loop bound: bounds the work per tick; a goal is at most two operators), MAX_TRANSITIONS (opt-out: loop bound: bounds the work per tick; a search step is at most two operators), EYE_RATIO (opt-out: anthropometry: a body proportion, not a trade-off; the body sets the height), CHEST_RATIO (opt-out: anthropometry: a body proportion, not a trade-off; the body sets the height), HEAD_RATIO (opt-out: anthropometry: the eye ratio again, not a trade-off), REPORT_INTERVAL_S (opt-out: log cadence only: how often the report lines re-check; gates no behaviour).
+Stays const: MAX_HEAD_TRACK_DISTANCE (opt-out: vanilla GMST fallback; the game reads its records), INTERIOR_HEAD_TRACK_MULT (opt-out: vanilla GMST fallback; the game reads its records), MISSING_AMBIENT (opt-out: data fallback: mirrors the renderer's missing-AMBI grey, not a trade-off), BALLS_KEPT (small index), MAX_TRANSITIONS (opt-out: loop bound: bounds the work per tick; a goal is at most two operators), MAX_TRANSITIONS (opt-out: loop bound: bounds the work per tick; a search step is at most two operators), EYE_RATIO (opt-out: anthropometry: a body proportion, not a trade-off; the body sets the height), CHEST_RATIO (opt-out: anthropometry: a body proportion, not a trade-off; the body sets the height), HEAD_RATIO (opt-out: anthropometry: the eye ratio again, not a trade-off), REPORT_INTERVAL_S (opt-out: log cadence only: how often the report lines re-check; gates no behaviour).
 
 ### sf_anim (67: T 53, C 6, ? 8)
 
@@ -332,22 +332,22 @@ Stays const: MISSING_AMBIENT (opt-out: data fallback: mirrors the renderer's mis
 | src/cloth.rs:298 | ClothParams.thickness | `0.015` | T | settings default |
 | src/cloth.rs:299 | ClothParams.teleport_distance | `1.0` | T |  |
 | src/cloth.rs:300 | ClothParams.teleport_angle | `1.0` | T |  |
-| src/cook.rs:53 | CookSettings.error_bound | `1e-4` | T |  |
-| src/cook.rs:53 | CookSettings.shell_distance | `1.0` | T |  |
-| src/cook.rs:53 | CookSettings.min_rate | `30.0` | T |  |
-| src/cook.rs:53 | CookSettings.max_rate | `120.0` | T |  |
-| src/cook.rs:105 | RootMotionRules.extract | `true` | T | settings default |
-| src/cook.rs:105 | RootMotionRules.horizontal | `true` | T | settings default |
-| src/cook.rs:105 | RootMotionRules.vertical | `false` | T | settings default |
-| src/cook.rs:105 | RootMotionRules.yaw | `true` | T | settings default |
-| src/cook.rs:105 | RootMotionRules.attitude | `false` | T | settings default |
-| src/cook.rs:105 | RootMotionRules.anchor_end | `false` | T | settings default |
-| src/cook.rs:160 | ContactRules.enabled | `true` | T | settings default |
-| src/cook.rs:162 | ContactRules.height | `0.06` | T |  |
-| src/cook.rs:163 | ContactRules.speed | `0.35` | T |  |
-| src/cook.rs:164 | ContactRules.release | `2.0` | T |  |
-| src/cook.rs:165 | ContactRules.lift | `0.06` | T | settings default |
-| src/cook.rs:182 | FALLBACK_LEG_LENGTH | `0.85` | ? |  |
+| src/cook.rs:54 | CookSettings.error_bound | `1e-4` | T |  |
+| src/cook.rs:54 | CookSettings.shell_distance | `1.0` | T |  |
+| src/cook.rs:54 | CookSettings.min_rate | `30.0` | T |  |
+| src/cook.rs:54 | CookSettings.max_rate | `120.0` | T |  |
+| src/cook.rs:106 | RootMotionRules.extract | `true` | T | settings default |
+| src/cook.rs:106 | RootMotionRules.horizontal | `true` | T | settings default |
+| src/cook.rs:106 | RootMotionRules.vertical | `false` | T | settings default |
+| src/cook.rs:106 | RootMotionRules.yaw | `true` | T | settings default |
+| src/cook.rs:106 | RootMotionRules.attitude | `false` | T | settings default |
+| src/cook.rs:106 | RootMotionRules.anchor_end | `false` | T | settings default |
+| src/cook.rs:161 | ContactRules.enabled | `true` | T | settings default |
+| src/cook.rs:163 | ContactRules.height | `0.06` | T |  |
+| src/cook.rs:164 | ContactRules.speed | `0.35` | T |  |
+| src/cook.rs:165 | ContactRules.release | `2.0` | T |  |
+| src/cook.rs:166 | ContactRules.lift | `0.06` | T | settings default |
+| src/cook.rs:183 | FALLBACK_LEG_LENGTH | `0.85` | ? |  |
 | src/foot_metrics.rs:47 | MeterRules.planted | `0.5` | T | settings default |
 | src/foot_metrics.rs:47 | MeterRules.settle | `0.1` | T |  |
 | src/foot_metrics.rs:47 | MeterRules.sole | `0.0` | T | settings default |
@@ -390,18 +390,18 @@ Stays const: AnimBudget.predicted_us (runtime state), AnimBudget.demoted (runtim
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/asset.rs:539 | FootGuards.max_step | `0.5` | T |  |
-| src/asset.rs:540 | FootGuards.max_drop | `0.4` | T |  |
-| src/asset.rs:541 | FootGuards.max_rise | `0.5` | T |  |
-| src/asset.rs:542 | FootGuards.unplant | `0.3` | T | settings default |
-| src/asset.rs:544 | FootGuards.max_speed | `8.0` | T |  |
-| src/asset.rs:545 | FootGuards.blend_halflife | `0.1` | T |  |
-| src/asset.rs:546 | FootGuards.foot_halflife | `0.04` | T |  |
+| src/asset.rs:669 | FootGuards.max_step | `0.5` | T |  |
+| src/asset.rs:670 | FootGuards.max_drop | `0.4` | T |  |
+| src/asset.rs:671 | FootGuards.max_rise | `0.5` | T |  |
+| src/asset.rs:672 | FootGuards.unplant | `0.3` | T | settings default |
+| src/asset.rs:679 | FootGuards.max_speed | `8.0` | T |  |
+| src/asset.rs:680 | FootGuards.blend_halflife | `0.1` | T |  |
+| src/asset.rs:681 | FootGuards.foot_halflife | `0.04` | T |  |
 | src/compiled.rs:71 | Provenance.redistributable | `true` | T |  |
-| src/instance.rs:48 | GRADE_HALFLIFE | `0.25` | T |  |
-| src/procedural.rs:226 | FADE_CUT | `5e-3` | T |  |
-| src/procedural.rs:253 | NORMAL_WEIGHT | `0.01` | T |  |
-| src/procedural.rs:591 | STEP_EDGE | `0.02` | T |  |
+| src/instance.rs:49 | GRADE_HALFLIFE | `0.25` | T |  |
+| src/procedural.rs:243 | FADE_CUT | `5e-3` | T |  |
+| src/procedural.rs:270 | NORMAL_WEIGHT | `0.01` | T |  |
+| src/procedural.rs:628 | STEP_EDGE | `0.02` | T |  |
 | src/secondary.rs:34 | SPRING_SUBSTEP | `1.0 / 120.0` | T |  |
 | src/secondary.rs:36 | SPRING_MAX_SUBSTEPS | `12` | T |  |
 | src/secondary.rs:254 | CLOTH_LEG_FOLLOW | `0.7` | T |  |
@@ -710,20 +710,20 @@ Stays const: FIRST_DUMMY (layout/math/id).
 | src/grip.rs:27 | GRIP_MAX_GAP | `0.5` | ? |  |
 | src/grip.rs:29 | GRIP_RAMP | `0.10` | ? |  |
 | src/ids.rs:6 | TICK_HZ | `60` | ? |  |
-| src/state.rs:143 | ModeProfile.speed_scale | `1.0` | T |  |
-| src/state.rs:143 | ModeProfile.jump_scale | `1.0` | T |  |
-| src/state.rs:205 | CharacterParams.gravity | `9.81` | T |  |
-| src/state.rs:206 | CharacterParams.jump_height | `1.0` | T |  |
-| src/state.rs:207 | CharacterParams.coyote_ticks | `6` | T | settings default |
-| src/state.rs:208 | CharacterParams.jump_buffer_ticks | `6` | T | settings default |
-| src/state.rs:209 | CharacterParams.deadzone | `0.15` | T | settings default |
-| src/state.rs:210 | CharacterParams.run_threshold | `0.6` | T |  |
-| src/state.rs:211 | CharacterParams.height | `1.8` | T |  |
-| src/state.rs:212 | CharacterParams.radius | `0.3` | T |  |
+| src/state.rs:172 | ModeProfile.speed_scale | `1.0` | T |  |
+| src/state.rs:172 | ModeProfile.jump_scale | `1.0` | T |  |
+| src/state.rs:234 | CharacterParams.gravity | `9.81` | T |  |
+| src/state.rs:235 | CharacterParams.jump_height | `1.0` | T |  |
+| src/state.rs:236 | CharacterParams.coyote_ticks | `6` | T | settings default |
+| src/state.rs:237 | CharacterParams.jump_buffer_ticks | `6` | T | settings default |
+| src/state.rs:238 | CharacterParams.deadzone | `0.15` | T | settings default |
+| src/state.rs:239 | CharacterParams.run_threshold | `0.6` | T |  |
+| src/state.rs:240 | CharacterParams.height | `1.8` | T |  |
+| src/state.rs:241 | CharacterParams.radius | `0.3` | T |  |
 | src/step.rs:22 | MAX_SETTLE | `4` | T |  |
 | src/step.rs:25 | FORWARD_COS | `0.5` | T |  |
 | src/step.rs:31 | TRAVERSE_INPUT_COS | `0.422_618_27` | T |  |
-| src/step.rs:761 | VAULT_REACH_SLACK | `0.3` | T |  |
+| src/step.rs:848 | VAULT_REACH_SLACK | `0.3` | T |  |
 
 Stays const: BRACE_FINGERS_UP (layout/math/id), CLASSES (small index), LEFT (small index), RIGHT (layout/math/id), RATE_ONE (layout/math/id).
 
@@ -731,8 +731,8 @@ Stays const: BRACE_FINGERS_UP (layout/math/id), CLASSES (small index), LEFT (sma
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/lib.rs:281 | OBSTACLE_RANGE_M | `1.5` | T |  |
-| src/lib.rs:322 | SAME_FACE_COS | `0.985` | T |  |
+| src/lib.rs:288 | OBSTACLE_RANGE_M | `1.5` | T |  |
+| src/lib.rs:337 | SAME_FACE_COS | `0.985` | T |  |
 
 ### sf_camera (39: T 34, C 1, ? 4)
 
@@ -818,7 +818,7 @@ Stays const: FirstPersonParams.eye_forward (layout/math/id).
 | src/marker.rs:34 | MARKER_SIZE | `8.0` | T |  |
 | src/marker.rs:36 | MARKER_RIM | `1.0` | ? |  |
 
-### sf_controller (44: T 37, C 4, ? 3)
+### sf_controller (47: T 37, C 7, ? 3)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -863,7 +863,7 @@ Stays const: FirstPersonParams.eye_forward (layout/math/id).
 | src/steps.rs:41 | CollisionSettings.weld | `1e-3` | T | settings default |
 | src/trajectory.rs:13 | TRAJECTORY_TIMES | `[0.2, 0.4, 0.6, 0.8, 1.0]` | ? |  |
 
-Stays const: EPS (layout/math/id), COLUMN (small index), MoverParams.step_up (layout/math/id), COLLISION_FORMAT (layout/math/id).
+Stays const: EPS (layout/math/id), COLUMN (small index), MoverParams.step_up (layout/math/id), COLLISION_FORMAT (layout/math/id), BISECT_ITERS (opt-out: solver precision, not a feel or cost trade), BRACKET_DOUBLINGS (opt-out: solver bound, not a feel or cost trade), SWITCH_SCAN_SAMPLES (opt-out: solver resolution, not a feel or cost trade).
 
 ### sf_controller_bevy (12: T 11, C 1, ? 0)
 
@@ -912,7 +912,7 @@ Stays const: ControllerSettings.foot_probe_up (layout/math/id).
 
 Stays const: UP (layout/math/id).
 
-### mw_bake (54: T 21, C 22, ? 11)
+### mw_bake (55: T 21, C 23, ? 11)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -931,25 +931,25 @@ Stays const: UP (layout/math/id).
 | src/delight.rs:64 | MIN_SIDE | `64` | T |  |
 | src/far.rs:38 | IMPOSTOR_MIN_HEIGHT | `3.0` | T |  |
 | src/importer.rs:43 | DROP_FRACTION | `0.02` | T |  |
-| src/nav.rs:63 | NAV_CELL | `64.0` | ? |  |
-| src/nav.rs:65 | INTERIOR_PAD | `2.0` | ? |  |
-| src/nav.rs:67 | DOOR_HALF_DEPTH | `0.75` | T |  |
-| src/nav.rs:69 | DOOR_FLOOR_SLACK | `0.5` | T |  |
-| src/nav.rs:71 | APPROACH_RADIUS | `6.0` | T |  |
-| src/nav.rs:73 | DEFAULT_SWIM_HEIGHT_SCALE | `0.9` | T |  |
-| src/nav.rs:75 | TERRAIN_SPACING | `sf_terrain::BASE_SPACING` | T |  |
-| src/nav.rs:436 | HEIGHT_BUDGET | `128 << 20` | T |  |
-| src/nav.rs:437 | MESH_BUDGET | `128 << 20` | T |  |
-| src/nav.rs:438 | CELL_BUDGET | `32 << 20` | T |  |
-| src/nav.rs:554 | GeometryCache.cells | `Decoded::new(CELL_BUDGET)` | ? |  |
-| src/nav.rs:555 | GeometryCache.meshes | `Decoded::new(MESH_BUDGET)` | ? |  |
-| src/nav.rs:556 | GeometryCache.heights | `Decoded::new(HEIGHT_BUDGET)` | T |  |
+| src/nav.rs:64 | NAV_CELL | `64.0` | ? |  |
+| src/nav.rs:66 | INTERIOR_PAD | `2.0` | ? |  |
+| src/nav.rs:68 | DOOR_HALF_DEPTH | `0.75` | T |  |
+| src/nav.rs:70 | DOOR_FLOOR_SLACK | `0.5` | T |  |
+| src/nav.rs:72 | APPROACH_RADIUS | `6.0` | T |  |
+| src/nav.rs:74 | DEFAULT_SWIM_HEIGHT_SCALE | `0.9` | T |  |
+| src/nav.rs:76 | TERRAIN_SPACING | `sf_terrain::BASE_SPACING` | T |  |
+| src/nav.rs:437 | HEIGHT_BUDGET | `128 << 20` | T |  |
+| src/nav.rs:438 | MESH_BUDGET | `128 << 20` | T |  |
+| src/nav.rs:439 | CELL_BUDGET | `32 << 20` | T |  |
+| src/nav.rs:555 | GeometryCache.cells | `Decoded::new(CELL_BUDGET)` | ? |  |
+| src/nav.rs:556 | GeometryCache.meshes | `Decoded::new(MESH_BUDGET)` | ? |  |
+| src/nav.rs:557 | GeometryCache.heights | `Decoded::new(HEIGHT_BUDGET)` | T |  |
 | src/textures.rs:54 | DDS_DATA | `128` | ? |  |
 | src/textures.rs:56 | DX10_DATA | `148` | ? |  |
 | src/textures.rs:149 | D3DFMT_A16B16G16R16 | `36` | ? |  |
 | src/world.rs:45 | LAYER_ARRAY_SIZE | `2048` | T |  |
 
-Stays const: GRAPH_RULES_VERSION (layout/math/id), VERSION (layout/math/id), VERSION (layout/math/id), RULES_VERSION (layout/math/id), VERSION (layout/math/id), DEPTH_VERSION (layout/math/id), VERSION (layout/math/id), ALGORITHM_VERSION (layout/math/id), ALPHA_CLASSIFIER_VERSION (layout/math/id), RULE_VERSION (layout/math/id), RULES_VERSION (layout/math/id), VERSION (layout/math/id), RULES_VERSION (layout/math/id), REGION (opt-out: an id the bake keys its products by), RULES_VERSION (layout/math/id), PALETTE_LEN (layout/math/id), DDPF_ALPHAPIXELS (sentinel/derived), DDPF_ALPHA (sentinel/derived), DDPF_FOURCC (sentinel/derived), DDPF_PALETTEINDEXED8 (sentinel/derived), DDPF_RGB (sentinel/derived), DDPF_LUMINANCE (sentinel/derived).
+Stays const: GRAPH_RULES_VERSION (layout/math/id), VERSION (layout/math/id), VERSION (layout/math/id), RULES_VERSION (layout/math/id), VERSION (layout/math/id), DEPTH_VERSION (layout/math/id), VERSION (layout/math/id), ALGORITHM_VERSION (layout/math/id), ALPHA_CLASSIFIER_VERSION (layout/math/id), RULE_VERSION (layout/math/id), RULES_VERSION (layout/math/id), VERSION (layout/math/id), RULES_VERSION (layout/math/id), REGION (opt-out: an id the bake keys its products by), CELL_M (derived), RULES_VERSION (layout/math/id), PALETTE_LEN (layout/math/id), DDPF_ALPHAPIXELS (sentinel/derived), DDPF_ALPHA (sentinel/derived), DDPF_FOURCC (sentinel/derived), DDPF_PALETTEINDEXED8 (sentinel/derived), DDPF_RGB (sentinel/derived), DDPF_LUMINANCE (sentinel/derived).
 
 ### mw_graphs (9: T 8, C 0, ? 1)
 
@@ -964,6 +964,10 @@ Stays const: GRAPH_RULES_VERSION (layout/math/id), VERSION (layout/math/id), VER
 | src/build.rs:421 | GAIT_BLEND | `0.15` | T |  |
 | src/build.rs:424 | DIRECTION_SMOOTHING | `0.05` | T |  |
 | src/script.rs:24 | SCRIPT_PRIORITY | `100` | T |  |
+
+### mw_interaction (2: T 0, C 2, ? 0)
+
+Stays const: FIT_EPS (opt-out: maths: rounding tolerance so 2 x 0.55 fits in 1.10, not a feel value), MASK_BITS (layout/math/id).
 
 ### mw_nif (23: T 6, C 10, ? 7)
 
@@ -1014,9 +1018,17 @@ Stays const: EFFECTS_BLOB_VERSION (layout/math/id), STATS_BLOB_VERSION (layout/m
 
 Stays const: RPG_VERSION (layout/math/id), SCRIPTS_VERSION (layout/math/id), PLAYER_EXT_VERSION (layout/math/id).
 
-### mw_script (1: T 0, C 1, ? 0)
+### mw_script (8: T 1, C 3, ? 4)
 
-Stays const: EMITTER_VERSION (layout/math/id).
+| Where | Name | Value | Cls | Note |
+|---|---|---|---|---|
+| src/aifn.rs:31 | WANDER | `0` | ? |  |
+| src/aifn.rs:32 | TRAVEL | `1` | ? |  |
+| src/aifn.rs:33 | ESCORT | `2` | ? |  |
+| src/aifn.rs:34 | FOLLOW | `3` | T |  |
+| src/aifn.rs:35 | ACTIVATE | `4` | ? |  |
+
+Stays const: NONE (layout/math/id), WANDER_IDLES (small index), EMITTER_VERSION (layout/math/id).
 
 ### mw_stats (14: T 3, C 8, ? 3)
 
@@ -1084,6 +1096,15 @@ Stays const: PRESS_CHANNEL (opt-out: format: the ring's channel layout, `sf_surf
 
 Stays const: TIE_EPS (opt-out: maths: float tie tolerance for equal-distance entrances, not a feel value), BUCKET_M (opt-out: layout: grid bucket edge; results are identical for any value, only query cost moves), InteractParams.priority_ambient (opt-out: bound from interact.claim.priority_ambient in sf_interaction_bevy; Guess, order from UE Smart Objects), InteractParams.priority_schedule (opt-out: bound from interact.claim.priority_schedule in sf_interaction_bevy; Guess), InteractParams.priority_quest (opt-out: bound from interact.claim.priority_quest in sf_interaction_bevy; Guess, = player, roadmap decision 1), InteractParams.priority_player (opt-out: bound from interact.claim.priority_player in sf_interaction_bevy; Guess), InteractParams.lease_s (opt-out: bound from interact.claim.lease_s in sf_interaction_bevy; Guess, spec 2026-11-11), InteractParams.move_tolerance_m (opt-out: bound from interact.claim.move_tolerance_m in sf_interaction_bevy; Guess), InteractParams.move_tolerance_deg (opt-out: bound from interact.claim.move_tolerance_deg in sf_interaction_bevy; Guess), InteractParams.queue_capacity (opt-out: bound from interact.queue.capacity in sf_interaction_bevy; Guess), InteractParams.ticket_lease_s (opt-out: bound from interact.queue.ticket_lease_s in sf_interaction_bevy; Guess), InteractParams.hand_max (opt-out: bound from interact.claim.hand_max in sf_interaction_bevy; Guess, two hands), InteractParams.focus_hold_s (opt-out: bound from interact.focus.hold_s in sf_interaction_bevy; Guess, RDR2-style hold prompt), InteractParams.focus_switch_margin (opt-out: bound from interact.focus.switch_margin in sf_interaction_bevy; Guess, hysteresis against prompt flicker, gta6.md 2), InteractParams.focus_switch_s (opt-out: bound from interact.focus.switch_s in sf_interaction_bevy; Guess), InteractParams.tick_hz (opt-out: bound from the app's fixed timestep in sf_interaction_bevy; net.md 60 Hz tick).
 
+### sf_interaction_bevy (3: T 0, C 1, ? 2)
+
+| Where | Name | Value | Cls | Note |
+|---|---|---|---|---|
+| src/focus.rs:63 | FocusState.stabilizer | `FocusStabilizer::new()` | ? |  |
+| src/focus.rs:66 | FocusState.list_open | `false` | ? | bool |
+
+Stays const: FocusState.priority (opt-out: empty state; set every tick from FocusInput.priority = interact.claim.priority_player).
+
 ### sf_level (1: T 0, C 0, ? 1)
 
 | Where | Name | Value | Cls | Note |
@@ -1147,7 +1168,7 @@ Stays const: CLOCK_VERSION (layout/math/id), WEATHER_VERSION (layout/math/id), R
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/lib.rs:112 | RECENT | `64` | ? |  |
+| src/lib.rs:125 | RECENT | `64` | ? |  |
 
 ### sf_stats (1: T 1, C 0, ? 0)
 
@@ -1253,12 +1274,11 @@ Stays const: RIGHT (layout/math/id).
 | src/lib.rs:40 | DEFAULT_STRENGTH | `50.0` | T |  |
 | src/lib.rs:118 | HUMANOID_MASS | `75.0` | T |  |
 
-### sf_physics (47: T 42, C 2, ? 3)
+### sf_physics (47: T 41, C 3, ? 3)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
 | src/body.rs:66 | ITEM_DAMPING | `(0.1, 1.5)` | T |  |
-| src/body.rs:231 | PhysicsParams.hz | `60.0` | T | settings default |
 | src/body.rs:232 | PhysicsParams.gravity | `Vec3::new(0.0, -9.81, 0.0)` | T |  |
 | src/body.rs:233 | PhysicsParams.rebase_distance | `512.0` | T |  |
 | src/body.rs:234 | PhysicsParams.mass_range | `(0.2, 60.0)` | T |  |
@@ -1303,7 +1323,7 @@ Stays const: RIGHT (layout/math/id).
 | src/steps.rs:344 | MIN_SHRINK | `0.8` | T |  |
 | src/world.rs:568 | STANDING | `0.05` | ? |  |
 
-Stays const: BODY_FORMAT (layout/math/id), ITEMS_FORMAT (layout/math/id).
+Stays const: PhysicsParams.hz (opt-out: fixed sim tick rate: the net contract, net.md Tick, as sf_action TICK_HZ), BODY_FORMAT (layout/math/id), ITEMS_FORMAT (layout/math/id).
 
 ### sf_physics_bevy (25: T 22, C 2, ? 1)
 
@@ -1885,7 +1905,7 @@ Stays const: MAX_CAPTURE_SIZE (opt-out: a capacity: the target's allocation, the
 
 Stays const: DEFORM_SUBVIEW (sentinel/derived), PARAM_BYTES (layout/math/id), MODE_FRESH (layout/math/id), MODE_CARRY (layout/math/id), MODE_EASE (layout/math/id), TAU (layout/math/id), FLAG_WET (layout/math/id), FLAG_PUDDLE (layout/math/id), FLAG_SNOW (layout/math/id), FLAG_ASH (layout/math/id), FLAG_RAISE (layout/math/id), DEBUG_OFF (layout/math/id), DEBUG_EXPOSURE (layout/math/id), DEBUG_CELLS (layout/math/id), DEBUG_POROSITY (layout/math/id), DEBUG_TRAILS (layout/math/id), CLASS_STATIC (shader enum), CLASS_TERRAIN (shader enum), CLASS_DYNAMIC (shader enum), COVER_SNOW (shader enum), COVER_ASH (shader enum), TRAIL_PRESS_FLOOR (opt-out: the ring's press resolution, sf_surface::trail::PRESS_FLOOR; a format fact), PROBE_TIMEOUT_FRAMES (opt-out: a dev command's give-up bound, about a second: no cost or look), SHELTER_SUBVIEW (sentinel/derived), CANOPY_SUBVIEW (sentinel/derived), FAR_SHELTER_SUBVIEW (sentinel/derived), FAR_CANOPY_SUBVIEW (sentinel/derived), SHELTER_LOD_DISTANCE_M (opt-out: a definition, not a trade-off: the finest level is the one visible at 0 m), RING_EDGE_MARGIN_M (opt-out: format: mirrors `layer.wesl` `surface_ring_lookup`, checked by `shader_tests`), RING_EDGE_FADE_M (opt-out: format: mirrors `layer.wesl` `TRAIL_EDGE_FADE_M`, checked by `shader_tests`), SPREAD_TAPS (opt-out: a sampling layout: the GC-T3 budget of 24 capture fetches per ring texel; the spread tunable sets its reach), SPREAD_REACH (opt-out: a sampling layout: where the smoothstep weight drops under 0.1), GOLDEN_ANGLE (opt-out: maths), U_SHELTER_CLIP (small index), U_WINDOW (small index), U_CELLS (small index), U_SHELTER (small index), U_MISC (small index), U_TIME (small index), U_CANOPY (small index), U_COVER (small index), U_COVER_UV (small index), U_TRAIL (small index), U_TRAIL_CELLS (small index), U_TRAIL_PREV_CELLS (small index), U_FAR_CLIP (opt-out: layout: uniform slot index), U_FAR_SHELTER (opt-out: layout: uniform slot index), U_FAR_CANOPY (opt-out: layout: uniform slot index), U_SLOTS (layout/math/id), FLAG_WET (layout/math/id), FLAG_PUDDLE (layout/math/id), FLAG_SNOW (layout/math/id), FLAG_ASH (layout/math/id), FLAG_RAISE (layout/math/id), SurfaceUniform.flags (layout/math/id).
 
-### sf_weather (100: T 43, C 36, ? 21)
+### sf_weather (100: T 42, C 37, ? 21)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -1896,7 +1916,6 @@ Stays const: DEFORM_SUBVIEW (sentinel/derived), PARAM_BYTES (layout/math/id), MO
 | src/frame.rs:30 | MAX_VISIBILITY_M | `100_000.0` | T |  |
 | src/frame.rs:92 | SPEED_OF_SOUND | `343.0` | T |  |
 | src/frame.rs:175 | WeatherFrame.lightning_per_hour | `0.0` | ? |  |
-| src/frame.rs:182 | WeatherFrame.wind_mid_speed | `0.0` | T |  |
 | src/frame.rs:573 | WORLD_STRIKE_CELL_M | `2000.0` | T |  |
 | src/frame.rs:575 | WORLD_STRIKE_RADIUS_M | `16_000.0` | T |  |
 | src/hash.rs:55 | PHASE | `1` | ? |  |
@@ -1954,7 +1973,7 @@ Stays const: DEFORM_SUBVIEW (sentinel/derived), PARAM_BYTES (layout/math/id), MO
 | src/records.rs:536 | PrecipKind.tint | `[0.55, 0.6, 0.65, 0.3]` | ? |  |
 | src/state.rs:43 | MAX_DEPTH | `6` | T |  |
 
-Stays const: CLOUD_TYPE (small index), WETNESS (small index), STORM (small index), EROSION (small index), BASE (small index), THICKNESS (small index), CIRRUS (small index), DIMMING (small index), HAZE (small index), DUST (small index), WIND_X (small index), WIND_Z (small index), GUSTINESS (small index), FOG_BASE (small index), PRECIP (small index), PRECIP_EXTINCTION (small index), LIGHTNING (small index), WET (small index), PUDDLE (small index), SNOW (small index), ASH (small index), DRYING (small index), PRECIP_TINT_R (small index), PRECIP_TINT_G (small index), PRECIP_TINT_B (small index), LEN (layout/math/id), MAP_EPSILON (layout/math/id), PrecipWindFilter.started (runtime state), CHANNELS (layout/math/id), CLOUDS (small index), SKY (small index), WIND (small index), FOG (small index), PRECIP (small index), CUES (small index), EPS (layout/math/id).
+Stays const: WeatherFrame.wind_mid_speed (opt-out: runtime state: the blended mean wind speed, computed every frame), CLOUD_TYPE (small index), WETNESS (small index), STORM (small index), EROSION (small index), BASE (small index), THICKNESS (small index), CIRRUS (small index), DIMMING (small index), HAZE (small index), DUST (small index), WIND_X (small index), WIND_Z (small index), GUSTINESS (small index), FOG_BASE (small index), PRECIP (small index), PRECIP_EXTINCTION (small index), LIGHTNING (small index), WET (small index), PUDDLE (small index), SNOW (small index), ASH (small index), DRYING (small index), PRECIP_TINT_R (small index), PRECIP_TINT_G (small index), PRECIP_TINT_B (small index), LEN (layout/math/id), MAP_EPSILON (layout/math/id), PrecipWindFilter.started (runtime state), CHANNELS (layout/math/id), CLOUDS (small index), SKY (small index), WIND (small index), FOG (small index), PRECIP (small index), CUES (small index), EPS (layout/math/id).
 
 ### sf_weather_bevy (10: T 8, C 0, ? 2)
 
@@ -2022,22 +2041,20 @@ Stays const: PARAMS_VEC4S (layout/math/id), SOURCE_VEC4S (layout/math/id), DATA_
 
 Stays const: FOREVER (layout/math/id), FIRST_LEVEL (layout/math/id), LAST_LEVEL (layout/math/id).
 
-### sf_lod_bevy (11: T 10, C 1, ? 0)
+### sf_lod_bevy (11: T 8, C 3, ? 0)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
 | src/lib.rs:119 | FarFieldSettings.l1_shadows | `true` | T |  |
 | src/lib.rs:120 | FarFieldSettings.light_min_pixels | `2.5` | T |  |
 | src/lib.rs:121 | FarFieldSettings.proxy_depth_offset_px | `2.0` | T |  |
-| src/lib.rs:123 | FarFieldSettings.emissive_nits | `1.0` | T | settings default |
-| src/lib.rs:124 | FarFieldSettings.emissive_exposure_weight | `0.0` | T |  |
 | src/shaders/far_shadow_map.wesl:15 | FAR_FADE_START | `0.85` | T | shader const: needs a uniform |
 | src/shaders/far_shadow_map.wesl:18 | FAR_PENUMBRA | `0.012` | T | shader const: needs a uniform |
 | src/shaders/far_shadow_map.wesl:19 | FAR_PENUMBRA_MIN | `2.0` | T | shader const: needs a uniform |
 | src/shaders/far_shadow_map.wesl:22 | FAR_BIAS | `6.0` | T | shader const: needs a uniform |
 | src/shaders/far_shadow_map.wesl:23 | FAR_BIAS_PER_M | `0.0015` | T | shader const: needs a uniform |
 
-Stays const: ResidencyGate.settings_rev (opt-out: a change counter starts at 0; the settle frame is the one-frame transform lag).
+Stays const: FarFieldSettings.emissive_nits (opt-out: unit conversion: linear emissive to nits, the host sets its exposure calibration), FarFieldSettings.emissive_exposure_weight (opt-out: external contract: Bevy exposure mode paired with emissive_nits), ResidencyGate.settings_rev (opt-out: a change counter starts at 0; the settle frame is the one-frame transform lag).
 
 ### sf_model (31: T 20, C 7, ? 4)
 
@@ -2111,9 +2128,9 @@ Stays const: NO_FOG (layout/math/id), FOG_ADD (shader enum).
 | src/cull.rs:466 | HorizonParams.min_cells | `4.0` | T |  |
 | src/demand.rs:37 | MAX_CLUSTER_RADIUS | `16.0` | T |  |
 | src/demand.rs:108 | CLUSTER | `16 + 8` | ? |  |
-| src/space.rs:83 | M1_LEVEL | `0` | ? |  |
-| src/space.rs:367 | SpaceConfig.space | `0` | T | settings default |
-| src/space.rs:369 | SpaceConfig.frames_in_flight | `3` | T |  |
+| src/space.rs:85 | M1_LEVEL | `0` | ? |  |
+| src/space.rs:374 | SpaceConfig.space | `0` | T | settings default |
+| src/space.rs:376 | SpaceConfig.frames_in_flight | `3` | T |  |
 | src/table.rs:96 | MAX_LOD_LEVELS | `16` | T |  |
 | src/table.rs:101 | INSTANCE | `80` | ? |  |
 | src/table.rs:107 | INSTANCE_CHAIN | `68` | ? |  |
@@ -2124,7 +2141,7 @@ Stays const: CLASSES (small index), MATERIAL_KEY_VERSION (layout/math/id), LAYOU
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/residency.rs:71 | SLAB_WAIT_FRAMES | `120` | T |  |
+| src/residency.rs:73 | SLAB_WAIT_FRAMES | `120` | T |  |
 | src/slabs.rs:77 | MATERIAL_RECHECK_EXTRACTS | `120` | ? |  |
 
 Stays const: NON_INDEXED (sentinel/derived), SLOT_BYTES (layout/math/id), SLOT_LEN (sentinel/derived).
@@ -2143,8 +2160,8 @@ Stays const: NON_INDEXED (sentinel/derived), SLOT_BYTES (layout/math/id), SLOT_L
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/exterior.rs:1551 | SUN_DEPTH_BIAS | `0.02` | T |  |
-| src/exterior.rs:1553 | SUN_NORMAL_BIAS | `0.8` | T |  |
+| src/exterior.rs:1553 | SUN_DEPTH_BIAS | `0.02` | T |  |
+| src/exterior.rs:1555 | SUN_NORMAL_BIAS | `0.8` | T |  |
 | src/gi_volume.rs:49 | INTERIOR_AMBIENT_SCALE | `0.1` | T |  |
 | src/level.rs:380 | SIZE | `128` | T |  |
 | src/trails.rs:40 | PLANTED | `0.5` | ? |  |
@@ -2177,17 +2194,16 @@ Stays const: MAX_DEPTH (opt-out: a recursion guard against driver cycles, not a 
 
 Stays const: UNIT_METERS_F64 (unit/format), CELL_UNITS (unit/format), VERTEX_UNITS (unit/format), TEXEL_UNITS (unit/format).
 
-### mw_worldgen (20: T 1, C 17, ? 2)
+### mw_worldgen (20: T 0, C 18, ? 2)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/anchor.rs:461 | FAR | `1e20` | T |  |
 | src/flora.rs:56 | GROUP_FLORA | `0` | ? |  |
 | src/flora.rs:57 | GROUP_ROCKS | `1` | ? |  |
 
-Stays const: SEA_LEVEL_M (opt-out: format fact: Morrowind's exterior water plane is at z = 0; the scaled guide keeps it), SEA_MATCH_M (opt-out: maths: f64 round-trip tolerance of one shared level, not a quality trade), REPORT_GRADE (opt-out: report: the spec's measurement, so the numbers compare), REPORT_WITHIN_M (opt-out: report: the spec's measurement, so the numbers compare), DERIVE_FORMAT (layout/math/id), UNKNOWN_SIZE_M (opt-out: fallback: only the budget's priority reads it, and every Morrowind flora mesh has bounds), FAR (opt-out: maths: a finite infinity far above any squared cell distance), FORMAT (opt-out: format version of the contract), PER_M (opt-out: format: written precision), PER_DEG (opt-out: format: written precision), CELL_QUADS (derived), SEA_SURFACE_UNITS (opt-out: format fact: the exterior water plane is at z = 0 in Morrowind's data and OpenMW), MARKERS_FORMAT (layout/math/id), FORMAT_VERSION (layout/math/id), FORMAT (opt-out: format version of the contract), SLOPE_REPORT_RADIUS_M (opt-out: report: the ST-3d measurement's radius, so the numbers compare), FORMAT (opt-out: format version of the contract).
+Stays const: SEA_LEVEL_M (opt-out: format fact: Morrowind's exterior water plane is at z = 0; the scaled guide keeps it), FAR (opt-out: sentinel: larger than any squared grid distance), SEA_MATCH_M (opt-out: maths: f64 round-trip tolerance of one shared level, not a quality trade), REPORT_GRADE (opt-out: report: the spec's measurement, so the numbers compare), REPORT_WITHIN_M (opt-out: report: the spec's measurement, so the numbers compare), DERIVE_FORMAT (layout/math/id), UNKNOWN_SIZE_M (opt-out: fallback: only the budget's priority reads it, and every Morrowind flora mesh has bounds), FAR (opt-out: maths: a finite infinity far above any squared cell distance), FORMAT (opt-out: format version of the contract), PER_M (opt-out: format: written precision), PER_DEG (opt-out: format: written precision), CELL_QUADS (derived), SEA_SURFACE_UNITS (opt-out: format fact: the exterior water plane is at z = 0 in Morrowind's data and OpenMW), MARKERS_FORMAT (layout/math/id), FORMAT_VERSION (layout/math/id), FORMAT (opt-out: format version of the contract), SLOPE_REPORT_RADIUS_M (opt-out: report: the ST-3d measurement's radius, so the numbers compare), FORMAT (opt-out: format version of the contract).
 
-### sf_world (25: T 21, C 3, ? 1)
+### sf_world (27: T 21, C 5, ? 1)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -2214,7 +2230,7 @@ Stays const: SEA_LEVEL_M (opt-out: format fact: Morrowind's exterior water plane
 | src/scheduler.rs:283 | SchedulerConfig.linger_secs | `5.0` | T |  |
 | src/scheduler.rs:1049 | LINGER_CLASS | `3` | ? |  |
 
-Stays const: VERSION (layout/math/id), PLACEMENT_BYTES (layout/math/id), PAGE_SHIFT (layout/math/id).
+Stays const: VERSION (layout/math/id), PLACEMENT_BYTES (layout/math/id), PAGE_SHIFT (layout/math/id), LINK_ID_POS_STEP (opt-out: id format: changing it changes every LinkId), LINK_ID_ROT_STEP (opt-out: id format: changing it changes every LinkId).
 
 ### sf_world_bevy (35: T 23, C 9, ? 3)
 
@@ -2249,7 +2265,7 @@ Stays const: VERSION (layout/math/id), PLACEMENT_BYTES (layout/math/id), PAGE_SH
 
 Stays const: FadeTransition.elapsed (runtime state), FadeTransition.queued_blackout (runtime state), FoldRules.flat_normal_map (opt-out: bench-only A/B arm switch, not a quality or feel value), FoldRules.one_texture_set (opt-out: bench-only A/B arm switch, not a quality or feel value), TARGET_MAX_SLAB_BYTES (layout/math/id), MIB (layout/math/id), WorldspaceParking.now (opt-out: state: the streaming clock, set every frame), StreamingConfig.one_texture_set (opt-out: bench-only A/B arm switch, `--off texvariety`; not a quality or feel value), INLINE_PAIRS (small index).
 
-### sf_worldgen (155: T 24, C 118, ? 13)
+### sf_worldgen (155: T 0, C 142, ? 13)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -2261,37 +2277,13 @@ Stays const: FadeTransition.elapsed (runtime state), FadeTransition.queued_black
 | src/dem.rs:42 | MODEL_GEOGRAPHIC | `2` | ? |  |
 | src/dem.rs:44 | RASTER_PIXEL_IS_POINT | `2` | ? |  |
 | src/dem.rs:46 | EPSG_WGS84 | `4326` | ? |  |
-| src/dem.rs:48 | WINDOW_MARGIN_PX | `3.0` | T |  |
-| src/dem.rs:50 | MAX_EXTENT_M | `200_000.0` | T |  |
-| src/dem.rs:52 | ALIGN_TOL_PX | `1e-3` | T |  |
 | src/lem/mod.rs:98 | NEWTON_OMEGA | `0.875` | ? |  |
-| src/lem/mod.rs:99 | NEWTON_MAX_ITER | `100` | T |  |
 | src/lem/route.rs:32 | BOUNDARY | `-2` | ? |  |
 | src/lem/route.rs:34 | PIT | `-1` | ? |  |
-| src/scatter.rs:124 | Params.sea_level_m | `0.0` | T |  |
-| src/stratovolcano.rs:121 | EDT_FAR | `1e20` | T |  |
-| src/stratovolcano.rs:123 | CALIB_STEPS | `16` | T |  |
-| src/stratovolcano.rs:124 | CALIB_TOL_M | `1e-3` | T |  |
 | src/stratovolcano.rs:126 | CALIB_WINDOW | `0.5` | ? |  |
-| src/stratovolcano.rs:130 | APRON_RAYS | `64` | T |  |
-| src/stratovolcano.rs:131 | APRON_MIN_LEN_M | `2000.0` | T |  |
-| src/stratovolcano.rs:133 | FOOT_BEARINGS | `720` | T |  |
 | src/stratovolcano.rs:135 | FIT_P | `[0.3, 5.0, 0.01]` | ? |  |
-| src/stratovolcano.rs:136 | FIT_R0_STEPS | `200` | T |  |
-| src/stratovolcano.rs:139 | STRUCTURE_THRESHOLD_M2 | `1e5` | T |  |
-| src/stratovolcano.rs:140 | STRUCTURE_WINDOW_M | `1000.0` | T |  |
-| src/stratovolcano.rs:141 | STRUCTURE_DIR_STEPS | `5` | T |  |
-| src/tiles.rs:664 | CELL_S | `2` | T |  |
-| src/tiles.rs:673 | SPACING | `11` | T |  |
-| src/tiles.rs:678 | GAIN | `16` | T |  |
-| src/tiles.rs:680 | MAX_AMP | `18` | T |  |
-| src/tiles.rs:685 | SHARP | `23` | T |  |
-| src/tiles.rs:687 | PHASE_FADE | `25` | T |  |
-| src/tiles.rs:688 | SHORE_RATIO | `26` | T |  |
-| src/tiles.rs:689 | CASCADE | `27` | T |  |
-| src/tiles.rs:694 | STAMPS | `31` | T |  |
 
-Stays const: ANCHORS_FORMAT (layout/math/id), LAND_FLOOR_M (opt-out: invariant: keeps modified dry samples strictly above sea level so Audit stays clean), RegionProfile.scarp_scale (opt-out: identity multipliers when a region has no TOML override), RegionProfile.shelf_scale (opt-out: identity multiplier), RegionProfile.steepen_scale (opt-out: identity multiplier), RegionProfile.sea_cliff_scale (opt-out: identity multiplier), RegionProfile.lava_scale (opt-out: identity: lava flows only run in regions that opt in via TOML), KERNEL_RADIUS_CELLS (opt-out: layout: coverage needs ≥ √2 cells, the 5 × 5 search allows ≤ 1.5), WARN_SAMPLES (opt-out: report layout: a warning threshold, ~800 MB of f32 heights), TAU (layout/math/id), FORMAT (opt-out: format version), NEIGHBOUR_DIST (opt-out: grid geometry: 1 and sqrt 2), NONE (opt-out: sentinel: no parent, no col), LAYERS_FORMAT (layout/math/id), NO_LAYER (sentinel/derived), STAMP_LAYER_WEIGHT (opt-out: format fact: the spec's stamp/global switch, the band's midpoint), UNKNOWN_ALBEDO (opt-out: fallback: neutral grey for a palette id missing from the layer table, logged by the caller), TRUNCATE_SIGMAS (opt-out: maths: 3σ holds 99.7 % of a Gaussian), NEWTON_TOL_M (opt-out: numerics of the local Newton solve: Veloren / fastscapelib-fortran tolerance and relaxation), BAND_EDGES_M (opt-out: metric definition: band edges fixed by the WG-M brief, 40 m to 10 km plus 10-40 m for 5 m fields), BINS_PER_DECADE (opt-out: metric definition: 10 log bins per decade), HEIGHT_QUANTILES (opt-out: metric definition: reported percentiles), WALK_BAND_EDGES_DEG (opt-out: metric definition: report bands 0-15 / 15-25 / 25-35 / 35-46 / 46-60 / > 60 deg), FLAT_DEG (opt-out: metric definition: landforms.md "Measurement", land share under 10 deg, Etna 52 %), STEEP_DEG (opt-out: metric definition: landforms.md "Measurement", land share >= 35 deg, Etna 1.8 %), UNTOUCHED_M (opt-out: metric definition: landforms.md "Measurement", untouched = |dh| < 0.5 m vs the base), EXACT_BELOW (opt-out: filter construction: exact kernel below 4 samples, Kovesi boxes above), IDENTITY_BELOW (opt-out: filter construction: a Gaussian under half a sample is the identity), BIG (opt-out: maths: "infinite" squared distance seed of the transform), SINUOSITY_CHANNELS (opt-out: metric definition: "the 20 largest channels", fixed by the WG-S2b brief), TRACE_STEP_SAMPLES (opt-out: geometry resolution: a vertex every 2 samples, the guide footprint of the prefilter), NEVER_TAN (opt-out: sentinel: an unreachable talus slope), SOFT_BELOW (opt-out: definition shared with geology.rs: soft = hardness below 0.5), LAND_FLOOR_M (opt-out: invariant: keeps written dry samples strictly dry so the wet/dry audit stays clean), NONE (opt-out: sentinel: "not a boundary pixel"), FORMAT (layout/math/id), ARC_SUBSTEPS_PER_SPACING (opt-out: maths: quadrature density of the arc-length table, accuracy only; trades no look or cost), DUP_EPS_M (opt-out: maths: duplicate-point epsilon, metres), SHEET_GAP_PX (opt-out: sheet layout, fixed by the look-test design), SHEET_GAP_GRAY (opt-out: sheet layout: white gaps), SLOPE_BINS (opt-out: layout: one bin per degree of slope, the census resolution of the slope cut), EDGE_EPS (opt-out: maths: rounding tolerance, far below any sample spacing), MM_CELL (opt-out: layout: block size of the per-stamp min/max grid, no quality trade), MAX_BINS_AXIS (opt-out: capacity: caps the bin grid at 256² for far-apart small stamps), S_WARP_X (opt-out: hash stream ids), S_WARP_Y (id table), S_FOOT (id table), S_EXPONENT (id table), S_RIFT_CURVE (id table), S_CALDERA (id table), S_COLLAPSE (id table), S_SUBPEAK (id table), S_CONE (id table), S_FRACTURE (id table), S_FRACTURE_WANDER (id table), S_SEED_COARSE (id table), S_SEED_FINE (id table), S_BAND (id table), S_BAND_WARP (id table), S_CELL (id table), S_FLANK_K (id table), NONE (layout/math/id), FRACTURE_SEGMENTS (small index), FLANK_RINGS_M (opt-out: report layout), RESIDUAL_TRACE_EVERY (opt-out: report layout), CR_OVERSHOOT (opt-out: maths: bound of the Catmull-Rom kernel, max Σ|w| = 1.25 per axis at t = 0.5), STAT_LEVELS (opt-out: layout: counter slots, one per tile level), W (id table), H (id table), COL_CI (id table), COL_CF (id table), ROW_CI (id table), ROW_CF (id table), COL_A (id table), COL_C (id table), ROW_A (id table), ROW_C (id table), SEA (id table), OCTAVES (id table), WAVELENGTH (id table), LACUNARITY (id table), RELIEF (id table), SLOPE_LO (id table), SLOPE_HI (id table), CURV_LO (id table), CURV_HI (id table), CARVE (id table), SEED (layout/math/id), BAND_LO (id table), BAND_HI (id table), LOOK (id table), LAYERS (opt-out: layout: GPU header slot index), STRATA_AMP (opt-out: layout: GPU header slot indices for Phase 3a sharp runtime operators), STRATA_STEP (opt-out: layout: GPU header slot index), STRATA_SHARP (opt-out: layout: GPU header slot index), ROCK_AMP (opt-out: layout: GPU header slot index), ROCK_SCALE (opt-out: layout: GPU header slot index), RIDGE_AMP (opt-out: layout: GPU header slot index), RIDGE_SCALE (opt-out: layout: GPU header slot index), STEEP_LO (opt-out: layout: GPU header slot index), STEEP_HI (opt-out: layout: GPU header slot index), HEIGHTS (opt-out: layout: GPU header slot index), MAXN (opt-out: capacity: upper bound of the declared `treads_max` range), FADE_SHARE (opt-out: spec definition: "cross-faded over a quarter cell"), NORMAL_STENCIL (opt-out: geometry: gradient stencil of the signed distance field), LINE_STEP_M (opt-out: geometry resolution of the report polylines), SAME_EPS_M (opt-out: numerics: f64 rounding of equal profiles), STREAM_TREAD (opt-out: format: noise stream ids), STREAM_RISER (opt-out: format: noise stream ids), STREAM_MEANDER (opt-out: format: noise stream ids), FD_M (opt-out: numerics: central-difference step, far under the shortest noise wavelength), RAY_ITERS (opt-out: numerics: iterations of a contraction, converged far under a sample), RAMP_FIT_ITERS (opt-out: numerics: a fixed point reached in two or three steps), RAMP_BUCKET_M (opt-out: indexing: a lookup grid's cell, any size gives the same cut), SMOOTH_FEET (opt-out: numerics: averages the digitised edge's jitter, far under the bend radii and ramp lengths), REPORT_FORMAT (opt-out: format version), BIG (opt-out: maths: "infinite" squared distance seed of the transform), FORMAT (layout/math/id).
+Stays const: ANCHORS_FORMAT (layout/math/id), LAND_FLOOR_M (opt-out: invariant: keeps modified dry samples strictly above sea level so Audit stays clean), RegionProfile.scarp_scale (opt-out: identity multipliers when a region has no TOML override), RegionProfile.shelf_scale (opt-out: identity multiplier), RegionProfile.steepen_scale (opt-out: identity multiplier), RegionProfile.sea_cliff_scale (opt-out: identity multiplier), RegionProfile.lava_scale (opt-out: identity: lava flows only run in regions that opt in via TOML), WINDOW_MARGIN_PX (opt-out: maths: the bicubic kernel reach plus one), MAX_EXTENT_M (opt-out: maths: validity bound of the local equirectangular frame, the extent range max), ALIGN_TOL_PX (opt-out: maths: float tolerance of the lattice alignment check), KERNEL_RADIUS_CELLS (opt-out: layout: coverage needs ≥ √2 cells, the 5 × 5 search allows ≤ 1.5), WARN_SAMPLES (opt-out: report layout: a warning threshold, ~800 MB of f32 heights), TAU (layout/math/id), FORMAT (opt-out: format version), NEIGHBOUR_DIST (opt-out: grid geometry: 1 and sqrt 2), NONE (opt-out: sentinel: no parent, no col), LAYERS_FORMAT (layout/math/id), NO_LAYER (sentinel/derived), STAMP_LAYER_WEIGHT (opt-out: format fact: the spec's stamp/global switch, the band's midpoint), UNKNOWN_ALBEDO (opt-out: fallback: neutral grey for a palette id missing from the layer table, logged by the caller), TRUNCATE_SIGMAS (opt-out: maths: 3σ holds 99.7 % of a Gaussian), NEWTON_TOL_M (opt-out: numerics of the local Newton solve: Veloren / fastscapelib-fortran tolerance and relaxation), NEWTON_MAX_ITER (opt-out: numerics of the local Newton solve: a divergence guard, it stops on NEWTON_TOL_M), BAND_EDGES_M (opt-out: metric definition: band edges fixed by the WG-M brief, 40 m to 10 km plus 10-40 m for 5 m fields), BINS_PER_DECADE (opt-out: metric definition: 10 log bins per decade), HEIGHT_QUANTILES (opt-out: metric definition: reported percentiles), WALK_BAND_EDGES_DEG (opt-out: metric definition: report bands 0-15 / 15-25 / 25-35 / 35-46 / 46-60 / > 60 deg), FLAT_DEG (opt-out: metric definition: landforms.md "Measurement", land share under 10 deg, Etna 52 %), STEEP_DEG (opt-out: metric definition: landforms.md "Measurement", land share >= 35 deg, Etna 1.8 %), UNTOUCHED_M (opt-out: metric definition: landforms.md "Measurement", untouched = |dh| < 0.5 m vs the base), EXACT_BELOW (opt-out: filter construction: exact kernel below 4 samples, Kovesi boxes above), IDENTITY_BELOW (opt-out: filter construction: a Gaussian under half a sample is the identity), BIG (opt-out: maths: "infinite" squared distance seed of the transform), SINUOSITY_CHANNELS (opt-out: metric definition: "the 20 largest channels", fixed by the WG-S2b brief), TRACE_STEP_SAMPLES (opt-out: geometry resolution: a vertex every 2 samples, the guide footprint of the prefilter), NEVER_TAN (opt-out: sentinel: an unreachable talus slope), SOFT_BELOW (opt-out: definition shared with geology.rs: soft = hardness below 0.5), LAND_FLOOR_M (opt-out: invariant: keeps written dry samples strictly dry so the wet/dry audit stays clean), NONE (opt-out: sentinel: "not a boundary pixel"), FORMAT (layout/math/id), ARC_SUBSTEPS_PER_SPACING (opt-out: maths: quadrature density of the arc-length table, accuracy only; trades no look or cost), DUP_EPS_M (opt-out: maths: duplicate-point epsilon, metres), SHEET_GAP_PX (opt-out: sheet layout, fixed by the look-test design), SHEET_GAP_GRAY (opt-out: sheet layout: white gaps), SLOPE_BINS (opt-out: layout: one bin per degree of slope, the census resolution of the slope cut), Params.sea_level_m (opt-out: a fact of the terrain the host passes, not a tunable), EDGE_EPS (opt-out: maths: rounding tolerance, far below any sample spacing), MM_CELL (opt-out: layout: block size of the per-stamp min/max grid, no quality trade), MAX_BINS_AXIS (opt-out: capacity: caps the bin grid at 256² for far-apart small stamps), S_WARP_X (opt-out: hash stream ids), S_WARP_Y (id table), S_FOOT (id table), S_EXPONENT (id table), S_RIFT_CURVE (id table), S_CALDERA (id table), S_COLLAPSE (id table), S_SUBPEAK (id table), S_CONE (id table), S_FRACTURE (id table), S_FRACTURE_WANDER (id table), S_SEED_COARSE (id table), S_SEED_FINE (id table), S_BAND (id table), S_BAND_WARP (id table), S_CELL (id table), S_FLANK_K (id table), NONE (layout/math/id), EDT_FAR (opt-out: sentinel: larger than any grid distance squared), CALIB_STEPS (opt-out: maths: a secant divergence guard, it converges in 3-5 steps to CALIB_TOL_M), CALIB_TOL_M (opt-out: maths: secant stop tolerance, far below the DEM precision), FRACTURE_SEGMENTS (small index), APRON_RAYS (opt-out: measurement recipe: fixed so radial-profile reports compare across runs), APRON_MIN_LEN_M (opt-out: measurement recipe: fixed so radial-profile reports compare across runs), FOOT_BEARINGS (opt-out: maths: 0.5 deg sampling of the analytic footprint to bound it), FIT_R0_STEPS (opt-out: measurement recipe: profile fit grid, fixed so reports compare), STRUCTURE_THRESHOLD_M2 (opt-out: measurement recipe: the S4 channel-structure recipe), STRUCTURE_WINDOW_M (opt-out: measurement recipe: the S4 channel-structure recipe), STRUCTURE_DIR_STEPS (opt-out: measurement recipe: the S4 channel-structure recipe), FLANK_RINGS_M (opt-out: report layout), RESIDUAL_TRACE_EVERY (opt-out: report layout), CR_OVERSHOOT (opt-out: maths: bound of the Catmull-Rom kernel, max Σ|w| = 1.25 per axis at t = 0.5), STAT_LEVELS (opt-out: layout: counter slots, one per tile level), W (id table), H (id table), CELL_S (opt-out: layout: GPU header slot index), COL_CI (id table), COL_CF (id table), ROW_CI (id table), ROW_CF (id table), COL_A (id table), COL_C (id table), ROW_A (id table), ROW_C (id table), SPACING (opt-out: layout: GPU header slot index), SEA (id table), OCTAVES (id table), WAVELENGTH (id table), LACUNARITY (id table), GAIN (opt-out: layout: GPU header slot index), RELIEF (id table), MAX_AMP (opt-out: layout: GPU header slot index), SLOPE_LO (id table), SLOPE_HI (id table), CURV_LO (id table), CURV_HI (id table), SHARP (opt-out: layout: GPU header slot index), CARVE (id table), PHASE_FADE (opt-out: layout: GPU header slot index), SHORE_RATIO (opt-out: layout: GPU header slot index), CASCADE (opt-out: layout: GPU header slot index), SEED (layout/math/id), BAND_LO (id table), BAND_HI (id table), STAMPS (opt-out: layout: GPU header slot index), LOOK (id table), LAYERS (opt-out: layout: GPU header slot index), STRATA_AMP (opt-out: layout: GPU header slot indices for Phase 3a sharp runtime operators), STRATA_STEP (opt-out: layout: GPU header slot index), STRATA_SHARP (opt-out: layout: GPU header slot index), ROCK_AMP (opt-out: layout: GPU header slot index), ROCK_SCALE (opt-out: layout: GPU header slot index), RIDGE_AMP (opt-out: layout: GPU header slot index), RIDGE_SCALE (opt-out: layout: GPU header slot index), STEEP_LO (opt-out: layout: GPU header slot index), STEEP_HI (opt-out: layout: GPU header slot index), HEIGHTS (opt-out: layout: GPU header slot index), MAXN (opt-out: capacity: upper bound of the declared `treads_max` range), FADE_SHARE (opt-out: spec definition: "cross-faded over a quarter cell"), NORMAL_STENCIL (opt-out: geometry: gradient stencil of the signed distance field), LINE_STEP_M (opt-out: geometry resolution of the report polylines), SAME_EPS_M (opt-out: numerics: f64 rounding of equal profiles), STREAM_TREAD (opt-out: format: noise stream ids), STREAM_RISER (opt-out: format: noise stream ids), STREAM_MEANDER (opt-out: format: noise stream ids), FD_M (opt-out: numerics: central-difference step, far under the shortest noise wavelength), RAY_ITERS (opt-out: numerics: iterations of a contraction, converged far under a sample), RAMP_FIT_ITERS (opt-out: numerics: a fixed point reached in two or three steps), RAMP_BUCKET_M (opt-out: indexing: a lookup grid's cell, any size gives the same cut), SMOOTH_FEET (opt-out: numerics: averages the digitised edge's jitter, far under the bend radii and ramp lengths), REPORT_FORMAT (opt-out: format version), BIG (opt-out: maths: "infinite" squared distance seed of the transform), FORMAT (layout/math/id).
 
 ## terrain-water
 
@@ -2393,17 +2385,11 @@ Stays const: TerrainBakeConfig.rt_stride (layout/math/id), NO_LAYER_ALBEDO (layo
 
 Stays const: P_CAMERA (small index), P_ORIGIN (small index), P_MISC (small index), P_VALID (small index), P_MORPH (small index), P_LAYER (small index), P_MACRO (small index), P_DETAIL (small index), P_LAYERS (small index), P_FAR (derived), P_RAISE (derived), P_HEX (derived), P_CLIFF (derived), P_SHADE (derived), SLOTS (layout/math/id), LAYER_LEVELS (small index), MACRO_LEVELS (small index), DEBUG_LOD (layout/math/id), DEBUG_WIREFRAME (layout/math/id), DEBUG_NO_FAR_SHADOWS (layout/math/id), DEBUG_NO_SPECULAR (layout/math/id), DEBUG_NO_INDIRECT (layout/math/id), DEBUG_RAW_LAYERS (layout/math/id), DEBUG_NO_ENV_SPECULAR (layout/math/id), P_CAMERA (shader enum), P_ORIGIN (shader enum), P_MISC (shader enum), P_VALID (shader enum), P_MORPH (shader enum), P_LAYER (shader enum), P_MACRO (shader enum), P_DETAIL (shader enum), P_LAYERS (shader enum), P_RAISE (shader enum), P_HEX (shader enum), P_CLIFF (shader enum), P_SHADE (shader enum), LAYER_LEVELS (shader enum), DEBUG_LOD (layout/math/id), DEBUG_WIREFRAME (layout/math/id), DEBUG_NO_FAR_SHADOWS (layout/math/id), DEBUG_NO_SPECULAR (layout/math/id), DEBUG_NO_INDIRECT (layout/math/id), DEBUG_RAW_LAYERS (layout/math/id), DEBUG_NO_ENV_SPECULAR (layout/math/id), MACRO_LEVELS (shader enum).
 
-### sf_water (111: T 58, C 14, ? 39)
+### sf_water (90: T 37, C 14, ? 39)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
-| src/body_mesh.rs:124 | LakeMeshParams.max_triangle_area_m2 | `1024.0` | T |  |
-| src/body_mesh.rs:125 | LakeMeshParams.min_angle_deg | `20.0` | T |  |
-| src/body_mesh.rs:126 | LakeMeshParams.max_steiner_vertices | `65_536` | T |  |
-| src/body_mesh.rs:150 | RiverMeshParams.spacing_m | `4.0` | T |  |
-| src/body_mesh.rs:151 | RiverMeshParams.cross_samples | `5` | T |  |
-| src/body_mesh.rs:152 | RiverMeshParams.bank_extend_m | `2.0` | T |  |
-| src/lib.rs:55 | TWIN_RESOLUTION | `64` | T |  |
+| src/lib.rs:80 | TWIN_RESOLUTION | `64` | T |  |
 | src/medium.rs:121 | CameraMedium.column | `0.0` | ? |  |
 | src/medium.rs:122 | CameraMedium.submerged | `false` | ? | bool |
 | src/medium.rs:123 | CameraMedium.changed | `false` | ? | bool |
@@ -2422,55 +2408,40 @@ Stays const: P_CAMERA (small index), P_ORIGIN (small index), P_MISC (small index
 | src/sea_wind.rs:48 | SeaWindSettings.min_speed_step | `0.15` | T |  |
 | src/sea_wind.rs:49 | SeaWindSettings.angle_step_deg | `3.0` | T |  |
 | src/sea_wind.rs:50 | SeaWindSettings.calm | `0.5` | T | settings default |
-| src/shore.rs:123 | SurfShape.enabled | `true` | ? | bool |
-| src/shore.rs:124 | SurfShape.height_gain | `1.5` | T |  |
-| src/shore.rs:125 | SurfShape.breaker_gamma | `0.78` | ? |  |
-| src/shore.rs:126 | SurfShape.steepen_start | `0.6` | ? |  |
-| src/shore.rs:127 | SurfShape.bore_start | `1.0` | ? |  |
-| src/shore.rs:128 | SurfShape.bore_full | `1.5` | ? |  |
-| src/shore.rs:129 | SurfShape.skew_steepen | `0.35` | ? |  |
-| src/shore.rs:130 | SurfShape.skew_bore | `0.6` | ? |  |
-| src/shore.rs:131 | SurfShape.bore_loop | `1.0` | ? |  |
-| src/shore.rs:132 | SurfShape.break_crest_min_m | `1.0` | T |  |
-| src/shore.rs:133 | SurfShape.break_sharpness | `8.0` | T |  |
-| src/shore.rs:134 | SurfShape.gap_cell_m | `24.0` | T |  |
-| src/shore.rs:135 | SurfShape.gap_share | `0.3` | ? |  |
-| src/shore.rs:136 | SurfShape.gap_feather | `0.08` | ? |  |
-| src/shore.rs:236 | SurfFoam.enabled | `true` | ? | bool |
-| src/shore.rs:237 | SurfFoam.birth_start | `0.5` | ? |  |
-| src/shore.rs:238 | SurfFoam.birth_full | `0.85` | ? |  |
-| src/shore.rs:239 | SurfFoam.bore_decay_rad | `1.8` | T |  |
-| src/shore.rs:240 | SurfFoam.front_rad | `0.3` | T |  |
-| src/shore.rs:241 | SurfFoam.lace_cell_m | `1.4` | T |  |
-| src/shore.rs:242 | SurfFoam.lace_fresh | `0.8` | ? |  |
-| src/shore.rs:243 | SurfFoam.lace_aged | `0.06` | T |  |
-| src/shore.rs:244 | SurfFoam.feather | `0.05` | ? |  |
-| src/shore.rs:245 | SurfFoam.lace_variation | `0.5` | ? |  |
-| src/shore.rs:246 | SurfFoam.albedo_fresh | `0.85` | ? |  |
-| src/shore.rs:247 | SurfFoam.albedo_aged | `0.55` | T |  |
-| src/shore.rs:248 | SurfFoam.aged_tint | `0.6` | T |  |
-| src/shore.rs:249 | SurfFoam.aged_opacity | `0.6` | T |  |
-| src/shore.rs:250 | SurfFoam.glow | `0.8` | ? |  |
-| src/shore.rs:251 | SurfFoam.bump_m | `0.03` | T |  |
-| src/shore.rs:252 | SurfFoam.swash_residue_rad | `1.2` | T |  |
-| src/shore.rs:253 | SurfFoam.contact_calm | `0.2` | ? |  |
-| src/shore.rs:254 | SurfFoam.contact_line | `0.15` | ? |  |
-| src/shore.rs:255 | SurfFoam.swash_spread | `2.0` | T |  |
-| src/shore.rs:263 | ShoreSettings.range | `256.0` | T |  |
-| src/shore.rs:264 | ShoreSettings.open_core | `200.0` | T | settings default |
-| src/shore.rs:265 | ShoreSettings.open_falloff | `800.0` | T |  |
-| src/shore.rs:266 | ShoreSettings.enclosed_fetch | `2000.0` | T | settings default |
-| src/shore.rs:267 | ShoreSettings.enclosed_max | `0.35` | T |  |
-| src/shore.rs:268 | ShoreSettings.swell_ramp | `40.0` | T | settings default |
-| src/shore.rs:269 | ShoreSettings.chop_ramp | `3.0` | T | settings default |
-| src/shore.rs:270 | ShoreSettings.chop_floor | `0.25` | T | settings default |
-| src/shore.rs:271 | ShoreSettings.normal_floor | `0.5` | T | settings default |
-| src/shore.rs:272 | ShoreSettings.beach_slope | `0.05` | T | settings default |
-| src/shore.rs:273 | ShoreSettings.shore_waves | `1.0` | T | settings default |
-| src/shore.rs:274 | ShoreSettings.foam_full_breaking | `0.6` | T | settings default |
-| src/shore.rs:346 | BIG | `1e20` | ? |  |
-| src/shore.rs:351 | BED_SLOPE_MIN | `0.02` | T |  |
-| src/shore.rs:352 | BED_SLOPE_MAX | `0.3` | T |  |
+| src/shore.rs:259 | SurfShape.enabled | `true` | ? | bool |
+| src/shore.rs:261 | SurfShape.breaker_gamma | `0.78` | ? |  |
+| src/shore.rs:262 | SurfShape.steepen_start | `0.6` | ? |  |
+| src/shore.rs:263 | SurfShape.bore_start | `1.0` | ? |  |
+| src/shore.rs:264 | SurfShape.bore_full | `1.5` | ? |  |
+| src/shore.rs:265 | SurfShape.skew_steepen | `0.35` | ? |  |
+| src/shore.rs:266 | SurfShape.skew_bore | `0.6` | ? |  |
+| src/shore.rs:267 | SurfShape.bore_loop | `1.0` | ? |  |
+| src/shore.rs:271 | SurfShape.gap_share | `0.3` | ? |  |
+| src/shore.rs:272 | SurfShape.gap_feather | `0.08` | ? |  |
+| src/shore.rs:372 | SurfFoam.enabled | `true` | ? | bool |
+| src/shore.rs:373 | SurfFoam.birth_start | `0.5` | ? |  |
+| src/shore.rs:374 | SurfFoam.birth_full | `0.85` | ? |  |
+| src/shore.rs:378 | SurfFoam.lace_fresh | `0.8` | ? |  |
+| src/shore.rs:380 | SurfFoam.feather | `0.05` | ? |  |
+| src/shore.rs:381 | SurfFoam.lace_variation | `0.5` | ? |  |
+| src/shore.rs:382 | SurfFoam.albedo_fresh | `0.85` | ? |  |
+| src/shore.rs:386 | SurfFoam.glow | `0.8` | ? |  |
+| src/shore.rs:389 | SurfFoam.contact_calm | `0.2` | ? |  |
+| src/shore.rs:390 | SurfFoam.contact_line | `0.15` | ? |  |
+| src/shore.rs:399 | ShoreSettings.range | `256.0` | T |  |
+| src/shore.rs:400 | ShoreSettings.open_core | `200.0` | T | settings default |
+| src/shore.rs:401 | ShoreSettings.open_falloff | `800.0` | T |  |
+| src/shore.rs:402 | ShoreSettings.enclosed_fetch | `2000.0` | T | settings default |
+| src/shore.rs:403 | ShoreSettings.enclosed_max | `0.35` | T |  |
+| src/shore.rs:404 | ShoreSettings.swell_ramp | `40.0` | T | settings default |
+| src/shore.rs:405 | ShoreSettings.chop_ramp | `3.0` | T | settings default |
+| src/shore.rs:406 | ShoreSettings.chop_floor | `0.25` | T | settings default |
+| src/shore.rs:407 | ShoreSettings.normal_floor | `0.5` | T | settings default |
+| src/shore.rs:408 | ShoreSettings.beach_slope | `0.05` | T | settings default |
+| src/shore.rs:409 | ShoreSettings.shore_waves | `1.0` | T | settings default |
+| src/shore.rs:482 | BIG | `1e20` | ? |  |
+| src/shore.rs:487 | BED_SLOPE_MIN | `0.02` | T |  |
+| src/shore.rs:488 | BED_SLOPE_MAX | `0.3` | T |  |
 | src/shore_waves.rs:80 | MICHE | `0.142 * PI` | ? |  |
 | src/shore_waves.rs:82 | STEEPNESS_LIMIT | `0.75` | T |  |
 | src/shore_waves.rs:86 | ORBIT_LIMIT | `0.4` | T |  |
@@ -2497,7 +2468,7 @@ Stays const: P_CAMERA (small index), P_ORIGIN (small index), P_MISC (small index
 
 Stays const: POINT_EPS_M (opt-out: maths: a duplicate-vertex guard), AREA_EPS_M2 (opt-out: maths: a zero-area guard), FOLD_MARGIN (opt-out: a no-fold bound, as `SKEW_RATE_LIMIT`), LENGTH_PROBES (opt-out: maths: the arc-length table per segment), MIN_SPACING_M (opt-out: maths: an allocation guard below the range), CENTRIPETAL (opt-out: maths: the parameterisation itself), CENTRE (small index), CameraMedium.started (runtime state), LEAF (small index), TRAINS (small index), BREAKER_INDEX (layout/math/id), SKEW_RATE_LIMIT (opt-out: a no-fold bound derived from the Jacobian, as ORBIT_LIMIT), MIN_EXTINCTION (opt-out: maths: a division guard, the shaders' floor), LEAF_TEXELS (opt-out: layout: the tree's leaf; exactness never depends on it).
 
-### sf_water_bevy (49: T 20, C 16, ? 13)
+### sf_water_bevy (48: T 18, C 17, ? 13)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -2512,7 +2483,6 @@ Stays const: POINT_EPS_M (opt-out: maths: a duplicate-vertex guard), AREA_EPS_M2
 | src/lib.rs:306 | ClipmapSettings.skirt | `32_000.0` | T | settings default |
 | src/lib.rs:306 | ClipmapSettings.displacement_range | `900.0` | T |  |
 | src/lib.rs:405 | MESH_RANK | `2` | ? |  |
-| src/medium.rs:98 | WaterMediumSettings.post | `true` | T | settings default |
 | src/render.rs:178 | GATE_ARGS_SNAPSHOT | `0` | ? |  |
 | src/render.rs:179 | GATE_ARGS_VELOCITY | `16` | ? |  |
 | src/render.rs:180 | GATE_ARGS_SSPR | `32` | ? |  |
@@ -2533,9 +2503,8 @@ Stays const: POINT_EPS_M (opt-out: maths: a duplicate-vertex guard), AREA_EPS_M2
 | src/shaders/water_common.wesl:116 | SW_REPEAT | `256.0` | ? |  |
 | src/shaders/water_fft.wesl:42 | MAX_N | `256u` | T | shader const: needs a uniform |
 | src/shaders/water_sspr.wesl:27 | MIN_HEIGHT | `0.01` | T | shader const: needs a uniform |
-| src/shaders/water_underwater.wesl:36 | MIN_EXTINCTION | `1e-4` | T | shader const: needs a uniform |
 
-Stays const: MIN_CYCLE_S (opt-out: maths: the range floor of `water.flow.cycle_s`), MAX_GATE_BOXES (opt-out: capacity: past it the gate runs every pass), OceanSpectrum.seed (runtime state), KEEP (small index), FLOW_LOCATION (layout/math/id), NO_WATER_DEPTH_M (opt-out: format: a finite ∞ for the GPU), RAIN_CLOCK_WRAP_S (opt-out: maths: whole ring cycles per wrap), GATE_ARGS_BYTES (layout/math/id), GATE_BOX_BYTES (layout/math/id), SSPR_GROUP (layout/math/id), SW_SKEW_RATE_LIMIT (opt-out: the twin of sf_water SKEW_RATE_LIMIT, a no-fold bound), SW_TAU (layout/math/id), SW_PI (layout/math/id), LANES (shader enum), TAU (layout/math/id), FLOW_NOISE_SEED (layout/math/id).
+Stays const: MIN_CYCLE_S (opt-out: maths: the range floor of `water.flow.cycle_s`), MAX_GATE_BOXES (opt-out: capacity: past it the gate runs every pass), OceanSpectrum.seed (runtime state), KEEP (small index), FLOW_LOCATION (layout/math/id), NO_WATER_DEPTH_M (opt-out: format: a finite ∞ for the GPU), RAIN_CLOCK_WRAP_S (opt-out: maths: whole ring cycles per wrap), GATE_ARGS_BYTES (layout/math/id), GATE_BOX_BYTES (layout/math/id), SSPR_GROUP (layout/math/id), SW_SKEW_RATE_LIMIT (opt-out: the twin of sf_water SKEW_RATE_LIMIT, a no-fold bound), SW_TAU (layout/math/id), SW_PI (layout/math/id), LANES (shader enum), TAU (layout/math/id), FLOW_NOISE_SEED (layout/math/id), MIN_EXTINCTION (opt-out: maths: division guard, mirrors sf_water underwater MIN_EXTINCTION).
 
 ## textures
 
@@ -2677,7 +2646,7 @@ Stays const: NavRepeat.elapsed (runtime state).
 
 Stays const: EPSILON (layout/math/id).
 
-### sf_ui_screens (14: T 9, C 0, ? 5)
+### sf_ui_screens (14: T 7, C 2, ? 5)
 
 | Where | Name | Value | Cls | Note |
 |---|---|---|---|---|
@@ -2691,7 +2660,7 @@ Stays const: EPSILON (layout/math/id).
 | src/options.rs:83 | DEFAULT_FLOAT_STEPS | `20.0` | T |  |
 | src/options.rs:86 | THUMB_WIDTH | `10.0` | T |  |
 | src/options.rs:89 | PANE_WIDTH | `280.0` | T |  |
-| src/options.rs:98 | VALUE_WIDTH | `160.0` | T |  |
-| src/pause_menu.rs:38 | PAUSE_WIDTH | `280.0` | T |  |
 | src/saveload.rs:256 | THUMB | `(128.0, 72.0)` | ? |  |
 | src/widgets.rs:98 | ScreenColors.font_size | `18.0` | T |  |
+
+Stays const: VALUE_WIDTH (opt-out: UI layout width, px), PAUSE_WIDTH (opt-out: UI layout width, px).

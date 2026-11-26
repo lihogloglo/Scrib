@@ -14,16 +14,22 @@
 //!   counted in one `info!` per spawn batch.
 //! - **Extras** (wander idle table, follow end point) ride on the actor as [`AiPackageExtras`],
 //!   by directive id, with the [`crate::directive_drive::DirectiveDrive`] that serves the top
-//!   (`MA2d2`).
+//!   (`MA2d2`). A repeating directive comes back under a fresh id (`sf_ai` `StackEdit::renew`);
+//!   the stack calls that edit [`Renewing`] note each one, and the extras follow it
+//!   ([`AiPackageExtras::follow`], `MA2d4`), as `OpenMW`'s repeat keeps the package's own data
+//!   (`aisequence.cpp` @ 5f3aafb, 349-354: `push_back(package->clone())`).
 
 use std::collections::BTreeMap;
 use std::mem::discriminant;
+use std::sync::{Mutex, PoisonError};
 
 use bevy_ecs::prelude::*;
 use bevy_log::{debug, info};
 use mw_ai::MorrowindPolicy;
 use mw_ai::packages::{PackageCtx, PackageDirectives, PackageExtra, PackageResolver, directives};
-use sf_ai::{DirectiveId, DirectiveSource, DirectiveStack, GameTime};
+use sf_ai::{
+    Directive, DirectiveEnd, DirectiveId, DirectiveSource, DirectiveStack, GameTime, StackEdit, StackPolicy,
+};
 use sf_ai_bevy::{AiActor, AiDirectives};
 use sf_character_bevy::{Character, CharacterPlacement};
 use sf_controller_bevy::Mover;
@@ -43,6 +49,43 @@ pub struct AiPackageExtras(pub Vec<(DirectiveId, PackageExtra)>);
 impl AiPackageExtras {
     pub fn get(&self, id: DirectiveId) -> Option<&PackageExtra> {
         self.0.iter().find(|(d, _)| *d == id).map(|(_, e)| e)
+    }
+
+    /// Moves each extra to the new id of its directive's repeat (`renewed`: old, new, in the
+    /// order they repeated, from [`Renewing::take`]).
+    pub fn follow(&mut self, renewed: &[(DirectiveId, DirectiveId)]) {
+        for &(old, new) in renewed {
+            for (d, _) in self.0.iter_mut().filter(|(d, _)| *d == old) {
+                *d = new;
+            }
+        }
+    }
+}
+
+/// [`MorrowindPolicy`] that also notes each repeat's new id (module docs): pass it to the
+/// stack's edits, then move what rides by id with [`Renewing::take`]'s pairs.
+#[derive(Debug, Default)]
+pub struct Renewing(Mutex<Vec<(DirectiveId, DirectiveId)>>);
+
+impl Renewing {
+    /// The (old, new) id of every repeat since the last call, in the order they repeated.
+    pub fn take(&self) -> Vec<(DirectiveId, DirectiveId)> {
+        std::mem::take(&mut *self.0.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+}
+
+impl StackPolicy for Renewing {
+    fn push(&self, stack: &mut StackEdit<'_>, d: Directive) {
+        MorrowindPolicy.push(stack, d);
+    }
+
+    fn on_end(&self, stack: &mut StackEdit<'_>, ended: &Directive, end: DirectiveEnd) {
+        let newest = stack.iter().map(|d| d.id).max();
+        MorrowindPolicy.on_end(stack, ended, end);
+        // A renewal's id is fresh: above every id already on the stack.
+        if let Some(id) = stack.iter().map(|d| d.id).max().filter(|id| newest.is_none_or(|n| *id > n)) {
+            self.0.lock().unwrap_or_else(PoisonError::into_inner).push((ended.id, id));
+        }
     }
 }
 

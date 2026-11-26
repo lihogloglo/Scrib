@@ -1,13 +1,22 @@
 //! The directive stack drives the routine (`docs/specs/ai-adapter.md` "Packages -> directives",
 //! slice `MA2d2`): each fixed tick [`drive_directives`] advances every actor's
-//! [`DirectiveStack`] on the game clock (`Limit`s expire through [`MorrowindPolicy`]) and lets
+//! [`DirectiveStack`] on the game clock (`Limit`s expire through [`mw_ai::MorrowindPolicy`]) and lets
 //! the directive it serves pick what the routine does.
 //!
-//! - **`StayNear { home, radius }`** (`AI_W`): the wander ([`Walker`]) runs as before, around
-//!   the directive's home and radius, with the idle table of its record package
-//!   ([`AiPackageExtras`]). A record-seeded wander already has those values (`attach` built the
-//!   planner from the same package at the same spawn point), so nothing changes for it; a
-//!   different one (the next `AI_W`, a script's) re-targets the planner and re-chooses.
+//! - **`StayNear { radius, .. }`** (`AI_W`): the wander ([`Walker`]) runs as before, around the
+//!   directive's home and radius, with the idle table of its package ([`AiPackageExtras`]). The
+//!   home is where the actor stands when the directive first serves (`MA2d4`; `OpenMW`
+//!   `aiwander.cpp` @ 5f3aafb, 293-297: `mInitialActorPosition`, stored once), not the spec's
+//!   point: an `AI_W` under an `AI_T` wanders around the arrival point. It is taken when no
+//!   reaction owns the actor, kept by id through repeats (as `OpenMW`'s clone keeps it) and not
+//!   saved: after a load or a respawn the first serve takes it again, where the actor stands
+//!   then (`OpenMW` saves it; ours is cheap to re-take and a respawn stands at its placement). A
+//!   record wander served at spawn gets the spawn point, the planner's home already, so nothing
+//!   changes for it; a different one (the next `AI_W`, a script's) re-targets the planner and
+//!   re-chooses. An actor without a [`Walker`] (spawned with no `AI_W` distance) gets one, built
+//!   as `attach` builds it ([`crate::walkers::new_walker`]); a radius of 0 stands, as at spawn.
+//!   The `AI_W` duration is counted once, by the directive's `Limit` (the wander driver keeps no
+//!   timer of its own).
 //! - **`GoTo(location)`** (`AI_T`): the routine pauses (as under [`Reaction::owns`]) and the
 //!   actor walks there with a `MoveTo` operator ([`OpRunner`]) over its [`NavCorridor`]. It is
 //!   done (`finish` through the policy: a repeating one goes to the bottom, the next top takes
@@ -18,9 +27,16 @@
 //!   (`isWithinMaxRange`, lines 23-29; [`TRAVEL_MAX_RANGE_M`]) is not walked: the actor stands,
 //!   the directive stays (as `OpenMW`'s package does). A failed walk (no path) retries after
 //!   [`TRAVEL_RETRY_S`].
-//! - **Other kinds** (Follow, Escort, Use, Fight, Custom), an empty stack, a `GoTo` into another
-//!   worldspace or off the navmesh: the routine runs as before (one `debug!` per kind; later
-//!   slices).
+//! - **An empty stack** (`MA2d4`): the walker stands where it is ([`DirectiveDrive::stands`]),
+//!   as `OpenMW` runs nothing for an empty `AiSequence` (`aisequence.cpp` @ 5f3aafb, 264-268):
+//!   after a `GoTo` the actor stays at its destination, after a wander's `Limit` where it was.
+//!   A record-only actor reaches an empty stack only when its `AI_W` duration runs out, where it
+//!   stood before too.
+//! - **Other kinds** (Follow, Escort, Use, Fight, Custom), a `GoTo` into another worldspace or
+//!   off the navmesh: the routine runs as before (one `debug!` per kind; later slices).
+//!
+//! **Repeats.** A repeating directive comes back under a new id; its extras and home move to it
+//! ([`Renewing`]).
 //!
 //! **Script reads.** Each tick an actor runs, what its stack served is written to
 //! [`AiRuns`] (`GetAIPackageDone`, `GetCurrentAIPackage`: [`crate::script_ai`]).
@@ -36,14 +52,16 @@ use bevy_ecs::prelude::*;
 use bevy_log::debug;
 use bevy_math::Vec3;
 use bevy_time::prelude::*;
-use mw_ai::MorrowindPolicy;
+use mw_ai::Wander;
 use mw_ai::packages::PackageExtra;
 use sf_ai::{
-    DirectiveId, DirectiveKind, ExecConfig, ExecContext, ExecGait, FaceTarget, GameTime, NavCommand, OperatorKind,
+    DirectiveId, DirectiveKind, DirectiveStack, ExecConfig, ExecContext, ExecGait, FaceTarget, GameTime, NavCommand, OperatorKind,
 };
 use sf_ai_bevy::{AiActor, AiDirectives, AiExecSettings};
 use sf_controller::LocomotionIntent;
+use sf_character_bevy::Character;
 use sf_controller_bevy::{Avoider, Dormant, MoveIntent, Mover, MoverMode};
+use sf_coords::WorldPos;
 use sf_nav::DEFAULT_EXTENT;
 use sf_nav_bevy::{NavCorridor, NavMeshes, NavQueries};
 use sf_sky_bevy::GameClock;
@@ -51,10 +69,12 @@ use sf_tunables_bevy::TunablesAppExt;
 use sf_tunables_bevy::sf_tunables::{Def, Lifetime, Net, Scope, Source, Unit, def};
 use sf_world::Location;
 
-use crate::directives::AiPackageExtras;
+use crate::directives::{AiPackageExtras, Renewing};
 use crate::reaction::{OpRunner, Reaction, RunStep};
 use crate::script_ai::{AiRuns, Served, record_runs};
-use crate::walkers::{ActorSpace, WanderVocab, Walker, clear_corridor_goal, nav_move_state};
+use crate::walkers::{
+    ActorSpace, WalkerContent, WanderVocab, Walker, clear_corridor_goal, nav_move_state, new_walker, record_walk_speed,
+};
 
 /// `mw.ai.travel.end_tolerance_m`: [`TravelSettings::end_tolerance_m`].
 pub const TRAVEL_END_TOLERANCE_M: Def<f32> = def!(float "mw.ai.travel.end_tolerance_m" = 0.9144)
@@ -138,6 +158,8 @@ pub struct DirectiveDriveStats {
     pub goto_failed_walks: u32,
     /// Times a `StayNear` re-targeted the wander (a home, radius or idle table it did not have).
     pub wander_retargets: u32,
+    /// Walkers given to the actor by a `StayNear` (it spawned without one).
+    pub walkers_given: u32,
 }
 
 /// The `GoTo` being served.
@@ -158,6 +180,10 @@ struct GoTo {
 #[derive(Component, Debug, Default)]
 pub struct DirectiveDrive {
     goto: Option<GoTo>,
+    /// Each `StayNear`'s home, by directive id: where the actor stood when it first served.
+    homes: Vec<(DirectiveId, WorldPos)>,
+    /// The stack is empty: the walker stands.
+    stands: bool,
     pub stats: DirectiveDriveStats,
 }
 
@@ -165,6 +191,58 @@ impl DirectiveDrive {
     /// Whether a directive's executor drives the actor (the wander stays paused).
     pub fn owns(&self) -> bool {
         self.goto.is_some()
+    }
+
+    /// Whether the actor has no directive left: its walker stands where it is (module docs).
+    pub fn stands(&self) -> bool {
+        self.stands
+    }
+
+    /// The home of the `StayNear` `id`, once it served.
+    pub fn home(&self, id: DirectiveId) -> Option<WorldPos> {
+        self.homes.iter().find(|(d, _)| *d == id).map(|&(_, p)| p)
+    }
+
+    /// The home of `id`, taken at `pos` on its first serve; none while a reaction owns the actor
+    /// (`owned`) before it has one.
+    fn home_at_first_serve(&mut self, id: DirectiveId, pos: WorldPos, owned: bool) -> Option<WorldPos> {
+        if let Some(home) = self.home(id) {
+            return Some(home);
+        }
+        if owned {
+            return None;
+        }
+        self.homes.push((id, pos));
+        Some(pos)
+    }
+
+    /// Moves the homes to each repeat's new id (`renewed`: old, new) and drops those of
+    /// directives no longer on `stack`.
+    pub(crate) fn follow(&mut self, renewed: &[(DirectiveId, DirectiveId)], stack: &DirectiveStack) {
+        for &(old, new) in renewed {
+            for (d, _) in self.homes.iter_mut().filter(|(d, _)| *d == old) {
+                *d = new;
+            }
+        }
+        self.homes.retain(|(d, _)| stack.get(*d).is_some());
+    }
+}
+
+/// Moves `extras` and `drive`'s homes to the new ids of what `policy` saw repeat.
+pub(crate) fn follow_renewals(
+    policy: &Renewing,
+    drive: Option<&mut DirectiveDrive>,
+    extras: Option<&mut Mut<'_, AiPackageExtras>>,
+    stack: &DirectiveStack,
+) {
+    let renewed = policy.take();
+    if !renewed.is_empty()
+        && let Some(extras) = extras
+    {
+        extras.follow(&renewed);
+    }
+    if let Some(drive) = drive {
+        drive.follow(&renewed, stack);
     }
 }
 
@@ -193,10 +271,19 @@ pub(crate) fn drive_directives(
     meshes: Option<Res<NavMeshes>>,
     mut queries: Option<ResMut<NavQueries>>,
     runs: Option<ResMut<AiRuns>>,
+    content: Option<Res<WalkerContent>>,
+    mut commands: Commands,
     mut logged: Local<BTreeSet<&'static str>>,
     mut actors: Query<(
-        (&AiActor, &Mover, &ActorSpace, &mut DirectiveDrive, Option<&AiPackageExtras>, Has<Dormant>),
-        (Option<&Reaction>, Option<&mut Walker>, Option<&mut NavCorridor>, &mut MoveIntent, Option<&mut Avoider>),
+        (Entity, &AiActor, &Mover, &ActorSpace, &mut DirectiveDrive, Option<&mut AiPackageExtras>, Has<Dormant>),
+        (
+            Option<&Reaction>,
+            Option<&mut Walker>,
+            Option<&mut NavCorridor>,
+            &mut MoveIntent,
+            Option<&mut Avoider>,
+            Option<&Character>,
+        ),
     )>,
 ) {
     let Some(mut store) = store else {
@@ -209,16 +296,25 @@ pub(crate) fn drive_directives(
     let dt = time.delta_secs().min(0.1);
     let mut events = Vec::new();
     let mut ran = Vec::new();
-    for ((actor, mover, space, mut drive, extras, dormant), (reaction, mut walker, mut nav, mut intent, avoider)) in
-        &mut actors
+    let policy = Renewing::default();
+    for (
+        (entity, actor, mover, space, mut drive, mut extras, dormant),
+        (reaction, mut walker, mut nav, mut intent, avoider, character),
+    ) in &mut actors
     {
         let Some(stack) = store.get_mut(actor.0) else {
             continue;
         };
         let served = Served::of(stack);
-        stack.advance(now, &MorrowindPolicy, &mut events);
+        stack.advance(now, &policy, &mut events);
+        follow_renewals(&policy, Some(&mut drive), extras.as_mut(), stack);
         if dormant {
             continue;
+        }
+        let stood = drive.stands;
+        drive.stands = stack.is_empty();
+        if stood && !drive.stands {
+            resume_wander(walker.as_deref_mut(), mover.loco.motion.yaw);
         }
         ran.push((actor.0, served));
         let pos = mover.loco.position;
@@ -288,9 +384,12 @@ pub(crate) fn drive_directives(
                 }
                 GoToStep::Done => {
                     clear_corridor_goal(nav, queries.as_deref_mut());
-                    stack.finish(id, now, &MorrowindPolicy, &mut events);
+                    stack.finish(id, now, &policy, &mut events);
+                    follow_renewals(&policy, Some(&mut *drive), extras.as_mut(), stack);
                     drive.goto = None;
                     drive.stats.goto_finished += 1;
+                    // An empty stack stands here (module docs); otherwise the next top takes over.
+                    drive.stands = stack.is_empty();
                     resume_wander(walker.as_deref_mut(), yaw);
                 }
                 GoToStep::Failed => drive.stats.goto_failed_walks += 1,
@@ -299,7 +398,33 @@ pub(crate) fn drive_directives(
             continue;
         }
         if let Some((id, kind)) = &serving {
-            serve_routine(*id, kind, walker.as_deref_mut(), extras, yaw, &mut drive.stats, &mut logged);
+            let owned = reaction.is_some_and(Reaction::owns);
+            let home = if matches!(kind, DirectiveKind::StayNear { .. }) {
+                drive.home_at_first_serve(*id, pos, owned)
+            } else {
+                None
+            };
+            let routine = Routine { id: *id, kind, home, extras: extras.as_deref(), yaw };
+            if let Some(wander) = serve_routine(&routine, walker.as_deref_mut(), &mut drive.stats, &mut logged)
+                && let Some(home) = home
+            {
+                // MA2d4: a StayNear on an actor spawned without a wander gets the walker `attach`
+                // would have given it (the same speed and idle gate).
+                let speed = content
+                    .as_deref()
+                    .zip(character)
+                    .and_then(|(c, ch)| record_walk_speed(c, ch))
+                    .or_else(|| reaction.and_then(|r| r.walk_speed))
+                    .or_else(|| nav.as_ref().map(|n| n.follower.speed));
+                if let Some(speed) = speed {
+                    let at = Location::new(space.0.clone(), home);
+                    let idle_mult = content.as_ref().map(|c| c.idle_mult);
+                    commands.entity(entity).try_insert(new_walker(entity, wander, &at, speed, idle_mult, vocab.as_deref()));
+                    drive.stats.walkers_given += 1;
+                } else if logged.insert("stay_near (no walk speed)") {
+                    debug!("directives: a stay_near on an actor with no walk speed; it stands");
+                }
+            }
         }
     }
     if let Some(mut runs) = runs {
@@ -310,36 +435,54 @@ pub(crate) fn drive_directives(
     }
 }
 
-/// The routine under a served directive that does not drive the actor itself: a `StayNear`
-/// points the wander at its home and radius; other kinds have no executor yet (module docs).
-fn serve_routine(
+/// A served directive the routine runs under.
+struct Routine<'a> {
     id: DirectiveId,
-    kind: &DirectiveKind,
-    walker: Option<&mut Walker>,
-    extras: Option<&AiPackageExtras>,
+    kind: &'a DirectiveKind,
+    /// A `StayNear`'s home (none while a reaction owns the actor before its first serve).
+    home: Option<WorldPos>,
+    extras: Option<&'a AiPackageExtras>,
     yaw: f32,
+}
+
+/// The routine under a served directive that does not drive the actor itself: a `StayNear`
+/// points the wander at its home and radius, or returns the wander to build a walker from when
+/// the actor has none; other kinds have no executor yet (module docs).
+fn serve_routine(
+    r: &Routine<'_>,
+    walker: Option<&mut Walker>,
     stats: &mut DirectiveDriveStats,
     logged: &mut BTreeSet<&'static str>,
-) {
-    match kind {
-        DirectiveKind::StayNear { home, radius } => {
+) -> Option<Wander> {
+    match r.kind {
+        DirectiveKind::StayNear { radius, .. } => {
+            let home = r.home?;
+            let package = match r.extras.and_then(|e| e.get(r.id)) {
+                Some(PackageExtra::Wander(wander)) => Some(*wander),
+                _ => None,
+            };
             if let Some(w) = walker {
-                let idles = match extras.and_then(|e| e.get(id)) {
-                    Some(PackageExtra::Wander(wander)) => Some(wander.idle_chances),
-                    _ => None,
-                };
-                if retarget(w, home, *radius, idles, yaw) {
+                if retarget(w, home, *radius, package.map(|p| p.idle_chances), r.yaw) {
                     stats.wander_retargets += 1;
                 }
-            } else if *radius > 0.0 && logged.insert("stay_near (no wander driver)") {
-                debug!("directives: a stay_near on an actor without a wander driver; it stands");
+            } else if *radius > 0.0 {
+                // The stack's `Limit` counts the duration; the walker keeps none.
+                let wander = package.unwrap_or(Wander {
+                    distance: *radius,
+                    duration_hours: 0.0,
+                    game_hour: 0,
+                    idle_chances: [0; 8],
+                    repeat: false,
+                });
+                return Some(Wander { distance: *radius, ..wander });
             }
         }
-        _ if logged.insert(kind.name()) => {
-            debug!("directives: no executor for {} yet; the routine keeps the actor", kind.name());
+        _ if logged.insert(r.kind.name()) => {
+            debug!("directives: no executor for {} yet; the routine keeps the actor", r.kind.name());
         }
         _ => {}
     }
+    None
 }
 
 /// One tick of a `GoTo` walk ([`GoToStep`]; arrival: module docs).
@@ -415,15 +558,15 @@ fn stand(nav: &mut NavCorridor, intent: &mut MoveIntent, yaw: f32, queries: Opti
 
 /// Points the wander at `home` / `radius` (and the idle table, when the directive has one); true
 /// if anything changed (the paused step ends and the wander re-chooses).
-fn retarget(walker: &mut Walker, home: &Location, radius: f32, idles: Option<[u8; 8]>, yaw: f32) -> bool {
+fn retarget(walker: &mut Walker, home: WorldPos, radius: f32, idles: Option<[u8; 8]>, yaw: f32) -> bool {
     let planner = &mut walker.driver.planner;
     let idles = idles.unwrap_or(planner.wander.idle_chances);
     #[allow(clippy::float_cmp)] // the same package's value: equal unless it is another directive
-    let same = planner.home == home.pos && planner.wander.distance == radius && planner.wander.idle_chances == idles;
+    let same = planner.home == home && planner.wander.distance == radius && planner.wander.idle_chances == idles;
     if same {
         return false;
     }
-    planner.home = home.pos;
+    planner.home = home;
     planner.wander.distance = radius;
     planner.wander.idle_chances = idles;
     resume_wander(Some(walker), yaw);
