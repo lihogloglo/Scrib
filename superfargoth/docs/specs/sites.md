@@ -269,7 +269,8 @@ clearings read as natural, not as stamped discs? Each "no" goes to a tunable or 
 
 1. (Answered, owner via meta-5, 2026-11-26: yes.) Dense forest may block sight lines (Bitter Coast, Ascadian Isles),
    with guaranteed clearings at roads and sites; here it sets `clearing_m` and `clearing.road_m` (live tunables).
-2. May some remote sites have no path at all (MU access `none`: reached across rough ground or by swimming, never by
+2. (Answered, owner via meta-6, 2026-11-26: yes, for remote rows: "many places won't have a road of course".)
+   May some remote sites have no path at all (MU access `none`: reached across rough ground or by swimming, never by
    a track)? Recommend yes, for remote rows only.
 3. Do sites hold gameplay from the first look (levelled creatures, a container), or start as scenery? Recommend
    scenery for WG-P-look, contents as the next slice (gameplay priority 2026-11-25).

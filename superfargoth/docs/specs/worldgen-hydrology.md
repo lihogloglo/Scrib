@@ -74,6 +74,7 @@ first part whole (`condition_and_water`, V); the walls are what we add.
 | Authored rivers forced | Arc Hydro stream burning; UE5 river splines carve via Landmass | none | gap: Later |
 | Sub-grid channel carve from the spline | UE5 Water river spline + Landmass brush | none (bed is a grid effect at 18 m) | gap: Later (ROADMAP [p] "generated rivers refactor") |
 | Tiled hydrology | Gaea Tiled Builds (U) | one global pass | differ by design: upstream discharge cannot be tiled (MU doc, research `magna-urbis-terrain` §5.5); 4.2 s whole island |
+| Sea-level inlets and channels | one ocean surface at one level reaches into every inlet, calm by fetch and depth, no water body per inlet: UE5 Water (one Water Body Ocean; rivers hand over through a River-to-Ocean transition), Sea of Thieves (one ocean), the source game and OpenMW (one water level per exterior) (U) | the ocean plane; calm from the ocean's own `openness` (fetch per connected water component) and shore attenuation (`water.md:186-198`, V) | match (owner 2026-11-26: fast and standard) |
 
 ## Design
 
@@ -239,6 +240,9 @@ tolerances (`run.rs:384-387, 582`) are float noise, consts.
 Bake: today `none` /1 4.2 s (WR-1, measured); W1a +0.1 s, W1b +0.3 s, W1c +0.5 s, W1d-f +0.2 s (all E); the whole
 chain W1g under 2 min (E: anchors 3.6 s WG-X2, roads 0.8-8.8 s WR-2/S-2, other steps U). Runtime: 0 ms for every
 slice; the bodies' query cost is FL-5a's (0.844 µs per sample measured).
+Sea-level channels (owner question 2): no body, no carve and no bake step (MU leaves heights <= 0 alone), and 0 ms
+beyond the ocean the frame already draws; their calm is the ocean's existing fetch and shore terms
+(`water.md:186-198`), the one-ocean-surface standard of the Industry comparison's last row.
 
 ## Tests
 
@@ -255,10 +259,12 @@ water-bodies lane's.
 
 ## Open questions (owner)
 
-1. A river whose valley is closed by a kept place: let it pool into a lake beside the town (or end at the basin rim
+1. (Answered, owner via meta-6, 2026-11-26: yes, the lake beside the town, never water through it: "people don't
+   build inside the water".) A river whose valley is closed by a kept place: let it pool into a lake beside the town (or end at the basin rim
    when the lake would flood the town), or move water through the town? **Recommended: the lake beside the town**; the
    town is never flooded or cut, and each case is logged per anchor.
-2. The Odai and other sea-level channels inland: keep them as calm arms of the sea (ocean plane, sea waves reduced by
+2. (Answered, owner via meta-6, 2026-11-26: yes, calm arms of the sea for now, on condition that it is fast and the
+   industry standard: "Industry comparison" last row, "Performance".) The Odai and other sea-level channels inland: keep them as calm arms of the sea (ocean plane, sea waves reduced by
    the FL lane), or make them flowing rivers with a current? **Recommended: arms of the sea in WG-W1**; a flowing
    estuary is a later FL slice if the look asks for it.
 
@@ -268,4 +274,6 @@ water-bodies lane's.
 - Sub-grid bed carve under the ribbon at runtime (ROADMAP [p] "generated rivers refactor"; research
   `magna-urbis-terrain` §5.3).
 - Per-region climate into MU's water budget once WG-E1 exists (MU takes two scalars: a vendored patch for rasters).
+- Building on water (floating houses, houses on stilts) for a culture that has it: culture data in the vendored
+  Magna Urbis, no slice now (owner 2026-11-26; kept towns of the first pack never stand in water, question 1).
 - Oxbow lakes written; wetness raster beyond `flow_area.f32`; tiled water for worlds over 8192 cells a side.

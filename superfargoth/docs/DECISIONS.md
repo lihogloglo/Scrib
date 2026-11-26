@@ -2082,3 +2082,9 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (bigworld-5, owner BW1): far tree shadows come from a simple opaque proxy on the shadow-only layer,
   not from each impostor card. The slot path stays, with six fill rules: the alpha test runs once, in the camera
   prepass, and the main pass tests depth-equal through `Material::specialize` (`big-world-rendering.md` "Fill rules").
+- 2026-11-26 (specs-8, WG-E3): scatter rocks = talus thrown from scarp cells under the shadow angle, outcrop blocks
+  with debris and field stones per rock unit, truncated Pareto sizes, rocks reserved before vegetation
+  (`worldgen-scatter.md` "Rocks (WG-E3)").
+- 2026-11-26 (owner via meta-6): remote sites may have no path at all (sites.md q2); a river blocked by a kept town
+  pools beside it, never through it; inland sea-level channels stay calm arms of the sea, as long as that is fast
+  and the industry standard (worldgen-hydrology.md q1, q2); building on water is later culture data in Magna Urbis.

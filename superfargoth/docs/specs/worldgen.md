@@ -164,6 +164,8 @@ height; runs start noisy and stop at a finite time, not at strict equilibrium.
    marks, bounded-round competition (bigger crown wins), lower layers by canopy light; tile alone == whole run with a
    halo; a hash-cached product read at load, the budget cut by rank. v1 (WG-X5, running today): per-region densities
    learned from the source's own placements (WG-R3 §6) and one Bernoulli draw per candidate.
+   Rocks (WG-E3) run first: talus thrown from scarp cells under the shadow angle (big blocks to the toe), outcrop
+   blocks with debris, field stones per rock unit; truncated Pareto sizes; rockgen library classes per unit.
 9. **Wilderness sites** ([sites.md](sites.md), WG-P/V/NM): a site table (data) drives Magna Urbis `Terrain::place` in
    `list` mode (kept towns by `position`, generated hamlets, farms, activity and remote sites) in `scrib-worldgen`;
    Scrib reads `sites.json` v2 (`sf_worldgen::sites`), floods reachability on the final ground (`sf_worldgen::reach`,

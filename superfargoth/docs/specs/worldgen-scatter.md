@@ -60,6 +60,8 @@ a cell model with no per-tree positions: it supports this choice and gives the h
 | Seeding around parents, few steps | UE Num Steps 3-4, Spread Distance (V) | Thomas offspring | match (no ageing) |
 | Shade layer | UE Shade Radius, Can Grow in Shade (V); Makowski `stol` (V) | understorey by light | match |
 | Cascade big to small | Horizon layers (V), Wildlands (U) | rocks, canopy, understorey, ground | match |
+| Debris below cliffs, sized | Houdini scree workflows (U); no game talk found (WG-R §4.7) | talus fall process, Pareto sizes | match (our design) |
+| Rocks prune foliage | UE PCG Difference, Self Pruning (U) | rocks first, footprints as obstacles | match |
 | Steady-state species competition | Ecormier-Nocca 2021 (V) | suitability min only | gap by choice (Later) |
 | GPU placement per frame | Horizon, ~250 us (V) | CPU, once, cached file | gap by choice (co-op safe) |
 
@@ -141,12 +143,56 @@ groundcover. Groundcover avoids trunks through `BigworldFootprints`.
 
 ## Rocks (WG-E3)
 
-Specced in the next slice.
+Rocks come from sources and obey transport (WG-R §4); the layer runs first, reusing passes 4, 6, 8, 9, 10.
+**Today (V):** v1 learns only `terrain_rock*` and rocks of 14 m or more (`classify.rs:118-131`); scale is uniform in
+that narrow range (`scatter.rs:597`): "all one size". The RG-2 library is not wired in (`rockgen.md:262-265`).
+
+**Inputs (V).** Guide heights; `geology/` products `unit.u8` and `cliff.u8` (`geology.rs:28`, written by placement,
+`placed/mod.rs:987-996`); `RockUnit::outcrop` (`geology.rs:164`). Scarp cell = `cliff.u8 > 0` OR slope >=
+`scarp_slope_deg` (fault, stroke and eroded cliffs alike). No geology product: the region's default unit (adapter).
+
+**Three contexts**, candidate streams of pass 4 with a size mark `s` (longest axis, `rockgen.md:116`):
+1. **Talus.** Parents on scarp cells at `talus_parent_per_ha` x the unit's `rockfall`. An offspring draws `s`, then
+   run-out `x ~ exp(-x / ell)`, `ell = fall_ell_m (s / size_min_m)^sort_beta`, cut at `reach_max_m`, along the
+   parent's downslope +- `talus_spread_deg`. Kept if below the shadow-angle line, `z_parent - z_land >= x
+   tan(shadow_angle_deg)` (Evans and Hungr 1993 minimum 27.5 deg, abstract V), and on slope <= `loose_slope_max_deg`.
+   **Large blocks go furthest, to the talus toe** (Statham 1976, Evans and Hungr, U), as a tendency: a 2021 cone
+   survey found sorting weak or absent (V), `sort_beta` 0 turns it off. Density falls away from the scarp.
+2. **Outcrop (parent block and debris).** In units with `outcrop`, Thomas parents at `outcrop_parent_per_ha`;
+   the parent is a rock from the top of the law (`s >= outcrop_parent_min_m`), its children
+   (Poisson `child_mean`) from the law cut at `child_size_ratio x s_parent`, Gaussian offset `cluster_sigma_m`.
+3. **Field stone.** Per unit, `field_stone_per_ha` in small Thomas clumps, `field` size range, x the slope hat.
+
+**Size law.** Truncated Pareto, `s = s_min (1 - u (1 - (s_min / s_max)^D))^(-1/D)` (WG-R §4.2), `N(>s) ~ s^-D`
+(Turcotte 1986, U; Ord 2021 prefers other laws: `size_law` is a column). Below ~0.3 m groundcover takes over.
+
+**Competition and exclusion (shared).** Pass 6 with footprint `r = s / 2`, `R_ij = rock_k (r_i + r_j)`, `rock_k`
+0.9 (rocks may touch), priority (size, hash): the big block keeps its spot, debris fills round it. Pass
+8 as is (roads, sites, anchors, forced clearings, sea, lakes, rivers). **Rock over tree:** rocks are reserved first;
+their footprints are hard obstacles for later layers (pass 7; UE PCG Difference and Self Pruning, U). **Budget:** its
+own group and `t_g` (pass 10; WG-R §9.3), debris cut first; share by the v1 rule (`scatter.rs:436-468`), ~45 % in WG-X5.
+
+**Tile independence.** As vegetation, with `H_rock = max(reach_max_m, 3 cluster_sigma_m) + (2k - 1) rock_k s_max`
+(D); offspring come from the parent's stream, scarp cells and units are pure functions of guide position. Bake
+seconds: measured by E3m; runtime 0 ms from the stage (same product file).
+
+**Mesh pick (recipe data).** Per rock unit and context, weighted rockgen classes (`sf_rockgen` `classes.rs:44-157`,
+9 classes). Class by `hash(instance, 1)`, variant `hash(instance, 2) mod N` (`rockgen.md:119-120`), scale `s / class
+size` (`rockgen.md:364`). No stretch: `aspect_spread` varies shape, hulls stay exact (`sf_physics` statics).
+
+**Pose.** Uniform yaw; up = v1 `align` blend + up to `tilt_jitter_deg`. Sink = `lerp(sink_small, sink_large, t)` of
+the short axis, `t = ln(s / s_min) / ln(s_max / s_min)` (WG-R 10-40 %, `rockgen.md:156` 20-40 %): small stones sit
+deep, big blocks high. Loose rocks above `loose_slope_max_deg` drop; outcrop parents are exempt.
+
+**Adapter data (Bevyrrowind).** Rock rows and `[rock_units]` in `scatter_species.toml` for the six units of
+`worldgen/geology.toml`. **Learned** from the 33,017 rock references (`flora.rs:86-113`): a field-stone region prior,
+pose `align`, `offset_m`. **Authored:** classes per unit and context (basalt_flow: block, columnar, talus; tephra:
+scoria; capped_sediment: platy, slab), `rockfall`, size ranges. Source rock models leave the scatter (open question 3).
 
 ## Slices
 
 One deliverable plus its test each. E2a-E2h need no climate product (neutral `Fields`). E2i and the owner look wait
-for WG-E1c3 and WG-V1b. Order a to h, then i, j, m.
+for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (they reuse E2d-E2e), E3e after E2i.
 
 ## Build rows
 
@@ -163,6 +209,13 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m.
 | WG-E2i | adapter: species TOML, learned priors, four groups, product `Fields` | Scrib `mw_worldgen` (`flora.rs`), `bevyrrowind/worldgen/scatter_species.toml` | E2h, WG-E1c3, WG-V1b | `tests_flora` tile alone; region prior exact | `test -p mw_worldgen` |
 | WG-E2j | hash-cached product in the guide folder, read at load | Scrib `sf_worldgen` (`scatter_product.rs`), `mw_worldgen` | E2i | same hash twice; seed change rebuilds; read == computed | same |
 | WG-E2m | measurement: stems/ha and cover per class, counts, seconds | Scrib `mw_worldgen` (test only) | E2j | `#[ignore = "measurement: scatter v2 counts and seconds"]` | ledger line |
+| WG-E3a | rock columns, `[rock_units]` table | Scrib `sf_worldgen` (`scatter_species.rs`) | E2a | round trip; bad weight rejected | `test -p sf_worldgen` |
+| WG-E3b | talus candidates, Pareto sizes | Scrib `sf_worldgen` (`scatter_rocks.rs`) | E2e, E3a | size slope within 10 % of D; size-distance Spearman > 0.3 (beta 0.4), ~0 (beta 0); none above the shadow line; tile alone | same |
+| WG-E3c | outcrop clusters, field stones | same file | E3b | children <= ratio x parent; g(r) > 1.5 at sigma; tile alone | same |
+| WG-E3d | rock layer first in the passes | Scrib `sf_worldgen` (`scatter.rs`) | E3c | no pair under `R_ij`; none on water, roads, footprints; no tree in a rock | same |
+| WG-E3e | mesh pick and pose | `scatter_rocks.rs` | E3d | class shares within 3 sigma; sink exact | same + clippy dependents |
+| WG-E3f | adapter rock rows, field-stone prior | Scrib `mw_worldgen` (`flora.rs`), `scatter_species.toml` | E3e, E2i, RG-2b | `tests_flora` tile alone; prior exact | `test -p mw_worldgen` |
+| WG-E3m | measurement: rocks/ha, size slope, share, seconds | `mw_worldgen` (test only) | E3f, E2j | `#[ignore = "measurement: rocks"]` | ledger line |
 
 ## Tunables
 
@@ -188,6 +241,14 @@ Prefix `scatter.`; source Guess unless noted. Species columns go in the file's `
 | species `crown_k` | ratio | 0.3-1.2 | 0.8 | Guess (zone of influence, U) |
 | species `shade_tolerance` | ratio | 0-1 | 0.3 | Makowski `stol` form (V) |
 | species hats (T, P, moisture, slope, altitude, water distance) | per driver | 4 values | open | Guess |
+| `rock.size_dim` D / `scarp_slope_deg` / `loose_slope_max_deg` | ratio / deg / deg | 1-3.5 / 40-75 / 30-60 | 2.0 / 50 / 45 | Turcotte, WG-R §4 (U) |
+| `rock.shadow_angle_deg` | deg | 15-35 | 27.5 | Evans and Hungr abstract (V) |
+| `rock.reach_max_m` / `fall_ell_m` / `sort_beta` | m / m / ratio | 20-400 / 2-100 / 0-1 | 150 / 15 / 0.4 | Guess |
+| `rock.talus_parent_per_ha` / `talus_spread_deg` | 1/ha / deg | 0-500 / 0-60 | 40 / 20 | Guess |
+| `rock.outcrop_parent_per_ha`, `_parent_min_m`, `cluster_sigma_m`, `child_mean`, `child_size_ratio` | | 0-50, 1-40, 2-30, 0-40, 0.05-1 | 2, 4, 6, 8, 0.4 | Guess (WG-R sigma 3-15) |
+| `rock.rock_k` / `tilt_jitter_deg` | ratio / deg | 0.5-1.2 / 0-30 | 0.9 / 15 | WG-R (U) |
+| row `size_min_m`, `size_max_m`; `sink_small`, `sink_large` | m; ratio | 0.2-40; 0-0.6 | talus 0.4-12, outcrop 1-20, field 0.3-2; 0.35, 0.15 | Guess |
+| unit `field_stone_per_ha` / `rockfall` | 1/ha / ratio | 0-500 / 0-4 | 20 / 1 | Guess |
 
 Removed in E2h: `clump_wavelength_m`, `clump_strength`, `occupancy_prior`, `occupancy_max`, slope classes, bands.
 
@@ -202,11 +263,13 @@ Removed in E2h: `clump_wavelength_m`, `clump_strength`, `occupancy_prior`, `occu
 
 Per build row. Statistics on a flat fixture of at least 1 km2, one species, neutral fields; g(r) with border edge
 correction; bands are sanity bands, not look limits. v1 tests (`tests_scatter.rs:104-205`) are ported, with halo tiles.
+Rocks: a fixture with one straight 60 m scarp of one unit; size slopes fitted on log N(>s) above `s_min`.
 
 ## Verification (owner checks)
 
 **WG-E2** after E2j on x10s (entry in the rows file): snug stands, clearings at roads and sites, big trees in the core,
 understorey in gaps, open classes open. Yes/no only; amounts are live tunables.
+**WG-E3** after E3f on x10s at placed scarps (rows file): size spread, big blocks at the toe, debris round blocks.
 
 ## Unverified dependences
 
@@ -215,7 +278,8 @@ offspring 3-30. (2) Stand densities 300-700 /ha temperate, 1000-3000 boreal, and
 (3) SDI cap 700-1100 (unused; the cap is the renderer's 400). (4) Weibull shape, de Liocourt q. (5) Crown allometry
 per species (one open-grown study). (6) Ripley K or g(r) of real stands (test bands). (7) Random sequential adsorption
 near 55 % (cover after 3 rounds: measured by E2m). (8) Luby 1986 round structure (U); the `(2r - 1) R` radius is ours
-(D), proven by the tile-alone test.
+(D), proven by the tile-alone test. Rocks: (9) talus 15-40 and scarp 45-60 deg. (10) shadow angle (abstract only).
+(11) D 1.6-3 (one quote of 1.6). (12) sorting beta 0.3-0.7 (ours). (13) sink 10-40 %.
 
 ## Open questions (owner)
 
@@ -223,6 +287,8 @@ near 55 % (cover after 3 rounds: measured by E2m). (8) Luby 1986 round structure
    edges)? Recommended: yes.
 2. Do water plants (kelp, lily pads: 38,572 source references) come back once generated water exists (WG-W1)?
    Recommended: yes, in a later slice, not E2.
+3. Do generated rocks use only the rockgen library, with the source's rock models (`terrain_rock*`, menhirs) kept
+   out of the scatter? Recommended: yes (RG-4 look approved; one size law across classes).
 
 ## Later
 
