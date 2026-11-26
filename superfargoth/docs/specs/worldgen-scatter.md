@@ -213,8 +213,8 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
 | WG-E2e | bounded-round competition, bucket grid | Scrib `sf_worldgen` (`scatter.rs`) | E2d | no winners closer than `R_ij`; g(r) ~0 below 0.8 R; tile alone; threads | same |
 | WG-E2f | lower layers by light, footprint obstacles | Scrib `sf_worldgen` (`scatter.rs`) | E2e | none in a trunk footprint; mean L higher than at uniform points | same |
 | WG-E2g | inland water exclusion, shore hat | Scrib `sf_worldgen` (`scatter.rs`) | E2f | nothing in lake, river, footprint, excluded cell | same |
-| WG-E2h | rank budget by group; v1 Bernoulli path deleted | Scrib `sf_worldgen` (`scatter.rs`) | E2g | budgets nest exactly; group shares; v1 tests ported | same + clippy dependents |
-| WG-E2i | adapter: species TOML, learned priors, four groups, product `Fields` | Scrib `mw_worldgen` (`flora.rs`), `bevyrrowind/worldgen/scatter_species.toml` | E2h, WG-E1c3, WG-V1b | `tests_flora` tile alone; region prior exact | `test -p mw_worldgen` |
+| WG-E2h | rank budget by group (v1 deletion moved to E2i) | Scrib `sf_worldgen` (`scatter.rs`) | E2g | budgets nest exactly; group shares; v1 tests ported | same + clippy dependents |
+| WG-E2i | adapter: species TOML, learned priors, four groups, product `Fields`; the v1 Bernoulli path deleted | Scrib `mw_worldgen` (`flora.rs`), `bevyrrowind/worldgen/scatter_species.toml` | E2h, WG-E1c3, WG-V1b | `tests_flora` tile alone; region prior exact | `test -p mw_worldgen` |
 | WG-E2j | hash-cached product in the guide folder, read at load | Scrib `sf_worldgen` (`scatter_product.rs`), `mw_worldgen` | E2i | same hash twice; seed change rebuilds; read == computed | same |
 | WG-E2m | measurement: stems/ha and cover per class, counts, seconds | Scrib `mw_worldgen` (test only) | E2j | `#[ignore = "measurement: scatter v2 counts and seconds"]` | ledger line |
 | WG-E3a | rock columns, `[rock_units]` table (entries: library class or pack model) | Scrib `sf_worldgen` (`scatter_species.rs`) | E2a | round trip; bad weight or unknown entry kind rejected | `test -p sf_worldgen` |
@@ -263,6 +263,12 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
   river the swept discs of its interpolated half width, exact); offspring also by region prior 0 and the slope and shore
   hats at the point. The shore hat reads `min(fields, exact inland distance)`. The margin also rings lakes. 2 tests.
 
+- **WG-E2h** (2026-11-27, `scatter.rs` v2 budget): `budget_rank(seed, key)` (its own hash stream) and
+  `budget_cut(seed, instances, budget, size_priority)`: per layer the `round(budget x n_l / n)` instances of smallest
+  `u / max(size mark, 0.1)^p`, ties by key (`select_nth`), all when `budget >= n`. v1 is kept until E2i: deleting it
+  breaks `mw_worldgen::flora` (it calls `Scatter`, `Learner`, `budget_keep`), which only E2i may rewrite. 4 tests
+  (v1's tile-alone, order and threads, slope, region and sea tests ported to four halo tiles; nest, shares, order).
+
 ## Tunables
 
 Prefix `scatter.`; source Guess unless noted. Species columns go in the file's `[columns]` table.
@@ -298,7 +304,7 @@ Prefix `scatter.`; source Guess unless noted. Species columns go in the file's `
 | row `size_min_m`, `size_max_m`; `sink_small`, `sink_large` | m; ratio | 0.2-40; 0-0.6 | talus 0.4-12, outcrop 1-20, field 0.3-2; 0.35, 0.15 | Guess |
 | unit `field_stone_per_ha` / `rockfall` | 1/ha / ratio | 0-500 / 0-4 | 20 / 1 | Guess |
 
-Removed in E2h: `clump_wavelength_m`, `clump_strength`, `occupancy_prior`, `occupancy_max`, slope classes, bands.
+Removed with the v1 path (E2i): `clump_wavelength_m`, `clump_strength`, `occupancy_prior`, `occupancy_max`, slope classes, bands.
 
 ## Performance
 

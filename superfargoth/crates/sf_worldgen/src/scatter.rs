@@ -58,6 +58,10 @@ mod tests_layers;
 #[path = "tests_scatter_water.rs"]
 mod tests_water;
 
+#[cfg(test)]
+#[path = "tests_scatter_budget.rs"]
+mod tests_budget;
+
 /// One-degree slope bins of the area census (0..90°).
 // tunables: const (layout: one bin per degree of slope, the census resolution of the slope cut)
 pub const SLOPE_BINS: usize = 90;
@@ -1575,4 +1579,65 @@ impl WaterMask {
         });
         (best <= cap).then_some(best)
     }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Scatter v2 rank budget (spec `worldgen-scatter.md` "Design" 10; slice WG-E2h). Every kept instance has a hashed
+// rank `u` in [0, 1), a pure function of the seed and its key ([`budget_rank`]). It is kept when
+// `u < min(1, t_g size^p)` (`p = scatter.size_priority`, size = its size mark), one threshold `t_g` per group (the
+// layer: canopy, understorey, ground; rocks join with WG-E3). An instance enters at `t = u / size^p`, so the cut
+// keeps, per group, the `round(budget x n_g / n)` instances of smallest entry (ties by key): each group keeps its
+// share of the full set, large instances first, and a larger budget keeps a superset (the budgets nest exactly,
+// the smallest cut first; gaps are left open, nothing re-competes, LOD-style). Above the full count every instance
+// is kept. The cut runs at load on the kept set (`--set scatter.budget=N` needs no rebuild).
+
+/// Salt of the budget rank stream in the scatter seed's hash space.
+// tunables: const (hash salt, not a value)
+const RANK_SALT: u64 = 0x2a4b_2d00_0000_2e2d;
+
+/// The smallest size the budget weight `size^p` sees, m (a guard against a zero weight, as in v1's [`budget_keep`]).
+// tunables: const (maths: a floor that keeps `u / size^p` finite; far under any declared `size_min_m`)
+const BUDGET_SIZE_FLOOR_M: f64 = 0.1;
+
+/// The budget rank of an instance, in `[0, 1)`: a hash of (seed, parent tile, species, parent, offspring),
+/// independent of the candidate streams.
+#[must_use]
+pub fn budget_rank(seed: u64, key: &CandidateKey) -> f64 {
+    let base = stream(seed ^ RANK_SALT, key.tile.0, key.tile.1, key.species);
+    unit(hash_k(base, (u64::from(key.parent) << 32) | u64::from(key.offspring), 0))
+}
+
+/// Which of `instances` the budget keeps, in input order ([module section](self): one cut per layer, each layer
+/// `round(budget x n_layer / n)` instances of smallest `budget_rank / max(size, 0.1)^size_priority`, ties by key).
+/// Every instance when `budget >= n`. Exact: a larger budget keeps a superset, on any input order.
+// Counts of instances: far under 2^52.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+#[must_use]
+pub fn budget_cut(seed: u64, instances: &[Candidate], budget: f64, size_priority: f64) -> Vec<bool> {
+    let n = instances.len();
+    if budget >= n as f64 {
+        return vec![true; n];
+    }
+    let mut groups: BTreeMap<Layer, Vec<(f64, usize)>> = BTreeMap::new();
+    for (i, c) in instances.iter().enumerate() {
+        let entry = budget_rank(seed, &c.key) / c.size_m.max(BUDGET_SIZE_FLOOR_M).powf(size_priority);
+        groups.entry(c.key.layer).or_default().push((entry, i));
+    }
+    let mut keep = vec![false; n];
+    for members in groups.values_mut() {
+        let k = ((budget.max(0.0) * members.len() as f64 / n as f64).round() as usize).min(members.len());
+        if k == 0 {
+            continue;
+        }
+        let order = |a: &(f64, usize), b: &(f64, usize)| {
+            a.0.total_cmp(&b.0).then(instances[a.1].key.cmp(&instances[b.1].key))
+        };
+        if k < members.len() {
+            members.select_nth_unstable_by(k - 1, order);
+        }
+        for &(_, i) in &members[..k] {
+            keep[i] = true;
+        }
+    }
+    keep
 }
