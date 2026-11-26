@@ -39,30 +39,107 @@ ported code cites file + commit in its module docs, gets a `superfargoth/THIRD_P
 
 ## Navigation (`sf_nav` data)
 
+Rewritten for the nav lane roadmap (`../../../docs/roadmaps/nav.md`, NV0d 2026-11-26); the earlier text and the NV4b
+as-built paragraph are in [archive/ai-adapter-history.md](archive/ai-adapter-history.md).
+
 - **Agent classes** (`sf.nav.agent` records from `mw_ai::nav`): `humanoid` (radius and height from the human capsule
   at race scale 1.0; small creatures use it too) and `large` (creature collision bounds above a size threshold). **Two
   classes, no `small`** (decisions (a)): no vanilla passage admits only small creatures, and a small class would cost
   ~4× the humanoid bake. MA1 prints the creature-radius histogram per class (a revisit trigger). OpenMW bakes one mesh
   per agent bounds (`components/detournavigator/navigator.hpp`).
 - **Areas** (`sf.nav.area`), from OpenMW's `areatype.hpp` (ground, water, door, pathgrid) plus ours: `ground` 1,
-  `water` (swimmers only; others high cost), `door` 2 (OpenMW's door cost; door leaves excluded from the bake geometry,
+  `water` (cost per actor profile, below), `door` 2 (OpenMW's door cost; door leaves excluded from the bake geometry,
   the doorway footprint marked), `door_closed` (set at runtime on those polygons), `path` (pathgrid corridors, slightly
   cheaper so NPCs keep to streets), `hazard` (lava: avoid filter). No vanilla record sets `carves_nav`.
-- **Pathgrid** (`mw_ai::pathgrid`, PGRD → `petgraph`, exists): edges become **off-mesh links** only where the navmesh
-  has no connection between the endpoints (OpenMW `offmeshconnectionsmanager.hpp`); nodes stay as **wander hints** and
-  **door approach points** (nearest node in front of each door, seamless research §4.11). Fallback when a worldspace
-  has no navmesh: the pathgrid route, as OpenMW `pathfinding.cpp` 150-210 does.
 - **Geometry**: exactly the cooked collision the mover uses (`collision.cook`), terrain from LAND, water level per
-  worldspace; NIF collision quirks are the bake's (actors-adapter "Static collision").
-- **As built (NV4b, 2026-11-11, `mw_bake::nav`)**: `MwNavSource` reads, per tile, the `mw.nav.cell` products (64 m
-  squares listing every static/item/door whose world bounds touch them, plus the level-0 `terrain.tile`s under them;
-  bytes = plan param, so a moved wall re-bakes only its cells' tiles), then `collision.cook` per model and the baked
-  terrain heights (what the physics heightfield uses, not raw LAND). Actors, lights, markers, editor-only and
-  start-disabled references are not geometry. Water: one quad at OpenMW's swim level (`getSwimLevel`: water −
-  (`fSwimHeightScale` + 1) × half height, GMST read from the records), area `water`, only over tiles with terrain or
-  objects; seabed kept. Doors: leaf excluded, `DoorVolume` = leaf footprint widened to 0.75 m each side, id = the
-  reference's `PlacementId` folded to 64 bits; approach = nearest pathgrid node ≤ 6 m (`mw.nav.links`). Areas
-  ground 1 / door 2 / water 3 (water cost 2); humanoid swims, `large` doesn't. Pathgrid off-mesh links: NV9.
+  worldspace; NIF collision quirks are the bake's (actors-adapter "Static collision"). Source as built: NV4b
+  `mw_bake::nav` `MwNavSource` (history file above).
+- **Every worldspace has a navmesh; pathgrids are bake input only** (nav roadmap decision 6). Tiles are baked, or a
+  missing one is built off the frame and cached (NV10c; owner 2026-11-26: never a stall while playing), so there is no
+  runtime pathgrid route. PGRD (`mw_ai::pathgrid`) feeds: off-mesh links only where the navmesh has no connection
+  between the endpoints (OpenMW `offmeshconnectionsmanager.hpp`; NV9d), wander hints, door approach points (MA21,
+  "Doors and followers"), road chains (route source below).
+- **Scaffold `PgrdFallback`** (named, to delete): `mw_walkers_bevy/src/walkers.rs` `drive`, the off-navmesh branch
+  calling `mw_ai::methods::WanderDriver::update_fallback` (fliers, swimmers and walkers without a resident tile walk
+  PGRD polylines), and `setup_of`'s swimmer `MoverMode::Fly { hover: None }` (fallfix). Removed by **MA12**
+  (`docs/roadmaps/ai.md`), after NV13b, NV13c, AI34 and AI35.
+- **Movement classes** (CREA flags, in `mw_anim::rig::CreatureMover::from_crea_flags` order, `Flies` first). An
+  actor = a class plus an area-cost profile (a per-actor Detour query filter: nothing re-bakes; costs in NV9d):
+  - NPCs (every race): ground class by size, `water` ×5: they swim after you, slower (decision 8, owner Q2).
+  - `Walks` without `Swims`, and creatures with neither (biped dremora carry only `Biped`): ground class by size,
+    `water` excluded: they wait at the shore (owner Q2).
+  - `Walks | Swims` (mudcrab): **amphibious = ground class with `water` ×1**, no class swap at the shore (decision 8:
+    swimming costs, not links; the swim quad already joins the shore polys).
+  - `Swims` without `Walks` (slaughterfish, dreugh): **swimmer** class in the water-body volume (decision 2, NV13c),
+    never the navmesh.
+  - `Flies` (cliff racer, netch): **flier** class on the clearance field (decision 2, NV13a-b).
+  - Levitate active (NPC or creature): class swap to the field; at its end, back to the ground class at the nearest
+    poly (decision 2).
+- **Water bodies (Morrowind inputs to nav.md "Volumes", NV0b; built in NV13c, costs NV9d).** One flat water plane per
+  worldspace: the exterior sea at 0 m (`mw_world::WorldRecords`, `sea_level`), and each interior whose CELL has
+  `HAS_WATER` at its WHGT height (`CellEnvironment::water_level`, 0 m when WHGT is absent). Per body the adapter hands:
+  the worldspace id, the surface height (m), the extent (the worldspace's nav extent: exterior = the bake's tile extent,
+  interior = placement bounds + `INTERIOR_PAD`) and the bed from the same `NavGeometrySource` geometry the tiles bake
+  (baked terrain heights + cooked collision), so no second source; a column with neither (open sea past the last
+  cell) has no bed (depth rule: NV0b). Vanilla and Morrowind-format mods have no lakes or rivers at their own heights
+  (the Odai is the sea), so one body per space; generated worlds' lakes and rivers come from world10x water bodies
+  (NV9e, `sf_worldgen`). The navmesh swim quad (OpenMW `getSwimLevel`) stays for ground classes; the volume serves
+  swimmers. Dependencies: CELL flags and WHGT, the tiles' terrain and collision products.
+- **Route source (NV12c, `mw_bake`, input of `nav.routes`; nav.md "Route graph").** `RouteSource::route_input` gives
+  one `RouteInput` for the exterior worldspace (`ids::exterior()`); interiors, "behave like exterior" ones included,
+  give none (a straight clique of their exits in `journey`, NV12e).
+  1. **Nodes and edges**: every node of every exterior PGRD (`PathGrids`, `CellKey::Exterior`) is `add_node(pos,
+     Junction)` (the builder sets Junction/End from degree); every stored connection is one `two_way` edge, kind
+     `Path`, `cost_m: None` (polyline length; NV12d measures). One-way connections become two-way (a road walks both
+     ways; OpenMW keeps them directed per cell, `pathgrid.cpp` 174-190), counted. Vanilla has no road flag: every
+     edge is `Path` in v1 (road LTEX under an edge is a possible later signal).
+  2. **Cross-cell joins** (ours: OpenMW builds one `PathgridGraph` per `ESM::Pathgrid`, `apps/openmw/mwmechanics/
+     pathgrid.cpp` 174, cached per record in `aipackage.cpp` 320-328, and crosses cells on the navmesh only; read at
+     `4e718b500ffee6657db90297d7b8a08a57d439bc`). Each pair of 8-neighbour exterior cells is visited once (offsets
+     (1,0), (0,1), (1,1), (1,−1) from the lower `(x, y)`); nodes a in A and b in B get a two-way `Path` edge when each
+     is the other's nearest node in the other cell and their 3D distance ≤ `mw.nav.route.join_m`. Distances squared
+     in f64; ties: lower `(cell x, cell y, point index)`. No height test: NV12d's Detour walk clears the class bit of
+     a join nobody can walk.
+  3. **Chains**: the adapter folds nothing; `RouteGraphBuilder::build` turns degree-2 nodes into polyline points and
+     keeps junctions, ends, anchors and doors as nodes.
+  4. **Settlement anchors**: exterior CELL records with a non-empty name (region-only cells have none), grouped by
+     ASCII-lowercased name; tag = that name (`balmora`, `caldera`). One anchor per group: among the group's PGRD nodes
+     in the largest component (union-find over the input after joins, by node count; tie: the component with the
+     lowest `(x, y, index)` node) touching the group, the node nearest (XZ) the mean of the group's cell centres; ties
+     lower `(x, y, index)`. That node goes in as `Anchor(tag)` instead of `Junction`. A group with no node: no anchor,
+     counted.
+  5. **Door ends**: each end of a `DoorLink` (`WorldRecords::door_links`) in the exterior is `add_door(link.id(), side,
+     approach)` with MA21's approach (PGRD node of the arrival's square + 8 neighbours, not behind the door plane, ≤
+     `mw.nav.door_approach_m`, else the arrival). NV12c moves `approach_point` (with the yaw of
+     `mw_doors_bevy::arrival_rotation`) from `mw_exterior_bevy/src/nav_links.rs` into Bevy-free `mw_ai::nav` (new module, no new dependency: `glam`, `sf_world`, `mw_world` are there); the bake
+     and MA21 call that one function, so door nodes equal `WorldGraph` approaches bit for bit. Node id = `RouteNodeId`
+     over (`LinkId`, side) (nav.md), the key NV12e joins on; the builder connects doors (`door_connect_m`). The bake's
+     own approach (`mw.nav.links`, ≤ 6 m from the door volume's floor centre, NV4b) feeds only `nav.coarse` and goes
+     with it in NV12d.
+  6. **No island filter**: small components are real places (camps, shrines, islets) and carry door nodes; queries
+     answer `Unreachable` or `NoJoin`. The measurement prints a component-size histogram (revisit trigger).
+  7. **Dynamic dependencies**: every exterior PGRD, every CELL record (names, door references, destinations), plan
+     params `mw.nav.route.join_m` and `mw.nav.door_approach_m`; a mod editing any of them re-bakes the exterior. A
+     live change of `door_approach_m` moves `WorldGraph` approaches only until the next bake (ids stay).
+  8. **Determinism**: the builder is order-free; adapter choices break ties by `(cell x, cell y, point index)` and
+     `LinkId`, never by record iteration order.
+  - **Tunable**: `mw.nav.route.join_m` 20 m (0-117, one cell; Guess; bake). Reused: `mw.nav.door_approach_m` (MA21).
+  - **Tests (NV12c, exact, synthetic records, `simplify_m` 0)**: two cells (0,0)/(1,0), one 3-node line each ending
+    4 m from the shared border: one join, one edge, exact node/point counts; gap of `join_m` + 0.01 m: two components
+    (`Unreachable`); mutual nearest (one node in A, two in B at 3 and 5 m: only 3 m joins; equal: lower index);
+    diagonal (1,1) join; Y-shaped PGRD folds to 1 Junction + 3 End, 3 edges; a one-way connection is two-way and
+    counted; anchor on the node nearest the group's centre, a nearer node in a smaller component skipped, tie by
+    index, unnamed cell none, named cell without PGRD counted, `anchor("testtown")` found; door node position ==
+    `mw_ai::nav::approach_point` (behind-plane node ignored, none within 4 m → arrival), id == `RouteNodeId` of
+    (`LinkId`, side), interior end adds nothing, MA21's `nav_links` tests unchanged; interior and behave-like-exterior
+    PGRDs ignored; shuffled record order → identical postcard bytes.
+  - **Measurement** (`#[ignore = "measurement: ..."]`, real install): nodes, edges, points in and out vs nav.md
+    "Budgets" (Vvardenfell ≤ 5k nodes, 6k edges, 60k points, ≤ 1.5 MiB), joins, one-way count, anchors (groups
+    without one), door nodes (pathgrid vs arrival; joined vs isolated), component histogram, bake ms; asserts the
+    Balmora → Caldera anchor route is `RouteKind::Graph`, not `Direct`.
+- **Reuse check**: Bevy has no navigation (nav roadmap decision 1); no crate builds road graphs from waypoint grids;
+  `mw_ai::pathgrid` (PGRD → `petgraph`, exists) reads, `sf_nav::route_graph` (NV12a) merges, folds and simplifies.
+  OpenMW is the behaviour reference above (per-cell graphs, pathgrid off-mesh links), not a design to copy.
 
 ## Packages → directives
 
@@ -295,6 +372,8 @@ filters through a new function family; named enemies remembering and returning a
 | Doors | followers teleport; no cross-cell nav | door markers, out-of-view teleport | `WorldGraph` + traverse (**ahead** of OpenMW) |
 | Crime | `commitCrime`/`reportCrime` | crime factions + witnesses | ported, witnesses through doors |
 | Off-screen | processing range only; `fastForward` | process levels | tiers + `fastForward` port |
+| Long routes | per-cell pathgrids, navmesh across cells; off-range actors freeze | Travel packages advance unloaded along the path (Skyrim, Starfield; CK "Persistence") | PGRD chains → route graph, tier 0 moves along it (**match** RDR2 road network, UE ZoneGraph lanes; nav roadmap decisions 3-4) |
+| Fliers, swimmers | navmesh per agent bounds, swim flag | navmesh + water flag | clearance field + water-body volume (**match** Horizon Zero Dawn, decision 2) |
 
 ## Build plan (adapter slices)
 
@@ -310,6 +389,7 @@ filters through a new function family; named enemies remembering and returning a
 | **MA8** schedules | data pack (three patterns, guards unscheduled), anchors, validator, `ai.schedules` setting | validator report per pattern on a real install; classic = vanilla stacks; unresolved anchors keep vanilla | AI10, AI11, AI12 |
 | **MA9** doors | escort/follow/pursue through doors, follower fallback | headless: follower through the Census door, guard pursues out | AI12 |
 | **MA10** combat sheets | NPC and creature combat through C6 | scripted fight, no NaN | AI15 |
+| **Nav adapter** (nav lane IDs) | NV12c route source, NV13c water bodies, NV9d pathgrid links + area-cost profiles, MA12 `PgrdFallback` removal ("Navigation") | rows in `docs/roadmaps/nav.md`, `docs/roadmaps/ai.md`; NV12c list in "Navigation" | there |
 
 As built (MA14, 2026-11-25): `mw_walkers_bevy/src/sight.rs` adds `AiSightPlugin` on the controller's ground
 (`Physics`, `MwGround` with `--off physics`); walkers get `AiObserver` with `AiActor` (`walkers.rs` `attach`); the
