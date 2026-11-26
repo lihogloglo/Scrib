@@ -2094,3 +2094,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (owner via meta-6): harvestable plants follow the scatter's ecology and water plants return once
   generated water exists (worldgen-scatter.md q1, q2). The source game's rock models stay in the scatter next to the
   rockgen library (q3: "Let's keep them for now"), mixed by pack data. sites.md q3 is decided at the WG-P-look check.
+- 2026-11-26 (owner go via meta-6: "use as much Magna Urbis as we can"): rural land use (fields, pastures, orchards,
+  field ways, enclosure) is MU's `landuse` module run per parish in scrib-worldgen, product `landuse.json` read by
+  `sf_worldgen::landuse`; farms stay `sites.md`'s; MU patches 06 (`demandFarms` switch), 07 (re-export) (`worldgen-landuse.md`).
