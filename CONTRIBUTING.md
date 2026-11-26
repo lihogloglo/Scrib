@@ -188,6 +188,9 @@ Several sessions may work **in the same working tree** at once.
    those paths, whatever else the shared index holds). Never `git add -A`, `commit -a` or a bare `git commit`.
 5. **Don't revert changes you didn't make.** Files changing under you are likely another session's work; check
    `.sessions/` and adapt.
+6. **Meta-coordinator (owner 2026-11-26).** When several lane sessions run, the owner talks only to one coordinator
+   session, which opens the lanes, relays questions and verdicts, keeps crates to one lane at a time and launches the
+   owner's checks as batched yes/no questions: `docs/meta-coordinator.md`.
 
 ## Tests and visual checks
 
