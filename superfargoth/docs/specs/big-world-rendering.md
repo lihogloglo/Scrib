@@ -217,20 +217,22 @@ cacheable.
 
 ## Cost model (RTX 4060 laptop, 1440p + DLSS Q, internal 1707×960)
 
-Bottom-up estimates, all `Guess` until BW-2/BW-10 measure them. 4060 laptop: ~14.6 TFLOPS, 256 GB/s, so bookkeeping
+Bottom-up estimates, `Guess` until BW-2/BW-10 measure them. **BW-2 measured the stand column of the slot path on
+2026-11-26 (last column; "As built" BW-2 has the table): the stop rule tripped.** The avg column and T2 are still
+`Guess`. 4060 laptop: ~14.6 TFLOPS, 256 GB/s, so bookkeeping
 passes are bandwidth-bound. Densities: **avg** 60/ha everywhere, **stand** 400/ha everywhere (the worst case).
 
-| Item (High) | avg | stand | Basis |
-|---|---|---|---|
-| T0 trees in ring / drawn (≈¼ in frustum) | 295 / ~75 | 1,960 / ~490 | π·125² m² × density |
-| T1 trees in ring / drawn | 91 k / ~23 k | 608 k / ~150 k | π·(2.2² − 0.125²) km² × density |
-| Pool bytes (16 B) / slot bytes (64 B + 144 B materialize tail) | 1.5 MB / 10 MB | 10 MB / 60 MB | 1.6 × drawn slots for headroom |
-| Producer + materialize (GPU) | 0.05 ms | 0.3 ms | bytes / 256 GB/s, ×1.5 overhead |
-| Preprocess, camera + 4 cascades (GPU) | 0.05 ms | 0.25 ms | 144 B in + 176 B per visible instance per view |
-| T0 raster, camera + cascades (avg LOD 1.5 k tris) | 0.1 ms | 0.6 ms | ~1.8 M tris at stand, ~2.5 Gtri/s effective |
-| Foliage fragment delta (prepass + main, over the terrain it covers) | 0.2 ms | 0.6 ms | overdraw ~1.5 on ~40 % of the screen; today's opaque+prepasses 2-3.2 ms per screen |
-| T2 canopy (~360 tiles drawn, ≤ 0.7 M tris) | 0.15 ms | 0.2 ms | 512 m tiles to 8 km, 2 km tiles beyond |
-| **GPU total** | **~0.55 ms** | **~1.95 ms** | |
+| Item (High) | avg | stand | Basis | stand, measured (BW-2) |
+|---|---|---|---|---|
+| T0 trees in ring / drawn (≈¼ in frustum) | 295 / ~75 | 1,960 / ~490 | π·125² m² × density | 1,973 in the ring |
+| T1 trees in ring / drawn | 91 k / ~23 k | 608 k / ~150 k | π·(2.2² − 0.125²) km² × density | 179,901 active cards |
+| Pool bytes (16 B) / slot bytes (64 B + 144 B materialize tail) | 1.5 MB / 10 MB | 10 MB / 60 MB | 1.6 × drawn slots for headroom | 254,096 slots |
+| Producer + materialize (GPU) | 0.05 ms | 0.3 ms | bytes / 256 GB/s, ×1.5 overhead | **0.33 ms** materialize alone (no producer in the bench): 1.3 ns per slot of capacity. Holds |
+| Preprocess, camera + 4 cascades (GPU) | 0.05 ms | 0.25 ms | 144 B in + 176 B per visible instance per view | **1.04 ms** (4.2×): 0.8 ns per slot of capacity per view, not per visible instance |
+| T0 raster, camera + cascades (avg LOD 1.5 k tris) | 0.1 ms | 0.6 ms | ~1.8 M tris at stand, ~2.5 Gtri/s effective | with the next row: **12.4 ms** (10×) |
+| Foliage fragment delta (prepass + main, over the terrain it covers) | 0.2 ms | 0.6 ms | overdraw ~1.5 on ~40 % of the screen; today's opaque+prepasses 2-3.2 ms per screen | prepasses 1.85, cascades 1-3 5.92, main opaque 4.60 ms: far more fill than an overdraw of 1.5 gives, with PBR alpha-masked quads seen at a grazing angle |
+| T2 canopy (~360 tiles drawn, ≤ 0.7 M tris) | 0.15 ms | 0.2 ms | 512 m tiles to 8 km, 2 km tiles beyond | not in the bench |
+| **GPU total** | **~0.55 ms** | **~1.95 ms** | | **13.7 ms** without T2 (model 1.75); whole-frame GPU delta 13.97 ms |
 | Main thread (ring planner, task joins, uploads) | ≤ 0.1 ms | ≤ 0.1 ms | ~5 tiles/s; no per-instance CPU work |
 | Render thread (~2 batches per species, ~300 T2 entities) | ≤ 0.15 ms | ≤ 0.2 ms | 16 species ≈ 32 batches × views |
 | VRAM (16 species of atlases + LOD chains, pools, T2 resident) | ~150 MB | ~200 MB | atlases ~45 MB, chains ~40 MB, T2 resident ~50 MB |
@@ -251,6 +253,12 @@ At Medium and Low, `ppr` drops with the internal resolution and the distances sh
 **Stop rule:** if BW-2 measures more than 2× these numbers for the slot path, stop before BW-3. The fallback is a
 standalone indirect pass in the eidolon pattern (own pipeline, our own alpha mask and shadow variants); see "Open
 questions".
+
+**Tripped (BW-2, 2026-11-26):** stand minus empty = 13.97 ms GPU against the 3.5 ms limit, so BW-3 does not start
+and the budget above is not met by the bench's content. Two rows broke: preprocess (4.2×, the slot path's own
+bookkeeping) and raster + fragment (10×, the fill of alpha-masked quads lit by `StandardMaterial` in the camera and
+three cascades). Materialize holds. The preset table above is the unmeasured model. What is known and what is not:
+"Risks".
 
 ## Tunables (`tunables.md`; prefix `bigworld.`, group `Group::Foliage`)
 
@@ -387,14 +395,66 @@ The plugin arrives with BW-3. No new Bevy feature set (group [1] of `tools/bevy_
 - **Adapter facts** (smoke launch): RTX 4060 Laptop on Vulkan reports `max_storage_buffer_binding_size` 2 GB and
   `max_buffer_size` 4 GB, so a 10⁶-slot batch (about 176 MB per view) needs no raised limit there.
 
+**Measured (one run, 2026-11-26 17:33, 157 s; lines in `bevyrrowind/benchmarks/runs/bw2_ceiling/run.log`).** GPU ms,
+medians of the timestamp spans, each arm minus `empty` (empty: frame 3.47 ms, p99 4.74, GPU 0.69 ms). Preprocess =
+`early_` + `late_mesh_preprocessing` + `range_unpacking` + `bin_unpacking`; prepasses = early + late; shadows = the
+four `per_view_shadow_pass` spans (cascade 0 holds nothing from 60 m up).
+
+| GPU ms minus empty | card 10⁵ | card 3·10⁵ | card 10⁶ | tree 10⁵ | tree 3·10⁵ | tree 10⁶ | **stand** | model, stand |
+|---|---|---|---|---|---|---|---|---|
+| materialize | 0.136 | 0.380 | 1.218 | 0.141 | 0.383 | 1.224 | **0.328** | 0.3 |
+| preprocess | 0.190 | 1.278 | 3.873 | 0.189 | 1.295 | 4.313 | **1.042** | 0.25 |
+| prepasses | 0.651 | 0.882 | 1.234 | 13.47 | 31.39 | 97.55 | **1.849** | |
+| shadows | 1.401 | 1.633 | 1.637 | 32.29 | 39.12 | 39.67 | **5.921** | |
+| main opaque | 1.844 | 2.520 | 3.460 | 30.97 | 50.98 | 115.59 | **4.600** | |
+| raster + fragment (the three rows above) | 3.896 | 5.035 | 6.331 | 76.72 | 121.48 | 252.80 | **12.370** | 1.2 |
+| slot path total | 4.222 | 6.693 | 11.422 | 77.05 | 123.16 | 258.34 | **13.740** | 1.75 |
+| whole-frame GPU | 4.47 | 6.77 | 11.67 | 77.37 | 123.39 | 258.65 | **13.97** | stop at 3.5 |
+| frame median / p99 ms | 5.83 / 7.73 | 16.5 / 19.4 † | 16.7 / 22.3 † | 81.6 / 88.6 † | 127 / 135 † | 263 / 269 † | 18.0 / 19.1 † | |
+
+- **Verdict: the stop rule trips** (13.97 ms against 3.5 ms). `stand`, whole frame: median 17.96 ms, p99 19.15 †,
+  main 1.07 ms (empty 1.21), render busy 3.41 ms (empty 2.62), render thread 17.5 ms (it waits on the GPU).
+- **Materialize is linear and as modelled:** 1.36, 1.27 and 1.22 ns per slot of capacity at 10⁵, 3·10⁵ and 10⁶
+  (1.29 at stand).
+- **Preprocess costs capacity × views, and is not linear below 3·10⁵:** 0.38 ns per slot per view at 10⁵, then 0.85
+  and 0.77-0.86 at 3·10⁵ and 10⁶ (5 views; 0.82 at stand). 6.7× the cost for 3× the slots between the first two
+  sizes; the same in the card and the tree arms, so it comes from the slot count, not the mesh. Cause not looked for.
+- **No VRAM fault at 10⁶:** materialize and preprocess grow 3.2× and 3.0-3.3× for 3.3× the slots (the groundcover
+  ledger's GC-D1 jump of 3-8× did not happen), and no buffer-limit warning was printed.
+- **Raster is fill-bound near the camera, vertex-bound far away.** Trees: 0.52, 0.28 and 0.17 ms per million
+  triangles in slots (all five views together) at 10⁵, 3·10⁵ and 10⁶; each further ring adds 0.13-0.15 ms per million
+  triangles in the ring (~4 Gtri/s per camera pass if a quarter of the ring is in the frustum as the model assumes;
+  the model used 2.5). The first 10⁵ trees cost 76.7 ms. Cards: 3.9 ms for the nearest 10⁵, then +1.1 ms for the
+  next 2·10⁵ and +1.3 ms for the next 7·10⁵ (1.9 ns per far card).
+- **Both halves of `stand` break the 1.2 ms row on their own.** Its cards within 1.5 km are a subset of
+  `card:300000`, so they cost at most ~5.0 ms; that leaves at least ~7.3 ms for the 1,973 trees (2.9 M triangles,
+  700 alpha-masked leaf quads each), of which 2.5 ms in cascade 1 alone. The bench has no arm that separates them
+  further.
+- **Caveats.** The camera is the hard case (60 m up, nothing hidden). Cards are plain alpha-masked quads with the PBR
+  `StandardMaterial`, not BW-4's impostor shader, and in the sweep arms cards and trees sit right at the camera: only
+  `stand` compares with the model. No DLSS: the window renders 1707×960 directly. † The window lost focus during
+  `card:300000` and never got it back (`focus=lost`, 2,967 frames), and other lanes' builds ran from 17:33:51 to the
+  end: frame, main and render ms of every arm after `card:100000` are dirty (the card and stand frames sit at the
+  60 Hz pacing of an unfocused window). The GPU spans do not show it: `tree:100000` (unfocused) and `card:100000`
+  (focused) agree on materialize and preprocess within 4 %. Main and render ms come from a dev-profile exe (our
+  crates opt-level 1, dependencies 3): the render-busy rise of 0.5 to 2.3 ms with the slot count (model: ≤ 0.2 ms)
+  needs a release run before it counts.
+
 ## Risks and open questions
 
-- **Slot path ceiling** (BW-2). Capacity-linear `materialize` and the preprocess over every view could cost more than
-  the model says. The fallback is a standalone indirect pass, which means our own alpha-mask and shadow pipelines, a
-  rule 4 cost.
-- **Alpha overdraw** in dense near crowns. If BW-2 shows main and prepass over 0.6 ms at stand density, there are two
-  options: geometry leaves at T0 (Chlorophyll F17: trees fully triangles, no alpha) or hashed alpha (Wyman & McGuire
-  2017).
+- **Slot path ceiling: measured, stop rule tripped** (BW-2, 2026-11-26). `materialize` is as modelled (1.3 ns per
+  slot). The preprocess is 0.8 ns per slot of capacity per view: 1.04 ms for 254 k slots and 5 views, 4.2× the model;
+  the two together are 1.37 ms against 0.55. The fallback is a standalone indirect pass (own pipeline), which means
+  our own alpha-mask and shadow pipelines, a rule 4 cost. It replaces the per-view capacity cost; it does not by
+  itself remove the fill cost of the next bullet. BW-3 waits for the owner's decision.
+- **Alpha overdraw: measured, the larger problem** (BW-2). Prepass + main opaque at stand density = 6.4 ms (the
+  threshold was 0.6), shadow cascades 1-3 another 5.9 ms. The near trees are ≥ 7.3 ms of it, the cards ≤ 5.0 ms.
+  Options for T0: geometry leaves (Chlorophyll F17: trees fully triangles, no alpha) or hashed alpha (Wyman & McGuire
+  2017). For T1: the impostor shader of BW-4 in place of `StandardMaterial`, and cards kept out of the near cascades.
+  Open: the bench cannot say how much of the fill each option buys back; that needs arms it does not have (stand's
+  trees and cards apart, a cheap-shader arm, cards without shadows).
+- **Render-thread CPU per slot** (BW-2, dev profile, not conclusive): render busy rose 0.5 ms at 10⁵ slots and
+  2.3 ms at 10⁶ (model ≤ 0.2 ms). Needs a release run.
 - **Meshlets for T2 only.** The canopy is opaque, which is the case where Bevy meshlets work. Re-check at BW-7: the DX12
   vs Vulkan backend, the per-entity upload (~300 entities is fine), and open flicker issues (#26467).
 - **Impostor lighting:** match T0 at the crossfade (normal + depth frames lit through `apply_pbr_lighting`, as

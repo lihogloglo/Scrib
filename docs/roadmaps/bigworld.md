@@ -18,8 +18,10 @@ with no build time or crates taken from other lanes. **Owner go for Stage A (202
 
 ## 2. Where we are (2026-11-26)
 
-- **Core built, nothing draws yet.** `sf_bigworld` (Bevy-free) plans tiles and tiers and packs instances; no
-  `sf_bigworld_bevy` yet.
+- **Core built, nothing draws in game yet.** `sf_bigworld` (Bevy-free) plans tiles and tiers and packs instances;
+  `sf_bigworld_bevy` holds only the BW-2 bench example.
+- **The ceiling bench tripped the stop rule** (BW-2, 2026-11-26): the worst-case stand costs 13.97 ms GPU on the
+  slot path with plain alpha-masked PBR trees and cards, against a 2.0 ms budget. Stage B waits for the owner.
 - Generated worlds draw every scattered tree as an entity: 7.21 M flora ran at 26 fps (owner run, 2026-11-19). The
   static scene, precombine and far field are off there (scaffold `WorldgenPlacementStatics`).
 - Placement exists and is deterministic per 256 m tile (`sf_worldgen::scatter`).
@@ -49,8 +51,10 @@ with no build time or crates taken from other lanes. **Owner go for Stage A (202
 - [x] **BW-1** `sf_bigworld` core (2026-11-26; 49b7ae15, 11b0cf8f, 1d134b3d): tiles, the 16 B instance format,
   `InstanceSource` plus a synthetic forest, tier bands, ring planner. 27 exact tests. Measured ring counts match the
   cost model within 5 % (High stand: 618 k trees in the impostor ring, 11 MB pool).
-- [~] **BW-2** (meta GO 2026-11-26: one run under 10 min, all arms in one launch) ceiling bench `forest_ceiling` (NEW `sf_bigworld_bevy`, example only). Verify: the orchestrator runs
-  one run per arm (10⁵ / 3·10⁵ / 10⁶ slots). Stop rule in the spec.
+- [x] **BW-2** (2026-11-26; e1b8c973, 0c9b0fab, 62d29ecc) ceiling bench `forest_ceiling` (`sf_bigworld_bevy`, example only), one run of all eight arms.
+  **Stop rule tripped:** `stand` costs 13.97 ms GPU over the empty scene (limit 3.5; model 1.75): fill of alpha-masked
+  PBR quads 12.4 ms, preprocess 1.04 ms (4.2×), materialize 0.33 ms (holds). BW-3 waits for the owner's decision
+  (spec "Cost model", "As built" BW-2, "Risks").
 
 **Stage B: a forest in a framework example scene** (owner looks, synthetic content).
 - [p] **BW-3** GPU producer. Depends on BW-1, BW-2. Verify: GPU twin test.
