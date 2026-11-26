@@ -20,6 +20,9 @@ pub mod shore;
 pub mod shore_waves;
 pub mod spectrum;
 pub mod sspr;
+pub mod swim;
+#[cfg(test)]
+mod swim_tests;
 pub mod twin;
 pub mod underwater;
 #[cfg(test)]
@@ -44,6 +47,8 @@ pub use shore::{OpticsMap, ShoreField, ShoreSettings, ShoreStats, SurfFoam, Surf
 pub use shore_waves::{ShoreWave, ShoreWaves, SurfFoamInput, SurfFoamTerms, SurfLife, shore_foam_weight, surf_birth, surf_envelope, surf_foam, surf_life, swash_edge};
 pub use spectrum::{Cascades, DEFAULT_CASCADES, GRAVITY, H0, REPEAT_PERIOD, SpectrumParams, WindInput};
 pub use sspr::{PlaneCandidate, reflection_plane};
+// Renamed at the root: `Medium` would clash with the `medium` module (camera medium).
+pub use swim::{Medium as SwimMedium, SwimParams, medium as swim_medium};
 pub use twin::{CascadeTwin, WaveSample, WaveTwin, origin_phase, tile_coords};
 pub use underwater::{UnderwaterLight, UnderwaterOptics, sun_term, underwater_colour};
 pub use wet_tiles::WetTiles;
