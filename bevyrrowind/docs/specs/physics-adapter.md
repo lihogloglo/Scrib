@@ -130,8 +130,9 @@ action characters (the player, the dummy) get none, so they play the fallback.
 - **Light path, not a `Takeover`:** no `Held`, the root and graph stay live. The agent is built like a takeover start (two
   posed frames, `bones_to_parts`, the floor), then each tick: `incoming` = `TintTarget` in the sim frame, `activePose` on
   every tinted mask, `setStiffness` per mask = `delirium.tint.stiffness` x `ActiveTint.sample.strength`, the pelvis held
-  on the target by `hardConstraint` (AN38 variant G). Copy-back: parts to a local pose under the live root, `PhysicsPose`
-  with per-joint weights. Done: the agent is dropped; no `DeliriumHandedBack`, no root move. Masks: SPINE `us`, NECK `un`,
+  on the target by `hardConstraint` (AN38 variant G; required: AN38a showed pose follow alone sinks to the floor in 2 s,
+  and `agent.fallen` stays false there, so `Failed` uses the provider's own pelvis-error and floor check). Copy-back: parts
+  to a local pose under the live root, `PhysicsPose` with per-joint weights. Done: the agent is dropped; no `DeliriumHandedBack`, no root move. Masks: SPINE `us`, NECK `un`,
   ARM_L/R `ul`/`ur`, LEG_L/R `ll`/`lr`.
 - **Per kind:** Stagger: `applyImpulse` on the struck part x `impulse_gain`. Stumble: `injury` on the hurt leg's mask at
   the intensity. Sway: `leanInDirection` along `direction`; with `bodyBalance` on the legs and `armsOutOnPushTimeout` only

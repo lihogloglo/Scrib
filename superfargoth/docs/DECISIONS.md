@@ -2040,3 +2040,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (specs-5, DQ-34): dialogue authoring = our own parser for a Yarn 3 subset into `DialogueScene`, not a
   vendored fork of yarnspinner-rust: the port is Yarn 2.5 only on a pinned unmaintained ANTLR (~385 KB generated, ~15k
   lines to keep vs ~2.5k ours) and its saliency would be a second selection beside the rule DB (dialogue-authoring.md).
+- 2026-11-26 (specs-6, AN38a): physics tint cap 4 (Guess) -> 2, Low 1: a tinted body costs 0.86 ms per tick (pose
+  follow, linear in N) against 2.0 ms median / 2.7 ms p99 per tick; provisional until AN38b times the pinned path. The
+  pelvis pin (or a balancer) is required: pose follow alone collapses in 2 s (physics-tint.md "Performance").
