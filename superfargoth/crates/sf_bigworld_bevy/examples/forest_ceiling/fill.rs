@@ -176,9 +176,35 @@ impl Arm {
     }
 }
 
-/// `tree:<n>` or `card:<n>` with `n > 0`.
-pub fn parse_arm(spec: &str) -> Result<Arm, String> {
-    let (kind, n) = spec.split_once(':').ok_or_else(|| format!("arm `{spec}`: expected tree:<n> or card:<n>"))?;
+/// The name of the arm with no batches.
+pub const EMPTY_ARM: &str = "empty";
+
+/// A parsed arm spec, before its bytes are built (cheap: validating a list of arms builds nothing).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArmSpec {
+    /// No batches: the bare scene (camera, sun, ground), the baseline other arms are compared with.
+    Empty,
+    /// One batch of `n` slots of one mesh ([`Arm::sweep`]).
+    Sweep(MeshKind, u32),
+}
+
+impl ArmSpec {
+    /// Builds the arm's bytes (seconds at a million slots).
+    pub fn build(self) -> Arm {
+        match self {
+            Self::Empty => Arm { name: EMPTY_ARM.to_owned(), batches: Vec::new() },
+            Self::Sweep(kind, n) => Arm::sweep(kind, n),
+        }
+    }
+}
+
+/// `empty`, `tree:<n>` or `card:<n>` with `n > 0`, parsed without building anything.
+pub fn parse_spec(spec: &str) -> Result<ArmSpec, String> {
+    if spec == EMPTY_ARM {
+        return Ok(ArmSpec::Empty);
+    }
+    let (kind, n) =
+        spec.split_once(':').ok_or_else(|| format!("arm `{spec}`: expected empty, tree:<n> or card:<n>"))?;
     let kind = match kind {
         "tree" => MeshKind::Tree,
         "card" => MeshKind::Card,
@@ -188,7 +214,12 @@ pub fn parse_arm(spec: &str) -> Result<Arm, String> {
     if n == 0 {
         return Err(format!("arm `{spec}`: the count must be positive"));
     }
-    Ok(Arm::sweep(kind, n))
+    Ok(ArmSpec::Sweep(kind, n))
+}
+
+/// `empty`, `tree:<n>` or `card:<n>` with `n > 0`, built ([`parse_spec`] then [`ArmSpec::build`]).
+pub fn parse_arm(spec: &str) -> Result<Arm, String> {
+    parse_spec(spec).map(ArmSpec::build)
 }
 
 #[cfg(test)]
@@ -266,8 +297,15 @@ mod tests {
         assert_eq!(tree, Ok(("tree:10".to_owned(), MeshKind::Tree, 10)));
         let card = parse_arm("card:7").map(|a| (a.total_slots(), a.batches[0].kind, a.name));
         assert_eq!(card, Ok((7, MeshKind::Card, "card:7".to_owned())));
-        for junk in ["", "tree", "tree:", "tree:0", "tree:-3", "tree:x", "bush:10", "tree:10:2", ":10"] {
+        for junk in ["", "tree", "tree:", "tree:0", "tree:-3", "tree:x", "bush:10", "tree:10:2", ":10", "Empty", "empty:3"] {
             assert!(parse_arm(junk).is_err(), "`{junk}` was accepted");
         }
+    }
+
+    #[test]
+    fn empty_arm_has_no_batches() {
+        let empty = parse_arm("empty").map(|a| (a.batches.len(), a.total_slots(), a.name));
+        assert_eq!(empty, Ok((0, 0, "empty".to_owned())));
+        assert_eq!(parse_spec("card:3"), Ok(ArmSpec::Sweep(MeshKind::Card, 3)));
     }
 }

@@ -1,18 +1,29 @@
 //! Slot-path ceiling bench (BW-2): what does the vendored `GpuBatchedMesh3d` slot path cost for N instance slots
-//! filled once on the CPU? One arm per launch: a flat synthetic forest at 400 trees/ha, the N trees nearest the
-//! origin drawn as one batch of full tree meshes or of upright cards, under a shadowed sun, from a fixed camera.
+//! filled once on the CPU? A flat synthetic forest at 400 trees/ha, the N trees nearest the origin drawn as one
+//! batch of full tree meshes or of upright cards, under a shadowed sun, from a fixed camera. One launch steps
+//! through a list of arms (`bench.rs`), measures each, prints `bw2 ceiling |` lines and exits by itself.
 //!
 //! ```text
 //! cargo run -p sf_bigworld_bevy --example forest_ceiling -- [options]
-//!   --arm <spec>     tree:<n> or card:<n> (default tree:100000)
-//!   --eye <metres>   camera height (default 60)
+//!   --arms <a,b,..>      arms in order: empty, tree:<n> or card:<n> (default
+//!                        empty,card:100000,card:300000,tree:100000,tree:300000,card:1000000,tree:1000000)
+//!   --arm <spec>         one arm (same as --arms <spec>)
+//!   --warm-s <s>         warm-up per arm, at least 30 frames (default 4)
+//!   --measure-s <s>      measured time per arm, at least --min-frames frames (default 12)
+//!   --min-frames <n>     fewest measured frames per arm (default 120)
+//!   --max-arm-s <s>      a slow arm's measurement ends here, with at least 20 frames (default 60)
+//!   --max-total-s <s>    watchdog: the whole run ends here (default 540)
+//!   --eye <metres>       camera height (default 60)
 //! ```
 //!
-//! No controls, no UI. Prints `bw2 ceiling | arm=<name> slots=<total> batches=<count>` at startup.
+//! No controls, no UI. Lines (stdout, `key=value`): one header (adapter, limits, settings), per arm `start`,
+//! `result` and one `pass=` line per GPU span, `warn=limit` before a batch over a binding limit, and `done` last.
 #![allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 
+mod bench;
 mod fill;
 mod meshes;
+mod stats;
 mod upload;
 
 use bevy::camera::Hdr;
@@ -25,13 +36,25 @@ use bevy::render::diagnostic::RenderDiagnosticsPlugin;
 use bevy::render::occlusion_culling::OcclusionCulling;
 use bevy::window::{PresentMode, WindowResolution};
 
-use fill::{Arm, MeshKind, parse_arm};
+use bench::{Bench, BenchConfig, advance, count_focus, parse_arms, print_header, sample_frame};
+use fill::{Arm, MeshKind};
+use sf_diag_bevy::{DiagCounters, FramePhasePlugin};
 use upload::{CeilingUploadPlugin, CeilingUploads, CeilingWrite};
 
 /// Fixture: window size in physical pixels (1440p over a 1.5 laptop scale).
 const WINDOW_PX: (u32, u32) = (1707, 960);
-/// Fixture: the arm run when `--arm` is absent.
-const DEFAULT_ARM: &str = "tree:100000";
+/// Fixture: the arms run when `--arms` and `--arm` are absent (baseline first; the arms over a binding limit last).
+const DEFAULT_ARMS: &str = "empty,card:100000,card:300000,tree:100000,tree:300000,card:1000000,tree:1000000";
+/// Fixture: default warm-up per arm, seconds.
+const DEFAULT_WARM_S: f64 = 4.0;
+/// Fixture: default measured time per arm, seconds.
+const DEFAULT_MEASURE_S: f64 = 12.0;
+/// Fixture: default cap on a slow arm's measurement, seconds.
+const DEFAULT_MAX_ARM_S: f64 = 60.0;
+/// Fixture: default fewest measured frames per arm.
+const DEFAULT_MIN_FRAMES: u32 = 120;
+/// Fixture: default watchdog on the whole run, seconds.
+const DEFAULT_MAX_TOTAL_S: f64 = 540.0;
 /// Fixture: camera height in metres when `--eye` is absent.
 const DEFAULT_EYE_M: f32 = 60.0;
 /// Fixture: camera pitch below the horizon, degrees.
@@ -54,42 +77,54 @@ const SHADOW_MAP_PX: usize = 2048;
 
 /// Command line.
 struct Args {
-    arm: String,
+    arms: Vec<String>,
+    cfg: BenchConfig,
+    max_total_s: f64,
     eye_m: f32,
 }
 
+/// A flag's value parsed as `T`.
+fn number<T: std::str::FromStr>(flag: &str, v: &str) -> Result<T, String>
+where
+    T::Err: std::fmt::Display,
+{
+    v.parse().map_err(|e| format!("{flag} `{v}`: {e}"))
+}
+
 fn parse_args() -> Result<Args, String> {
-    let mut args = Args { arm: DEFAULT_ARM.to_owned(), eye_m: DEFAULT_EYE_M };
+    let mut arms = DEFAULT_ARMS.to_owned();
+    let mut cfg = BenchConfig {
+        warm_s: DEFAULT_WARM_S,
+        measure_s: DEFAULT_MEASURE_S,
+        max_arm_s: DEFAULT_MAX_ARM_S,
+        min_frames: DEFAULT_MIN_FRAMES,
+    };
+    let (mut max_total_s, mut eye_m) = (DEFAULT_MAX_TOTAL_S, DEFAULT_EYE_M);
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
-        let mut value = || it.next().ok_or_else(|| format!("{flag} needs a value"));
+        let v = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
         match flag.as_str() {
-            "--arm" => args.arm = value()?,
-            "--eye" => {
-                let v = value()?;
-                args.eye_m = v.parse().map_err(|e| format!("--eye `{v}`: {e}"))?;
+            "--arms" | "--arm" => arms = v,
+            "--warm-s" => cfg.warm_s = number(&flag, &v)?,
+            "--measure-s" => cfg.measure_s = number(&flag, &v)?,
+            "--max-arm-s" => cfg.max_arm_s = number(&flag, &v)?,
+            "--min-frames" => cfg.min_frames = number(&flag, &v)?,
+            "--max-total-s" => max_total_s = number(&flag, &v)?,
+            "--eye" => eye_m = number(&flag, &v)?,
+            other => {
+                return Err(format!(
+                    "unknown argument `{other}` (--arms, --arm, --warm-s, --measure-s, --min-frames, --max-arm-s, \
+                     --max-total-s, --eye)"
+                ));
             }
-            other => return Err(format!("unknown argument `{other}` (--arm <spec>, --eye <metres>)")),
         }
     }
-    Ok(args)
+    Ok(Args { arms: parse_arms(&arms)?, cfg, max_total_s, eye_m })
 }
 
-/// Marker on the bench's batch entities (the next slice despawns them to switch arms).
+/// Marker on the bench's batch entities (despawned to switch arms).
 #[derive(Component)]
 struct CeilingBatch;
-
-/// The arm on screen: its name and each batch's slot count.
-#[derive(Resource, Debug)]
-#[allow(dead_code)]
-struct CurrentArm {
-    name: String,
-    slots: Vec<u32>,
-}
-
-/// The arm to spawn at startup (taken by [`spawn_arm`]).
-#[derive(Resource)]
-struct PendingArm(Option<Arm>);
 
 /// The bench's shared meshes and material, kept so arms can be respawned.
 #[derive(Resource)]
@@ -111,13 +146,6 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let arm = match parse_arm(&args.arm) {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("forest_ceiling: {e}");
-            std::process::exit(2);
-        }
-    };
 
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -129,16 +157,20 @@ fn main() {
         }),
         ..default()
     }))
-    .add_plugins((FrameTimeDiagnosticsPlugin::default(), RenderDiagnosticsPlugin));
+    .add_plugins((FrameTimeDiagnosticsPlugin::default(), RenderDiagnosticsPlugin))
+    // The phase counters need their registry in place first.
+    .init_resource::<DiagCounters>()
+    .add_plugins(FramePhasePlugin);
     if !app.is_plugin_added::<GpuInstanceBatchPlugin>() {
         app.add_plugins(GpuInstanceBatchPlugin);
     }
     app.add_plugins(CeilingUploadPlugin)
         .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP_PX })
         .insert_resource(GlobalAmbientLight { color: Color::WHITE, brightness: AMBIENT_BRIGHTNESS, ..default() })
-        .insert_resource(PendingArm(Some(arm)))
+        .insert_resource(Bench::new(args.cfg, args.max_total_s, args.arms))
         .insert_resource(Eye(args.eye_m))
-        .add_systems(Startup, (setup_scene, spawn_arm).chain())
+        .add_systems(Startup, (setup_scene, print_header))
+        .add_systems(Update, (sample_frame, count_focus, advance).chain())
         .run();
 }
 
@@ -209,17 +241,8 @@ fn setup_scene(
     });
 }
 
-/// Spawns the pending arm's batches and queues each batch's bytes as one run at slot 0.
-fn spawn_arm(
-    mut commands: Commands,
-    assets: Res<CeilingAssets>,
-    mut pending: ResMut<PendingArm>,
-    mut uploads: ResMut<CeilingUploads>,
-) {
-    let Some(arm) = pending.0.take() else { return };
-    let total = arm.total_slots();
-    let count = arm.batches.len();
-    let mut slots = Vec::with_capacity(count);
+/// Spawns an arm's batches and queues each batch's bytes as one run at slot 0.
+fn spawn_arm(commands: &mut Commands, assets: &CeilingAssets, uploads: &mut CeilingUploads, arm: Arm) {
     for batch in arm.batches {
         let mesh = match batch.kind {
             MeshKind::Tree => assets.tree.clone(),
@@ -233,8 +256,5 @@ fn spawn_arm(
             ))
             .id();
         uploads.writes.push(CeilingWrite { entity, first_slot: 0, bytes: batch.bytes });
-        slots.push(batch.capacity);
     }
-    println!("bw2 ceiling | arm={} slots={total} batches={count}", arm.name);
-    commands.insert_resource(CurrentArm { name: arm.name, slots });
 }
