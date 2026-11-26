@@ -134,9 +134,10 @@ one `test --workspace` with nothing to compile still ran 290 s. Three changes, r
   finished in 3 s while a 20 s test ran). rustdoc.exe now counts as busy: doctests compile in the run phase.
 - **CI** (`.github/workflows/ci.yml`): test, both clippy runs, and a no-compile policy job (deny, hakari, tunables
   census, all blocking; the census passes again since ec45d48e) on push to `main`, `ci/**`, `wt/**` and PRs; docs-only
-  pushes skip it. On `ci/**`, `wt/**` and PRs a newer push cancels the running one; on `main` every commit has its own
-  concurrency group and run (a per-branch group keeps only one pending run: 42 of 46 main runs on 2026-11-26 were
-  replaced before they started). Windows runners for parity with the dev machine; LFS clips from the Actions cache
+  pushes skip it. On `ci/**`, `wt/**` and PRs a newer push cancels the running one; on `main` a running run is never
+  cancelled and only the newest pending one waits behind it, so a verdict covers the batch of commits pushed during
+  the previous run and a red one lists its suspects (a run per commit was tried on 2026-11-26: 21 runs in progress
+  or queued within 40 min, at GitHub's 20-job limit). Windows runners for parity with the dev machine; LFS clips from the Actions cache
   (free LFS bandwidth ~1 GB/month). `tools/ci_push.sh` pushes HEAD + given paths (with gh's credential).
 - **CI cache** (ci-2, `.github/workflows/cargo_cache.mjs`): the whole `target` + registry, one entry per main commit,
   restored by every branch (newest main entry). `Swatinem/rust-cache` was dropped: it keeps only packages outside the

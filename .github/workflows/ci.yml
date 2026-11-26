@@ -17,12 +17,14 @@ on:
     paths: ["**", "!**/*.md", "!docs/**", "superfargoth/vendor/**"]
   workflow_dispatch:
 
-# ci/wt branches and PRs: one run per branch, a newer push cancels the running one. Main: one group per commit, so
-# every push gets its own full verdict (lanes commit straight to main and CI is the backstop). A per-branch group
-# keeps only one pending run even without cancel-in-progress: 42 of 46 main runs on 2026-11-26 were replaced
-# before they started.
+# ci/wt branches and PRs: one run per branch, a newer push cancels the running one. Main: one group as well, but a
+# running run is never cancelled: at most one run in progress plus the newest pending one, so each verdict covers
+# the batch of commits pushed while the previous run ran, and a red one lists its suspects since the last green
+# ancestor (ci_report.mjs). GitHub shows the pending runs a newer push replaced as cancelled: they never started.
+# One group per commit (128d6094) gave every push its own run: 21 main runs were in progress or queued within
+# 40 min on 2026-11-26, at the 20-job limit, each saving its own 4 GB of cache.
 concurrency:
-  group: ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # ci_report.mjs reads the run list (last green main run) and commit files for its suspect list.
