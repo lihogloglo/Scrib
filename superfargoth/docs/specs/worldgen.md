@@ -159,11 +159,11 @@ height; runs start noisy and stop at a finite time, not at strict equilibrium.
 7. **Runtime detail (< 2 m):** one stateless detail function guided by the material fields: an analytic
    gradient-aligned erosion filter plus integer-hash noise, each point evaluated in isolation (WG-R1), evaluated on the GPU when clipmap levels fill and by a CPU twin for height queries,
    physics and nav (the water "wave twin" pattern). Not a bake during play: nothing is stored.
-8. **Nature scatter** (later stage): rocks, trees, flora from rules learned from the source's own placements per
-   region, Horizon-style rule-based placement. Method (WG-R3 §6): occupancy tables measured on the source's own
-   terrain (per ~1.8 m cell: slope, elevation, relief, curvature, layer), Bernoulli draws with exponential-race
-   ordering, poses replayed in the terrain frame, objects sized by bounding box, a failed placement means absence;
-   per-region libraries with an explicit fallback.
+8. **Nature scatter** ([worldgen-scatter.md](worldgen-scatter.md), WG-E2 vegetation, WG-E3 rocks): suitability from
+   the climate and terrain fields, a stand mosaic with forced clearings, a truncated Thomas cluster process with size
+   marks, bounded-round competition (bigger crown wins), lower layers by canopy light; tile alone == whole run with a
+   halo; a hash-cached product read at load, the budget cut by rank. v1 (WG-X5, running today): per-region densities
+   learned from the source's own placements (WG-R3 §6) and one Bernoulli draw per candidate.
 9. **Wilderness sites** ([sites.md](sites.md), WG-P/V/NM): a site table (data) drives Magna Urbis `Terrain::place` in
    `list` mode (kept towns by `position`, generated hamlets, farms, activity and remote sites) in `scrib-worldgen`;
    Scrib reads `sites.json` v2 (`sf_worldgen::sites`), floods reachability on the final ground (`sf_worldgen::reach`,

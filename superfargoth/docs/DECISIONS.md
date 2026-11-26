@@ -2076,3 +2076,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
   the humanoid weapon sheets (combat-adapter.md "Creatures (C6f)", combat-clips.md "Creature attack clips").
 - 2026-11-26 (specs-8, meta): no patch in the pinned Delirium fork to move its 6-agent split: Delirium is adopted
   from upstream as it is; a tint cap above 4 goes through a provider-side fan-out (AN38e; physics-tint.md).
+- 2026-11-26 (specs-8, WG-E2): nature scatter v2 = rules + point processes (suitability hats, stand mosaic, Thomas
+  clusters with size marks, bounded-round competition, layers by light), not an ecosystem simulation; the result is a
+  hash-cached product, no longer computed at world load (`worldgen-scatter.md`; research WG-R).

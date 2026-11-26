@@ -128,6 +128,8 @@ Pipeline (each step a deterministic product in the guide folder; positions never
 6. **Statics** (WG-X4): anchor members through the anchor transform, nature references dropped, into the 10× world's
    own static index / scene / far field. **Flora** (WG-X5): per region, the source's own flora models and their
    density per m² of land, scattered on the 10× land (slope, height, clumping noise, seed), counts raised in steps.
+   Scatter v2 (WG-E2, `superfargoth/docs/specs/worldgen-scatter.md` "Adapter data"): species rows in
+   `bevyrrowind/worldgen/scatter_species.toml`; learned densities become a region prior, not a replay target.
 
 Known limits accepted for the first look: the Odai and other source rivers at sea level are arms of the sea at 10x
 (HC-1); generated rivers route round kept towns (`../../../superfargoth/docs/specs/worldgen-hydrology.md`, WG-W1;
