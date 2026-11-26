@@ -14,7 +14,7 @@ use std::time::Instant;
 use delirium::prelude::*;
 use mw_delirium::delirium;
 use mw_delirium::delirium::msg::Value;
-use mw_delirium::sim::{Sim, SpawnPose, Spawned, spawn};
+use mw_delirium::sim::{DT, Sim, SpawnPose, Spawned, spawn};
 use mw_delirium::{Options, character_from_skeleton};
 use mw_install::MorrowindInstall;
 use sf_vfs::{Vfs, VfsPath};
@@ -31,8 +31,18 @@ const FALLEN_AT: usize = 120;
 const PUSH_PART: usize = 10;
 const PUSH_NS: f32 = 45.0;
 
-fn fixture() -> Option<&'static Spawned> {
-    static F: OnceLock<Option<Spawned>> = OnceLock::new();
+/// Ticks after setup at which `tint_pose_error` samples (0.5, 1 and 2 s at 60 Hz: a tint lives 0.5-2 s).
+const POSE_SAMPLES: [usize; 3] = [30, 60, 120];
+
+/// The same build laid out twice: `bind` (where every sim starts) and `zero` (the asset's zero pose, the pose target
+/// `tint_pose_error` feeds, so the target differs from the natural stand).
+struct Layouts {
+    bind: Spawned,
+    zero: Spawned,
+}
+
+fn layouts() -> Option<&'static Layouts> {
+    static F: OnceLock<Option<Layouts>> = OnceLock::new();
     F.get_or_init(|| {
         let Ok((install, _)) = MorrowindInstall::detect(None) else {
             eprintln!("no Morrowind install detected; skipping");
@@ -42,9 +52,13 @@ fn fixture() -> Option<&'static Spawned> {
         let bytes = vfs.read(&VfsPath::new("meshes/base_anim.nif").unwrap()).unwrap();
         let skeleton = mw_anim::rig::skeleton(&mw_nif::load(&bytes).unwrap()).unwrap();
         let body = character_from_skeleton(&skeleton, &Options::default()).unwrap();
-        Some(spawn(&body, SpawnPose::Bind, None))
+        Some(Layouts { bind: spawn(&body, SpawnPose::Bind, None), zero: spawn(&body, SpawnPose::Zero, None) })
     })
     .as_ref()
+}
+
+fn fixture() -> Option<&'static Spawned> {
+    layouts().map(|l| &l.bind)
 }
 
 /// A drive state: `setup` runs once on a fresh sim, `tick` (if any) before every step, inside the timed region.
@@ -177,6 +191,52 @@ fn tint_step_cost() {
                 first[first.len() / 2],
                 first[first.len() * 99 / 100],
             );
+        }
+    }
+}
+
+/// The parts a Delirium mask drives: its joints (`nmrs::Character::mask`), each moving its child part, `joint + 1`
+/// (`nmrs::joints`: `child = i + 1`).
+fn mask_parts(mask: &str) -> Vec<usize> {
+    delirium::nmrs::Character::mask(mask).into_iter().map(|j| j + 1).collect()
+}
+
+/// Mean and max, degrees, over `parts` of the angle between each part's rotation relative to the pelvis (part 0) in
+/// `frames` and in `target`, so drift and turning of the whole body do not count.
+fn pose_error(frames: &[Transform], target: &[Transform], parts: &[usize]) -> (f64, f64) {
+    let rel = |f: &[Transform], k: usize| f[0].rotation.inverse() * f[k].rotation;
+    let e: Vec<f64> = parts.iter().map(|&k| f64::from(rel(frames, k).angle_between(rel(target, k)).to_degrees())).collect();
+    (e.iter().sum::<f64>() / e.len() as f64, e.iter().copied().fold(0.0, f64::max))
+}
+
+#[test]
+#[ignore = "measurement: per drive state, how far the simulated body is from the pose it is told to follow"]
+fn tint_pose_error() {
+    let Some(Layouts { bind, zero }) = layouts() else { return };
+    let (ub, legs) = (mask_parts("ub"), mask_parts("lb"));
+    let target = &zero.frames;
+    let pelvis0 = f64::from(bind.frames[0].translation.z);
+    let ((ub_mean, ub_max), (lb_mean, lb_max)) = (pose_error(&bind.frames, target, &ub), pose_error(&bind.frames, target, &legs));
+    println!(
+        "tint pose error header: target = zero pose, start = bind pose, N=1; ub parts {ub:?}, leg parts {legs:?}; bind to target (no motion): ub mean {ub_mean:.1} max {ub_max:.1}; legs mean {lb_mean:.1} max {lb_max:.1}"
+    );
+    for prefix in ["A ", "C ", "F ", "G "] {
+        let state = STATES.iter().find(|s| s.name.starts_with(prefix)).expect("state in STATES");
+        let mut sim = Sim::new(bind, 0.3, false);
+        (state.setup)(&mut sim);
+        for done in 1..=POSE_SAMPLES[POSE_SAMPLES.len() - 1] {
+            tick_all(std::slice::from_mut(&mut sim), state, target);
+            if POSE_SAMPLES.contains(&done) {
+                assert!(sim.finite(), "{} t={done}: non-finite frames", state.name);
+                let frames = sim.frames();
+                let ((ub_mean, ub_max), (lb_mean, lb_max)) = (pose_error(&frames, target, &ub), pose_error(&frames, target, &legs));
+                let pelvis = f64::from(sim.pelvis_z()) / pelvis0 * 100.0;
+                println!(
+                    "tint pose error {} t={:.1} s: ub mean {ub_mean:.1} max {ub_max:.1}; legs mean {lb_mean:.1} max {lb_max:.1}; pelvis {pelvis:.0} %",
+                    state.name,
+                    done as f64 * f64::from(DT),
+                );
+            }
         }
     }
 }
