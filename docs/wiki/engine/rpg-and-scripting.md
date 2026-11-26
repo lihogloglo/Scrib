@@ -33,7 +33,7 @@ the console. The sandboxed Luau runtime exists in the framework and is parked.
   writes go through a copy in `Rpg` (`ScriptLocals`): a script id wins over an actor id (OpenMW `getMemberType`).
 - **Luau** (`sf_script`, `sf_script_bevy`): one sandboxed state per mod, memory/CPU limits, fault isolation,
   timers, snapshots; `ScriptSlot` systems `Input`/`Update`/`Ui` (`sf_script_bevy/src/lib.rs`). `mw_scripts_bevy::add`
-  (`exterior.rs:551`) creates contexts per mod, script handles for placements, and door activation.
+  (`exterior.rs:551`) creates contexts per mod, script handles for placements (`HANDLE_CLASSES`: statics, items, doors, lights, actors, containers, activators), and door activation.
 
 ## Bevy features used
 Resources, events, exclusive systems for script slots. No Bevy scripting crate.

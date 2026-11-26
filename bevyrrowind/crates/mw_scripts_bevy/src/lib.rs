@@ -197,11 +197,22 @@ fn live_spawn(world: &mut World, handle: Handle, record: &str, ws: &WorldspaceId
     info!("script {context}: spawned {record} ({entities} entities) at {position:.2?}, handle {:032x}", handle.0);
 }
 
+/// The placement classes that become script handles at R0: everything a script or the focus ray
+/// can name. Activators were missing until 2026-11-26 (no `ACTI` could be focused or activated).
+const HANDLE_CLASSES: [PlacementClass; 7] = [
+    PlacementClass::Static,
+    PlacementClass::Dynamic,
+    PlacementClass::Door,
+    PlacementClass::Light,
+    PlacementClass::Actor,
+    mw_world::source::CONTAINER,
+    mw_world::source::ACTIVATOR,
+];
+
 /// Wraps the placement spawners so R0 activation registers the placement as a script handle.
 fn hook_placements(spawners: Option<ResMut<PlacementSpawners>>) {
     let Some(mut spawners) = spawners else { return };
-    let classes = [PlacementClass::Static, PlacementClass::Dynamic, PlacementClass::Door, PlacementClass::Light, PlacementClass::Actor, mw_world::source::CONTAINER];
-    for class in classes {
+    for class in HANDLE_CLASSES {
         if let Some(inner) = spawners.for_class(class).cloned() {
             spawners.set(class, Arc::new(ScriptHandleHook(inner)));
         }
@@ -381,3 +392,6 @@ fn report(mut outcomes: MessageReader<ActivationOutcome>, placements: Res<Script
         info!("activation of {record}: {}", if o.handled { "handled by a script" } else { "default action" });
     }
 }
+
+#[cfg(test)]
+mod tests;

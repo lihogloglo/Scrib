@@ -244,3 +244,42 @@ fn death_of_a_powered_knockdown_stays_in_the_ragdoll() {
     assert!(app.world().get::<Claimed>(root).is_none());
     assert!(limp_death(&app, body) && app.world().get::<Dead>(root).is_some());
 }
+
+/// The spawner hook gives activators and containers static collision like statics (the focus ray
+/// needs a body); a placement with no model queues nothing.
+#[test]
+fn activators_and_containers_queue_a_static_body() {
+    use bevy_app::PostStartup;
+    use sf_coords::WorldTransform;
+    use sf_physics_bevy::PhysicsStreaming;
+    use sf_world::{IndexedPlacement, Placement, PlacementClass, PlacementFlags, PlacementId, RecordRef, WorldspaceId};
+    use sf_world_bevy::{ActivateCx, PlacementSpawners};
+
+    let mut app = App::new();
+    app.init_resource::<PlacementSpawners>().init_resource::<PhysicsStreaming>().add_systems(PostStartup, super::hook);
+    app.update();
+    let placed = |id: u128, class: PlacementClass, model: Option<&str>| IndexedPlacement {
+        placement: Placement {
+            id: PlacementId(id),
+            base: RecordRef::new("ACTI", "thing"),
+            model: model.and_then(|m| m.try_into().ok()),
+            transform: WorldTransform { pos: WorldPos::from_f64([0.0; 3].into()), rotation: bevy_math::Quat::IDENTITY, scale: Vec3::ONE },
+            class,
+            flags: PlacementFlags::empty(),
+        },
+        radius: 1.0,
+    };
+    let activate = |app: &mut App, p: &IndexedPlacement| {
+        let spawner = app.world().resource::<PlacementSpawners>().for_class(p.placement.class).cloned().expect("a spawner");
+        let world = app.world_mut();
+        let cell_entity = world.spawn_empty().id();
+        let ws = WorldspaceId::new("test");
+        spawner.activate(world, &ActivateCx { worldspace: &ws, cell: bevy_math::IVec3::ZERO, cell_entity, discard: false }, p);
+        world.resource::<PhysicsStreaming>().pending_count()
+    };
+    assert_eq!(activate(&mut app, &placed(1, mw_world::source::ACTIVATOR, Some("meshes/f/active_bed.nif"))), 1);
+    assert_eq!(activate(&mut app, &placed(2, mw_world::source::CONTAINER, Some("meshes/o/chest.nif"))), 2);
+    assert_eq!(activate(&mut app, &placed(3, mw_world::source::ACTIVATOR, None)), 2, "no model, no body");
+    // A class outside the list keeps the plain default spawner.
+    assert_eq!(activate(&mut app, &placed(4, PlacementClass::Custom(200), Some("meshes/x/other.nif"))), 2);
+}

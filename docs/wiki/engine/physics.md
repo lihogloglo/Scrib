@@ -19,7 +19,7 @@ character, projectile, `BODY_PROXY`), interpolated poses (`pose_at` `:444`), eve
 (`:74`), capped by `max_steps_per_frame` (time dilates beyond it). `PhysicsFocus` (the streaming anchor) drives rebases.
 `PhysicsBody` entities get interpolated pose written back. Streaming (`stream.rs`): `PhysicsHook` wraps placement
 spawners, Active cells queue `Fixed` colliders (one shared mesh per model, built on the task pool) under
-`insert_budget_ms`; terrain chunks 64 m at 0.5 m follow the active cells; an item gate waits for the floor.
+`insert_budget_ms` (the game hooks statics, doors, items, containers and, since 2026-11-26, activators: `mw_walkers_bevy/src/physics.rs` `hook`); terrain chunks 64 m at 0.5 m follow the active cells; an item gate waits for the floor.
 Characters: `character.rs` (order since IN11b, `:104`: `PhysicsSystems::Step` before `ControllerSystems::Drive`, the
 game also before `ActionSystems::Sample`, as UE/Jolt tick the base first; `base_velocities` / `refresh_base_velocity`
 re-read the ground body's point velocity after the step; capsules target the feet plus the tick's mover motion;
