@@ -141,3 +141,49 @@ Look for: droplets on the lens right after surfacing that run down in streaks an
 the quick dip), the image bent and slightly blurred through each drop, none below the waterline while half in.
 Bad: a uniform blur or tint, drops that pop off together, drops sliding upward or sideways, a visible grid pattern,
 drops still there after ~5 s, any hitch when they start.
+
+### WA-13: Generated river without sea waves, bank shear, joins (FL-1, FL-2; joins after FL-4b; `superfargoth/docs/specs/water-bodies.md`)
+
+Status: planned (after FL-1, FL-2; joins part after FL-4b).
+Launch: `bash bevyrrowind/tools/owner_launch.sh view "world:C:/cargo-target/scrib/worldgen/x10s-b2w" --hour 12 --camera -2450,+90,1850,-2690,+5,1650`
+(TN-2 Odai 2.0 reach, clear); A/B `--off waterflowtex` (today's FFT ripples), later `--off flowfield`.
+Do: stand on the bank, then a bridge looking downstream; walk to a confluence and to where the river enters a lake.
+Look for: streaks drifting downstream at the water's speed, no waves running in random directions, slower calmer water
+at the banks than mid-channel, smoother water on fast reaches with white only where it is fastest; at joins the
+tributary dissolving into the main river or lake with no hard edge or doubled ripples.
+Bad: shimmering in place, a conveyor belt (banks as fast as the middle), pulsing every ~2 s, a seam or a straight cut
+where two waters meet, the lake ripples stopping at a line.
+
+### WA-14: Waterfall (FL-6b; `world:` x10s-b2w)
+
+Status: planned (after FL-6b).
+Launch: `bash bevyrrowind/tools/owner_launch.sh view "world:C:/cargo-target/scrib/worldgen/x10s-b2w" --hour 12` with the
+camera FL-6b writes for the largest fall within 3 km of Balmora 2.0 (scene `wa-river-fall`, registered by that slice);
+then `--hour 18` and `--weather overcast`; A/B `--off waterfalls`.
+Do: look at the fall from 200 m, walk to the plunge pool, stand beside the curtain, look up.
+Look for: a curtain falling from the lip (no sloped ramp of flat water), streaks accelerating downward, aerated white
+growing with the drop, a foam ring at the foot spreading on the pool, soft mist near the base that thins with distance.
+Bad: a static sheet, upward or sideways streaks, a gap between curtain and lip or pool, mist as hard-edged cards, a
+fall popping in or out while walking, a frame hitch near it.
+
+### WA-15: Wading rings and a short wake (FL-7, after R2/R3; `world:` x10s-b2w)
+
+Status: planned (after FL-7).
+Launch: same as WA-13 (Odai 2.0 reach, noon, clear); A/B `--off wadewake`, `--off ripples`.
+Do: third person, wade knee-deep across the river, stop mid-stream, walk upstream, then into a still lake edge.
+Look for: rings around the legs while moving and small ones while standing, a short trail drifting downstream and
+fading in ~1.5 s, none drifting in the still lake (rings only); the river's own streaks unchanged around the legs.
+Bad: rings frozen in place on a flowing river, a long V like a boat wake, the river's streaks bending round the
+character, rings far from the legs, any flicker at the grid's edge.
+
+### WA-16: Swimming in the current (FL-5c; `world:` x10s-b2w)
+
+Status: planned (after FL-5c).
+Launch: same as WA-13; then a guide lake (the nearest lake to the camera; FL-5c logs its id and centre).
+Do: walk into the river until swimming, hold still, then swim upstream, across, and climb out on a bank; swim in the lake.
+Look for: walking turns to swimming at about chest depth and back to wading when shallow, holding still drifts you
+downstream at about the water's visible speed (slower near the banks after FL-1), swimming upstream is slow but
+possible, the bank stops the drift; in the lake no drift at all. Swim strokes may still be the walk animation (graph
+`swimming` parameter is the anim lane's, ROADMAP 3.6).
+Bad: walking on the river bed in deep water, popping between swim and walk, being pushed through a bank, drift in still
+water, the current faster than the water looks.

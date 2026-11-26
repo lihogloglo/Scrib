@@ -443,6 +443,8 @@ must sort against windows and leaves); only camera-local volumes are Overlay.
   their own clipmap instance when active (one per active worldspace view; portals later, M9).
 - Overlaps resolve by priority in the clipmap raster and the BVH; equal priority is an authoring error
   in the bake report.
+- **Generated lakes and rivers** (guide `water.json`) become `WaterBody` records in the query (FL-5a: swim depth,
+  current) and get joins (FL-4): [water-bodies.md](water-bodies.md).
 
 ## Rivers: baked flow to the sea
 
@@ -475,16 +477,9 @@ fingerprinted on terrain + bodies.
 4. Product: flow map tiles (RG8 velocity, 2 m texels) per body, read by the water-level clipmap and the
    CPU query.
 
-**Generated rivers** (`Generate`): trace from each cell where accumulation crosses the threshold down
-D8 to a body; smooth to a spline (Catmull-Rom, simplified to 4 m error); width by hydraulic geometry
-(`w = a·Q^0.5`); surface height per point monotone non-increasing (min of bank − depth along the
-channel); ribbon mesh + flow map; join at confluences; end in the receiving body with a mixing zone.
-Waterfalls where the surface drops more than 2 m over 4 m: a marker for an effect mesh (content
-supplies it), not simulated.
-
-**Shading** (Vlachos 2010): two-phase flow-advected normal maps (and foam where speed or shore
-contact is high), wave cascades × openness (rivers get little), ripples. Buoyant bodies drift with
-`velocity`.
+**Generated (guide) rivers, lakes, joins, waterfalls, swimming in a current, wading** (FL-1..FL-7, owner answers
+2026-11-26: rivers carry no ocean waves, waterfalls at drops > 2 m, wading rings + short wake, flow unchanged): moved to
+[water-bodies.md](water-bodies.md) (2026-11-26), with the former "Generated rivers" and "Shading" paragraphs.
 
 ## Underwater
 
@@ -607,6 +602,7 @@ Added to weather.md's table; budgets, not measurements. Each feature lands with 
 | Water draw (clipmap 5/6/7/7 rings) + velocity | 0.3 | 0.4 | 0.5 / 0.4 | 0.6 |
 | Underwater (when below) | analytic 0.1 | analytic 0.1 | froxel medium +0.1 | +0.15 |
 | Caustics in the hook | off | 0.03 | 0.05 | 0.05 |
+| Waterfalls (when visible; FL-6b, not in the total) | curtains only, 0.05 | 1 full, 0.15 | 2 full, 0.3 | 2 full, 0.3 |
 | **Total water (above water)** | **≈ 0.5** | **≈ 0.9** | **≈ 1.35 / 1.1** | **≈ 1.55** |
 
 Together with weather.md's ≈ 3.3 ms (High), a Bitter Coast rainstorm view is ≈ 4.6 ms of weather +

@@ -95,6 +95,18 @@ Because all exterior water is one `Ocean` body, enclosed water must not get open
   the larger channels. Expect slow drifts; tune the discharge scale on the Odai first, then check that
   the swamp stays still (WA-2).
 
+### Generated water (guide worlds, FL-1..FL-7)
+
+Framework design: superfargoth `water-bodies.md`. Classic Vvardenfell keeps decision 3 (`FlowOnly`, no generated rivers):
+FL-1/FL-2/FL-3 reach it only through `water.flow` bodies once built (the Odai); FL-4, FL-5a and FL-6 run only on `world:`
+guide worlds (10x Vvardenfell; x10s-b2w: Odai 2.0 at Balmora, 95 MU rivers, 186 lakes). The Bitter Coast stays a
+sea-level swamp in the classic map (still water, WA-2); in a guide world its MU rivers get the coastal optics like all
+guide water until per-region guide optics land. Authored waterfalls (`ex_vivec_waterfall_*`, `in_om_waterfall*`, mist
+cards) stay NIFs (above); FL-6 detection never runs on them. Swimming (FL-5c): `fSwimHeightScale` (default 0.9,
+`mw_bake/src/nav.rs:73`) maps to `swim.enter_fraction` with the nav bake's swim-level rule (`nav.rs:17-20`, OpenMW
+`getSwimLevel`), so the mover swims where the navmesh's swim area starts; the rule applies to the sea and interior pools
+too (one query, every body).
+
 ### Optics by region (`WaterOpticsSource`)
 
 The region name of the exterior cell (`CELL` region, the same lookup as `ClimateSource`) picks an optics
