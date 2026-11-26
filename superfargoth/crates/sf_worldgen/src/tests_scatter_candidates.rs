@@ -60,14 +60,14 @@ fn build(text: &str, rect: [f64; 4], stand_rect: [f64; 4], disc: [f64; 3]) -> Ve
     let excl = move |x: f64, y: f64| (x - disc[0]).hypot(y - disc[1]) <= disc[2];
     let rules = StandRules { values: &file.values, seed: 55, canopy: &suit };
     let stand = StandMap::build(rules, &fields, &excl, stand_rect);
-    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one };
+    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0 };
     cand.candidates(&fields, &stand, rect)
 }
 
 fn rules_rect(text: &str, tile: (i32, i32)) -> ([f64; 4], f64) {
     let file = SpeciesFile::parse_toml(text).expect("fixture parses");
     let suit: Vec<Suitability> = file.species.iter().map(|s| Suitability::new(s, &[])).collect();
-    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one };
+    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0 };
     (cand.tile_rect(tile), cand.competition_reach_m())
 }
 

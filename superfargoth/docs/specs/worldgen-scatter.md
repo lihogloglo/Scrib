@@ -257,6 +257,11 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
   n)`; every stem `footprint_ratio x size`, new species column, Guess 0.01). Lower candidates: dominating intensity x
   `(1 + edge_boost)`, kept at the point with `lerp(stol, 1, L) x (1 + edge_boost in band) / (1 + edge_boost)`; dropped
   when their footprint overlaps an earlier stem. One CSR `Buckets` grid shared with the competition. 3 tests.
+- **WG-E2g** (2026-11-27, `scatter.rs` v2 water): `WaterMask::new(&GuideWater, water_margin_m)` / `sea` / dry
+  `Default`; `CandidateRules` gains `water` and `height`. Each instance is dropped at its own point in a forced clearing
+  (now every layer), on the sea, in a lake (holes are dry) or within the margin of a lake shore or river bank (the
+  river the swept discs of its interpolated half width, exact); offspring also by region prior 0 and the slope and shore
+  hats at the point. The shore hat reads `min(fields, exact inland distance)`. The margin also rings lakes. 2 tests.
 
 ## Tunables
 

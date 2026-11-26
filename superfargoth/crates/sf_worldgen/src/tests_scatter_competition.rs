@@ -88,7 +88,7 @@ fn candidates(file: &SpeciesFile, suit: &[Suitability], rect: [f64; 4]) -> Vec<C
     let fields = neutral();
     let none = |_: f64, _: f64| false;
     let stand = StandMap::build(StandRules { values: &file.values, seed: 55, canopy: suit }, &fields, &none, rect);
-    let cand = CandidateRules { file, suitability: suit, seed: 55, tile_m: 256.0, prior: &one };
+    let cand = CandidateRules { file, suitability: suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0 };
     cand.candidates(&fields, &stand, rect)
 }
 
@@ -193,7 +193,7 @@ fn a_tile_alone_equals_the_same_square_of_a_larger_build() {
     let (file, suit) = parse(DENSE);
     let fields = neutral();
     let none = |_: f64, _: f64| false;
-    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one };
+    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0 };
     let tile = (1, 1);
     let rect = cand.tile_rect(tile);
     let stand = StandMap::build(StandRules { values: &file.values, seed: 55, canopy: &suit }, &fields, &none, rect);

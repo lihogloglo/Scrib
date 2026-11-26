@@ -33,9 +33,10 @@ use rayon::prelude::*;
 
 use crate::filter::Declared;
 use crate::perturb::value_noise;
-use crate::scatter_fields::{Fields, Suitability};
+use crate::scatter_fields::{FieldSample, Fields, Suitability, hat};
 use crate::scatter_species::{Layer, SizeLaw, Species as SpeciesRow, SpeciesFile};
 use crate::scatter_stand::{StandClass, StandMap};
+use crate::water::GuideWater;
 
 #[cfg(test)]
 #[path = "tests_scatter.rs"]
@@ -52,6 +53,10 @@ mod tests_competition;
 #[cfg(test)]
 #[path = "tests_scatter_layers.rs"]
 mod tests_layers;
+
+#[cfg(test)]
+#[path = "tests_scatter_water.rs"]
+mod tests_water;
 
 /// One-degree slope bins of the area census (0..90°).
 // tunables: const (layout: one bin per degree of slope, the census resolution of the slope cut)
@@ -672,7 +677,9 @@ fn tilt(up: [f32; 3], deg: f32, turn: f64) -> [f32; 3] {
 // layers (thinned at the point by the light, WG-E2f below). `prior` is the caller's region prior, clamped to
 // `[0, scatter.region_prior_max]`. Each candidate gets a size mark by inversion ([`size_mark`]; canopy quantiles
 // scaled by `scatter.edge_size_ratio` in the edge band), its crown radius `crown_a_m + crown_b h`, and a tie-break
-// hash for the competition's priority (size mark, then hash).
+// hash for the competition's priority (size mark, then hash). Exclusion (WG-E2g) is tested at every instance's own
+// point: no forced clearing, sea, lake or river band ([`WaterMask`]), and for an offspring the region prior and the
+// slope and shore hats too (a background point's suitability is already its own).
 //
 // Determinism: a candidate is a pure function of its own streams, the fields and the stand at its point; a rect
 // keeps the candidates inside it, from every parent tile within the reach of a parent, so any covering build
@@ -770,6 +777,17 @@ fn hash_k(base: u64, i: u64, k: u64) -> u64 {
     mix(base ^ (i.wrapping_mul(16).wrapping_add(k).wrapping_add(1)).wrapping_mul(0x9e37_79b9_7f4a_7c15))
 }
 
+/// (stand factor, edge band, forced clearing) at a point; `None` drops a canopy candidate in a clearing. Lower
+/// layers take only the edge band (their stand factor is the light) and drop an instance in a forced clearing at its
+/// point ([`CandidateRules`]'s exclusion).
+fn stand_factor(stand: &StandMap, canopy: bool, x: f64, y: f64) -> Option<(f64, bool, bool)> {
+    let p = stand.at(x, y);
+    if !canopy {
+        return Some((1.0, p.edge_band, p.forced));
+    }
+    (p.class != StandClass::Clearing).then_some((p.d, p.edge_band, p.forced))
+}
+
 /// The rules of the v2 candidates.
 pub struct CandidateRules<'a> {
     /// Values (`[params]`) and species rows.
@@ -782,6 +800,10 @@ pub struct CandidateRules<'a> {
     pub tile_m: f64,
     /// Region prior on parent intensity at (species index, x, y), clamped to `[0, scatter.region_prior_max]`.
     pub prior: &'a (dyn Fn(usize, f64, f64) -> f64 + Sync),
+    /// The sea, lakes and rivers: nothing is kept on water ([`WaterMask`], spec "Design" 8).
+    pub water: &'a WaterMask,
+    /// The final ground height at (x, y), m (the sea rule).
+    pub height: &'a (dyn Fn(f64, f64) -> f64 + Sync),
 }
 
 impl CandidateRules<'_> {
@@ -877,6 +899,35 @@ impl CandidateRules<'_> {
         out
     }
 
+    /// An instance may stand at `(x, y)`: not in a forced clearing (`forced`, the stand's exclusion), not on the
+    /// sea, a lake or a river band ([`WaterMask::wet`]; spec "Design" 8).
+    fn dry_ground(&self, x: f64, y: f64, forced: bool) -> bool {
+        !forced && !self.water.wet(x, y, (self.height)(x, y))
+    }
+
+    /// The fields at `(x, y)`, the water distance refined by the exact inland water for a shore species (only an
+    /// answer nearer than the fields' own and the hat's far end can change it).
+    fn sample(&self, fields: &dyn Fields, sp: &SpeciesRow, x: f64, y: f64) -> FieldSample {
+        let mut f = fields.sample(x, y);
+        if let Some(h) = sp.hats.water_distance_m
+            && let Some(d) = self.water.distance_within_m(x, y, f.water_distance_m.min(h.e_max))
+        {
+            f.water_distance_m = f.water_distance_m.min(d);
+        }
+        f
+    }
+
+    /// An offspring's own point inside the species' slope and shore hats (spec "Design" 8; the parent's
+    /// suitability set its intensity).
+    fn point_hats(&self, fields: &dyn Fields, sp: &SpeciesRow, x: f64, y: f64) -> bool {
+        let (slope, shore) = (sp.hats.slope_deg, sp.hats.water_distance_m);
+        if slope.is_none() && shore.is_none() {
+            return true;
+        }
+        let f = self.sample(fields, sp, x, y);
+        slope.is_none_or(|h| hat(&h, f.slope_deg) > 0.0) && shore.is_none_or(|h| hat(&h, f.water_distance_m) > 0.0)
+    }
+
     /// The candidates of one species (unsorted).
     // Tile indices of world metres and hashed counts of a few thousand per tile.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
@@ -904,16 +955,10 @@ impl CandidateRules<'_> {
         let sigma = sp.cluster_sigma_m;
         let reach = THOMAS_REACH_SIGMAS * sigma;
         let inside = |x: f64, y: f64| x >= rect[0] && x < rect[2] && y >= rect[1] && y < rect[3];
-        // (stand factor, edge band) at a point; `None` drops a canopy candidate in a clearing. Lower layers take
-        // only the edge band (their stand factor is the light).
-        let stand_at = |x: f64, y: f64| -> Option<(f64, bool)> {
-            let p = stand.at(x, y);
-            if !canopy {
-                return Some((1.0, p.edge_band));
-            }
-            (p.class != StandClass::Clearing).then_some((p.d, p.edge_band))
-        };
+        let stand_at = |x: f64, y: f64| stand_factor(stand, canopy, x, y);
         let prior = |x: f64, y: f64| (self.prior)(s, x, y).clamp(0.0, pmax) / pmax;
+        let sample = |x: f64, y: f64| self.sample(fields, sp, x, y);
+        let point_ok = |x: f64, y: f64| prior(x, y) > 0.0 && self.point_hats(fields, sp, x, y);
         // `keep` is the point's uniform for the light thinning (lower layers).
         let mut emit = |key: CandidateKey, x: f64, y: f64, edge: bool, u: f64, tiebreak: u64, keep: f64| {
             if !canopy {
@@ -951,8 +996,8 @@ impl CandidateRules<'_> {
                     if dx.hypot(dy) > reach {
                         continue;
                     }
-                    let su = suit.at(&fields.sample(px, py));
-                    let Some((d, _)) = stand_at(px, py) else { continue };
+                    let su = suit.at(&sample(px, py));
+                    let Some((d, _, _)) = stand_at(px, py) else { continue };
                     if draw(base, j, 2) >= su * d * prior(px, py) {
                         continue;
                     }
@@ -968,7 +1013,10 @@ impl CandidateRules<'_> {
                         if !inside(x, y) {
                             continue;
                         }
-                        let Some((_, edge)) = stand_at(x, y) else { continue };
+                        let Some((_, edge, forced)) = stand_at(x, y) else { continue };
+                        if !self.dry_ground(x, y, forced) || !point_ok(x, y) {
+                            continue;
+                        }
                         let key = CandidateKey { layer: sp.layer, species, tile, parent: j as u32, offspring: o as u32 };
                         emit(key, x, y, edge, draw(ob, o, 2), hash_k(ob, o, 3), draw(ob, o, 4));
                     }
@@ -984,9 +1032,9 @@ impl CandidateRules<'_> {
                     if !inside(x, y) {
                         continue;
                     }
-                    let su = suit.at(&fields.sample(x, y));
-                    let Some((d, edge)) = stand_at(x, y) else { continue };
-                    if draw(bb, i, 2) >= su * su * d * prior(x, y) {
+                    let su = suit.at(&sample(x, y));
+                    let Some((d, edge, forced)) = stand_at(x, y) else { continue };
+                    if draw(bb, i, 2) >= su * su * d * prior(x, y) || !self.dry_ground(x, y, forced) {
                         continue;
                     }
                     let key = CandidateKey { layer: sp.layer, species, tile, parent: BACKGROUND, offspring: i as u32 };
@@ -1271,5 +1319,260 @@ impl Cover {
         let mut hit = false;
         self.stems.near([x, y], r, |d, ri| hit |= d < ri + r);
         hit
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Scatter v2 water (spec "Design" 8; slice WG-E2g). Nothing is kept on the sea (the v1 rule: ground lower than
+// `sea_level_m + water_margin_m`), inside a lake (even-odd over its outline and holes, so an island holds plants),
+// or closer than `water_margin_m` to a lake shore or a river bank (the river a tapered capsule per segment: its
+// centre line widened by the half width, interpolated between the two points). The same geometry gives the exact
+// distance to inland water, which refines the fields' `water_distance_m` for a species with a shore hat (the
+// product raster stays the answer for the sea and wherever it is nearer). Two cell indexes (one for the bank
+// pieces, one for the lakes) answer a point from its own cell; a distance query only scans the cells within the
+// distance that could still lower the answer.
+
+/// One piece of a water edge: a river segment (half widths at its two points) or a lake edge (half width 0).
+#[derive(Clone, Copy, Debug)]
+struct Bank {
+    a: [f64; 2],
+    b: [f64; 2],
+    ha: f64,
+    hb: f64,
+}
+
+impl Bank {
+    /// Distance from `p` to the band's edge, m (negative inside): the band is the union of the discs of radius
+    /// `h(u) = ha + k u` (`k = (hb - ha) / L`) centred along the segment, so the distance is `min_u |p - c(u)| -
+    /// h(u)`, a convex function of `u` in `[0, L]`: its stationary point `u* = s + k |q| / sqrt(1 - k^2)` (`s`, `q`:
+    /// `p` along and across the line) clamped to the segment, or an end when one disc holds the other (`|k| >= 1`).
+    fn edge_distance(&self, p: [f64; 2]) -> f64 {
+        let d = [self.b[0] - self.a[0], self.b[1] - self.a[1]];
+        let len = d[0].hypot(d[1]);
+        let r = [p[0] - self.a[0], p[1] - self.a[1]];
+        if len <= 0.0 {
+            return r[0].hypot(r[1]) - self.ha.max(self.hb);
+        }
+        let (s, q) = ((r[0] * d[0] + r[1] * d[1]) / len, (r[0] * d[1] - r[1] * d[0]) / len);
+        let k = (self.hb - self.ha) / len;
+        let f = |u: f64| (s - u).hypot(q) - (self.ha + k * u);
+        let ends = f(0.0).min(f(len));
+        if k.abs() < 1.0 { ends.min(f((s + k * q.abs() / (1.0 - k * k).sqrt()).clamp(0.0, len))) } else { ends }
+    }
+
+    /// Bounding box grown by `extra`, `[x0, y0, x1, y1]`.
+    fn bbox(&self, extra: f64) -> [f64; 4] {
+        let g = self.ha.max(self.hb) + extra;
+        [
+            self.a[0].min(self.b[0]) - g,
+            self.a[1].min(self.b[1]) - g,
+            self.a[0].max(self.b[0]) + g,
+            self.a[1].max(self.b[1]) + g,
+        ]
+    }
+}
+
+/// A CSR grid of boxes: each cell lists the boxes that overlap it (cell `sqrt(area / n)`, so about as many cells
+/// as boxes; points outside the grid are clamped to its edge cells, a superset).
+#[derive(Debug, Default)]
+struct CellIndex {
+    x0: f64,
+    y0: f64,
+    cell: f64,
+    nx: usize,
+    ny: usize,
+    start: Vec<u32>,
+    items: Vec<u32>,
+}
+
+impl CellIndex {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)] // cell indices
+    fn new(boxes: &[[f64; 4]]) -> Self {
+        let n = boxes.len();
+        if n == 0 {
+            return Self { nx: 1, ny: 1, cell: 1.0, start: vec![0, 0], ..Self::default() };
+        }
+        let (mut x0, mut y0, mut x1, mut y1) = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for b in boxes {
+            (x0, y0, x1, y1) = (x0.min(b[0]), y0.min(b[1]), x1.max(b[2]), y1.max(b[3]));
+        }
+        let cell = ((x1 - x0) * (y1 - y0) / n as f64).sqrt();
+        // Layout: one cell when every box is a point.
+        let cell = if cell > 0.0 { cell } else { 1.0 };
+        let nx = ((x1 - x0) / cell).floor() as usize + 1;
+        let ny = ((y1 - y0) / cell).floor() as usize + 1;
+        let mut g = Self { x0, y0, cell, nx, ny, start: vec![0u32; nx * ny + 1], items: Vec::new() };
+        let mut count = vec![0u32; nx * ny];
+        for b in boxes {
+            g.cells(*b, |c| count[c] += 1);
+        }
+        for (i, k) in count.iter().enumerate() {
+            g.start[i + 1] = g.start[i] + k;
+        }
+        let mut next = g.start.clone();
+        let mut items = vec![0u32; g.start[nx * ny] as usize];
+        for (i, b) in boxes.iter().enumerate() {
+            g.cells(*b, |c| {
+                items[next[c] as usize] = i as u32;
+                next[c] += 1;
+            });
+        }
+        g.items = items;
+        g
+    }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // clamped cell indices
+    fn cell_of(&self, p: [f64; 2]) -> (usize, usize) {
+        let cx = (((p[0] - self.x0) / self.cell).max(0.0).floor() as usize).min(self.nx - 1);
+        let cy = (((p[1] - self.y0) / self.cell).max(0.0).floor() as usize).min(self.ny - 1);
+        (cx, cy)
+    }
+
+    /// Calls `f(cell)` for every cell `rect = [x0, y0, x1, y1]` touches.
+    fn cells(&self, rect: [f64; 4], mut f: impl FnMut(usize)) {
+        let (gx0, gy0) = self.cell_of([rect[0], rect[1]]);
+        let (gx1, gy1) = self.cell_of([rect[2], rect[3]]);
+        for gy in gy0..=gy1 {
+            for gx in gx0..=gx1 {
+                f(gy * self.nx + gx);
+            }
+        }
+    }
+
+    /// The boxes listed in the cell holding `p`.
+    fn at(&self, p: [f64; 2]) -> &[u32] {
+        let (cx, cy) = self.cell_of(p);
+        self.of(cy * self.nx + cx)
+    }
+
+    /// The boxes listed in cell `c`.
+    fn of(&self, c: usize) -> &[u32] {
+        &self.items[self.start[c] as usize..self.start[c + 1] as usize]
+    }
+}
+
+/// Even-odd crossing test of `p` against one ring (closing point optional).
+fn ring_crosses(ring: &[[f64; 2]], p: [f64; 2]) -> bool {
+    let mut odd = false;
+    let Some(mut b) = ring.last().copied() else { return false };
+    for &a in ring {
+        if (a[1] > p[1]) != (b[1] > p[1]) && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0] {
+            odd = !odd;
+        }
+        b = a;
+    }
+    odd
+}
+
+/// Lakes, rivers and the sea, as the v2 exclusion sees them (spec "Design" 8). [`Default`]: dry (no sea, no water).
+#[derive(Debug)]
+pub struct WaterMask {
+    sea_level_m: f64,
+    margin_m: f64,
+    banks: Vec<Bank>,
+    bank_index: CellIndex,
+    /// Per lake its rings (outline, then holes).
+    lakes: Vec<Vec<Vec<[f64; 2]>>>,
+    lake_index: CellIndex,
+}
+
+impl Default for WaterMask {
+    fn default() -> Self {
+        Self::sea(f64::NEG_INFINITY, 0.0)
+    }
+}
+
+impl WaterMask {
+    /// The sea only: ground lower than `sea_level_m + margin_m` is water.
+    #[must_use]
+    pub fn sea(sea_level_m: f64, margin_m: f64) -> Self {
+        Self {
+            sea_level_m,
+            margin_m,
+            banks: Vec::new(),
+            bank_index: CellIndex::new(&[]),
+            lakes: Vec::new(),
+            lake_index: CellIndex::new(&[]),
+        }
+    }
+
+    /// A guide's water network (its sea level, lakes and rivers); `margin_m` is `scatter.water_margin_m`.
+    #[must_use]
+    pub fn new(water: &GuideWater, margin_m: f64) -> Self {
+        let half = |p: &[f64; 4]| 0.5 * p[2].max(0.0);
+        let mut banks = Vec::new();
+        for r in &water.rivers {
+            if let [p] = r.points.as_slice() {
+                banks.push(Bank { a: [p[0], p[1]], b: [p[0], p[1]], ha: half(p), hb: half(p) });
+            }
+            for w in r.points.windows(2) {
+                banks.push(Bank { a: [w[0][0], w[0][1]], b: [w[1][0], w[1][1]], ha: half(&w[0]), hb: half(&w[1]) });
+            }
+        }
+        let mut lakes = Vec::with_capacity(water.lakes.len());
+        let mut lake_boxes = Vec::with_capacity(water.lakes.len());
+        for l in &water.lakes {
+            let rings: Vec<Vec<[f64; 2]>> =
+                std::iter::once(&l.outline).chain(&l.holes).filter(|r| !r.is_empty()).cloned().collect();
+            if rings.is_empty() {
+                continue;
+            }
+            let mut bb = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+            for ring in &rings {
+                for (i, &a) in ring.iter().enumerate() {
+                    banks.push(Bank { a, b: ring[(i + 1) % ring.len()], ha: 0.0, hb: 0.0 });
+                    bb = [bb[0].min(a[0]), bb[1].min(a[1]), bb[2].max(a[0]), bb[3].max(a[1])];
+                }
+            }
+            lakes.push(rings);
+            lake_boxes.push(bb);
+        }
+        let boxes: Vec<[f64; 4]> = banks.iter().map(|b| b.bbox(margin_m.max(0.0))).collect();
+        Self {
+            sea_level_m: water.sea_level_m,
+            margin_m,
+            bank_index: CellIndex::new(&boxes),
+            banks,
+            lake_index: CellIndex::new(&lake_boxes),
+            lakes,
+        }
+    }
+
+    /// `(x, y)` is inside a lake (outline minus holes).
+    #[must_use]
+    pub fn in_lake(&self, x: f64, y: f64) -> bool {
+        self.lake_index
+            .at([x, y])
+            .iter()
+            .any(|&l| self.lakes[l as usize].iter().fold(false, |odd, ring| odd ^ ring_crosses(ring, [x, y])))
+    }
+
+    /// Nothing may stand at `(x, y)` on ground of height `height_m`: the sea, a lake, or closer than the margin to
+    /// a lake shore or a river bank (spec "Design" 8).
+    #[must_use]
+    pub fn wet(&self, x: f64, y: f64, height_m: f64) -> bool {
+        if height_m < self.sea_level_m + self.margin_m || self.in_lake(x, y) {
+            return true;
+        }
+        self.bank_index.at([x, y]).iter().any(|&b| self.banks[b as usize].edge_distance([x, y]) < self.margin_m)
+    }
+
+    /// The distance from `(x, y)` to the nearest lake shore or river bank, m (0 on the water), when it is at most
+    /// `cap`; `None` beyond (or with no inland water).
+    #[must_use]
+    pub fn distance_within_m(&self, x: f64, y: f64, cap: f64) -> Option<f64> {
+        if self.banks.is_empty() || cap.is_nan() || cap < 0.0 {
+            return None;
+        }
+        if self.in_lake(x, y) {
+            return Some(0.0);
+        }
+        let mut best = f64::INFINITY;
+        self.bank_index.cells([x - cap, y - cap, x + cap, y + cap], |c| {
+            for &b in self.bank_index.of(c) {
+                best = best.min(self.banks[b as usize].edge_distance([x, y]).max(0.0));
+            }
+        });
+        (best <= cap).then_some(best)
     }
 }
