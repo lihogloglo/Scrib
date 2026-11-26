@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 use sf_bake::{BakeError, Baker, Digest, PlanCx, ProductKey, RunCx, Step};
 
 use crate::{
-    AnimImporter, AnimSource, CLIP_FORMAT, Clip, ClipRules, CookSettings, RIG_PROFILE_FORMAT, RetargetRig, Retargeter, RigHints, RigProfile,
-    RootMotionRules, SKELETON_FORMAT, Skeleton, SkeletonRules, cook_clip_for, detect_profile, transfer_contacts,
+    AnimImporter, AnimSource, CLIP_FORMAT, Clip, ClipRules, CookSettings, DistanceRules, RIG_PROFILE_FORMAT, RetargetRig, Retargeter, RigHints,
+    RigProfile, RootMotionRules, SKELETON_FORMAT, Skeleton, SkeletonRules, apply_distance, cook_clip_for, detect_profile, transfer_contacts,
 };
 
 pub const SKELETON_COOK: &str = "skeleton.cook";
@@ -377,6 +377,13 @@ impl AnimRetargetStep {
         let (skeleton, file, clip) = parse_anim_subject(anim)?;
         self.0.rules.retarget_root(file, clip, skeleton)
     }
+
+    /// [`ClipRules::distance`] of the `anim.cook` subject `anim`: the curve
+    /// is measured again on the target's root track.
+    fn distance(&self, anim: &str) -> Option<DistanceRules> {
+        let (skeleton, file, clip) = parse_anim_subject(anim)?;
+        self.0.rules.clip(file, clip, skeleton).rules.distance
+    }
 }
 
 impl Step for AnimRetargetStep {
@@ -401,6 +408,13 @@ impl Step for AnimRetargetStep {
         if let Some(root) = self.root(anim) {
             cx.param("retarget_root", bytes_of(&root));
         }
+        // Only when set, so clips without the rule keep their keys. Needed:
+        // a `retarget_root` source cooks without root motion, so its
+        // `anim.cook` product (the input digest) is the same with or without
+        // the rule.
+        if let Some(d) = self.distance(anim) {
+            cx.param("distance", bytes_of(&d));
+        }
         cx.param("settings", self.0.settings.key_bytes());
         cx.param("format", CLIP_FORMAT.to_le_bytes().to_vec());
         Ok(())
@@ -421,6 +435,9 @@ impl Step for AnimRetargetStep {
         .map_err(|e| BakeError::step(&key, e))?;
         let profile = read_profile(&key, target_path, cx)?;
         transfer_contacts(&clip.meta.contacts, &target, &profile, &mut cooked);
+        if let Some(d) = self.distance(anim) {
+            apply_distance(&mut cooked, &d);
+        }
         Ok(cooked.to_bytes())
     }
 }

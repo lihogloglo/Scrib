@@ -401,8 +401,9 @@
   procedural: [
     SpeedMatch(min: 0.5, max: 2.2, rate_share: 0.5, gate: Some("speed_match"), max_lod: 2),
     StrideWarp(pelvis: Rig("hips"), legs: [], min: 0.6, max: 1.2, grade: (up: 0.45, down: 0.25), pelvis_halflife: 0.08, hold: 1.0, max_drop: 0.1, gate: Some("stride_warp"), max_lod: 1),
-    FootPlacement(pelvis: Rig("hips"), legs: [], max_foot_angle: 0.5235988, release: 0.1, pelvis_halflife: 0.08, body: Lower, roll: 0.0, guards: (max_step: 0.5, max_drop: 0.4, max_rise: 0.5, unplant: 0.3, unplant_angle: 0.34906584, max_speed: 8.0, blend_halflife: 0.1, foot_halflife: 0.04), gate: Some("on_ground"), max_lod: 1),
+    FootPlacement(pelvis: Rig("hips"), legs: [], max_foot_angle: 0.5235988, release: 0.1, pelvis_halflife: 0.08, body: Lower, roll: 0.0, guards: (max_step: 0.5, max_drop: 0.4, max_rise: 0.5, unplant: 0.3, unplant_angle: 0.34906584, extension: 0.99, max_speed: 8.0, blend_halflife: 0.1, foot_halflife: 0.04), gate: Some("on_ground"), max_lod: 1),
     Lean(joints: [(Rig("chest"), 0.45), (Rig("upperChest"), 0.4), (Rig("neck"), 0.15)], counter: [(Rig("head"), 0.9), (Rig("leftUpperArm"), 0.85), (Rig("rightUpperArm"), 0.85)], gain: 0.0, max_angle: 0.2617994, grade: (up: 0.3, down: 0.075, max: 0.15, fade_from: 0.0, fade_to: 0.0, rise_from: 0.2, rise_to: 1.2), halflife: 0.3, gate: Some("lean"), max_lod: 1),
+    LookAt(chain: [(Rig("chest"), 0.1, 0.13962634), (Rig("upperChest"), 0.15, 0.17453292), (Rig("neck"), 0.35, 0.5235988), (Rig("head"), 1.0, 1.0471976)], forward: (0.1175, 0.0, -0.9931), total_limit: 1.3962634, halflife: 0.15, release: 2.0943952, rejoin: 1.8325957, max_lod: 0),
     HandIk(upper: Rig("leftUpperArm"), lower: Rig("leftLowerArm"), hand: Rig("leftHand"), target: "hand_l", weight: "hand_ik_l", max_lod: 0),
     HandIk(upper: Rig("rightUpperArm"), lower: Rig("rightLowerArm"), hand: Rig("rightHand"), target: "hand_r", weight: "hand_ik_r", max_lod: 0),
     HitReact(joints: [], depth: 3, falloff: 0.5, gain: 0.35, max_angle: 0.5235988, halflife: 0.12, max_lod: 2),

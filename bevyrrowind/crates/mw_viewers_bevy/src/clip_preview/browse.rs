@@ -3,6 +3,9 @@
 //! steps clips within an activity and activities, both wrapping around; and the `.prov.json`
 //! sidecar's prompt and band for the overlay; and the owner's verdicts (`verdicts.toml` in the
 //! browsed folder, motion-generation.md "review"): Y/N/M rate the cursor's clip and advance.
+//! The grader's `grades.json` (scrib-motiongen `motiongen grade`) orders each activity (ungated
+//! clips first, gated ones, then failing prompt groups last), feeds the overlay, and drives the
+//! "candidates only" filter; a view filter (all, unrated, maybe, keep) serves the second pass.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -35,14 +38,61 @@ pub struct Activity {
     pub clips: Vec<BrowseClip>,
 }
 
-/// Every activity (sorted by name) and the cursor: activity, then clip in it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Every activity (sorted by name; with grades, see [`BrowseList::set_grades`]) and the cursor:
+/// activity, then clip in it.
+#[derive(Clone, Debug, PartialEq)]
 pub struct BrowseList {
-    /// The browsed folder (where `verdicts.toml` lives).
+    /// The browsed folder (where `verdicts.toml` and `grades.json` live).
     pub root: PathBuf,
     pub activities: Vec<Activity>,
     pub activity: usize,
     pub clip: usize,
+    /// The folder's `grades.json` (empty without one).
+    pub grades: Grades,
+    /// Hide gated clips from navigation.
+    pub candidates_only: bool,
+    /// Which verdicts navigation shows (needs the verdicts; without them every verdict is shown).
+    pub view: View,
+}
+
+/// The verdict filter navigation follows (cycled all -> unrated -> maybe -> keep).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum View {
+    #[default]
+    All,
+    Unrated,
+    Maybe,
+    Keep,
+}
+
+impl View {
+    #[must_use]
+    pub fn next(self) -> Self {
+        match self {
+            Self::All => Self::Unrated,
+            Self::Unrated => Self::Maybe,
+            Self::Maybe => Self::Keep,
+            Self::Keep => Self::All,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Unrated => "unrated",
+            Self::Maybe => "maybe",
+            Self::Keep => "keep",
+        }
+    }
+
+    fn admits(self, rating: Option<Rating>) -> bool {
+        match self {
+            Self::All => true,
+            Self::Unrated => rating.is_none(),
+            Self::Maybe => rating == Some(Rating::Maybe),
+            Self::Keep => rating == Some(Rating::Keep),
+        }
+    }
 }
 
 /// Clip files the browser lists.
@@ -109,7 +159,52 @@ impl BrowseList {
             }
         }
         activities.sort_by(|a, b| a.name.cmp(&b.name));
-        (!activities.is_empty()).then_some(Self { root: root.to_path_buf(), activities, activity: 0, clip: 0 })
+        (!activities.is_empty()).then_some(Self {
+            root: root.to_path_buf(),
+            activities,
+            activity: 0,
+            clip: 0,
+            grades: Grades::default(),
+            candidates_only: false,
+            view: View::All,
+        })
+    }
+
+    /// Take `grades` and reorder: inside each activity ungated clips first, gated ones after, clips
+    /// of failing prompt groups last (path order otherwise); activities whose every clip is in a
+    /// failing group go after the others. The cursor goes back to the first clip. Empty grades
+    /// change nothing.
+    pub fn set_grades(&mut self, grades: Grades) {
+        self.grades = grades;
+        let g = &self.grades;
+        let failing = |c: &BrowseClip| g.group(c).is_some_and(|(_, gr)| gr.failing);
+        for act in &mut self.activities {
+            act.clips.sort_by_key(|c| (failing(c), g.grade(c).is_some_and(Grade::gated)));
+        }
+        self.activities.sort_by_key(|a| a.clips.iter().all(failing));
+        (self.activity, self.clip) = (0, 0);
+    }
+
+    /// Whether navigation stops on `clip`: not gated while candidates-only is on, and its verdict
+    /// in the view (the view applies only with `verdicts`).
+    pub fn shown(&self, clip: &BrowseClip, verdicts: Option<&Verdicts>) -> bool {
+        if self.candidates_only && self.grades.grade(clip).is_some_and(Grade::gated) {
+            return false;
+        }
+        verdicts.is_none_or(|v| self.view.admits(v.rating(&clip.id)))
+    }
+
+    /// Clips navigation stops on.
+    pub fn shown_count(&self, verdicts: Option<&Verdicts>) -> usize {
+        self.cursors().filter(|(_, c)| self.shown(c, verdicts)).count()
+    }
+
+    /// After a filter change: if the cursor's clip is hidden, move to the next shown one (it stays
+    /// if none is).
+    pub fn settle(&mut self, verdicts: Option<&Verdicts>) {
+        if !self.shown(self.current(), verdicts) {
+            self.advance_in(verdicts);
+        }
     }
 
     pub fn current(&self) -> &BrowseClip {
@@ -131,23 +226,59 @@ impl BrowseList {
 
     /// Next (`step` 1) or previous (`step` -1) clip in the current activity, wrapping around.
     pub fn step_clip(&mut self, step: isize) {
-        self.clip = wrap(self.clip, step, self.current_activity().clips.len());
+        self.step_clip_in(step, None);
+    }
+
+    /// [`Self::step_clip`] over the shown clips ([`Self::shown`]); unchanged if none is.
+    pub fn step_clip_in(&mut self, step: isize, verdicts: Option<&Verdicts>) {
+        let clips = &self.activities[self.activity].clips;
+        let mut at = self.clip;
+        for _ in 0..clips.len() {
+            at = wrap(at, step, clips.len());
+            if self.shown(&clips[at], verdicts) {
+                self.clip = at;
+                return;
+            }
+        }
     }
 
     /// Next or previous activity, wrapping around; starts on its first clip.
     pub fn step_activity(&mut self, step: isize) {
-        self.activity = wrap(self.activity, step, self.activities.len());
-        self.clip = 0;
+        self.step_activity_in(step, None);
+    }
+
+    /// [`Self::step_activity`] over activities with a shown clip, starting on the first shown one;
+    /// unchanged if none has one.
+    pub fn step_activity_in(&mut self, step: isize, verdicts: Option<&Verdicts>) {
+        let mut at = self.activity;
+        for _ in 0..self.activities.len() {
+            at = wrap(at, step, self.activities.len());
+            if let Some(clip) = self.activities[at].clips.iter().position(|c| self.shown(c, verdicts)) {
+                (self.activity, self.clip) = (at, clip);
+                return;
+            }
+        }
     }
 
     /// The next clip in browse order: the next in this activity, else the next activity's first
     /// (wrapping from the last activity to the first).
     pub fn advance(&mut self) {
-        if self.clip + 1 < self.current_activity().clips.len() {
-            self.clip += 1;
-        } else {
-            self.step_activity(1);
+        self.advance_in(None);
+    }
+
+    /// [`Self::advance`] to the next shown clip; unchanged if no other is shown.
+    pub fn advance_in(&mut self, verdicts: Option<&Verdicts>) {
+        if let Some(at) = self.find_after(|c| self.shown(c, verdicts)) {
+            (self.activity, self.clip) = at;
         }
+    }
+
+    /// The first clip after the cursor in browse order (wrapping, the cursor's own excluded)
+    /// matching `pred`.
+    fn find_after(&self, pred: impl Fn(&BrowseClip) -> bool) -> Option<(usize, usize)> {
+        let all: Vec<_> = self.cursors().map(|(at, clip)| (at, pred(clip))).collect();
+        let here = all.iter().position(|(at, _)| *at == (self.activity, self.clip)).unwrap_or(0);
+        (1..all.len()).map(|k| all[(here + k) % all.len()]).find(|(_, hit)| *hit).map(|(at, _)| at)
     }
 
     /// Every clip with its cursor (activity, clip), in browse order.
@@ -155,14 +286,12 @@ impl BrowseList {
         self.activities.iter().enumerate().flat_map(|(a, act)| act.clips.iter().enumerate().map(move |(c, clip)| ((a, c), clip)))
     }
 
-    /// Jump to the first unrated clip after the cursor (wrapping); `false` (cursor unchanged)
-    /// if every other clip has a verdict.
+    /// Jump to the first unrated shown clip after the cursor (wrapping); `false` (cursor
+    /// unchanged) if every other shown clip has a verdict.
     pub fn next_unrated(&mut self, verdicts: &Verdicts) -> bool {
-        let all: Vec<_> = self.cursors().map(|(at, clip)| (at, verdicts.get(&clip.id).is_none())).collect();
-        let here = all.iter().position(|(at, _)| *at == (self.activity, self.clip)).unwrap_or(0);
-        let found = (1..all.len()).map(|k| all[(here + k) % all.len()]).find(|(_, unrated)| *unrated);
-        if let Some(((a, c), _)) = found {
-            (self.activity, self.clip) = (a, c);
+        let found = self.find_after(|c| verdicts.get(&c.id).is_none() && self.shown(c, Some(verdicts)));
+        if let Some(at) = found {
+            (self.activity, self.clip) = at;
         }
         found.is_some()
     }
@@ -173,7 +302,7 @@ impl BrowseList {
     /// `verdicts.toml` couldn't be written (the verdict stays recorded in memory).
     pub fn rate(&mut self, verdicts: &mut Verdicts, verdict: Verdict) -> Result<(), String> {
         verdicts.set(&self.current().id, verdict);
-        self.advance();
+        self.advance_in(Some(verdicts));
         verdicts.save()
     }
 
@@ -187,6 +316,134 @@ impl BrowseList {
         } else {
             Ok(false)
         }
+    }
+
+    /// The overlay's grade line for `clip`: gates, metrics, mirror flag, prompt group's
+    /// gated/total; `None` without a `grades.json`.
+    pub fn grade_line(&self, clip: &BrowseClip) -> Option<String> {
+        if self.grades.is_empty() {
+            return None;
+        }
+        let Some(grade) = self.grades.grade(clip) else { return Some("grade: (not in grades.json)".to_owned()) };
+        let gates = if grade.gated() { format!("gates: {}", grade.gates.join(", ")) } else { "ungated".to_owned() };
+        let metrics = metrics_text(&grade.metrics);
+        let mirror = if grade.mirror_candidate { "   mirror candidate" } else { "" };
+        let group = match self.grades.group(clip) {
+            Some((_, g)) => format!("group {}/{} gated{}", g.gated, g.total, if g.failing { " FAILING" } else { "" }),
+            None => "group -".to_owned(),
+        };
+        Some(format!("{gates}   {metrics}{mirror}   {group}   type {}", grade.kind.as_deref().unwrap_or("-")))
+    }
+}
+
+/// The grader's metrics, in a fixed order with units; absent ones left out.
+fn metrics_text(metrics: &BTreeMap<String, f64>) -> String {
+    const SHOWN: [(&str, &str, &str); 7] = [
+        ("skate_cm_s", "skate ", " cm/s"),
+        ("skate_worst_cm", "worst ", " cm"),
+        ("jerk_p99", "jerk p99 ", ""),
+        ("jerk_max", "max ", ""),
+        ("flight_s", "flight ", " s"),
+        ("steps", "steps ", ""),
+        ("turn_deg", "turn ", " deg"),
+    ];
+    SHOWN.iter().filter_map(|(k, label, unit)| metrics.get(*k).map(|v| format!("{label}{v}{unit}"))).collect::<Vec<_>>().join("  ")
+}
+
+/// The file the grader writes in the browsed folder.
+pub const GRADES_FILE: &str = "grades.json";
+
+/// One clip's entry in `grades.json`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Grade {
+    /// Failed gates (`skate`, `jerk`, `turn_mag`, ...); empty = a candidate.
+    pub gates: Vec<String>,
+    pub metrics: BTreeMap<String, f64>,
+    pub mirror_candidate: bool,
+    /// `cycle`, `start`, `stop`, `turn`, `pivot`, `other`.
+    pub kind: Option<String>,
+}
+
+impl Grade {
+    pub fn gated(&self) -> bool {
+        !self.gates.is_empty()
+    }
+}
+
+/// One prompt group's `_groups` entry.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GroupGrade {
+    pub failing: bool,
+    pub gated: usize,
+    pub total: usize,
+}
+
+/// `grades.json`: clip stem -> grade, and prompt group (the stem without its take number) -> triage.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Grades {
+    clips: BTreeMap<String, Grade>,
+    groups: BTreeMap<String, GroupGrade>,
+}
+
+impl Grades {
+    /// The grader's JSON; `None` if it isn't a JSON object. Entries that aren't objects are skipped.
+    pub fn parse(text: &str) -> Option<Self> {
+        let value: serde_json::Value = serde_json::from_str(text).ok()?;
+        let mut out = Self::default();
+        for (key, entry) in value.as_object()? {
+            if key == "_groups" {
+                for (name, g) in entry.as_object().into_iter().flatten() {
+                    let count = |k: &str| g.get(k).and_then(serde_json::Value::as_u64).and_then(|n| usize::try_from(n).ok()).unwrap_or(0);
+                    let failing = g.get("failing").and_then(serde_json::Value::as_bool).unwrap_or(false);
+                    out.groups.insert(name.clone(), GroupGrade { failing, gated: count("gated"), total: count("total") });
+                }
+            } else if !key.starts_with('_') && entry.is_object() {
+                let gates = entry.get("gates").and_then(serde_json::Value::as_array).into_iter().flatten().filter_map(serde_json::Value::as_str).map(str::to_owned).collect();
+                let metrics = entry
+                    .get("metrics")
+                    .and_then(serde_json::Value::as_object)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|(k, v)| v.as_f64().map(|v| (k.clone(), v)))
+                    .collect();
+                let mirror_candidate = entry.get("mirror_candidate").and_then(serde_json::Value::as_bool).unwrap_or(false);
+                let kind = entry.get("type").and_then(serde_json::Value::as_str).map(str::to_owned);
+                out.clips.insert(key.clone(), Grade { gates, metrics, mirror_candidate, kind });
+            }
+        }
+        Some(out)
+    }
+
+    /// `<dir>/grades.json`; empty if it is absent, unreadable or not JSON (browsing works as without one).
+    pub fn load(dir: &Path) -> Self {
+        std::fs::read_to_string(dir.join(GRADES_FILE)).ok().and_then(|t| Self::parse(&t)).unwrap_or_default()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.clips.is_empty() && self.groups.is_empty()
+    }
+
+    /// Graded clips, and how many of them are gated.
+    pub fn counts(&self) -> (usize, usize) {
+        (self.clips.len(), self.clips.values().filter(|g| g.gated()).count())
+    }
+
+    /// `clip`'s grade, joined by its file stem (the grader's key, also when two clips share a stem).
+    pub fn grade(&self, clip: &BrowseClip) -> Option<&Grade> {
+        self.clips.get(stem(&clip.rel))
+    }
+
+    /// `clip`'s prompt group name and triage.
+    pub fn group(&self, clip: &BrowseClip) -> Option<(&str, GroupGrade)> {
+        self.groups.get_key_value(group_of(stem(&clip.rel))).map(|(k, g)| (k.as_str(), *g))
+    }
+}
+
+/// The prompt group of a clip stem: the stem without a trailing `.<digits>` take number (the grader's rule).
+fn group_of(stem: &str) -> &str {
+    match stem.rsplit_once('.') {
+        Some((head, take)) if !take.is_empty() && take.bytes().all(|b| b.is_ascii_digit()) => head,
+        _ => stem,
     }
 }
 
@@ -539,6 +796,189 @@ mod tests {
         }
         assert!(!l.next_unrated(&v));
         assert_eq!(l.current().id, "top");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Two prompt groups in `walk.f` (g0 fine, g1 failing), one failing group filling `run.f`, an ungraded top clip.
+    const GRADES: &str = r#"{
+        "walk.f.act.g0.00": {"gates": ["skate"], "metrics": {"skate_cm_s": 62.0, "skate_worst_cm": 84.5, "jerk_p99": 1225.0, "steps": 12}, "mirror_candidate": false, "source": "py", "type": "cycle"},
+        "walk.f.act.g0.01": {"gates": [], "metrics": {"skate_cm_s": 21.1, "turn_deg": -4.6}, "mirror_candidate": true, "source": "py", "type": "cycle"},
+        "walk.f.act.g0.02": {"gates": [], "metrics": {}, "mirror_candidate": false, "source": "py", "type": "cycle"},
+        "walk.f.act.g1.00": {"gates": [], "metrics": {}, "mirror_candidate": false, "source": "py"},
+        "run.f.act.g0.00": {"gates": ["jerk", "skate"], "metrics": {}, "mirror_candidate": false, "source": "py", "type": "start"},
+        "run.f.act.g0.01": {"gates": ["turn_mag"], "metrics": {}, "mirror_candidate": false, "source": "py", "type": "start"},
+        "_groups": {
+            "walk.f.act.g0": {"failing": false, "gated": 1, "total": 3},
+            "walk.f.act.g1": {"failing": true, "gated": 4, "total": 6},
+            "run.f.act.g0": {"failing": true, "gated": 2, "total": 2}
+        }
+    }"#;
+
+    fn graded() -> BrowseList {
+        let root = Path::new("gen");
+        let paths = [
+            "idle.bvh",
+            "walk.f/act/walk.f.act.g0.00.bvh",
+            "walk.f/act/walk.f.act.g0.01.bvh",
+            "walk.f/act/walk.f.act.g0.02.bvh",
+            "walk.f/act/walk.f.act.g1.00.bvh",
+            "run.f/act/run.f.act.g0.00.bvh",
+            "run.f/act/run.f.act.g0.01.bvh",
+        ];
+        let mut l = BrowseList::from_paths(root, paths.iter().map(|p| root.join(p))).unwrap();
+        l.set_grades(Grades::parse(GRADES).unwrap());
+        l
+    }
+
+    fn order(l: &BrowseList) -> Vec<&str> {
+        l.cursors().map(|(_, c)| c.id.as_str()).collect()
+    }
+
+    fn find(l: &BrowseList, id: &str) -> BrowseClip {
+        l.cursors().find(|(_, c)| c.id == id).unwrap().1.clone()
+    }
+
+    #[test]
+    fn grades_parse_and_join_by_stem() {
+        let l = graded();
+        let g = l.grades.grade(&find(&l, "walk.f.act.g0.00")).unwrap();
+        assert_eq!(g.gates, ["skate"]);
+        assert!(g.gated() && !g.mirror_candidate);
+        assert_eq!((g.metrics["skate_cm_s"], g.metrics["steps"], g.kind.as_deref()), (62.0, 12.0, Some("cycle")));
+        assert!(l.grades.grade(&find(&l, "walk.f.act.g0.01")).unwrap().mirror_candidate);
+        assert_eq!(l.grades.grade(&find(&l, "walk.f.act.g1.00")).unwrap().kind, None);
+        assert_eq!(l.grades.grade(&find(&l, "idle")), None);
+        assert_eq!(l.grades.group(&find(&l, "run.f.act.g0.01")), Some(("run.f.act.g0", GroupGrade { failing: true, gated: 2, total: 2 })));
+        assert_eq!(l.grades.group(&find(&l, "idle")), None);
+        assert_eq!(l.grades.counts(), (6, 3));
+        assert_eq!((group_of("a.b.00"), group_of("a.b"), group_of("a.b."), group_of("x")), ("a.b", "a.b", "a.b.", "x"));
+        assert!(Grades::parse("not json").is_none() && Grades::parse("[]").is_none());
+        // Two clips sharing a stem get path ids but both join the stem's grade.
+        let root = Path::new("gen");
+        let mut dup = BrowseList::from_paths(root, ["a/x.bvh", "b/x.bvh"].iter().map(|p| root.join(p))).unwrap();
+        dup.set_grades(Grades::parse(r#"{"x": {"gates": ["jerk"]}}"#).unwrap());
+        assert!(dup.cursors().all(|(_, c)| dup.grades.grade(c).is_some_and(Grade::gated)));
+        assert_eq!(order(&dup), ["a/x", "b/x"]);
+    }
+
+    #[test]
+    fn order_puts_gated_then_failing_groups_last() {
+        let l = graded();
+        let names: Vec<_> = l.activities.iter().map(|a| a.name.as_str()).collect();
+        // run.f is all one failing group: after the others, though it sorts first by name.
+        assert_eq!(names, [TOP, "walk.f", "run.f"]);
+        assert_eq!(order(&l), ["idle", "walk.f.act.g0.01", "walk.f.act.g0.02", "walk.f.act.g0.00", "walk.f.act.g1.00", "run.f.act.g0.00", "run.f.act.g0.01"]);
+        assert_eq!((l.activity, l.clip), (0, 0));
+    }
+
+    #[test]
+    fn candidates_only_hides_gated_clips_from_navigation() {
+        let mut l = graded();
+        l.candidates_only = true;
+        assert_eq!(l.shown_count(None), 4);
+        let mut seen = Vec::new();
+        for _ in 0..5 {
+            l.advance();
+            seen.push(l.current().id.clone());
+        }
+        // run.f has no candidate: advance wraps past it.
+        assert_eq!(seen, ["walk.f.act.g0.01", "walk.f.act.g0.02", "walk.f.act.g1.00", "idle", "walk.f.act.g0.01"]);
+        l.step_clip(-1);
+        assert_eq!(l.current().id, "walk.f.act.g1.00");
+        l.step_clip(1);
+        assert_eq!(l.current().id, "walk.f.act.g0.01");
+        l.step_activity(1);
+        assert_eq!(l.current().id, "idle");
+        l.step_activity(-1);
+        assert_eq!(l.current().id, "walk.f.act.g0.01");
+        // Turning it on while on a gated clip moves to the next candidate.
+        l.candidates_only = false;
+        l.step_activity(1);
+        assert_eq!(l.current().id, "run.f.act.g0.00");
+        l.candidates_only = true;
+        l.settle(None);
+        assert_eq!(l.current().id, "idle");
+        // next_unrated skips gated clips too.
+        let dir = temp("candidates");
+        let v = Verdicts::load(&dir).unwrap();
+        assert!(l.next_unrated(&v));
+        assert_eq!(l.current().id, "walk.f.act.g0.01");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn view_filter_cycles_and_navigation_stays_inside_it() {
+        let views: Vec<_> = std::iter::successors(Some(View::All), |v| Some(v.next())).take(5).collect();
+        assert_eq!(views, [View::All, View::Unrated, View::Maybe, View::Keep, View::All]);
+        let dir = temp("view");
+        let mut l = graded();
+        let mut v = Verdicts::load(&dir).unwrap();
+        v.set("walk.f.act.g0.01", Verdict::Maybe);
+        v.set("walk.f.act.g1.00", Verdict::Maybe);
+        v.set("idle", Verdict::Keep);
+        l.view = View::Maybe;
+        l.settle(Some(&v));
+        assert_eq!(l.current().id, "walk.f.act.g0.01");
+        l.advance_in(Some(&v));
+        assert_eq!(l.current().id, "walk.f.act.g1.00");
+        l.advance_in(Some(&v));
+        assert_eq!(l.current().id, "walk.f.act.g0.01");
+        l.step_clip_in(-1, Some(&v));
+        assert_eq!(l.current().id, "walk.f.act.g1.00");
+        // No other activity holds a maybe: stepping activities comes back to walk.f's first maybe.
+        l.step_activity_in(1, Some(&v));
+        assert_eq!(l.current().id, "walk.f.act.g0.01");
+        assert!(!l.next_unrated(&v));
+        // Re-rating a maybe as keep takes it out of the view and advances inside it.
+        l.rate(&mut v, Verdict::Keep).unwrap();
+        assert_eq!(l.current().id, "walk.f.act.g1.00");
+        assert_eq!(l.shown_count(Some(&v)), 1);
+        l.view = View::Keep;
+        l.settle(Some(&v));
+        assert_eq!(l.current().id, "idle");
+        l.advance_in(Some(&v));
+        assert_eq!(l.current().id, "walk.f.act.g0.01");
+        // The unrated view: rating advances to the next unrated, next_unrated stays inside.
+        l.view = View::Unrated;
+        l.settle(Some(&v));
+        assert_eq!(l.current().id, "walk.f.act.g0.02");
+        l.rate(&mut v, Verdict::Reject).unwrap();
+        assert_eq!(l.current().id, "walk.f.act.g0.00");
+        assert!(l.next_unrated(&v));
+        assert_eq!(l.current().id, "run.f.act.g0.00");
+        l.advance_in(Some(&v));
+        assert_eq!(l.current().id, "run.f.act.g0.01");
+        l.advance_in(Some(&v));
+        assert_eq!(l.current().id, "walk.f.act.g0.00");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn grade_line_shows_gates_metrics_mirror_and_group() {
+        let l = graded();
+        assert_eq!(
+            l.grade_line(&find(&l, "walk.f.act.g0.00")).unwrap(),
+            "gates: skate   skate 62 cm/s  worst 84.5 cm  jerk p99 1225  steps 12   group 1/3 gated   type cycle"
+        );
+        assert_eq!(l.grade_line(&find(&l, "walk.f.act.g0.01")).unwrap(), "ungated   skate 21.1 cm/s  turn -4.6 deg   mirror candidate   group 1/3 gated   type cycle");
+        assert_eq!(l.grade_line(&find(&l, "walk.f.act.g1.00")).unwrap(), "ungated      group 4/6 gated FAILING   type -");
+        assert_eq!(l.grade_line(&find(&l, "idle")).unwrap(), "grade: (not in grades.json)");
+        assert_eq!(list().grade_line(list().current()), None);
+    }
+
+    #[test]
+    fn without_grades_order_and_filters_change_nothing() {
+        let dir = temp("nogrades");
+        let mut l = list();
+        l.set_grades(Grades::load(&dir));
+        assert_eq!(l, list());
+        std::fs::write(dir.join(GRADES_FILE), "{ broken").unwrap();
+        l.set_grades(Grades::load(&dir));
+        assert_eq!(l, list());
+        // Candidates-only hides nothing ungraded; the view needs verdicts.
+        l.candidates_only = true;
+        l.view = View::Keep;
+        assert_eq!(l.shown_count(None), l.len());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

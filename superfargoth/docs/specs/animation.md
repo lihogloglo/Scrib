@@ -748,7 +748,8 @@ Moved to [archive/animation-history.md](archive/animation-history.md#industry-co
    negative before the stop), a `Player` mode that seeks by remaining
    distance, and a stop/pivot point predicted from the trajectory springs
    (locomotion.md open question 4). Worth it once library start/stop clips
-   are baked; nothing to gain on cycle-only legacy sets.
+   are baked; nothing to gain on cycle-only legacy sets. **Curve built 2026-11-26 (B1)**: `ClipRules::distance`
+   (`sf_anim/src/distance.rs`, tunable `anim.cook.distance.rest_speed_mps`); retarget re-derivation built (B1b), seek mode built (B2a: `Clip.distance`), stop predictor built (B2b, `sf_controller::stop_offset`); states B4.
 6. Foot placement pelvis modes (UE's `AllPlantedFeet` and uphill/downhill
    variants) and a heel-lift ratio before the pelvis drops: fold into the
    per-girdle `FootPlacement` rewrite (audit row 2) and pick by visual check.

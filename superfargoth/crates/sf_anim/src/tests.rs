@@ -44,12 +44,12 @@ fn biped_joints() -> Vec<SourceJoint> {
     v
 }
 
-fn biped() -> Skeleton {
+pub(crate) fn biped() -> Skeleton {
     let rules = SkeletonRules { root_motion_joint: Some("root".into()), ..SkeletonRules::default() };
     Skeleton::with_rules(&biped_joints(), &rules).unwrap().0
 }
 
-fn idx(s: &Skeleton, name: &str) -> usize {
+pub(crate) fn idx(s: &Skeleton, name: &str) -> usize {
     s.find(name).unwrap_or_else(|| panic!("no joint {name}"))
 }
 
@@ -878,7 +878,7 @@ fn springs_are_frame_rate_independent_and_converge() {
 
 // --- Retargeting --------------------------------------------------------------------
 
-fn biped_rig(prefix: &str, a_pose: bool, ik: bool) -> RetargetRig {
+pub(crate) fn biped_rig(prefix: &str, a_pose: bool, ik: bool) -> RetargetRig {
     let c = |name: &str, joints: &[&str], ik: bool| RetargetChain {
         name: name.into(),
         joints: joints.iter().map(|j| format!("{prefix}{j}")).collect(),
@@ -902,7 +902,7 @@ fn biped_rig(prefix: &str, a_pose: bool, ik: bool) -> RetargetRig {
 /// Joints standing in `s`'s retarget pose with positions times `scale`,
 /// every joint frame turned by `frame(joint)` (other local axis
 /// conventions), names prefixed, plus an unmapped `tail` on the hips.
-fn reframed(s: &Skeleton, rig: &RetargetRig, prefix: &str, scale: f32, frame: impl Fn(usize) -> Quat) -> Vec<SourceJoint> {
+pub(crate) fn reframed(s: &Skeleton, rig: &RetargetRig, prefix: &str, scale: f32, frame: impl Fn(usize) -> Quat) -> Vec<SourceJoint> {
     let mut pose = s.rest().to_vec();
     for (name, q) in &rig.retarget_pose {
         pose[idx(s, name)].rotation = *q;
@@ -1040,7 +1040,7 @@ fn retarget_scales_translation_root_motion_and_renames_contacts() {
 /// are the take's root, resting off the origin and lying along +X (the
 /// retarget pose stands them up), and each frame puts them at `at(f)`
 /// facing `heading(f)` in the take's space.
-fn take_source(frames: usize, at: impl Fn(usize) -> Vec3, heading: impl Fn(usize) -> f32) -> (Skeleton, RetargetRig, FrameClip) {
+pub(crate) fn take_source(frames: usize, at: impl Fn(usize) -> Vec3, heading: impl Fn(usize) -> f32) -> (Skeleton, RetargetRig, FrameClip) {
     let mut joints = biped_joints();
     joints[1].rest = Trs::new(Vec3::new(1.52, 1.0, -0.72), Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2), Vec3::ONE);
     let s = Skeleton::new(&joints).unwrap().0;
@@ -1423,6 +1423,9 @@ mod gltf {
     /// Rig data for `character_glb`: `chars/a.glb` has joints `a_*`, `b.glb` `b_*`.
     struct TestRules;
 
+    /// The distance rule of `TestRules`' `walk_dist` and `walk_pelvis_dist`.
+    const DISTANCE: DistanceRules = DistanceRules { curve: DistanceCurve::Start, rest_speed: 0.05 };
+
     fn prefix(path: &str) -> &'static str {
         if path.ends_with("b.glb") { "b_" } else { "a_" }
     }
@@ -1435,11 +1438,14 @@ mod gltf {
             match clip {
                 "walk_loop" => ClipSpec { source: "walk".into(), rules: ClipRules { looping: Looping::Whole, ..ClipRules::default() } },
                 "walk_pelvis" => ClipSpec::named("walk"),
+                "walk_dist" | "walk_pelvis_dist" => {
+                    ClipSpec { source: "walk".into(), rules: ClipRules { distance: Some(DISTANCE), ..ClipRules::default() } }
+                }
                 _ => ClipSpec::named(clip),
             }
         }
         fn retarget_root(&self, _file: &str, clip: &str, _skeleton: &str) -> Option<RootMotionRules> {
-            (clip == "walk_pelvis").then(RootMotionRules::default)
+            matches!(clip, "walk_pelvis" | "walk_pelvis_dist").then(RootMotionRules::default)
         }
         fn rig(&self, path: &str) -> Option<RetargetRig> {
             let p = prefix(path);
@@ -1561,6 +1567,62 @@ mod gltf {
             assert!(g.0.distance(u.0) < 1e-3 && (g.1 - u.1).abs() < 1e-3, "root at {time}: {g:?} vs {u:?}");
         }
         assert!(generated.meta.average_velocity.distance(usual.meta.average_velocity) < 1e-3);
+    }
+
+    /// `ClipRules::distance` on retargeted clips: `anim.retarget` measures the
+    /// curve on the target's root track, also when that track is generated on
+    /// the target; clips without the rule bake as before, byte for byte.
+    #[test]
+    fn bake_steps_measure_the_distance_curve_on_the_target() {
+        let files = Arc::new(Files::default());
+        files.0.write().unwrap().insert("chars/a.glb".into(), character_glb("a_"));
+        files.0.write().unwrap().insert("chars/b.glb".into(), character_glb("b_"));
+        let dir = tempfile::tempdir().unwrap();
+        let bake = AnimBake::new(AnimImporters::framework(), Arc::new(TestRules), CookSettings::default());
+        let mut baker = Baker::new(Store::open(dir.path()).unwrap(), files);
+        bake.register(&mut baker);
+        let (a, b) = ("chars/a.glb", "chars/b.glb");
+        let cook = |clip: &str| ProductKey::new(steps::ANIM_COOK, steps::anim_subject(a, a, clip));
+        let moved = |clip: &str| ProductKey::new(steps::ANIM_RETARGET, steps::retarget_subject(b, &steps::anim_subject(a, a, clip)));
+        let names = ["walk", "walk_dist", "walk_pelvis", "walk_pelvis_dist"];
+        let keys: Vec<ProductKey> = names.iter().flat_map(|n| [cook(n), moved(n)]).collect();
+        let report = baker.bake(&keys);
+        assert_eq!(report.failures().count(), 0, "{:?}", report.failures().collect::<Vec<_>>());
+        let bytes = |k: &ProductKey| baker.store().get(&baker.product(k).unwrap()).unwrap();
+        let get = |k: &ProductKey| Clip::from_bytes(&bytes(k)).unwrap();
+
+        for name in ["walk_dist", "walk_pelvis_dist"] {
+            let clip = get(&moved(name));
+            let track = clip.root_motion.as_ref().expect("root motion on the target");
+            let dt = cook::frame_time(1, clip.frame_count as usize, clip.duration);
+            let i = clip.find_curve(DISTANCE_CURVE).unwrap_or_else(|| panic!("{name}: no distance curve"));
+            assert_eq!(clip.curves[i].values, distance_curve(track, dt, &DISTANCE), "{name}");
+            assert!(clip.curves[i].values.last().unwrap() > &0.5, "{name}: {:?}", clip.curves[i].values);
+        }
+        // The pelvis source cooks without root motion, so the rule leaves its
+        // `anim.cook` product unchanged: the retarget keys on the rule itself.
+        let mut pelvis = get(&cook("walk_pelvis_dist"));
+        "walk_pelvis".clone_into(&mut pelvis.name);
+        assert_eq!(pelvis.to_bytes(), bytes(&cook("walk_pelvis")));
+
+        // Without the rule: no curve, and the product is the retarget and
+        // contact transfer alone, as before the rule existed.
+        let skeleton = |p: &str| Skeleton::from_bytes(&bytes(&ProductKey::new(steps::SKELETON_COOK, p))).unwrap();
+        let (sa, sb) = (skeleton(a), skeleton(b));
+        let profile = RigProfile::from_bytes(&bytes(&ProductKey::new(steps::RIG_PROFILE, b))).unwrap();
+        let r = Retargeter::new(&sa, &TestRules.rig(a).unwrap(), &sb, &TestRules.rig(b).unwrap()).unwrap();
+        let settings = CookSettings::default();
+        for (name, root) in [("walk", None), ("walk_pelvis", Some(RootMotionRules::default()))] {
+            let source = get(&cook(name));
+            let mut want = match &root {
+                Some(root) => r.clip_with_root(&source, root, &settings),
+                None => r.clip(&source, &settings),
+            }
+            .unwrap();
+            transfer_contacts(&source.meta.contacts, &sb, &profile, &mut want);
+            assert!(want.find_curve(DISTANCE_CURVE).is_none());
+            assert_eq!(bytes(&moved(name)), want.to_bytes(), "{name}");
+        }
     }
 }
 

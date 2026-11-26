@@ -23,6 +23,7 @@ gltf = { workspace = true, optional = true }
 postcard.workspace = true
 serde.workspace = true
 sf_bake.workspace = true
+sf_tunables.workspace = true
 thiserror.workspace = true
 ufbx = { workspace = true, optional = true }
 

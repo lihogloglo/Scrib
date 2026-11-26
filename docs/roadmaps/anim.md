@@ -73,27 +73,36 @@ P-IK4 + lean fix (PL-10) and the roll chain (CB-6), both 2026-11-25.
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| AN1 | Diagnosis of the shipped cycles, flat and at speed: arm swing, elbow/hand clearance, spine pitch, bob, skate; ranks generation vs retarget vs graph | tests `mw_bake`, `mw_graphs` | - | printed table; ledger |
+| AN1 | Diagnosis of the shipped cycles, flat and at speed: arm swing, elbow/hand clearance, spine pitch, bob, skate; ranks generation vs retarget vs graph | tests `mw_bake`, `mw_graphs` | - | **done 2026-11-26** (ledger: swing, skate, cadence = generation; 15.7 cm pelvis dip at 2.2 m/s = graph) |
+| AN1b | Diagnosis: the graph pelvis dip at the walk/jog blend (2.2 m/s: 15.7 cm vs 4 cm clips; foot placement lock hold vs reach clamp vs SpeedMatch on a 2-lane blend) | tests `mw_bake` | AN1 | **done 2026-11-26** (heel-roll toe pin held on the blended roll curve, straight leg, pelvis lowered by −`rise_cap`; lock drift into release 2nd) |
+| AN1c | FootPlacement: unplant a locked/pinned foot when the leg over-extends (extension ratio, UE5 Foot Placement / ALS) instead of lowering the pelvis to keep it | `sf_anim_graph` | AN1b | exact: 2.2 m/s dip ≤ clip bob + 1 cm; flat 1.6 unchanged | **done 2026-11-26 (toe pins)** (`FootGuards.extension` 0.99, UE `MaxExtensionRatio` form; dip 13.2→2.5 cm at 2.2, 18.0→3.4 at 2.4; stance-lock release dip 4.6-6.9 cm at 2.6-3.0 left for AN1d: unplanting stance locks slid run strafes 20-25 cm; GRAPH_FORMAT 15)
+| AN1d | FootPlacement: plant and toe pin decided from the final blended pose (foot/toe speed + height), not thresholded blended curves | `sf_anim_graph` | AN1c | exact: no pin while the blended toe moves; owner ANIM-1 |
 | AN2 | Retarget arm IK against a body capsule (eased like the leg IK) | `sf_anim`, `sf_character` | AN1 | exact: clearance on every take; no contact = byte-identical |
-| AN3 | Swing-bias offset (upper-arm pitch, `pose_offsets`) if AN1 ranks it | `mw_graphs` data | AN1 | swing in Morrowind's range |
-| AN4 | Batch 2 recipe (R19 §6): free cycles + dense-path sweep, `cfg_weight`, starts/stops/turns/pivots, side/back cycles (C2) | scrib-motiongen | AN1 | plan prints; selftest |
-| AN5 | Batch 2 generation + grade (≥ 6 samples per prompt) | generation | AN4 | grade table; ledger |
+| AN3 | Swing-bias offset (upper-arm pitch, `pose_offsets`) if AN1 ranks it (AN1: range too small, not biased; fix in AN4 prompts first, this only if batch 2 still swings < ~50 deg) | `mw_graphs` data | AN1, AN5 | swing in Morrowind's range |
+| AN4a | Worker: dense root paths from a speed profile (hold/ramp/steady/decel/rest, one key per frame) + `cfg_weight` per activity | scrib-motiongen | - | **done 2026-11-26** (`root = "profile:hold=,ramp=,speed=,decel=,rest=,turn="`, `cfg_weight = [text, constraint]`, Kimodo default [2,2] when absent; batch 1 plans byte-identical) |
+| AN4b | Batch 2 recipe (R19 §6): free cycles + dense-path sweep, `cfg_weight`, starts/stops/turns/pivots, side/back cycles (C2); arm-swing and jog-cadence prompt arms from AN1 | scrib-motiongen | AN1, AN4a | **done 2026-11-26** (`recipes/loco-batch2.toml`: 41 activities, 246 clips, ids `loco2.*`; steps A/B left out: run-wide `--steps` only) |
+| AN5 | Batch 2 generation + grade (≥ 6 samples per prompt) | generation | AN4b | **done 2026-11-26** (246 clips, 676 s; 26/246 gated, all skate: dense jog 3.5/4.5, jog stride prompts, sprint 5.0) |
+| AN5b | Measurement: per-take arm swing, cadence, speed, bob, skate of the loco2 cycles (AN1 harness), ranked | tests `mw_bake` | AN5, AN1b | printed table; ledger |
 | AN6 | Picks into slots, bake retime limits | `mw_graphs` data | AN5, AN10 | `player_gaits` in clamp; owner **ANIM-1** (replaces LOCO-2) |
 | A5 | Turns: body follows (offset-root spring), `OrientationWarp` for the rest | `sf_anim_graph`, `mw_graphs` | AN6 | exact; owner ANIM-2 |
-| B1 | Distance curve at cook | `sf_anim` | - | exact, synthetic |
-| B2 | Seek by distance + stop predictor | `sf_anim_graph`, `sf_controller` | B1 | stop within 1 cm |
+| B1 | Distance curve at cook | `sf_anim` | - | **done 2026-11-26** (`distance.rs`, `ClipRules::distance`, 10 exact tests) |
+| B1b | `anim.retarget` re-derives the `distance` curve on the target root (retargeted clips carry the source curve or none) | `sf_anim`/`sf_character` | B1 | **done 2026-11-26** (`apply_distance` after both retarget paths; `"distance"` retarget key param only when set) |
+| B2a | Seek by distance: `Clip` node `distance: (value, rate_clamp)` | `sf_anim_graph` | B1b | **done 2026-11-26** (playhead = curve inverse, never back, clamp 0.75-1.25 (UE5); one-shot, unsynced only; GRAPH_FORMAT 14) |
+| B2b | Stop/pivot predictor: where the mover comes to rest from its springs (closed form) | `sf_controller` | - | **done 2026-11-26** (`stop.rs`: `stop_offset`, `stop_time`, `pivot`; 8 tests vs the mover within 1 cm) | stop within 1 cm |
 | B4 | Start/stop/pivot states, stop clip by planted foot | `mw_graphs` | B2, AN6 | exact; owner ANIM-3 |
 | AN7 | Acceleration and turn lean in `Lean` | `sf_anim_graph` | AN6 | exact: no accel, no lean |
-| AN8 | `LookAt` wired (head then eyes, limits, spring, target param) | `sf_anim_graph`, `mw_graphs` | - | exact limits; owner ANIM-4 |
+| AN8 | `LookAt` wired (head then eyes, limits, spring, target param) | `sf_anim_graph`, `mw_graphs` | - | **done 2026-11-26** (humanoid chest/upperChest/neck/head 8/10/30/60°, total 80°, A0; release 120°/rejoin 105° fixes the behind-the-head flip; no eye bones; GRAPH_FORMAT 13) |
+| AN8b | Look target feed: NPC head tracking at the player (port OpenMW `Actors::updateHeadTracking`, cite file + commit), player none yet | `mw_walkers_bevy` | AN8 | **done 2026-11-26** (`head_track.rs`, OpenMW b8285cc9 `actors.cpp:270-363`; GMST `fMaxHeadTrackDistance` 400 u = 5.7 m, interior x0.5; 12 exact tests); owner **ANIM-4** awaiting |
 | B6 | Gaze, slope posture, downhill stride, P-IK6, P-IK3 retuned on the new cycles | `sf_anim_graph`, `mw_graphs` | AN6 | printed; owner ANIM-5 |
 
 ### Stage 2: the clip review and pick tool
 
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
-| AN9 | Diagnosis: what slows decisions in `--browse` (owner notes, a timed session) vs dailies review; gap list in the spec | docs | - | doccheck |
-| AG2 | Browser reads `grades.json`: overlay, sort, candidates only (absorbs ROADMAP's MG10b) | `mw_viewers_bevy` | AN9 | list order; owner ANIM-6 |
+| AN9 | Diagnosis: what slows decisions in `--browse` (owner notes, a timed session) vs dailies review; gap list in the spec | docs | - | **done 2026-11-26** (`motion-generation.md` "Browse review: diagnosis", 8 ranked gaps; no timed session, owner away) |
+| AG2 | Browser reads `grades.json`: overlay, sort, candidates only (absorbs ROADMAP's MG10b) | `mw_viewers_bevy` | AN9 | list order; owner ANIM-6 | **done 2026-11-26** (C candidates only, V view all/unrated/maybe/keep, gated last per activity, grade line in the overlay)
 | AN10 | Side-by-side elimination: 2-4 takes synced in a row, reject drops one, last ones get keep/maybe | `mw_viewers_bevy` | AG2 | exact list state; owner ANIM-6 |
+| AN46 | Review controls: Z undo (Backspace today clears the NEXT clip, `browse.rs:174-190`), pause/frame step/speed, number-key reason tags into the note, mirror preview of `mirror_candidate` | `mw_viewers_bevy` | AN10 | exact list state |
 | AN11 | In context: a take through the shipped graph at slot speed (treadmill, ramps) on chosen bodies (old/young, races, female rig) | `mw_viewers_bevy` | AN10 | pose = `mw_graphs::sim`; owner ANIM-6 |
 | AG3 | Fitted gates + score; `motiongen calibrate` from `verdicts.toml` | scrib-motiongen | AG2 | AUC printed |
 | AG4 | Target-body arm/chest check on retargeted clips | `mw_bake` | AN2 | exact on fixtures |
@@ -124,8 +133,12 @@ Each family: recipe against slot contact points and MG4 height bands, generation
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
 | AN25 | Spec: families, slot naming, contact constraints, variant axes | docs | IN27 | doccheck |
-| AN43 | Hub-pose rule (owner 2026-11-26: chains are assembled at runtime from pieces, never pre-generated): every interaction piece starts and ends on a listed hub pose (standing idle, seated idle, seated holding a cup...); hub list per family as data; runtime = warp + layers/masks + IK to contact points + inertialization | docs | AN25 | doccheck |
-| AN44 | Generator spike: the same 3 pieces (stand→sit, seated→reach cup, seated→stand) via Kimodo + keyframe constraints, ARDY (SOMA checkpoint, keyframe constraints) and Kimodo + MotionBricks links; hub error + foot slide per take | scrib-motiongen | AN43 | printed table; owner ranks takes |
+| AN43 | Hub-pose rule (owner 2026-11-26: chains are assembled at runtime from pieces, never pre-generated): every interaction piece starts and ends on a listed hub pose (standing idle, seated idle, seated holding a cup...); hub list per family as data; runtime = warp + layers/masks + IK to contact points + inertialization | docs | AN25 | **done 2026-11-26** (`motion-generation.md` "Interaction pieces and hub poses": body hub + hand state, `hubs.toml` from a kept take's frame, `from_hub`/`to_hub` tags; AN25 fills the per-family table) |
+| AN44a | Kimodo worker: full-body keyframe constraints at given frames (hub pose at first/last frame; README `start_pose` "not yet (MG8)"); ARDY note `docs/research/anim-2026-11-26/ardy.md` | scrib-motiongen | AN43 | selftest: constrained frames printed vs the pose | **done 2026-11-26** (`start_pose`/`end_pose = "hub:<id>"`, `pose_frames`, Kimodo `FullBodyConstraintSet` on SOMA-30 from the hub BVH frame; `recipes/hubs.toml` seeds `stand.idle`, `sit.chair`; `--hub-root`)
+| AN44b | `motiongen hubcheck`: hub error per take (per-joint deg + hand/foot/pelvis cm at first/last frame, AN43's measure) and foot slide; Kimodo arm recipe for the 3 pieces (stand→sit, seated reach cup at `sit.chair`, sit→stand), 8 seeds each | scrib-motiongen | AN44a | selftest; plan prints | **done 2026-11-26** (`motiongen hubcheck`, numpy only; Kimodo arm generated + checked: `generated/hubspike/hubcheck.json`)
+| AN44c | ARDY arm: install (≤ 1 day; gated Llama, C++ ext on Windows), npz→BVH, same 3 pieces with hub keyframes | scrib-motiongen | AN44b | hubcheck table |
+| AN44d | MotionBricks arm: in-betweening between the hub poses, same 3 pieces (exploratory) | scrib-motiongen | AN44b | hubcheck table |
+| AN44 | Spike verdict: the three arms' hubcheck + foot-slide tables side by side; owner ranks takes | docs | AN44b-d | table; owner ranks |
 | AN45 | Bake hub snap + hub gate: blend the last frames into the exact hub pose, reject takes whose hub error exceeds a tunable (beside the foot-slide gate) | scrib-motiongen, `mw_graphs` bake | AN44 | exact: snapped ends equal the hub; rejects printed |
 | MG7b | Grip table + second-hand `FullBodyIk` | `mw_viewers_bevy`, data | MG7a | exact sockets |
 | MG8 | MotionBricks link worker (approach, loop seams, exit) | scrib-motiongen | AN13 | seams printed |

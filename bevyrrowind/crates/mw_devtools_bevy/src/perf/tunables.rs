@@ -61,6 +61,7 @@ pub const CATALOG: &[(&str, &[&dyn AnyDef])] = &[
     ("sf_ai_bevy::exec", sf_ai_bevy::exec::TUNABLES),
     ("sf_ai_bevy::alloc", sf_ai_bevy::alloc::ALLOC_TUNABLES),
     ("sf_crime_bevy", sf_crime_bevy::TUNABLES),
+    ("mw_walkers_bevy::head_track", mw_walkers_bevy::head_track::TUNABLES),
     ("mw_walkers_bevy::light_inputs", mw_walkers_bevy::light_inputs::TUNABLES),
     ("mw_walkers_bevy::noise_emitters", mw_walkers_bevy::noise_emitters::TUNABLES),
     ("mw_walkers_bevy::walkers", mw_walkers_bevy::walkers::TUNABLES),
@@ -312,6 +313,7 @@ mod tests {
             "sight_cache_s", "cache_move_m", "search_ttl_s", "search_error_m", "search_widen_mps",
             "search_ring_points", "search_look_half_deg", "search_uncertain_mul", "search_inner_frac",
             "closed_door_m", "light_search_m", "light_rays", "dark_threshold", "roof_sky_mul", "light_falloff_exp",
+            "noise_max_hops",
         ];
         const AWARENESS: &[&str] = &[
             "curious", "suspicious", "searching", "band_hysteresis", "alert_hold_s", "decay_delay_s",

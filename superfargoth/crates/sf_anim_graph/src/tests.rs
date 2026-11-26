@@ -1069,7 +1069,7 @@ fn foot_placement_follows_ground_and_locks_contacts() {
 #[test]
 fn foot_placement_guards_stop_lock_drift_teleports_and_bad_samples() {
     let unguarded = r#"FootPlacement(pelvis: Joint("hips"), legs: ["l", "r"],
-                        guards: (max_step: 100.0, max_drop: 100.0, max_rise: 100.0, unplant: 100.0, max_speed: 1000.0))"#;
+                        guards: (max_step: 100.0, max_drop: 100.0, max_rise: 100.0, unplant: 100.0, extension: 100.0, max_speed: 1000.0))"#;
     let guarded = r#"FootPlacement(pelvis: Joint("hips"), legs: ["l", "r"])"#;
     let flat = [Some(GroundSample { point: Vec3::ZERO, normal: Vec3::Y }); 2];
     // Worst pelvis drop below the plain animation, and worst hip-to-foot
@@ -1153,6 +1153,32 @@ fn look_at_and_hand_ik_reach_targets() {
     let hand = rig.joint("hand_l");
     assert!(out.model.rotation(hand).angle_between(turn) < 1e-3, "hand {:?}", out.model.rotation(hand));
     assert!(out.model.translation(hand).distance(grip) < 1e-3);
+}
+
+/// A target straight behind, jittering across the back from one side to the other, lets
+/// the look go (no swap between the two clamped sides); a target ahead takes hold again.
+#[test]
+fn look_at_lets_go_behind_the_head() {
+    let rig = proc_rig(r#"LookAt(chain: [(Joint("chest"), 0.3, 0.6), (Joint("head"), 1.0, 1.2)], forward: (0.0, 0.0, 1.0), halflife: 0.01)"#);
+    let b = rig.binding();
+    let head = rig.joint("head");
+    let (mut inst, mut out) = (GraphInstance::new(&b), GraphOutput::new(&rig.graph));
+    let (mut free, mut free_out) = (GraphInstance::new(&b), GraphOutput::new(&rig.graph));
+    let at = |deg: f32| Vec3::new(2.0 * deg.to_radians().sin(), 1.65, 2.0 * deg.to_radians().cos());
+    for i in 0..120 {
+        let inputs = UpdateInputs { look_target: Some(at(if i % 2 == 0 { 179.0 } else { -179.0 })), ..UpdateInputs::default() };
+        inst.update(&b, 1.0 / 60.0, 0, &inputs, &mut out);
+        free.update(&b, 1.0 / 60.0, 0, &UpdateInputs::default(), &mut free_out);
+        // `1 - |dot|`, not `angle_between`: its `acos` turns a last-bit difference into 7e-4 rad.
+        let off = 1.0 - out.model.rotation(head).dot(free_out.model.rotation(head)).abs();
+        assert!(off < 1e-6, "frame {i}: head {off} off the animated pose (1 - |dot|)");
+    }
+    let inputs = UpdateInputs { look_target: Some(at(45.0)), ..UpdateInputs::default() };
+    for _ in 0..60 {
+        inst.update(&b, 1.0 / 60.0, 0, &inputs, &mut out);
+    }
+    let want = (at(45.0) - out.model.translation(head)).normalize();
+    assert!((out.model.rotation(head) * Vec3::Z).angle_between(want) < 0.05);
 }
 
 #[test]
@@ -1394,6 +1420,7 @@ fn variety_offsets_looping_phase_and_jitters_rate_except_root_motion_drive() {
     assert!(t > 0.0 && t <= 0.1 + 1e-5, "attack time {t}");
 }
 
+mod distance_match;
 mod gates;
 mod optional;
 mod pelvis;

@@ -850,8 +850,11 @@ fn heel_roll_pins_the_toe_from_heel_off_to_toe_off() {
         nodes: {"w": Clip(clip: "roll")},
         layers: [(node: "w")],
         profile_limbs: Support,
-        procedural: [FootPlacement(pelvis: Joint("hips"))],
+        procedural: [FootPlacement(pelvis: Joint("hips"), guards: (extension: 1.0))],
     )"#;
+    // The fixture's leg is straight from heel-off (its translated foot sits at full extension),
+    // so the 5 cm drift over-extends it: this test is about the roll pin, the extension unplant
+    // (AN1c, `toe_pin_unplants_at_the_extension_limit...` below) is off.
     let rig = Rig::new(s, vec![clip], ron);
     assert!(rig.graph.legs.iter().any(|l| l.roll.is_some() && l.toe.is_some()), "the left leg resolves its roll curve and has a toe");
     let b = rig.binding();
@@ -876,4 +879,92 @@ fn heel_roll_pins_the_toe_from_heel_off_to_toe_off() {
     assert!(slide < 5e-3, "the toe slid {slide} m between heel-off and toe-off");
     let rise = rolling.last().unwrap().1 - rolling[0].1;
     assert!(rise > 0.05, "the heel rolled up {rise} m");
+}
+
+/// `AN1c`: a toe pin (heel roll) the body walks away from lets go at `guards.extension`
+/// (UE5 Foot Placement's max extension ratio) instead of the pelvis dropping to keep it; on
+/// the walk/jog blend it pulled the pelvis down 13-18 cm. Ground below still lowers the pelvis.
+#[test]
+fn toe_pin_unplants_at_the_extension_limit_instead_of_dropping_the_pelvis() {
+    let s = biped_with_toes();
+    // Standing, knees a little bent (hip to ankle 0.86 of the 0.90 m leg): the left foot plants
+    // on the first update, then rolls (contact down, roll up) for the rest of the clip.
+    let src = SourceClip {
+        name: "pin".into(),
+        duration: 4.0,
+        tracks: ["l", "r"]
+            .iter()
+            .flat_map(|side| {
+                [(format!("thigh_{side}"), -0.25f32), (format!("shin_{side}"), 0.5)].map(|(joint, a)| SourceTrack {
+                    joint,
+                    rotation: Some(sampled(4.0, move |_| Quat::from_rotation_x(a))),
+                    ..SourceTrack::default()
+                })
+            })
+            .collect(),
+        curves: vec![
+            sf_anim::SourceCurve { name: "contact.foot_l".into(), curve: sampled(4.0, |t| if t < 0.05 { 1.0 } else { 0.0 }) },
+            sf_anim::SourceCurve { name: "roll.foot_l".into(), curve: sampled(4.0, |_| 1.0) },
+        ],
+        ..SourceClip::default()
+    };
+    let clip = cook_clip(&s, &src, &walk_rules(), &CookSettings::default()).unwrap();
+    let graph = |ops: &str| format!(r#"(nodes: {{"w": Clip(clip: "pin")}}, layers: [(node: "w")], profile_limbs: Support, procedural: [{ops}])"#);
+    // The drift limit off: only the extension (or nothing) lets the pin go.
+    let feet = |ext: f32| graph(&format!(r#"FootPlacement(pelvis: Joint("hips"), guards: (unplant: 100.0, extension: {ext}))"#));
+    let plain = Rig::new(s.clone(), vec![clip.clone()], &graph(""));
+    // Per update: hips drop below the plain pose, the left foot's offset from it, the animated
+    // hip (thigh) and foot, and the stats.
+    let run = |ops: &str, lift: f32, step: f32, updates: usize| {
+        let rig = Rig::new(s.clone(), vec![clip.clone()], ops);
+        assert!(rig.graph.legs.iter().any(|l| l.roll.is_some() && l.toe.is_some()));
+        let (b, pb) = (rig.binding(), plain.binding());
+        let (mut inst, mut out) = (GraphInstance::new(&b), GraphOutput::new(&rig.graph));
+        let (mut pinst, mut pout) = (GraphInstance::new(&pb), GraphOutput::new(&plain.graph));
+        let ground = vec![Some(GroundSample { point: Vec3::Y * lift, normal: Vec3::Y }); rig.graph.probe_count()];
+        let (hips, thigh, foot) = (rig.joint("hips"), rig.joint("thigh_l"), rig.joint("foot_l"));
+        (0..updates)
+            .map(|_| {
+                let inputs = UpdateInputs { ground: &ground, moved: RootDelta::new(Vec3::Z * step, 0.0), ..UpdateInputs::default() };
+                inst.update(&b, 1.0 / 60.0, 0, &inputs, &mut out);
+                pinst.update(&pb, 1.0 / 60.0, 0, &UpdateInputs::default(), &mut pout);
+                assert!(out.model.translation(hips).is_finite());
+                let f = pout.model.translation(foot);
+                let drop = pout.model.translation(hips).y - out.model.translation(hips).y;
+                (drop, out.model.translation(foot) - f, pout.model.translation(thigh), f, out.feet)
+            })
+            .collect::<Vec<_>>()
+    };
+    let step = 0.02; // 1.2 m/s at 60 Hz
+    let off = run(&feet(100.0), 0.0, step, 60);
+    let dropped = off.iter().map(|h| h.0).fold(0.0f32, f32::max);
+    assert!(off.iter().all(|h| h.4.unplanted == 0));
+    assert!(dropped > 0.05, "extension off: the pin drops the pelvis {dropped}");
+
+    let on = run(&feet(0.99), 0.0, step, 60);
+    let worst = on.iter().map(|h| h.0.abs()).fold(0.0f32, f32::max);
+    println!("pelvis drop: extension off {dropped:.4} m, on {worst:.5} m");
+    assert!(worst < 1e-3, "the pelvis stays at the animated height: {worst}");
+    let first = on.iter().position(|h| h.4.unplanted_extension > 0).expect("an extension unplant");
+    assert_eq!(on.iter().map(|h| h.4.unplanted).sum::<u32>(), 1);
+    // It let go at the limit: the update before held the pin within it, one more update of
+    // drift would have passed it.
+    let full = 2.0 * Vec3::new(0.0, -0.45, 0.02).length();
+    let (_, dev, hip, f, _) = on[first - 1];
+    let animated = hip.distance(f);
+    let limit = animated + 0.99 * (full - animated);
+    let held = hip.distance(f + Vec3::new(dev.x, 0.0, dev.z));
+    let next = hip.distance(f + Vec3::new(dev.x, 0.0, dev.z - step));
+    println!("unplanted at update {first}: animated {animated:.4}, limit {limit:.4}, held {held:.4}, next {next:.4} (full {full:.4})");
+    assert!(held <= limit + 1e-4 && next > limit - 1e-4, "held {held} next {next} limit {limit}");
+    assert!(dev.length() > 0.1, "the pin held the foot first ({dev:?})");
+
+    // Ground genuinely below (5 cm under both feet, standing): the pelvis still lowers to it,
+    // exactly as with the limit off, and nothing unplants.
+    let (on, off) = (run(&feet(0.99), -0.05, 0.0, 60), run(&feet(100.0), -0.05, 0.0, 60));
+    let last = on.last().unwrap().0;
+    println!("ground 5 cm below: pelvis drop {last:.4} m");
+    assert!((last - 0.05).abs() < 1e-3, "pelvis lowers to the ground: {last}");
+    assert!(on.iter().zip(&off).all(|(a, b)| (a.0 - b.0).abs() < 1e-5));
+    assert!(on.iter().all(|h| h.4.unplanted == 0));
 }

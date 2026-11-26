@@ -15,16 +15,16 @@ use std::collections::HashMap;
 
 use glam::{Vec2, Vec3};
 use sf_anim::ik::FullBody;
-use sf_anim::{Clip, LimbSolver, RigProfile, RootMotionMode, Skeleton};
+use sf_anim::{Clip, DISTANCE_CURVE, LimbSolver, RigProfile, RootMotionMode, Skeleton};
 use sf_bake::ProductKey;
 
 use crate::asset::{
-    BlendMode, ClipFallback, ClipRef, ConditionSpec, GraphAsset, JointRef, LayerMode, LayerSpec, LegSpec, NodeSpec, OpSpec, ParamKind, ProfileLimbs,
+    BlendMode, ClipFallback, ClipRef, ConditionSpec, DistanceMatchSpec, GraphAsset, JointRef, LayerMode, LayerSpec, LegSpec, NodeSpec, OpSpec, ParamKind, ProfileLimbs,
     SyncSpec, ValueSpec,
 };
 use crate::blendspace::triangulate;
 use crate::compiled::{
-    Blend, BlendSpace, BodyEffector, ClipResolution, ClipSlot, CompiledGraph, Condition, GirdleSeg, HitReactOp, Layer, Leg, Machine, MirrorTable, Node, NodeKind,
+    Blend, BlendSpace, BodyEffector, ClipResolution, ClipSlot, CompiledGraph, Condition, DistanceMatch, GirdleSeg, HitReactOp, Layer, Leg, Machine, MirrorTable, Node, NodeKind,
     Op, OpEntry, ParamDef, ParamType, PlayerNode, Provenance, SlotDef, SpringBonesOp, State, Transition, Value, WarpWindow,
 };
 
@@ -323,6 +323,26 @@ impl Compiler<'_> {
         crate::compiled::parse_warp_window(self.skeleton, clip, e, &mut |name| Self::intern(table, name, "warp targets"))
     }
 
+    /// A distance-matched clip: its distance curve, checked non-decreasing.
+    fn distance_match(&self, slot: u16, name: &str, d: &DistanceMatchSpec, synced: bool) -> R<DistanceMatch> {
+        let (lo, hi) = d.rate_clamp;
+        if !(lo > 0.0 && lo <= hi) {
+            return Err(format!("distance rate_clamp ({lo}, {hi}) needs 0 < min <= max"));
+        }
+        if synced {
+            return Err("a distance-matched clip can't join a sync group (its playhead follows the distance)".into());
+        }
+        let c = &self.clips[usize::from(slot)];
+        let curve = c
+            .find_curve(DISTANCE_CURVE)
+            .ok_or_else(|| format!("clip {name:?} has no {DISTANCE_CURVE:?} curve for distance matching (anim.cook distance rules)"))?;
+        let values = &c.curves[curve].values;
+        if values.iter().any(|v| !v.is_finite()) || values.windows(2).any(|w| w[1] < w[0]) {
+            return Err(format!("clip {name:?}: its {DISTANCE_CURVE:?} curve decreases, distance matching needs it non-decreasing"));
+        }
+        Ok(DistanceMatch { value: self.value(&d.value)?, curve: u16_of(curve, "clip curves")?, rate_clamp: (lo, hi) })
+    }
+
     fn sync(&mut self, s: Option<&SyncSpec>) -> R<Option<(u16, crate::asset::SyncRole)>> {
         s.map(|s| Ok((Self::intern(&mut self.out.sync_groups, &s.group, "sync groups")?, s.role))).transpose()
     }
@@ -489,10 +509,17 @@ impl Compiler<'_> {
         let idx = self.placeholder(&path);
         let at = |e: String| format!("{path}: {e}");
         let compiled = match &spec {
-            NodeSpec::Clip { clip, rate, looping, start, sync, root_motion } => 'clip: {
+            NodeSpec::Clip { clip, rate, looping, start, sync, root_motion, distance } => 'clip: {
                 let Some(slot) = self.clip_slot(scope, clip).map_err(at)? else { break 'clip None };
+                let distance = match distance {
+                    Some(d) => Some(self.distance_match(slot, clip, d, sync.is_some()).map_err(at)?),
+                    None => None,
+                };
                 let c = &self.clips[usize::from(slot)];
                 let looping = looping.unwrap_or(c.loop_range.is_some());
+                if looping && distance.is_some() {
+                    return Err(at(format!("clip {clip:?}: distance matching needs a non-looping clip")));
+                }
                 let mode = root_motion.or(inherited).unwrap_or(c.meta.root_motion_mode);
                 let additive = c.meta.additive;
                 let player = PlayerNode {
@@ -505,6 +532,7 @@ impl Compiler<'_> {
                     root_motion: mode,
                     space: None,
                     rate_clamp: None,
+                    distance,
                 };
                 Some((NodeKind::Player(player), additive))
             }
@@ -740,6 +768,7 @@ impl Compiler<'_> {
             root_motion: mode,
             space: Some(space),
             rate_clamp: None,
+            distance: None,
         };
         Ok(Some((NodeKind::Player(player), additive)))
     }
@@ -971,13 +1000,16 @@ impl Compiler<'_> {
                         *max_lod,
                     )
                 }
-                OpSpec::LookAt { chain, forward, total_limit, halflife, max_lod } => {
+                OpSpec::LookAt { chain, forward, total_limit, halflife, release, rejoin, max_lod } => {
                     let chain = chain.iter().map(|(j, w, l)| Ok((self.joint(j)?, *w, *l))).collect::<R<Vec<_>>>()?;
                     if chain.is_empty() {
                         return Err("LookAt needs a chain".into());
                     }
                     let forward = Vec3::new(forward.0, forward.1, forward.2).normalize_or(Vec3::Z);
-                    (Op::LookAt { chain, forward, total_limit: *total_limit, halflife: *halflife }, *max_lod)
+                    if rejoin >= release || rejoin.is_nan() || release.is_nan() {
+                        return Err("LookAt needs rejoin < release".into());
+                    }
+                    (Op::LookAt { chain, forward, total_limit: *total_limit, halflife: *halflife, release: *release, rejoin: *rejoin }, *max_lod)
                 }
                 OpSpec::SpineBend { spine, gain, max_angle, halflife, max_lod } => {
                     (Op::SpineBend { spine: weights(self, spine)?, gain: *gain, max_angle: *max_angle, halflife: *halflife }, *max_lod)

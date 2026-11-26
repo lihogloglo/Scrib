@@ -9,6 +9,10 @@
 //! Cycle takes (`*.cycle.*`) cook through the loop cutter ([`cook::cook_report`]) and loop in the
 //! slot with no re-blend, so the seam shows as the game would play it; the overlay gives the cut's
 //! window and seam errors, and L switches between the cut loop and the raw take (A/B).
+//! With the grader's `grades.json` in the folder ([`super::browse::Grades`]) each activity lists
+//! ungated clips first, the overlay shows the clip's gates, metrics, mirror flag and prompt group,
+//! and C toggles "candidates only" (gated clips hidden); V cycles the view all / unrated / maybe /
+//! keep. Arrows, rating's advance and U stay inside the filters.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -20,7 +24,7 @@ use sf_anim_bevy::Animator;
 use sf_anim_graph::LateClip;
 use sf_anim_graph::slot::LOOP_FOREVER;
 
-use super::browse::{BrowseList, Prov, Tally, Verdict, Verdicts};
+use super::browse::{BrowseList, Grades, Prov, Tally, Verdict, Verdicts};
 use super::cook::{self, ClipJob};
 use super::{ActorQuery, Phase, Preview, play_full};
 
@@ -54,7 +58,12 @@ pub(super) struct Browse {
 }
 
 impl Browse {
-    pub(super) fn new(list: BrowseList, source: String) -> Self {
+    pub(super) fn new(mut list: BrowseList, source: String) -> Self {
+        list.set_grades(Grades::load(&list.root));
+        match list.grades.counts() {
+            (0, _) => println!("browse grades: no grades.json"),
+            (graded, gated) => println!("browse grades: {graded} clips graded, {gated} gated"),
+        }
         let verdicts = Verdicts::load(&list.root);
         if let Err(e) = &verdicts {
             eprintln!("error: verdicts off: {e}");
@@ -106,9 +115,40 @@ impl Browse {
         true
     }
 
+    /// C (candidates only) / V (view); `true` if the overlay needs a refresh.
+    fn filter_keys(&mut self, keys: &ButtonInput<KeyCode>) -> bool {
+        let candidates = keys.just_pressed(KeyCode::KeyC);
+        let view = keys.just_pressed(KeyCode::KeyV);
+        if !candidates && !view {
+            return false;
+        }
+        if candidates {
+            self.list.candidates_only = !self.list.candidates_only;
+        }
+        if view {
+            self.list.view = self.list.view.next();
+        }
+        let verdicts = self.verdicts.as_ref().ok();
+        let before = self.list.current().id.clone();
+        self.list.settle(verdicts);
+        self.pending |= self.list.current().id != before;
+        let shown = self.list.shown_count(verdicts);
+        let empty = if self.list.shown(self.list.current(), verdicts) { "" } else { " (nothing to show: cursor stays)" };
+        self.message = format!("{}: {shown} of {} shown{empty}", self.filter_text(), self.list.len());
+        println!("browse filter: {}", self.message);
+        true
+    }
+
+    /// The active filters, for the overlay and messages.
+    fn filter_text(&self) -> String {
+        let view = if self.verdicts.is_ok() { self.list.view.as_str() } else { "all (verdicts off)" };
+        format!("view {view}, candidates only {}", if self.list.candidates_only { "on" } else { "off" })
+    }
+
     fn overlay_text(&self) -> String {
         let clip = self.list.current();
         let prov = Prov::read(clip).unwrap_or_default();
+        let grade = self.list.grade_line(clip).map(|g| format!("{g}\n")).unwrap_or_default();
         let activity = self.list.current_activity();
         let (verdict, tally, all) = match &self.verdicts {
             Ok(v) => (v.get(&clip.id).unwrap_or("unrated").to_owned(), tally_text(v.tally(&activity.clips)), tally_text(v.tally(self.list.activities.iter().flat_map(|a| &a.clips)))),
@@ -117,14 +157,15 @@ impl Browse {
         let cut = if self.cut.is_empty() { String::new() } else { format!("{}\n", self.cut) };
         let l = if self.loop_cut { "L: raw take" } else { "L: loop cut" };
         format!(
-            "{} ({}/{})   clip {}/{} of {} in all\n{}   band: {}   {}\n{cut}prompt: {}\nverdict: {verdict}   activity: {tally}   all: {all}   {}\n\
-             Y keep  N reject  M maybe  Bksp clear  U next unrated   {l}   Left/Right: clip   Up/Down: activity   drag: orbit   wheel: zoom",
+            "{} ({}/{})   clip {}/{} of {} in all   {}\n{}   band: {}   {}\n{cut}prompt: {}\n{grade}verdict: {verdict}   activity: {tally}   all: {all}   {}\n\
+             Y keep  N reject  M maybe  Bksp clear  U next unrated   C candidates only  V view   {l}   Left/Right: clip   Up/Down: activity   drag: orbit   wheel: zoom",
             activity.name,
             self.list.activity + 1,
             self.list.activities.len(),
             self.list.clip + 1,
             activity.clips.len(),
             self.list.len(),
+            self.filter_text(),
             clip.rel,
             prov.band.as_deref().unwrap_or("-"),
             self.status,
@@ -169,10 +210,11 @@ pub(super) fn browse_step(
     let Some(b) = preview.browse.as_mut() else { return };
     for (key, step_activity, step) in [(KeyCode::ArrowRight, false, 1), (KeyCode::ArrowLeft, false, -1), (KeyCode::ArrowDown, true, 1), (KeyCode::ArrowUp, true, -1)] {
         if keys.just_pressed(key) {
+            let verdicts = b.verdicts.as_ref().ok();
             if step_activity {
-                b.list.step_activity(step);
+                b.list.step_activity_in(step, verdicts);
             } else {
-                b.list.step_clip(step);
+                b.list.step_clip_in(step, verdicts);
             }
             b.pending = true;
             b.message.clear();
@@ -183,7 +225,7 @@ pub(super) fn browse_step(
         b.pending = true;
         b.message = format!("loop cut {}", if b.loop_cut { "on" } else { "off: raw takes" });
     }
-    let refresh = b.verdict_keys(&keys);
+    let refresh = b.filter_keys(&keys) | b.verdict_keys(&keys);
     if refresh && !b.pending {
         let text = b.overlay_text();
         for mut t in &mut overlay {

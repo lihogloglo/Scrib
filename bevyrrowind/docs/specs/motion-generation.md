@@ -137,6 +137,95 @@ is the path there). `python -m motiongen stats <bvh|dir>` prints skate/flight/ro
   (later) turns into sources.ron candidates. `clip-preview --browse` writes it in the browsed folder: Y keep, N reject,
   M maybe (each advances), Backspace clear, U next unrated; sorted keys, existing entries kept, atomic save.
 
+#### Browse review: diagnosis (AN9, 2026-11-26)
+
+No timed owner session was possible (owner away); the evidence is the owner's notes (DECISIONS 2026-11-25: "the clip
+picker tool is weak"; ~2 h per 200 clips, about 35 s a clip; rates by elimination: reject sure, maybe usable, keep
+relatively best, then keep+maybe ranked by numbers, small batches), the code, and what `grades.json` already holds.
+
+**Now.** One clip at a time: sorted by path, grouped by first folder (`browse.rs:84-111`), the clip cooked on demand and
+looped (`live.rs:156-205`). The overlay shows activity, path, band, prompt and tallies (`live.rs:109-130`); keys Y/N/M
+rate and advance, Backspace clears, U next unrated, L loop cut, arrows move (`live.rs:77-107`, `browse.rs:174-190`).
+Nothing reads `grades.json` (gates `skate`/`jerk`/`turn_mag`, `mirror_candidate`, metrics, `_groups` triage).
+
+**Gaps, most time first.**
+1. **Gated clips are judged by eye.** Of 175 rated loco1 clips the gates caught 26 of the rejects at the cost of 6
+   keep/maybe; each costs a full look. Fix: hide or sort gated clips last, show gates and metrics in the overlay
+   (skate cm/s, jerk), jump past a triaged group. **AG2.**
+2. **No comparison, only memory.** "Relatively best" needs two takes side by side, but takes of one recipe job are
+   spread through the list (stems differ only by take number) and each is seen alone. Fix: view a prompt group
+   (`_groups`) as 2-4 synced actors, reject drops one, the last get keep/maybe. **AN10** (groups from AG2).
+3. **No second pass over keep+maybe.** After elimination the owner must rank by numbers, but the tool has no filter
+   (unrated, maybe, keep) and no ordering by metric. Fix: view filter and sort key (gate count, skate, jerk, prompt
+   group), an "unrated only" mode as the default queue. **AG2** (sort, filter); the keep/maybe ranking = **AG3** score.
+4. **A mistaken key is hard to fix.** Y/N/M advance first, so Backspace clears the *next* clip (`browse.rs:174-190`);
+   the fix is Left, Backspace, Right. Fix: Z undoes the last verdict and returns to it. **New** (small, with AN10).
+5. **Judging contact needs slow motion.** Skate and sliding feet are what rejects hinge on, yet there is no pause, frame
+   step, speed or foot-contact marker; only a fixed loop. Fix: Space pause, `,` `.` step, `[` `]` speed, optional
+   contact-lock markers from the grader. **New** (with AN10: sync control is shared).
+6. **Wrong-way turns look like rejects.** `mirror_candidate` clips are usable relabels but show as plain bad takes.
+   Fix: show the flag and preview the mirror. **AG2** (flag), mirror preview **new**.
+7. **A clip is seen on one body, free-standing.** Skate or foot trouble that only shows at slot speed or on another
+   rig is missed until in game. Fix: **AN11.**
+8. **Notes need a text editor.** `note: ...` verdicts cannot be entered in the tool. Fix: a number key tags a reason
+   (skate, slide, pop, pose) into the note. **New** (small); these tags feed AG3 calibration.
+
+**Industry form.** Dailies tools (ShotGrid/Tweak RV, KeyFlow) review versions with synced A/B, wipe and tiled compare,
+frame step and per-version status keys, never one clip at a time from memory. Mocap pipelines pick a **circle take**
+from several takes of one move, then pass only circled takes on, with notes. Circle-take (AI-take dailies room) is the
+closest match: takes organised per shot, auto quality gates first, compare, circle winners, export prompts and seeds. We
+follow that: gates remove the sure rejects before any look (gap 1), groups are compared in a row (gap 2), the winner is
+circled (keep). Sources: [RV on ShotGrid](https://shotgrid-rv.software.informer.com/),
+[KeyFlow](https://keyflow.tools/), [circle-take](https://github.com/wassermanproductions/circle-take),
+[Animost mocap take selection](https://animost.com/tutorials/motion-capture-for-games-planning-and-direction-part-3/).
+
+**Roadmap.** Gaps 4, 5 and 8 have no row: add **AN12** (review controls: undo, pause/step/speed, reason tags;
+`mw_viewers_bevy`, depends AN10, exact list state). For the 246 loco2 clips: run `motiongen grade` first, and until
+AG2 lands review the ungated clips first (`grades.json` lists the gated ones).
+
+**As built (AG2, 2026-11-26):** `--browse` reads `<folder>/grades.json` (absent or broken: unchanged behaviour): inside each
+activity ungated clips first, then gated, then failing groups; **C** candidates only (gated hidden), **V** view all → unrated →
+maybe → keep (arrows, Y/N/M advance and U stay inside it); overlay grade line (gates, skate, jerk p99, steps, group gated/total,
+mirror candidate). `browse.rs`, `live.rs`; 6 exact tests.
+
+### Interaction pieces and hub poses (AN43, owner 2026-11-26)
+
+**Rule.** Interaction chains (sit, reach the cup, drink, put it down, stand up) are **assembled at runtime from
+pieces, never generated as one take**. Every piece starts and ends on a listed **hub pose**, so any piece that ends on
+hub H can be followed by any piece that starts on H. Loops play at one hub (start = end = H). Slot clip ids stay the
+interaction spec's (`<kind>.<family>.{enter.<side>,loop,exit.<side>}`, `interaction.md` "Definitions"); hubs are
+metadata on those clips, not a second naming scheme.
+
+- **Hub = body hub + hand state.** Body hubs: `stand.idle`, `sit.<seat>` (stool, chair, bench, floor, bed edge),
+  `lie.bed`, `lean.wall`, `kneel` ...; each hand is `empty` or holds a prop class (`cup`, `book`, `bowl` ...), so
+  "seated holding a cup in the right hand" is `sit.chair+R:cup`. A piece that doesn't use a hand keeps its state
+  (upper-arm-down mask), so hand states don't multiply body pieces (The Sims' posture + carry split).
+- **Hub list per family is data** (`recipes/hubs.toml` in scrib-motiongen, copied beside the output as
+  `generated/hubs.toml`; Scrib reads it, files only): `id`, family, body hub, hands, and its **source**: one frame of
+  a kept SOMA take (clip id + frame), never hand-typed angles. The MW-rig hub is that frame through the normal retarget
+  (MG3), so generation and bake share one definition. Style classes may add their own body hub
+  (`stand.idle@old`); missing ones fall back to the neutral hub, inertialization absorbs the gap.
+- **Piece metadata:** each generated piece's provenance names `from_hub` and `to_hub`; the bake copies them into the
+  cooked clip (`sources.ron` row tags). A chain is valid when consecutive pieces share a hub (load error otherwise).
+- **Generation:** hub poses go to the generator as start/end constraints (Kimodo keyframe constraints, ARDY
+  keyframes, MotionBricks in-betweening between two given poses); AN44 measures which hits hubs best. Unconstrained
+  takes are allowed only through the bake's hub snap and gate (AN45: blend the last/first frames into the exact hub,
+  reject above a tunable hub error, beside the foot-slide gate).
+- **Runtime** (no new system: existing `sf_anim_graph` and `sf_action` parts): the enter piece is warped onto the slot
+  frame (`Interaction` move rule's Warp, action.md); prop pieces play as layers with masks over the seated or standing
+  body; IK pins hands and feet to the slot's contact points (`IkTargets`, two-bone / `FullBodyIk`); every piece
+  boundary is an inertialized switch (the residual after the snap is millimetres and degrees, so it never pops).
+- **Hub error** (the gate's measure and AN44's table): per joint local rotation error (deg, max and mean) and hand/
+  foot/pelvis position error in the character frame (cm), at the piece's first and last frame.
+
+Reuse check: Bevy 0.20's `AnimationGraph` has blends and masks but no posture/transition contract; our own
+`sf_anim_graph` already has slots, masks, inertialization and warp. No crate implements a posture graph. Industry:
+hubs are Snap-Together Motion's "hub nodes" (Gleicher et al., SIGGRAPH 2003: clips snapped to shared poses so any
+order plays); The Sims' posture graph (postures and carry as separate tracks); RDR2/GTA scenario clip sets (enter,
+idle, exit per scenario, base idle as the junction); UE5 Smart Objects + Contextual Animation + Motion Warping for the
+slot alignment; inertialization at the junctions (Bollo, GDC 2018). AN25 fills the per-family hub table; this
+section fixes the rule and the format.
+
 ## Slices (one deliverable each)
 
 | Slice | Deliverable | Needs | Status |

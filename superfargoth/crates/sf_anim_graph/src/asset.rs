@@ -272,6 +272,35 @@ fn one() -> f32 {
     1.0
 }
 
+/// A distance-matched [`NodeSpec::Clip`] (UE5 Distance Matching). Each
+/// update the playhead heads for the time whose `distance` curve value is
+/// `value` (the curve is non-decreasing: binary search, linear between
+/// frames; past its last value, the end), never backwards and at
+/// `rate_clamp` times the normal pace at most and at least (while it has to
+/// move at all), so a noisy input neither stutters nor jumps. A start or a
+/// pivot reads the metres travelled since it began (UE's
+/// `AdvanceTimeByDistanceMatching`), a stop minus the metres left to the
+/// stop point (`DistanceMatchToTarget`). The clip must carry the curve
+/// (`anim.cook` distance rules): a compile error otherwise.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DistanceMatchSpec {
+    /// Distance in the curve's terms, metres: travelled (start, pivot) or
+    /// minus the distance remaining (stop).
+    pub value: ValueSpec,
+    /// Playhead speed range against normal playback, `(min, max)`.
+    #[serde(default = "distance_rate_clamp")]
+    pub rate_clamp: (f32, f32),
+}
+
+/// Default [`DistanceMatchSpec::rate_clamp`]. Tunable: unit ratio (clip
+/// seconds per second of normal playback), range `0 < min <= max`, about
+/// 0.25..=4; source Industry (UE5 `UAnimDistanceMatchingLibrary::
+/// AdvanceTimeByDistanceMatching`'s `PlayRateClamp` default, as Lyra's
+/// starts use it).
+pub fn distance_rate_clamp() -> (f32, f32) {
+    (0.75, 1.25)
+}
+
 fn crossfade_default() -> BlendMode {
     BlendMode::Inertialize(0.2)
 }
@@ -296,6 +325,11 @@ pub enum NodeSpec {
         /// Defaults to the enclosing state's mode, else the clip's.
         #[serde(default)]
         root_motion: Option<RootMotionMode>,
+        /// Distance matching (UE5's): the playhead follows the clip's
+        /// `sf_anim::DISTANCE_CURVE` to a distance parameter instead of the
+        /// clock. `None`: plays by time.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        distance: Option<DistanceMatchSpec>,
     },
     /// Clips placed on one axis; at most two play.
     BlendSpace1D {
@@ -525,6 +559,20 @@ pub struct FootGuards {
     /// `unplant` and spreads or crosses the legs. The release decays like
     /// a drift release (`release`), then the foot re-plants where it is.
     pub unplant_angle: f32,
+    /// Over-extension unplant of a toe pin (heel roll; `BodyFit::Lower`,
+    /// as `Fit` pitches the body to its locks). Tunable (ratio, 0.5-1;
+    /// default 0.99, source Industry: UE5 Foot Placement plant settings'
+    /// `MaxExtensionRatio`, same definition; value Guess: the reach is 0.999
+    /// of full extension, so 0.99 lets go about where the pin would start
+    /// to cost pelvis height). A toe pin may stretch the leg (hip to pinned
+    /// ankle, at the animated hip and foot height) by this share of the
+    /// length the animated leg has left to full extension; past it the foot
+    /// unplants (released like a drift release) instead of the pelvis
+    /// dropping to keep it. Ground under the foot is not part of it: a
+    /// target below on a slope or step still lowers the pelvis. Stance locks
+    /// keep `unplant` only (strafes hold them a few cm past full extension;
+    /// letting go slid the feet). 1 or more turns it off.
+    pub extension: f32,
     /// Above this speed (m/s) the op blends out.
     pub max_speed: f32,
     /// Halflife of the op's weight (blend in and out), seconds.
@@ -541,6 +589,7 @@ impl Default for FootGuards {
             max_rise: 0.5,
             unplant: 0.3,
             unplant_angle: 45f32.to_radians(),
+            extension: 0.99,
             max_speed: 8.0,
             blend_halflife: 0.1,
             foot_halflife: 0.04,
@@ -835,6 +884,17 @@ pub enum OpSpec {
         total_limit: f32,
         #[serde(default = "look_halflife")]
         halflife: f32,
+        /// Tunable (rad, 90-180°; default 120°, source Guess within the industry's
+        /// release cones, e.g. ALS / Naughty Dog look-ats letting go behind the
+        /// shoulder): past this angle between the animated aim and the target the
+        /// look lets go (its weight springs to 0), so a target behind the head never
+        /// flips the aim from one side to the other as it crosses straight behind.
+        #[serde(default = "look_release")]
+        release: f32,
+        /// Tunable (rad, below `release`; default 105°, source Guess: 15° of
+        /// hysteresis): a released look takes hold again under this angle.
+        #[serde(default = "look_rejoin")]
+        rejoin: f32,
         #[serde(default = "lod0")]
         max_lod: u8,
     },
@@ -986,6 +1046,12 @@ fn pelvis_halflife() -> f32 {
 }
 fn look_halflife() -> f32 {
     0.15
+}
+fn look_release() -> f32 {
+    120f32.to_radians()
+}
+fn look_rejoin() -> f32 {
+    105f32.to_radians()
 }
 
 /// The mirror plane's normal axis in character space.

@@ -22,7 +22,8 @@
 //!   girdle by its legs' largest need; `Fit` follows their mean ground
 //!   offset capped by reach, then the body pitches between girdles and
 //!   rolls by `roll` (the "pelvis plus chest" extension of Johansen 2009).
-//! - `LookAt`: aim chain toward a smoothed target with a smoothed weight.
+//! - `LookAt`: aim chain toward a smoothed target with a smoothed weight;
+//!   lets go of a target past `release` behind the head (hysteresis `rejoin`).
 //! - `SpineBend` / `Lean`: yaw into turns spread over the spine; roll by
 //!   lateral acceleration.
 //! - `LimbIk`: any limb to a target slot, position and rotation.
@@ -116,6 +117,8 @@ pub(crate) enum OpState {
         weight: f32,
         weight_velocity: f32,
         init: bool,
+        /// Let go: the target is (or was, within the hysteresis) past `release`.
+        released: bool,
     },
     /// Full-body IK working memory and the effector list.
     Body(Box<(FullBodyScratch, Vec<Effector>)>),
@@ -141,7 +144,7 @@ impl OpState {
             Op::FullBodyIk { .. } => Self::Body(Box::default()),
             Op::HitReact(op) => Self::Hit(HitState::new(op)),
             Op::SpringBones(_) => Self::Springs(SpringState::default()),
-            Op::LookAt { .. } => Self::Look { target: Vec3::ZERO, velocity: Vec3::ZERO, weight: 0.0, weight_velocity: 0.0, init: false },
+            Op::LookAt { .. } => Self::Look { target: Vec3::ZERO, velocity: Vec3::ZERO, weight: 0.0, weight_velocity: 0.0, init: false, released: false },
             _ => Self::None,
         }
     }
@@ -295,17 +298,21 @@ fn solve_leg(skeleton: &Skeleton, local: &mut LocalPose, model: &mut ModelPose, 
     solve_limb(skeleton, local, model, &ROOT, &joints, leg.solver, &goal)
 }
 
-/// Reach of a limb's solved span (slightly short of straight). A
-/// `TwoBoneAnkle` leg reaches as thigh plus the shin-to-toe virtual bone:
+/// Full extension of a limb's solved span (its chain straight). A
+/// `TwoBoneAnkle` leg extends as thigh plus the shin-to-toe virtual bone:
 /// its metatarsal only folds further, never straightens.
-fn reach(model: &ModelPose, leg: &Leg) -> f32 {
+fn limb_length(model: &ModelPose, leg: &Leg) -> f32 {
     let p = |j: u16| model.translation(usize::from(j));
     let solved = leg.solved();
-    let length = match (leg.solver, solved) {
+    match (leg.solver, solved) {
         (LimbSolver::TwoBoneAnkle, &[a, b, _, d]) => p(a).distance(p(b)) + p(b).distance(p(d)),
         _ => solved.windows(2).map(|w| p(w[0]).distance(p(w[1]))).sum::<f32>(),
-    };
-    length * 0.999
+    }
+}
+
+/// Reach of a limb's solved span: slightly short of straight.
+fn reach(model: &ModelPose, leg: &Leg) -> f32 {
+    limb_length(model, leg) * 0.999
 }
 
 /// Highest rise of a limb's root joint (`hip`) that still lets the limb
@@ -491,8 +498,10 @@ pub(crate) fn run_ops(cx: &mut ProceduralCx<'_>, states: &mut [OpState], local: 
             (Op::FootPlacement { .. }, OpState::Feet { girdles: springs, legs: ls, weight }) => {
                 foot_placement(cx, &entry.op, (springs, ls, weight), fading, local, model);
             }
-            (Op::LookAt { chain, forward, total_limit, halflife }, OpState::Look { target, velocity, weight, weight_velocity, init }) => {
-                let goal = if cx.inputs.look_target.is_some() { 1.0 } else { 0.0 };
+            (
+                Op::LookAt { chain, forward, total_limit, halflife, release, rejoin },
+                OpState::Look { target, velocity, weight, weight_velocity, init, released },
+            ) => {
                 if let Some(t) = cx.inputs.look_target {
                     if *init {
                         critical_spring(target, velocity, t, *halflife, cx.dt);
@@ -501,13 +510,27 @@ pub(crate) fn run_ops(cx: &mut ProceduralCx<'_>, states: &mut [OpState], local: 
                         *init = true;
                     }
                 }
+                let Some(&(end, ..)) = chain.last() else { continue };
+                let end = usize::from(end);
+                // Behind the head the shortest arc to the target swaps sides as it crosses
+                // straight behind (the clamped aim would jump from one limit to the other):
+                // let go past `release` off the animated aim, take hold again under `rejoin`.
+                if *init {
+                    let animated = (model.rotation(end) * *forward).normalize_or(Vec3::Z);
+                    let off = animated.angle_between(*target - model.translation(end));
+                    if off > *release {
+                        *released = true;
+                    } else if off < *rejoin {
+                        *released = false;
+                    }
+                }
+                let goal = if cx.inputs.look_target.is_some() && !*released { 1.0 } else { 0.0 };
                 critical_spring(weight, weight_velocity, goal, *halflife, cx.dt);
                 let w = weight.clamp(0.0, 1.0);
-                if w < 1e-3 || chain.is_empty() {
+                if w < 1e-3 {
                     continue;
                 }
                 let joints: Vec<AimJoint> = chain.iter().map(|&(j, weight, limit)| AimJoint { joint: usize::from(j), weight, limit }).collect();
-                let end = usize::from(chain[chain.len() - 1].0);
                 aim_chain(s, local, model, &ROOT, &joints, end, *target, Aim { forward: *forward, total_limit: *total_limit, weight: w });
             }
             (Op::SpineBend { spine, gain, max_angle, halflife }, OpState::Angle(angle)) => {
@@ -742,6 +765,21 @@ fn foot_placement(
         // lock, or the animated foot moved onto the pinned toe.
         let toe_pin = st.toe_lock.zip(toe).map(|(l, t)| l + horizontal(f - t));
         let pin = if contact > 0.5 { st.lock } else if rolling { toe_pin } else { None };
+        // Over-extension limit of a toe pin (UE5 Foot Placement plant
+        // settings' max extension ratio): the pin may stretch the leg, at the
+        // animated hip and foot height, by `extension` of the length the
+        // animated leg has left to full extension; past it the foot lets go
+        // rather than the pelvis dropping for the pin's own drift. Ground
+        // under the foot stays out of it (a step below still lowers the
+        // pelvis). `Fit` pitches the body to its locks instead (its reach
+        // pass bounds it): `Lower` only. Stance locks keep the drift limit:
+        // strafes hold locks a few cm past full extension, and letting them
+        // go slid the feet (AN1c, `docs/ledger/animation.md`).
+        let stretch = (*body == BodyFit::Lower && guards.extension < 1.0).then(|| {
+            let hip = model.translation(usize::from(leg.solved()[0]));
+            let animated = hip.distance(f);
+            (hip, animated + guards.extension * (limb_length(model, leg) - animated).max(0.0))
+        });
         if let Some(p) = pin {
             let drift = horizontal(p - f).length();
             cx.feet.drift_max = cx.feet.drift_max.max(drift);
@@ -753,10 +791,14 @@ fn foot_placement(
             // clip's own foot yaw since the plant.
             let turn = (st.turned + yaw_about_y(model.rotation(foot) * st.plant_rotation.inverse())).abs();
             let turned = turn > guards.unplant_angle;
-            if !st.unplanting && (turned || drift > guards.unplant * reaches[k]) {
+            // Over-extension (`stretch` above): the toe pin would need the
+            // leg past the limit at the animated hip and foot height.
+            let stretched = !turned && contact <= 0.5 && stretch.is_some_and(|(hip, l)| hip.distance(Vec3::new(p.x, f.y, p.z)) > l);
+            if !st.unplanting && (turned || stretched || drift > guards.unplant * reaches[k]) {
                 st.unplanting = true;
                 cx.feet.unplanted += 1;
                 cx.feet.unplanted_turn += u32::from(turned);
+                cx.feet.unplanted_extension += u32::from(stretched);
             }
         }
         // A locked target: the lock's plane position at the animated foot's

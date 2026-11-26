@@ -553,7 +553,7 @@ impl Builder {
     }
 
     fn play(&mut self, name: &str, clip: &str, looping: Option<bool>) -> String {
-        self.node(name, NodeSpec::Clip { clip: clip.into(), rate: ValueSpec::default(), looping, start: 0.0, sync: None, root_motion: None })
+        self.node(name, NodeSpec::Clip { clip: clip.into(), rate: ValueSpec::default(), looping, start: 0.0, sync: None, root_motion: None, distance: None })
     }
 
     /// A directional blend space over `<prefix><Dir><suffix>`.
@@ -750,7 +750,7 @@ impl Builder {
         self.by_stance(name, |b, s, n| {
             let clip = b.hold_clip(part, s.suffix());
             let held = |b: &mut Self, n: &str| {
-                b.node(n, NodeSpec::Clip { clip: clip.clone(), rate: ValueSpec::default(), looping: Some(false), start: 1.0, sync: None, root_motion: None })
+                b.node(n, NodeSpec::Clip { clip: clip.clone(), rate: ValueSpec::default(), looping: Some(false), start: 1.0, sync: None, root_motion: None, distance: None })
             };
             if let Some(idle) = s.overlay() {
                 let base = held(b, &format!("{n}.lower"));
@@ -1108,6 +1108,36 @@ impl Builder {
                      grade: (up: 0.3, down: 0.075, max: 0.15, rise_from: 0.2, rise_to: 1.2), halflife: 0.3, gate: Some(\"lean\"))",
                 )
                 .expect("Lean defaults"),
+            );
+            // Look-at (AN8, animation.md "Procedural pass and IK"): the host's look target (`AnimDrive::look_target`,
+            // character space) spread over the trunk, neck and head, root first, each joint taking
+            // its share of what remains, clamped to its limit (`sf_anim::ik::aim_chain`); after the
+            // lean (it moves the head), before the hands. Morrowind's rig has no eye bones: no eye
+            // link, the head carries the rest. Off (skipped) while the host gives no target.
+            // Tunables (graph data; source: the UE5 / ALS look-at spread, spine ~15-20°, neck ~30°,
+            // head ~60°, total 80°; the shares are a Guess): (share 0..1, limit deg) chest
+            // (0.1, 8), upper chest (0.15, 10), neck (0.35, 30), head (1, 60); `total_limit` 80° yaw
+            // and pitch off the animated aim (60..90); `halflife` 0.15 s target and weight smoothing
+            // (0.1..0.3); `release` 120° / `rejoin` 105° (90..180, 15° hysteresis, Guess): a target
+            // behind the shoulder lets the look go instead of flipping sides as it crosses straight
+            // behind. `forward`: the head's level gaze in `Bip01 Head`'s frame, measured on the
+            // male and female idle (`look_at head_axis`: local -Z pitched 6.75°; the beast head sits
+            // 12°, so beasts aim ~5° off level). `max_lod` 0: A0 only (animation.md "LOD and
+            // budget": A1 keeps speed match, stride and feet).
+            self.a.procedural.push(
+                ron::from_str(&format!(
+                    "LookAt(chain: [(Rig(\"chest\"), 0.1, {}), (Rig(\"upperChest\"), 0.15, {}), (Rig(\"neck\"), 0.35, {}), \
+                     (Rig(\"head\"), 1.0, {})], forward: (0.1175, 0.0, -0.9931), total_limit: {}, halflife: 0.15, \
+                     release: {}, rejoin: {}, max_lod: 0)",
+                    8f32.to_radians(),
+                    10f32.to_radians(),
+                    30f32.to_radians(),
+                    60f32.to_radians(),
+                    80f32.to_radians(),
+                    120f32.to_radians(),
+                    105f32.to_radians(),
+                ))
+                .expect("LookAt defaults"),
             );
             // Hands on the lip (B2b): two-bone arm IK onto the host's grip targets, after the
             // trunk lean (it moves the shoulders) and before the springs. At weight 0 (every

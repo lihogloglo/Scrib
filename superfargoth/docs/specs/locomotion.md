@@ -366,5 +366,6 @@ Havok character proxy in Creation Engine games.
    controller, or the kinematic mover if M3's crowd shows the need.
 4. Local avoidance: **resolved** 2026-10-12 (M3-b, "Local avoidance (ORCA)" above): it lives
    in `sf_controller` (UE puts RVO in the movement component), on the intent's desired
-   velocity, with a per-frame spatial hash of the characters. Still open: the closed-form stop
-   and pivot point from the springs for distance matching (P2, animation.md open question 5).
+   velocity, with a per-frame spatial hash of the characters. Stop and pivot points: **built 2026-11-26 (B2b)**,
+   `sf_controller/src/stop.rs` (`stop_offset` = a/y² + 2v/y with the brake half-life, `stop_time`, `pivot`; the
+   rate-capped mode has no pivot: it turns at speed).

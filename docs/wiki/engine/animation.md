@@ -24,6 +24,9 @@ and creature graphs are built in code, shipped as RON, and compiled at bake time
 - **Ops** (`procedural.rs`, listed in `OpSpec`): `SpeedMatch` (play rate from measured speed), `StrideWarp`,
   `FootPlacement` (probes, plant/lock, pelvis, turn unplant), `Lean`, `LimbIk`, `ChainIk`, `LookAt`, `FullBodyIk`,
   `HandIk`, `HitReact`, `SpringBones`, `OrientationWarp`, `SpineBend`. `max_lod` per op skips them at lower tiers.
+  `LookAt` (humanoid since AN8, after `Lean`, A0 only) aims chest/upperChest/neck/head at `AnimDrive.look_target`
+  (limits 8/10/30/60°, total 80°); it lets go past `release` 120° from the animated aim and rejoins under 105°, so a
+  target behind never flips sides. Nothing in the game sets a target yet (AN8b).
 - **Humanoid graph** (`bevyrrowind/crates/mw_graphs/src/build.rs`, shipped as
   `bevyrrowind/crates/mw_graphs/data/animation/graphs/mw_humanoid.animgraph.ron`, ~209 KB): base `locomotion` state
   machine (idle, walk, run, turn left/right, sneak, jump, swim, reactions) picked by parameter conditions
@@ -56,6 +59,15 @@ and creature graphs are built in code, shipped as RON, and compiled at bake time
   `anim.retarget` (library clips onto the humanoid rig) and `animgraph.compile`. The manifest
   `bevyrrowind/crates/mw_graphs/data/animation/sources.ron` maps slots to `source:clip` chains; only the CC0
   Quaternius UAL1/UAL2 packs ship (LFS). The game reads the last bake: re-run it after changing slots.
+- **Distance curve** (B1, 2026-11-26): `ClipRules::distance: Some((curve: Start|Stop|Pivot))` makes the cook append a
+  `distance` curve (`sf_anim/src/distance.rs`): path length of the root's XZ travel, from frame 0 (Start), minus the distance
+  left to rest (Stop), signed from the slowest interior frame (Pivot); steps under `anim.cook.distance.rest_speed_mps` (0.05)
+  add nothing. Retargeted clips re-measure it on the target root (`apply_distance` in `anim.retarget` and
+  `mw_bake/src/anim.rs` library cooks, B1b). A `Clip` node with `distance: Some((value: <param>))` plays by it
+  (B2a, `sf_anim_graph/src/distance.rs`): the playhead moves to where the curve reaches the param, never backwards,
+  0.75-1.25x the normal advance (UE5 `AdvanceTimeByDistanceMatching`); one-shot, unsynced clips only; a stop at 0
+  holds its rest frame and never finishes (the state machine leaves on distance). Where the mover will stop or pivot: `sf_controller::{stop_offset, stop_time, pivot}`
+  (`stop.rs`, closed form from the springs, B2b). No shipped state uses either yet (B4).
 - **Loop cutter** (`superfargoth/crates/sf_anim/src/loop_cut.rs:1-39`, rules `:53` `LoopCutRules`, cut `:199`): opt-in
   `ClipRules::loop_cut` (`cook.rs:242`; a slot's `loop_cut: Some((...))` in `sources.ron`, `mw_graphs/src/sources.rs:187`)
   turns a non-periodic take (Kimodo ramps up, holds, slows) into a seamless loop: Kovar 2002 transition-point search

@@ -200,6 +200,10 @@ pub fn cook_library_clip_report(
     }
     .map_err(|e| e.to_string())?;
     sf_anim::transfer_contacts(&cooked.meta.contacts, &target.skeleton, &target.profile, &mut out);
+    // As `anim.retarget`: the distance curve is measured on the target's root track.
+    if let Some(d) = &rules.distance {
+        sf_anim::apply_distance(&mut out, d);
+    }
     out.name.clone_from(&src.name);
     Ok((out, report))
 }

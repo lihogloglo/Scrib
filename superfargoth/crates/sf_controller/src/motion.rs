@@ -131,7 +131,7 @@ impl TurnRates {
 }
 
 /// Speed below which a velocity has no direction of its own, m/s.
-const STILL_SPEED: f32 = 1e-3;
+pub(crate) const STILL_SPEED: f32 = 1e-3;
 
 /// Sub-step of the trajectory prediction when the motion has no closed
 /// form (brake half-life or turn rates), seconds.

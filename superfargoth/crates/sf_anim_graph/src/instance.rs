@@ -29,6 +29,7 @@ use crate::asset::{LayerMode, SyncRole};
 use crate::compiled::{
     Blend, CompiledGraph, Condition, Machine, NodeKind, Op, ParamId, ParamType, PlayerNode, Value, WarpMode, WarpRotation, WarpWindow,
 };
+use crate::distance;
 use crate::inertial::Inertializer;
 use crate::procedural::{OpState, ProceduralCx, ground_grade, run_ops};
 use crate::secondary::{ClothBinding, ClothRun, Hit};
@@ -288,6 +289,9 @@ pub struct FootStats {
     pub unplanted: u32,
     /// Of `unplanted`, those released by the turn (the unplant angle).
     pub unplanted_turn: u32,
+    /// Of `unplanted`, toe pins released by over-extension (the pin would
+    /// stretch the leg past `guards.extension`), not by the turn.
+    pub unplanted_extension: u32,
     /// Updates whose `moved` jumped further than a leg reaches (locks reset).
     pub teleports: u32,
     /// Non-finite results caught (the op was skipped and its state reset).
@@ -314,6 +318,7 @@ impl std::ops::AddAssign for FootStats {
         self.pelvis_clamped += o.pelvis_clamped;
         self.unplanted += o.unplanted;
         self.unplanted_turn += o.unplanted_turn;
+        self.unplanted_extension += o.unplanted_extension;
         self.teleports += o.teleports;
         self.non_finite += o.non_finite;
         self.cap_bound += o.cap_bound;
@@ -1531,7 +1536,9 @@ impl GraphInstance {
         let NodeKind::Player(def) = &cx.g.nodes[n].kind else {
             return;
         };
-        let speed_match = self.speed_match;
+        // Distance matching replaces the speed match: the distance sets the pace.
+        let speed_match = if def.distance.is_some() { None } else { self.speed_match };
+        let matched = def.distance.map(|d| (d, self.params.value(d.value)));
         let mut stride = None;
         let mut anim_vel = Vec3::ZERO;
         let mut stride_vel = Vec3::ZERO;
@@ -1573,12 +1580,17 @@ impl GraphInstance {
         };
         let weighted: f32 = (0..st.lanes.len()).map(|i| st.lanes[i].weight * length(i)).sum();
         let leader_len = length(leader);
-        let delta = if def.lanes.len() == 1 || weighted <= EPS {
+        let clip = &cx.clips[usize::from(def.lanes[leader])];
+        let mut delta = if def.lanes.len() == 1 || weighted <= EPS {
             dt * rate * def.lane_rates[leader]
         } else {
             dt * rate * leader_len * def.lane_rates[leader] / weighted
         };
-        let clip = &cx.clips[usize::from(def.lanes[leader])];
+        if let Some((d, value)) = matched
+            && let Some(curve) = clip.curves.get(usize::from(d.curve))
+        {
+            delta = distance::matched_delta(&curve.values, clip.rate, clip.duration, st.lanes[leader].time, value, delta, d.rate_clamp);
+        }
         st.events.clear();
         let mut fired = Vec::new();
         let lane = &mut st.lanes[leader];

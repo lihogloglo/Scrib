@@ -1025,6 +1025,8 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest, p
         crate::sight::add::<MwGround>(app);
     }
     crate::light_inputs::insert_records(app, &db);
+    // NPCs turn their heads to the player (AN8b): the look target of their `AnimDrive`.
+    crate::head_track::add(app, &db);
     let refused = sf_ai_bevy::load_perception_states(app.world_mut(), &db);
     if refused > 0 {
         warn!("walkers: {refused} perception records refused (out of range)");

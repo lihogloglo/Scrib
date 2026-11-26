@@ -9,9 +9,11 @@
 //! sight reads them (`MA18`). `directives`: record AI packages onto each new actor's directive stack (`MA2d1`);
 //! `directive_drive`: the stack's serving directive drives the routine (`MA2d2`: `StayNear`, `GoTo`).
 //! `script_ai`: `MWScript` AI pushes onto the stacks and the reads' [`crate::script_ai::AiRuns`] (`MA2c2`).
+//! `head_track`: NPCs turn their heads to the player, `OpenMW`'s head tracking (`AN8b`).
 
 pub mod directive_drive;
 pub mod directives;
+pub mod head_track;
 pub mod light_inputs;
 pub mod nav;
 pub mod noise_emitters;

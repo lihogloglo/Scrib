@@ -27,6 +27,7 @@ use glam::{Affine3A, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::clip::{RAW, RotTrack, VecChannel, VecTrack, rebuild};
+use crate::distance::{DistanceRules, apply_distance};
 use crate::loop_cut::{LoopCut, LoopCutError, LoopCutRules};
 use crate::source::BoundSource;
 use crate::{
@@ -240,6 +241,14 @@ pub struct ClipRules {
     /// searched inside `range`. Absent: the clip cooks as before.
     #[serde(default)]
     pub loop_cut: Option<LoopCutRules>,
+    /// Add a distance-matching curve ([`crate::DISTANCE_CURVE`],
+    /// `distance.rs`) measured on the clip's root motion. Skipped when the
+    /// clip cooks without root motion (in place, additive, or extracted
+    /// later by `anim.retarget`), as contacts are on additive clips;
+    /// `anim.retarget` measures it again on the target's root track. Absent:
+    /// the clip cooks as before and the bake key doesn't change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distance: Option<DistanceRules>,
 }
 
 impl ClipRules {
@@ -466,6 +475,9 @@ fn cook_plain(skeleton: &Skeleton, profile: Option<&RigProfile>, source: &Source
     clip.markers.sort_by(|a, b| a.time.total_cmp(&b.time));
     if let Some(p) = profile.filter(|_| rules.contacts.enabled && rules.additive.is_none()) {
         crate::annotate_contacts(skeleton, p, &mut clip);
+    }
+    if let Some(d) = &rules.distance {
+        apply_distance(&mut clip, d);
     }
     Ok(clip)
 }

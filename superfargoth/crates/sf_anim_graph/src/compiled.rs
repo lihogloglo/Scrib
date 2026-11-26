@@ -110,6 +110,20 @@ pub struct PlayerNode {
     /// `SpeedMatch`'s rate range for this player (`None`: the op's `min..=max`).
     #[serde(default)]
     pub rate_clamp: Option<(f32, f32)>,
+    /// Distance matching (a single clip only; `None`: plays by time).
+    #[serde(default)]
+    pub distance: Option<DistanceMatch>,
+}
+
+/// A distance-matched player: the playhead follows the clip's distance
+/// curve to `value` ([`crate::asset::DistanceMatchSpec`]).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DistanceMatch {
+    pub value: Value,
+    /// Index of the clip's `sf_anim::DISTANCE_CURVE` among its curves.
+    pub curve: u16,
+    /// Playhead speed range against normal playback, `(min, max)`.
+    pub rate_clamp: (f32, f32),
 }
 
 /// A triangulated blend space over normalized coordinates.
@@ -458,6 +472,10 @@ pub enum Op {
         forward: Vec3,
         total_limit: f32,
         halflife: f32,
+        /// Lets go past this angle off the animated aim (rad).
+        release: f32,
+        /// Takes hold again under this angle (rad, below `release`).
+        rejoin: f32,
     },
     SpineBend {
         spine: Vec<(u16, f32)>,
@@ -612,7 +630,7 @@ pub const LEAN_COUNTER_MAX: usize = 8;
 
 const MAGIC: &[u8; 4] = b"SFAG";
 /// Version of the compiled graph format.
-pub const GRAPH_FORMAT: u32 = 12;
+pub const GRAPH_FORMAT: u32 = 15;
 
 impl CompiledGraph {
     #[cfg(feature = "bake")]
@@ -796,7 +814,11 @@ impl CompiledGraph {
                 return Err("node ranges");
             }
             let kids_ok = match &node.kind {
-                NodeKind::Player(p) => p.lanes.iter().all(|&c| usize::from(c) < self.clips.len()) && p.lane_rates.len() == p.lanes.len(),
+                NodeKind::Player(p) => {
+                    p.lanes.iter().all(|&c| usize::from(c) < self.clips.len())
+                        && p.lane_rates.len() == p.lanes.len()
+                        && (p.distance.is_none() || p.lanes.len() == 1)
+                }
                 NodeKind::Blend { a, b, .. } => node_ok(*a) && node_ok(*b),
                 NodeKind::Additive { base, additive, .. } => node_ok(*base) && node_ok(*additive),
                 NodeKind::Layers { base, layers } => node_ok(*base) && layers.iter().all(|l| node_ok(l.node)),

@@ -51,6 +51,8 @@ pub struct Sim {
     /// Per graph leg: the ground under it (character space), as the
     /// controller's foot probes at `out.probe_origins` give it.
     pub ground: Vec<Option<GroundSample>>,
+    /// The look-at target (character space), as `AnimDrive::look_target`; `None`: no look.
+    pub look_target: Option<Vec3>,
     ik: Vec<Option<IkTarget>>,
     warp: Vec<Option<WarpTarget>>,
 }
@@ -60,7 +62,7 @@ impl Sim {
         let instance = GraphInstance::new(&Binding::new(&graph, &skeleton, &clips)?);
         let out = GraphOutput::new(&graph);
         let (ground, ik, warp) = (vec![None; graph.probe_count()], vec![None; graph.ik_targets.len()], vec![None; graph.warp_targets.len()]);
-        Ok(Self { graph, skeleton, clips, instance, out, time: 0.0, events: Vec::new(), notices: Vec::new(), velocity: Vec3::ZERO, moved: RootDelta::ZERO, turn_rate: 0.0, lod: 0, ground, ik, warp })
+        Ok(Self { graph, skeleton, clips, instance, out, time: 0.0, events: Vec::new(), notices: Vec::new(), velocity: Vec3::ZERO, moved: RootDelta::ZERO, turn_rate: 0.0, lod: 0, ground, look_target: None, ik, warp })
     }
 
     fn binding(&self) -> Binding<'_> {
@@ -100,6 +102,7 @@ impl Sim {
                 moved: std::mem::take(&mut self.moved),
                 turn_rate: self.turn_rate,
                 ground: &self.ground,
+                look_target: self.look_target,
                 ik_targets: &self.ik,
                 warp_targets: &self.warp,
                 ..UpdateInputs::default()

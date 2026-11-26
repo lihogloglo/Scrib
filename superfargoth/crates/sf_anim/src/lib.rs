@@ -19,6 +19,7 @@ mod bvh_import;
 mod clip;
 pub mod cloth;
 mod cook;
+mod distance;
 #[cfg(feature = "fbx")]
 mod fbx_import;
 pub mod foot_metrics;
@@ -56,6 +57,7 @@ pub use cook::{
     AdditiveBase, ClipRules, ContactRules, CookError, CookReport, CookSettings, FrameClip, Looping, RootMotionRules, cook_clip, cook_clip_for, cook_clip_report,
     cook_frames,
 };
+pub use distance::{DISTANCE_CURVE, DistanceCurve, DistanceRules, REST_SPEED_MPS, apply_distance, distance_curve};
 #[cfg(feature = "fbx")]
 pub use fbx_import::FbxAnimImporter;
 #[cfg(feature = "gltf")]
@@ -140,6 +142,8 @@ pub trait AnimImporter: Send + Sync {
 
 #[cfg(test)]
 mod annotate_tests;
+#[cfg(test)]
+mod distance_tests;
 #[cfg(test)]
 mod fbik_tests;
 #[cfg(test)]

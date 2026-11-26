@@ -38,6 +38,7 @@ mod mover;
 mod path;
 mod probe;
 mod statics;
+mod stop;
 #[cfg(feature = "bake")]
 pub mod steps;
 #[cfg(feature = "terrain")]
@@ -56,6 +57,7 @@ pub use mover::{CRUSH_DEPTH_M, Crush, KinematicMover, Locomotion, MoveInput, Mov
 pub use path::{ArrivalParams, PathFollower, PathMode, PathNode, PathOutput};
 pub use probe::{GroundBody, GroundHit, GroundProbe, HeightSurface, Nearest, ProbeQuery, SurfaceId, TerrainProbe};
 pub use statics::{COLLISION_FORMAT, CollisionBuilder, CollisionMesh, StaticId, StaticShape, StaticWorld};
+pub use stop::{Pivot, pivot, stop_offset, stop_time};
 pub use trajectory::{LocomotionParams, TRAJECTORY_TIMES, Trajectory, TrajectoryPoint};
 
 /// A cooked file that can't be read.
