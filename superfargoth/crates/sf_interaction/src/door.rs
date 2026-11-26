@@ -6,6 +6,8 @@
 //! mid-swing reverses from the current angle and a leaf that would hit an actor does not advance.
 //! The shell sweeps the next pose ([`DoorState::stepped`]) for a blocker before it commits a step;
 //! close-behind is a pure schedule here ([`DoorState::released`], [`DoorState::poll`]).
+//! A door's state at rest is three bytes ([`DoorState::rest_bytes`], [`DoorState::from_rest_bytes`]):
+//! the target and the swing side, stored as the [`DOOR_STATE_OWNER`] state blob of its placement.
 
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
@@ -23,6 +25,12 @@ pub const VERB_OPEN: TagId = TagId::of("open");
 
 /// The slotless verb that closes a door; a door def's `close` requires [`DOOR_OPEN`].
 pub const VERB_CLOSE: TagId = TagId::of("close");
+
+/// The owner name of a door's rest state among a placement's state blobs.
+pub const DOOR_STATE_OWNER: &str = "door";
+
+/// Version byte of a door's rest state; v1 = `[version, open, sign]`.
+pub const DOOR_REST_VERSION: u8 = 1;
 
 /// Float slack of the arrival test, as a fraction of one step: a step that leaves less than this
 /// share of itself to go lands on the target exactly (rounding of summed steps, not a tunable).
@@ -81,6 +89,32 @@ impl DoorState {
     #[must_use]
     pub fn resting(open: bool, sign: i8) -> Self {
         Self { open, t: if open { 1.0 } else { 0.0 }, sign, opener: None, close_at: None }
+    }
+
+    /// The state at rest as `[DOOR_REST_VERSION, open, sign]`: `open` 0 or 1, the sign `1` for
+    /// `>= 0` and `0xFF` (-1) for a negative one. A swinging door saves its target.
+    #[must_use]
+    pub fn rest_bytes(&self) -> [u8; 3] {
+        let sign = if self.sign < 0 { 0xFF } else { 1 };
+        [DOOR_REST_VERSION, u8::from(self.open), sign]
+    }
+
+    /// The door at rest that [`Self::rest_bytes`] wrote; `None` for any other length, version,
+    /// open byte or sign byte.
+    #[must_use]
+    pub fn from_rest_bytes(bytes: &[u8]) -> Option<Self> {
+        let &[DOOR_REST_VERSION, open, sign] = bytes else { return None };
+        let open = match open {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+        let sign = match sign {
+            1 => 1,
+            0xFF => -1,
+            _ => return None,
+        };
+        Some(Self::resting(open, sign))
     }
 
     fn target(&self) -> f32 {

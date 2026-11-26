@@ -1,5 +1,5 @@
 //! `IN33a` swing door: toggle (also mid-swing), step (exact arrival, blocked pause), swing side,
-//! leaf pose, close-behind schedule, defaults and save round trip.
+//! leaf pose, close-behind schedule, defaults and save round trip, the three-byte rest state.
 #![allow(clippy::float_cmp)] // exact arrival on 0 / 1 is the contract
 
 use std::f32::consts::FRAC_PI_2;
@@ -227,6 +227,40 @@ fn defaults_tag_and_save_round_trip() {
     let s = DoorState { open: true, t: 0.25, sign: -1, opener: None, close_at: Some(Tick(99)) };
     let text = ron::to_string(&s).unwrap();
     assert_eq!(ron::from_str::<DoorState>(&text).unwrap(), s);
+}
+
+#[test]
+fn the_four_rest_states_round_trip_through_three_bytes() {
+    for open in [false, true] {
+        for sign in [1, -1] {
+            let s = DoorState::resting(open, sign);
+            assert_eq!(DoorState::from_rest_bytes(&s.rest_bytes()), Some(s), "open {open}, sign {sign}");
+        }
+    }
+    assert_eq!(DoorState::resting(true, -1).rest_bytes(), [1, 1, 0xFF]);
+    assert_eq!(DOOR_REST_VERSION, 1);
+    assert_eq!(DOOR_STATE_OWNER, "door");
+}
+
+#[test]
+fn a_swinging_door_saves_its_target() {
+    let def = door_def(true, false);
+    let mut s = DoorState::default();
+    s.toggle(DOOR, &def, DOORWAY, Some((player(1), FRONT)), Tick(0));
+    for _ in 0..5 {
+        s.step(DT, SWING, false);
+    }
+    assert!(s.is_moving());
+    assert_eq!(s.sign, -1);
+    assert_eq!(DoorState::from_rest_bytes(&s.rest_bytes()), Some(DoorState::resting(true, -1)));
+}
+
+#[test]
+fn malformed_rest_bytes_decode_to_none() {
+    let bad: [&[u8]; 9] = [&[], &[1, 1], &[1, 1, 1, 0], &[0, 1, 1], &[2, 1, 1], &[1, 2, 1], &[1, 1, 0], &[1, 1, 2], &[1, 0, 2]];
+    for bytes in bad {
+        assert_eq!(DoorState::from_rest_bytes(bytes), None, "{bytes:?}");
+    }
 }
 
 #[test]

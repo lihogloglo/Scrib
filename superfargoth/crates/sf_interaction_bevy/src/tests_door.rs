@@ -3,6 +3,8 @@
 //! comes from the user's feet in the object's frame, the door tunables are bound live.
 //! `IN33b2b`: the swing on the fixed tick (48 steps at 60 Hz, a blocked pause, a reversal), the
 //! close-behind armed by the opener's release through the claim table, a removal mid-swing.
+//! `IN33b2c`: a `DoorRest` puts a door at rest (with its insert in either order, or mid-swing) and
+//! snaps its leaf; one for no registered door is dropped.
 //! `UseApproved` is written directly: the activation pipeline is tested in `tests_activate`.
 
 use std::f32::consts::FRAC_PI_2;
@@ -446,6 +448,83 @@ fn the_openers_release_closes_the_door_behind_after_the_delay() {
     assert_eq!(t(&app).to_bits(), 0.0_f32.to_bits());
     assert!(!state(&app).unwrap().is_moving());
     assert_eq!(app.world().resource::<Swing>().changed.len(), 1);
+}
+
+#[test]
+fn a_swing_step_is_no_snap() {
+    let mut app = opened(door(false));
+    let moved = fixed(&mut app, 1);
+    assert_eq!(moved, vec![DoorMoved { placement: DOOR, leaf: leaf_now(&app), snap: false }]);
+}
+
+// --- The rest state (IN33b2c) -------------------------------------------------------------------
+
+const NEW: PlacementId = PlacementId(12);
+
+fn tagged_at(app: &App, placement: PlacementId) -> bool {
+    app.world().resource::<InteractionStateTags>().tags(placement).contains(&DOOR_OPEN)
+}
+
+/// An insert of a new door at `NEW` and its rest state, written in either order, then one tick.
+fn insert_and_rest(rest_first: bool) {
+    let mut app = app();
+    track(&mut app);
+    let object = Frame { translation: Vec3::new(2.0, 0.0, 0.0), rotation: Quat::IDENTITY };
+    let owner = app.world_mut().spawn_empty().id();
+    let insert = IndexChange::Insert { placement: NEW, def: door(false), object, owner, disabled: SmallVec::new() };
+    let rest = DoorRest { placement: NEW, open: true, sign: -1 };
+    if rest_first {
+        app.world_mut().write_message(rest);
+        app.world_mut().write_message(insert);
+    } else {
+        app.world_mut().write_message(insert);
+        app.world_mut().write_message(rest);
+    }
+    let moved = fixed(&mut app, 1);
+    let door = app.world().resource::<Doors>().get(NEW).unwrap().clone();
+    assert_eq!(door.state, sf_interaction::DoorState::resting(true, -1), "rest first: {rest_first}");
+    assert_eq!(door.state.t.to_bits(), 1.0_f32.to_bits());
+    assert!(!door.state.is_moving());
+    assert!(tagged_at(&app, NEW));
+    assert_ne!(door.leaf(), object, "the leaf is turned open");
+    assert_eq!(moved, vec![DoorMoved { placement: NEW, leaf: door.leaf(), snap: true }]);
+    assert!(app.world().resource::<Swing>().changed.is_empty(), "a rest is no use");
+    assert_eq!(fixed(&mut app, 3), vec![], "at rest");
+}
+
+#[test]
+fn a_rest_state_with_its_insert_puts_the_door_at_rest_in_either_order() {
+    insert_and_rest(false);
+    insert_and_rest(true);
+}
+
+#[test]
+fn a_closed_rest_state_stops_a_swinging_door_closed() {
+    let mut app = opened(door(false));
+    assert_eq!(fixed(&mut app, 10).len(), 10);
+    assert!(tagged(&app));
+    app.world_mut().resource_mut::<Swing>().changed.clear();
+    app.world_mut().write_message(DoorRest { placement: DOOR, open: false, sign: 0 });
+    let moved = fixed(&mut app, 1);
+    assert_eq!(state(&app), Some(sf_interaction::DoorState::resting(false, 1)), "a sign of 0 is +1");
+    assert!(!tagged(&app));
+    assert_eq!(moved, vec![DoorMoved { placement: DOOR, leaf: Frame::default(), snap: true }]);
+    assert!(app.world().resource::<Swing>().changed.is_empty());
+    assert_eq!(fixed(&mut app, 3), vec![]);
+}
+
+#[test]
+fn a_rest_state_for_no_registered_door_is_dropped() {
+    let mut app = app();
+    track(&mut app);
+    app.world_mut().write_message(DoorRest { placement: CHAIR, open: true, sign: 1 });
+    app.world_mut().write_message(DoorRest { placement: PlacementId(99), open: true, sign: -1 });
+    assert_eq!(fixed(&mut app, 1), vec![]);
+    assert_eq!(app.world().resource::<Doors>().len(), 1);
+    assert!(!tagged_at(&app, CHAIR));
+    assert!(!tagged_at(&app, PlacementId(99)));
+    assert_eq!(state(&app), Some(sf_interaction::DoorState::default()));
+    assert!(app.world().resource::<Swing>().changed.is_empty());
 }
 
 #[test]

@@ -562,6 +562,22 @@ tick included; none at rest, none while blocked: a blocked door keeps `t` and it
 (`1 / tick_hz`), the swing takes `interact.door.swing_s`. The shell does not depend on physics and never sends
 `IndexChange::Move` for a leaf. The player never claims the doorway, so close-behind is for NPC users (AI12 / AI14).
 
+## As built (IN33b2c, 2026-11-26)
+
+**Persistence (decided here, replaces the planned `sf/interaction` save section):** a door's state is a per-placement
+state blob in the placement overlay (`sf_world::PlacementOverlay::set_state(id, DOOR_STATE_OWNER, bytes)`, owner
+`door`), the path per-placement state already takes (save.md "One path for unload and save"; physics item state). So a
+door keeps its state across a cell unload without a save, the `sf/overlay` section saves it with no new section and no
+`sf_save_bevy` dependency in this crate (framework sections take the game's accessors), and the reset rules (IN15)
+can expire it like any overlay entry. Core: `DoorState::rest_bytes() -> [u8; 3]` = `[DOOR_REST_VERSION (1), open, sign
+(1 or 0xFF)]` (the target: a swinging door saves where it is going) and `from_rest_bytes` (anything else: `None`).
+Shell: the host sends `DoorRest { placement, open, sign }` when a door with a blob streams in; `register` applies it
+after the tick's index changes (either send order): the door is at rest in that state, `door.open` follows, one
+`DoorMoved { snap: true }` (the host sets the pose without a sweep; a swing step has `snap: false`), no `DoorChanged`.
+`Door::leaf()` gives the leaf's world frame for a body that appears after its door registered. The host writes the blob
+at each `DoorChanged` (the only time the rest state changes), so nothing is flushed at save or unload (IN33c2). The
+opener and the close-behind schedule are not saved.
+
 ## Owner questions
 
 1. Destruction scope: every crate and barrel, or only some ("fragile" list per material)? Which weapons break what

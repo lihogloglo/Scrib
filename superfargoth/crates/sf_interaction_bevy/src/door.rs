@@ -1,5 +1,6 @@
-//! Swing doors (`docs/specs/interaction.md`, IN33): the resident doors, the default for their
-//! `open` / `close` use, and their swing on the fixed tick. The state is the core's [`DoorState`].
+//! Swing doors (`docs/specs/interaction.md`, IN33): the resident doors, their restored rest state,
+//! the default for their `open` / `close` use, and their swing on the fixed tick. The state is the
+//! core's [`DoorState`].
 //!
 //! - **Registry** ([`Doors`], `FixedUpdate`, in `InteractionSystems::Apply` after the claim step):
 //!   every [`IndexChange::Insert`] whose def has a [`sf_interaction::SlotKind::Door`] slot registers
@@ -7,6 +8,10 @@
 //!   closed leaf's centre, in the object's frame). A re-insert keeps the door's state; a re-insert
 //!   without a door slot, or a removal, drops it and clears its [`DOOR_OPEN`] tag. A move refreshes
 //!   its frame. Changes apply in send order.
+//! - **Rest** (same system, after all of the tick's index changes, in send order): a [`DoorRest`]
+//!   puts a registered door at rest in its state (a restored save or a streamed-in cell), sets or
+//!   clears [`DOOR_OPEN`] and writes one [`DoorMoved`] with `snap: true`; no [`DoorChanged`]. One
+//!   for a placement that is not a registered door is dropped.
 //! - **Default** (`Update`, [`DoorSystems::Default`], after `ActivationSystems::Default`): a
 //!   [`UseApproved`] on a registered door toggles it: verb `open` only when its target is closed,
 //!   `close` only when open, no verb always, any other verb never. The user is the
@@ -28,8 +33,8 @@
 //!   no physics.
 //! - **Commit** (`FixedUpdate`, [`DoorSystems::Commit`]): a blocked door does not move this tick (it
 //!   keeps `t` and its target); any other swept door takes its step and writes one [`DoorMoved`]
-//!   with the leaf's new world frame (the arriving tick included; none at rest). A door gone since
-//!   Plan is skipped. A swinging leaf never sends an [`IndexChange::Move`]: the object's frame (and
+//!   (`snap: false`) with the leaf's new world frame (the arriving tick included; none at rest). A
+//!   door gone since Plan is skipped. A swinging leaf never sends an [`IndexChange::Move`]: the object's frame (and
 //!   its claims) stay put.
 //!
 //! Plan and Commit step by one fixed tick (`1 / tick_hz` s, `interact.door.swing_s` closed to open).
@@ -61,6 +66,15 @@ pub struct Door {
     /// The door slot's `local.translation`: the closed leaf's centre, in the object's frame.
     pub doorway: Vec3,
     pub state: DoorState,
+}
+
+impl Door {
+    /// The leaf's world frame now (the object's frame if the def has no door slot), for a host
+    /// that places a body after the door registered.
+    #[must_use]
+    pub fn leaf(&self) -> Frame {
+        self.def.door().map_or(self.object, |(_, _, door_def)| self.state.leaf(door_def, &self.object))
+    }
 }
 
 /// The resident swing doors, by placement.
@@ -136,11 +150,23 @@ impl DoorSweeps {
 pub struct DoorChanged(pub sf_interaction::DoorChanged);
 
 /// One committed step of one door's leaf: its new world frame (the host moves the leaf's body and
-/// mesh). One per door per moving tick, none at rest or while blocked.
+/// mesh). One per door per moving tick, none at rest or while blocked, and one per [`DoorRest`].
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct DoorMoved {
     pub placement: PlacementId,
     pub leaf: Frame,
+    /// `false` for a swing step (the host sweeps the body there); `true` when the leaf jumped to a
+    /// restored state (the host sets the pose without a sweep).
+    pub snap: bool,
+}
+
+/// Puts a registered door at rest in this state: a restored save or a streamed-in cell. Not a use,
+/// so no [`DoorChanged`]. A `sign` of 0 counts as +1.
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DoorRest {
+    pub placement: PlacementId,
+    pub open: bool,
+    pub sign: i8,
 }
 
 /// Where the door systems run.
@@ -155,12 +181,14 @@ pub enum DoorSystems {
     Commit,
 }
 
-/// The registry follows the tick's index changes (module docs).
+/// The registry follows the tick's index changes, then its rest states (module docs).
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn register(
     mut changes: MessageReader<IndexChange>,
+    mut rests: MessageReader<DoorRest>,
     mut doors: ResMut<Doors>,
     mut tags: ResMut<InteractionStateTags>,
+    mut moved: MessageWriter<DoorMoved>,
 ) {
     for change in changes.read() {
         match change {
@@ -186,6 +214,17 @@ pub(crate) fn register(
                 }
             }
         }
+    }
+    for rest in rests.read() {
+        let Some(door) = doors.0.get_mut(&rest.placement) else { continue };
+        let sign = if rest.sign < 0 { -1 } else { 1 };
+        door.state = DoorState::resting(rest.open, sign);
+        if rest.open {
+            tags.insert(rest.placement, DOOR_OPEN);
+        } else {
+            tags.remove(rest.placement, DOOR_OPEN);
+        }
+        moved.write(DoorMoved { placement: rest.placement, leaf: door.leaf(), snap: true });
     }
 }
 
@@ -293,6 +332,6 @@ pub(crate) fn commit(
         let Some(door) = doors.get_mut(placement) else { continue };
         let Some((_, _, door_def)) = door.def.door() else { continue };
         door.state = door.state.stepped(dt, swing_s);
-        out.write(DoorMoved { placement, leaf: door.state.leaf(door_def, &door.object) });
+        out.write(DoorMoved { placement, leaf: door.state.leaf(door_def, &door.object), snap: false });
     }
 }

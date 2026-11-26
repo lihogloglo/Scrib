@@ -48,7 +48,8 @@
 //!   ([`DoorSystems`]) toggles one on an approved `open` / `close` use, writes [`DoorChanged`] and
 //!   keeps the [`sf_interaction::DOOR_OPEN`] state tag. Each fixed tick, Plan arms and fires the
 //!   close-behind and fills [`DoorSweeps`], the host blocks what its bodies hit, and Commit steps
-//!   the rest and writes [`DoorMoved`].
+//!   the rest and writes [`DoorMoved`]. A [`DoorRest`] puts a registered door at rest in a restored
+//!   state (one [`DoorMoved`] with `snap: true`).
 //!
 //! Not here: game wiring (`IN32`).
 
@@ -88,7 +89,7 @@ pub use activate::{
     ActivateCommand, ActivationSystems, InteractionDefs, InteractionStateTags, PendingUse, PendingUses, ScriptActivate,
     UseApproved, UseRefused,
 };
-pub use door::{Door, DoorChanged, DoorMoved, DoorSweep, DoorSweeps, DoorSystems, Doors};
+pub use door::{Door, DoorChanged, DoorMoved, DoorRest, DoorSweep, DoorSweeps, DoorSystems, Doors};
 pub use focus::{FocusCandidates, FocusState, PlayerFocus};
 pub use seat::{EndPoseFree, EndPoseTest, InteractionUser, SeatClips, SeatPhase, SeatSystems, SeatUse, SeatUses, seat_target};
 pub use seat_clips::{SIT_ENTER, SIT_EXIT, SIT_LOOP, SeatClipSets, SeatClipSystems, SeatSet, bind_seat_clips};
@@ -392,6 +393,7 @@ impl Plugin for InteractionPlugin {
             .add_message::<DoorChanged>()
             .init_resource::<DoorSweeps>()
             .add_message::<DoorMoved>()
+            .add_message::<DoorRest>()
             .add_systems(FixedUpdate, (sync_params, step, door::register).chain().in_set(InteractionSystems::Apply))
             .configure_sets(
                 FixedUpdate,
