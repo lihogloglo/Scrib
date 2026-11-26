@@ -7,6 +7,11 @@
 //! kinematic) and, when the overlay holds a decodable door state, put back at that rest with a
 //! `DoorRest`. Deactivation undoes the index entry and the kinematic listing; the shell
 //! (`sf_interaction_bevy::Doors`) registers and swings the door from the index changes.
+//!
+//! [`save_rest`] writes the rest state back: each toggle of a resident swing door (`DoorChanged`,
+//! an approved use or a close-behind) sets the door's `rest_bytes` (a swinging door's target) as
+//! its overlay blob, so the door is at that rest after its cell reloads and in a save. A flip is
+//! the only write: a door that never toggled has no blob, and a toggled closed door keeps one.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, PoisonError};
@@ -20,7 +25,7 @@ use bevy_transform::components::Transform;
 use mw_interaction::door_def;
 use sf_coords::{WorldPos, WorldTransform};
 use sf_interaction::{DOOR_STATE_OWNER, DoorState};
-use sf_interaction_bevy::{DoorRest, IndexChange};
+use sf_interaction_bevy::{DoorChanged, DoorRest, Doors, IndexChange};
 use sf_physics_bevy::KinematicPlacements;
 use sf_physics_bevy::sf_physics::BodyId;
 use sf_world::{DoorLink, IndexedPlacement, PlacementClass, PlacementId, WorldspaceId};
@@ -192,6 +197,33 @@ impl PlacementSpawner for DoorHook {
         if let Some(mut kinematic) = world.get_resource_mut::<KinematicPlacements>() {
             kinematic.remove(&door.worldspace, id);
         }
+    }
+}
+
+/// Each toggle of a resident swing door into its overlay blob (module docs). Locks the overlay
+/// once, and only on a frame with a toggle to write.
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn save_rest(
+    mut changed: MessageReader<DoorChanged>,
+    swing: Res<SwingDoors>,
+    doors: Res<Doors>,
+    overlay: Option<Res<WorldOverlay>>,
+) {
+    let Some(overlay) = overlay else {
+        changed.clear();
+        return;
+    };
+    let mut rests = changed
+        .read()
+        .filter(|c| swing.get(c.0.placement).is_some())
+        .filter_map(|c| doors.get(c.0.placement).map(|d| (c.0.placement, d.state.rest_bytes())))
+        .peekable();
+    if rests.peek().is_none() {
+        return;
+    }
+    let mut overlay = overlay.0.write().unwrap_or_else(PoisonError::into_inner);
+    for (id, bytes) in rests {
+        overlay.set_state(id, DOOR_STATE_OWNER, bytes.to_vec());
     }
 }
 

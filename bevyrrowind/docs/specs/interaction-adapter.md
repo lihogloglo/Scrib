@@ -240,6 +240,18 @@ result). Only `Layer::CHARACTER` blocks: walls and frames overlap vanilla leaves
 pushed by the sweep. A capsule shows where its character was one tick earlier (capsules are targeted after the
 movers, which run after the step). Without physics nothing blocks.
 
+### As built (IN33c2b3, 2026-11-26)
+
+`door::save_rest` (`Update`, after `DoorSystems::Default`) reads the shell's `DoorChanged` (an approved `open` /
+`close`, or a close-behind from the fixed tick) and, for a door in `SwingDoors` that the shell has registered, writes
+`DoorState::rest_bytes` (three bytes; a swinging door's bytes are its target) into the live `WorldOverlay` with
+`set_state(id, "door", ..)`. The overlay is locked once per frame and only when a toggle has to be written. A flip is
+the only write: nothing at save time, nothing at deactivation, no blob for a door that never toggled; a door that was
+toggled back closed keeps a closed blob (the overlay has no state removal). With `DoorHook::activate`'s `DoorRest`
+(IN33c2a) the loop is closed: a door left open is open at rest when its cell is resident again, and in a save
+(the overlay is what saves and cell fetches read). `DoorState.opener` is not saved, so a restored open door does not
+close behind anyone.
+
 ## World rules mapping (IN41, IN38, IN19)
 
 **Material rows** (`sf.interact.material` + a pattern table in `mw_interaction`, checked against the install at cook,

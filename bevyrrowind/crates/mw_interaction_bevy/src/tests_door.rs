@@ -1,5 +1,6 @@
 //! Headless tests of [`DoorHook`]: the pivot at spawn, the index entry, the kinematic listing and
-//! the restored rest state in R0, travel doors left alone, the pivot map following despawns.
+//! the restored rest state in R0, each toggle saved to the overlay, travel doors left alone, the
+//! pivot map following despawns.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -13,10 +14,12 @@ use bevy_transform::components::Transform;
 use glam::{DVec3, Quat, Vec2, Vec3};
 use mw_interaction::door_def;
 use sf_coords::WorldTransform;
-use sf_interaction::{DOOR_OPEN, DOOR_STATE_OWNER, DoorState, InvalidReason};
-use sf_interaction_bevy::{DoorRest, Doors, IndexChange, InteractionStateTags};
+use sf_interaction::{DOOR_OPEN, DOOR_STATE_OWNER, DoorState, InvalidReason, VERB_CLOSE};
+use sf_interaction_bevy::{DoorRest, Doors, IndexChange, InteractionStateTags, UseApproved};
 use sf_physics_bevy::KinematicPlacements;
 use sf_records::RecordId;
+use sf_script_bevy::sf_script::Handle;
+use sf_script_bevy::{Activated, PLAYER};
 use sf_world::{DoorLink, IndexedPlacement, Level, LinkEnd, PlacementClass, PlacementId, WorldspaceId};
 use sf_world_bevy::{
     ActivateCx, DoorLinks, EndInputs, LoadedModel, ModelTemplate, PlacementSpawner, SpawnCx, StreamingConfig, WorldOverlay,
@@ -25,6 +28,7 @@ use sf_world_bevy::{
 use crate::door::{DoorHook, DoorPivot, DoorPivots};
 use crate::index::frame_of;
 use crate::tests::{Nothing, app, cell, placement, tick};
+use crate::tests_door_body::approve_open;
 
 pub(crate) const DOOR: PlacementId = PlacementId(40);
 const BASE: &str = "in_door_01";
@@ -248,4 +252,97 @@ fn a_despawned_pivot_leaves_the_pivot_map() {
     let pivot = app.world().resource::<DoorPivots>().get(DOOR).expect("spawned");
     app.world_mut().despawn(pivot);
     assert_eq!(app.world().resource::<DoorPivots>().get(DOOR), None);
+}
+
+fn approve_close(app: &mut App) {
+    let activation = Activated { target: Handle(DOOR.0), actor: PLAYER, verb: Some(VERB_CLOSE.0) };
+    app.world_mut().write_message(UseApproved { activation, verb: Some(VERB_CLOSE), slot: None });
+}
+
+/// The door's overlay blob, raw.
+fn blob(app: &App) -> Option<Vec<u8>> {
+    let overlay = app.world().resource::<WorldOverlay>().0.read().unwrap_or_else(PoisonError::into_inner);
+    overlay.state(DOOR, DOOR_STATE_OWNER).map(<[u8]>::to_vec)
+}
+
+/// The rest state the door's blob decodes to.
+fn saved(app: &App) -> Option<DoorState> {
+    blob(app).and_then(|b| DoorState::from_rest_bytes(&b))
+}
+
+fn shell_state(app: &App) -> DoorState {
+    app.world().resource::<Doors>().get(DOOR).expect("registered").state
+}
+
+/// A resident door the shell registered.
+fn resident(app: &mut App) -> DoorHook {
+    let hook = DoorHook(Arc::new(Nothing));
+    residency(app, &hook, &door(), true);
+    tick(app, 1);
+    hook
+}
+
+#[test]
+fn an_opened_door_writes_an_open_rest() {
+    let mut app = door_app();
+    resident(&mut app);
+    assert_eq!(blob(&app), None);
+    approve_open(&mut app);
+    app.update();
+    let shell = shell_state(&app);
+    assert!(shell.open && shell.is_moving(), "mid-swing: {shell:?}");
+    assert_eq!(saved(&app), Some(DoorState::resting(true, shell.sign)));
+}
+
+#[test]
+fn a_closed_door_writes_a_closed_rest() {
+    let mut app = door_app();
+    resident(&mut app);
+    approve_open(&mut app);
+    app.update();
+    tick(&mut app, 200);
+    let shell = shell_state(&app);
+    assert!(shell.open && !shell.is_moving(), "at rest open: {shell:?}");
+    approve_close(&mut app);
+    app.update();
+    assert!(shell_state(&app).is_moving(), "closing");
+    assert_eq!(saved(&app), Some(DoorState::resting(false, shell.sign)));
+
+    approve_open(&mut app);
+    app.update();
+    approve_close(&mut app);
+    app.update();
+    assert_eq!(saved(&app).map(|s| s.open), Some(false), "a mid-swing close");
+}
+
+#[test]
+fn an_open_door_is_open_again_after_its_cell_reloads() {
+    let mut app = door_app();
+    let hook = resident(&mut app);
+    approve_open(&mut app);
+    app.update();
+    let sign = shell_state(&app).sign;
+    residency(&mut app, &hook, &door(), false);
+    tick(&mut app, 1);
+    assert!(app.world().resource::<Doors>().get(DOOR).is_none(), "the shell dropped the door");
+    for _ in 0..3 {
+        app.update();
+    }
+    residency(&mut app, &hook, &door(), true);
+    tick(&mut app, 1);
+    assert_eq!(shell_state(&app), DoorState::resting(true, sign));
+    assert!(app.world().resource::<InteractionStateTags>().tags(DOOR).contains(&DOOR_OPEN));
+}
+
+#[test]
+fn a_door_that_never_toggled_has_no_blob() {
+    let mut app = door_app();
+    let hook = resident(&mut app);
+    for _ in 0..3 {
+        app.update();
+    }
+    residency(&mut app, &hook, &door(), false);
+    tick(&mut app, 1);
+    app.update();
+    assert_eq!(blob(&app), None);
 }

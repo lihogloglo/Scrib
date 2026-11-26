@@ -88,7 +88,7 @@ fn stream_door(app: &mut App) -> WorldTransform {
     p.placement.transform
 }
 
-fn approve_open(app: &mut App) {
+pub(crate) fn approve_open(app: &mut App) {
     let activation = Activated { target: Handle(DOOR.0), actor: PLAYER, verb: Some(VERB_OPEN.0) };
     app.world_mut().write_message(UseApproved { activation, verb: Some(VERB_OPEN), slot: None });
 }
