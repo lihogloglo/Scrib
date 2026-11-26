@@ -1,0 +1,181 @@
+//! Actors keep their pose across their cell's unload and reload (`AI10c3a`; `ai.md` "Tiers and
+//! budget", `docs/roadmaps/ai.md`).
+//!
+//! [`ActorPoseHook`] wraps the actor class spawner (installed with `PlacedObjectsHook` by
+//! `crate::directives::hook_placed_objects`). When an actor placement leaves R0 (its cell drops out
+//! of Active; the body and its `Mover` are still alive, and from then on `Dormant`, so the pose
+//! written is the pose it has when its Near group despawns), a body that moved from its
+//! placement is written to the placement overlay: `PlacementOverlay::move_to` its worldspace
+//! (its `ActorSpace`), feet (`mover.loco.position`) and facing (the mover's yaw, as the placement
+//! rotation `CharacterSpawner` turns back to it, [`placement_rotation`]). The overlay then loads
+//! the placement with the cell it now stands in, at its next fetch, and `CharacterSpawner` +
+//! `attach` respawn the body there, facing that way. Not on `ActivateCx::discard` (a reload after
+//! a save load: the loaded overlay wins), as `sf_physics_bevy`'s `persist_item`.
+//!
+//! - **Moved** means more than 1e-3 m on the ground plane or 1e-3 rad of yaw (maths tolerance, as
+//!   `sf_physics_bevy`'s `moved_item`), or another worldspace than the placement's. A body that
+//!   only settled onto the ground at spawn is not moved: the overlay is saved and must not grow
+//!   with every NPC the player walked past. A dead or knocked-down body is written too.
+//! - **Tier 0** (`AI10c2`): a stored actor's body is written like any other; its logical state
+//!   stays in `sf_ai_bevy::AiLogical`, and the respawned body is re-marked by `enter_tier0`
+//!   (`crate::logical`).
+//! - **Saves** (`MA22`, not wired yet): [`persist_actor_poses`] writes every resident moved actor
+//!   into a copy of the overlay as its deactivation would, without removing anything.
+//! - **Proof line**: `actors: N poses kept at unload`, at most once a second.
+//!
+//! **Gap (named, `AI10c3b`):** a body that walked into a neighbouring cell is still its home
+//! cell's child: when the home cell drops out while the neighbour stays loaded, the body despawns
+//! and reappears only when the neighbour reloads (before `AI10c3a` it popped back to its baked
+//! placement instead). `AI10c3b` re-homes bodies at the crossing.
+
+use std::collections::HashMap;
+use std::f32::consts::TAU;
+use std::sync::{Arc, PoisonError};
+
+use bevy_asset::{AssetServer, UntypedHandle};
+use bevy_ecs::prelude::*;
+use bevy_log::prelude::*;
+use bevy_math::Quat;
+use bevy_time::prelude::*;
+use sf_character_bevy::{CharacterPlacement, Characters};
+use sf_controller_bevy::Mover;
+use sf_world::{IndexedPlacement, Location, Placement, PlacementId, PlacementOverlay, WorldspaceId};
+use sf_world_bevy::{ActivateCx, LoadedModel, PlacementSpawner, SpawnCx, WorldOverlay};
+
+use crate::walkers::ActorSpace;
+
+/// Position tolerance on the ground plane, metres (maths tolerance, as `moved_item`).
+// tunables: const (comparison epsilon, not a gameplay or quality value)
+const MOVED_M: f32 = 1e-3;
+/// Yaw tolerance, radians (maths tolerance, as `moved_item`).
+// tunables: const (comparison epsilon, not a gameplay or quality value)
+const TURNED_RAD: f32 = 1e-3;
+
+/// The actor placements of the Active cells, with their worldspace (inserted at activation,
+/// removed at deactivation): what [`persist_actor_poses`] writes from. Also counts the poses
+/// kept since the last proof line.
+#[derive(Resource, Debug, Default)]
+pub struct ResidentActors {
+    placements: HashMap<PlacementId, (WorldspaceId, Placement)>,
+    kept: u32,
+}
+
+impl ResidentActors {
+    /// Resident actor placements.
+    pub fn len(&self) -> usize {
+        self.placements.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.placements.is_empty()
+    }
+}
+
+/// Wraps the actor class spawner: deactivation (not a discard) writes a body that moved to the
+/// placement overlay (module docs).
+pub struct ActorPoseHook(pub Arc<dyn PlacementSpawner>);
+
+impl PlacementSpawner for ActorPoseHook {
+    fn spawn(&self, world: &mut World, cx: &SpawnCx<'_>, placement: &IndexedPlacement) -> u32 {
+        self.0.spawn(world, cx, placement)
+    }
+    fn needs_model(&self, placement: &IndexedPlacement) -> bool {
+        self.0.needs_model(placement)
+    }
+    fn prepare(&self, assets: &AssetServer, placement: &IndexedPlacement, model: Option<&LoadedModel>) -> Option<UntypedHandle> {
+        self.0.prepare(assets, placement, model)
+    }
+    fn activate(&self, world: &mut World, cx: &ActivateCx<'_>, placement: &IndexedPlacement) {
+        self.0.activate(world, cx, placement);
+        if let Some(mut resident) = world.get_resource_mut::<ResidentActors>() {
+            let p = &placement.placement;
+            resident.placements.insert(p.id, (cx.worldspace.clone(), p.clone()));
+        }
+    }
+    fn deactivate(&self, world: &mut World, cx: &ActivateCx<'_>, placement: &IndexedPlacement) {
+        self.0.deactivate(world, cx, placement);
+        let p = &placement.placement;
+        // A reload after a save load discards live poses: the overlay is the loaded one.
+        if !cx.discard
+            && let Some((to, rotation)) = body_of(world, p.id).and_then(|body| moved(cx.worldspace, p, &body, turn(world)))
+            && let Some(overlay) = world.get_resource::<WorldOverlay>()
+        {
+            overlay.0.write().unwrap_or_else(PoisonError::into_inner).move_to(p, &to, rotation);
+            if let Some(mut resident) = world.get_resource_mut::<ResidentActors>() {
+                resident.kept += 1;
+            }
+        }
+        if let Some(mut resident) = world.get_resource_mut::<ResidentActors>() {
+            resident.placements.remove(&p.id);
+        }
+    }
+}
+
+/// Saving (`MA22`, save.md "One path for unload and save"): writes every resident actor that
+/// moved into `overlay` (a copy of the live one, for the snapshot), as its deactivation would,
+/// without removing anything.
+pub fn persist_actor_poses(world: &World, overlay: &mut PlacementOverlay) {
+    let Some(resident) = world.get_resource::<ResidentActors>() else { return };
+    let Some(mut bodies) = world.try_query::<(&CharacterPlacement, &Mover, &ActorSpace)>() else { return };
+    let bodies: HashMap<PlacementId, (Location, f32)> = bodies.iter(world).map(|(p, m, s)| (p.0, pose(m, s))).collect();
+    let turn = turn(world);
+    for (id, (ws, p)) in &resident.placements {
+        if let Some((to, rotation)) = bodies.get(id).and_then(|body| moved(ws, p, body, turn)) {
+            overlay.move_to(p, &to, rotation);
+        }
+    }
+}
+
+/// The placement rotation of a body facing `yaw`: `CharacterSpawner` adds the content's `turn`
+/// (`CharacterContent::placement_rotation`) to a placement's rotation, so the stored one has it
+/// taken off again.
+pub fn placement_rotation(yaw: f32, turn: Quat) -> Quat {
+    Quat::from_rotation_y(yaw) * turn.inverse()
+}
+
+/// The yaw a body spawned from a placement rotation faces (`attach`: `Mover::yaw_of` of the
+/// spawned transform).
+pub fn placement_yaw(rotation: Quat, turn: Quat) -> f32 {
+    Mover::yaw_of(rotation * turn)
+}
+
+/// `proof line`: `actors: N poses kept at unload`, when some were, at most once a second.
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn report_kept(time: Res<Time>, mut resident: ResMut<ResidentActors>, mut last: Local<Option<f64>>) {
+    let now_s = time.elapsed_secs_f64();
+    if resident.kept == 0 || last.is_some_and(|t| now_s - t < crate::logical::LOG_EVERY_S) {
+        return;
+    }
+    info!("actors: {} poses kept at unload", resident.kept);
+    resident.kept = 0;
+    *last = Some(now_s);
+}
+
+/// The content's placement turn (identity without a character plugin).
+fn turn(world: &World) -> Quat {
+    world.get_resource::<Characters>().map_or(Quat::IDENTITY, |c| c.content().placement_rotation())
+}
+
+/// Where a body stands and the yaw it faces.
+fn pose(mover: &Mover, space: &ActorSpace) -> (Location, f32) {
+    (Location::new(space.0.clone(), mover.loco.position), mover.loco.motion.yaw)
+}
+
+/// The pose of placement `id`'s body, if it has one.
+fn body_of(world: &World, id: PlacementId) -> Option<(Location, f32)> {
+    let mut bodies = world.try_query::<(&CharacterPlacement, &Mover, &ActorSpace)>()?;
+    bodies.iter(world).find(|(p, ..)| p.0 == id).map(|(_, m, s)| pose(m, s))
+}
+
+/// Where and how to store a body standing at `body` for placement `p` of worldspace `ws`: `None`
+/// when it has not moved from the placement's pose (module docs).
+fn moved(ws: &WorldspaceId, p: &Placement, (at, yaw): &(Location, f32), turn: Quat) -> Option<(Location, Quat)> {
+    let shifted = p.transform.pos.delta_f32(at.pos).with_y(0.0).length() > MOVED_M;
+    let d = (yaw - placement_yaw(p.transform.rotation, turn)).rem_euclid(TAU);
+    let turned = d.min(TAU - d) > TURNED_RAD;
+    (shifted || turned || at.worldspace != *ws).then(|| (at.clone(), placement_rotation(*yaw, turn)))
+}
+
+#[cfg(test)]
+#[path = "poses_tests.rs"]
+mod tests;

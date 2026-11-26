@@ -194,6 +194,7 @@ FG-12 | confirmed 2026-11-23 (cost pending): A1-A3 per-pixel sun visibility (LSO
 AI-11 | owner 2026-11-26: OK | [ai](visual-checks/ai.md) | perception lab: light vs dark lane, cover wall gaps, hearing stripes 4/8/14 m, scenes `level-perception*` (2026-11-25)
 AI-12 | owner 2026-11-26: OK (Suspicious steps, looks, walks back; Alerted static = expected until AI29/combat) | [ai](visual-checks/ai.md) | sneaking (Ctrl) hides you: dark lane upright vs sneak, lit lane, sprint, behind; scene `level-perception-light` (2026-11-25)
 AI-14 | awaiting owner | [ai](visual-checks/ai.md) | far NPCs run at tier 0 (`tier0: N logical`), no jump while watched, no pop when they wake, none vanish; Balmora noon (AI10c2, 2026-11-26)
+AI-15 | awaiting owner | [ai](visual-checks/ai.md) | NPCs keep where they stood and their facing after you leave (~300 m) and come back, none missing; Seyda Neen noon (AI10c3a, 2026-11-26)
 AI-3 | awaiting owner | [ai](visual-checks/ai.md) | perception gizmos (cones, bands, LKP, light, noise rings) + NPCs noticing and searching, Seyda Neen noon and 23:00 (2026-11-25)
 AI-1 | awaiting owner | [ai](visual-checks/ai.md) | AI debug overlay (`ai.select`, `ai.trace`, plan gizmos) on a synthetic trace, example `ai_overlay` (2026-11-09)
 NV-1 | confirmed by owner 2026-11-18 (Balmora: `nav.stats` good, `nav.draw tiles` streams and follows terrain after detail-mesh + terrain-origin fixes) | [ai](visual-checks/ai.md) | Baked navmesh tiles over Seyda Neen (`nav.draw tiles`, `nav.stats`), slice NV4c (2026-11-17)

@@ -484,7 +484,7 @@ fn setup_of(content: &WalkerContent, id: &RecordId) -> Setup {
 /// Gives dressed characters their mover (and wanderers their walker); not the player's avatar
 /// (the action layer moves it).
 #[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
-fn attach(
+pub(crate) fn attach(
     mut commands: Commands,
     content: Res<WalkerContent>,
     vocab: Option<Res<WanderVocab>>,
@@ -1124,6 +1124,9 @@ pub fn add(app: &mut App, db: Arc<RecordDb>, store: Store, manifest: Manifest, p
         // `AI_A` placement index and the packages waiting for a target to spawn.
         .init_resource::<crate::directives::PendingPackages>()
         .add_systems(PostStartup, crate::directives::hook_placed_objects)
+        // AI10c3a: the resident actor placements and the poses-kept proof line.
+        .init_resource::<crate::poses::ResidentActors>()
+        .add_systems(Update, crate::poses::report_kept)
         .add_systems(Update, (crate::directives::seed_directives, crate::directives::retry_pending).chain().after(attach))
         // Gameplay on the fixed tick (NV7a): the physics step first (IN11b: characters ride the
         // bases it moved), then the player (its tick state is what the NPCs avoid), then the NPC

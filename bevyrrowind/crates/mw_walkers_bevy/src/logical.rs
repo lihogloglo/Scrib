@@ -309,9 +309,9 @@ pub struct Tier0Tick {
     logged: (Tier0Counts, Option<f64>),
 }
 
-/// The proof line's cadence: at most one line a second.
+/// The proof line's cadence: at most one line a second (also `crate::poses`' line).
 // tunables: const (log cadence, not a gameplay or quality value)
-const LOG_EVERY_S: f64 = 1.0;
+pub(crate) const LOG_EVERY_S: f64 = 1.0;
 
 /// The tier-0 systems on the fixed tick (module docs), only while a [`GameClock`] exists. Needs
 /// `sf_ai_bevy::AiPlugin` (the store, the queue, the sets); `walkers::add_drive` calls it.

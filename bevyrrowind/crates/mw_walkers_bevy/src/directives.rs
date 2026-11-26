@@ -246,7 +246,7 @@ impl PlacementSpawner for PlacedObjectsHook {
 
 /// `PostStartup`: the [`PlacedObjects`] index of the content's `AI_A` targets, and its
 /// [`PlacedObjectsHook`] on every class that can be one (after `exterior.rs` built the spawners
-/// at `Startup`).
+/// at `Startup`), the actor class's around [`crate::poses::ActorPoseHook`] (`AI10c3a`).
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn hook_placed_objects(
     mut commands: Commands,
@@ -267,7 +267,11 @@ pub(crate) fn hook_placed_objects(
         mw_world::source::ACTIVATOR,
     ];
     for class in classes {
-        if let Some(inner) = spawners.for_class(class).cloned() {
+        if let Some(mut inner) = spawners.for_class(class).cloned() {
+            if class == PlacementClass::Actor {
+                // `AI10c3a`: an actor's body keeps its pose across its cell's unload.
+                inner = Arc::new(crate::poses::ActorPoseHook(inner));
+            }
             spawners.set(class, Arc::new(PlacedObjectsHook(inner)));
         }
     }

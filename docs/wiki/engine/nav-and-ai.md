@@ -79,6 +79,13 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   placement in another worldspace puts the state back (AI10c3 moves bodies). A marked body stays rendered where it
   stood: `drive` stands it first (`walkers.rs:809`), `drive_directives` skips it (`directive_drive.rs:318`); script
   pushes and late packages `wake` it. Proof line `tier0: N logical, Q queued, P placed (X other-space)` (≤ 1/s).
+  **Bodies keep their pose across a cell unload** (AI10c3a, `mw_walkers_bevy/src/poses.rs:95` `ActorPoseHook`,
+  installed on the actor class at `directives.rs:273`): when an actor placement leaves R0 (not a discard), a body
+  that moved more than 1e-3 m on the ground plane or 1e-3 rad of yaw is `PlacementOverlay::move_to` its
+  `ActorSpace`, feet and yaw (spawn turn taken off), so it reloads with the cell it stands in and `attach` respawns it
+  there; tier 0 re-marks it (Enter). `persist_actor_poses` (`:117`) is the save path (MA22, not wired). Gap: a body
+  that crossed into a neighbour cell despawns with its home cell (AI10c3b re-homes it). Proof line
+  `actors: N poses kept at unload` (≤ 1/s).
   Tier 0 core (AI10a, `sf_ai/src/logical.rs`): `LogicalState::step` jumps event to event
   (route arrival, `DirectiveStack::next_deadline`, `LogicalEnv::next_window_edge` hook), each served kind taken up
   through `LogicalTransitions::transition` (StayNear waits in place or walks home, GoTo/Escort walk and end

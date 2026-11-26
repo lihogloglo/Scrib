@@ -95,3 +95,13 @@ Log: `ai: N wanderers on navmesh, M on pathgrid fallback (since start: X navmesh
 - Q2: walk toward a far NPC: does it start moving normally when you get near, with no pop? (expected yes)
 - Q3: turn away for 10 s and back: is every nearby NPC still there, none vanished? (expected yes)
 - Status: awaiting owner.
+
+### AI-15: NPCs keep their place when you leave and come back (AI10c3a, 2026-11-26)
+- Kind: game, dev build. `owner_launch.sh view "Seyda Neen" --hour 12` (exterior, noon), F11 drops the player.
+- Proof log line: `actors: N poses kept at unload` with N > 0 once the village unloads (one line a second at most).
+- Q1: watch where a wandering NPC stands, run ~300 m away along the road until the village is out of sight, come
+  back: is it where you left it (or a few steps from there), not back at its original spot? (expected yes)
+- Q2: same for its facing: does it face the way it did, without a snap when you arrive? (expected yes)
+- Q3: is every NPC of the village still there? (expected yes; known gap AI10c3b: one that walked into a
+  neighbouring cell may be missing until that cell reloads)
+- Status: awaiting owner.

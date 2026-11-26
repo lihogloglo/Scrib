@@ -13,6 +13,7 @@
 //! `in_view`: the tier allocator's `AiInView` from each player's `AiViewer` frustum (`MA20a`).
 //! `greeting`: NPCs greet the player, `OpenMW`'s greeting machine from `mw_ai` acted on (`MA4c2`).
 //! `logical`: the tier-0 envs (`AI10c2`): routes over the worldspace graph, views and navmesh snap for promotion.
+//! `poses`: an actor's moved body keeps its pose across its cell's unload, through the placement overlay (`AI10c3a`).
 
 pub mod directive_drive;
 pub mod directives;
@@ -24,6 +25,7 @@ pub mod logical;
 pub mod nav;
 pub mod noise_emitters;
 pub mod physics;
+pub mod poses;
 pub mod reaction;
 pub mod script_ai;
 pub mod search;

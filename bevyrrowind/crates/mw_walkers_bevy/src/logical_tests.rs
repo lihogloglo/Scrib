@@ -478,6 +478,27 @@ mod game {
         assert_eq!(status(&app, 6, ids[1]), DirectiveStatus::Serving, "the wander is the next top");
     }
 
+    /// `AI10c3a`: a stored actor's body despawns with its cell and respawns (`attach` makes it
+    /// `Dormant`) where the overlay kept it: the next tick marks it again and its state is the
+    /// stored one, not a new one at the body.
+    #[test]
+    fn a_body_respawned_for_a_stored_key_is_marked_and_keeps_its_state() {
+        let mut app = game(BIG);
+        let (e, ids) = actor(&mut app, 8, at(10.0, 20.0), vec![go_to(30.0, 20.0)]);
+        app.world_mut().entity_mut(e).insert(Dormant);
+        app.update();
+        app.update();
+        let before = app.world().resource::<AiLogical>().get(ActorKey(8)).cloned().expect("stored");
+        assert_eq!(before.directive, Some(ids[0]), "the stored state walks the GoTo");
+        app.world_mut().entity_mut(e).despawn();
+        let again = spawn_wanderer(&mut app, &ws(), at(13.0, 20.0), 8, 11);
+        app.world_mut().entity_mut(again).insert((AiActor(ActorKey(8)), Dormant));
+        app.update();
+        assert!(app.world().entity(again).contains::<AiLogicalBody>(), "re-marked on the next tick");
+        let after = app.world().resource::<AiLogical>().get(ActorKey(8)).cloned().expect("still stored");
+        assert_eq!((after.directive, &after.route), (before.directive, &before.route), "the stored state, not a new one");
+    }
+
     #[test]
     fn no_game_clock_no_tier_zero() {
         let mut app = app_with(|_| {});
