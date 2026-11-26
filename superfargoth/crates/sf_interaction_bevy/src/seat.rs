@@ -44,6 +44,18 @@
 //! enter, a lost claim before the body sat, the slot given back. A lost claim while seated keeps it
 //! until the stand-up's `SeatExited` (the stand-up plays the exit clip of the last exit side).
 //!
+//! **Reports** ([`SeatReport`]): every transition of a seat use writes one message, from the step
+//! where it happens (never per tick), naming the user, its entity, the slot and the [`SeatStep`]:
+//! the request's `Asked` or `Held` (or `Busy`: an approval ignored because the user is already in
+//! a use, with that use's slot and phase); the claim's `ClaimRefused`; the offer step's `UserGone`,
+//! `Lost` (which of claim, def, frame or index row went; once when the use is dropped or a seated
+//! user turns `Leaving`), `NoEntrance` and `Offered` (on the grant's tick: entry side, horizontal
+//! feet-to-seat distance, yaw offset); the events step's `Entered`, `Exited` and `EnterRefused`
+//! (with that tick's action refusals). An approval that is not a seat use (no def, no pose slot
+//! for the verb) or whose actor is no [`InteractionUser`] reports nothing. The host logs or shows
+//! them; every use ends in `ClaimRefused`, `UserGone`, `Lost` (before sitting), `NoEntrance`,
+//! `EnterRefused` or `Exited`.
+//!
 //! **Latency** at one fixed tick per frame: an `ActivateCommand` validated on tick N is approved
 //! in that frame's `Update`, its claim applies on tick N+1 and the enter starts on tick N+1 (the
 //! grant is read after `Apply`, before `Step`). `SeatEntered` on tick M occupies on M+1;
@@ -51,16 +63,17 @@
 //! on T (the stand-up starts on T).
 
 use std::collections::BTreeMap;
+use std::f32::consts::{PI, TAU};
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
-use glam::{Quat, Vec3};
+use glam::{Quat, Vec2, Vec3};
 use sf_action::{EventKind as ActionEventKind, TargetId};
 use sf_action_bevy::{ActionBody, ActionCharacter, SeatAim, SeatSense};
 use sf_anim::RootPose;
 use sf_coords::WorldPos;
 use sf_interaction::{
-    ClipFamily, Entrance, Frame, Op, Request, Side, SlotDef, SlotKind, SlotRef, SlotTerms, TagId, UserKey, VerbTarget, compose, pick_entrance,
+    ClipFamily, Entrance, Frame, InteractableDef, Op, Request, Side, SlotDef, SlotKind, SlotRef, SlotTerms, TagId, UserKey, VerbTarget, compose, pick_entrance,
     pick_exit, to_local,
 };
 use sf_script_bevy::sf_script::Handle;
@@ -195,6 +208,67 @@ impl SeatUses {
     }
 }
 
+/// What a lost seat use no longer has (checked in this order).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SeatLoss {
+    /// The slot's claim is no longer the user's.
+    Claim,
+    /// The placement has no def, or the def no such slot.
+    Def,
+    /// The placement has no current frame.
+    Frame,
+    /// The slot has no index row.
+    IndexRow,
+}
+
+/// One transition of a seat use ([`SeatReport`], module docs "Reports").
+#[derive(Clone, Debug, PartialEq)]
+pub enum SeatStep {
+    /// The claim request is written.
+    Asked,
+    /// The slot was already the user's claim: straight to granted.
+    Held,
+    /// An approval ignored: the user is already in a seat use (the report names that use's slot),
+    /// in this phase.
+    Busy(SeatPhase),
+    /// The claim refused the use.
+    ClaimRefused(sf_interaction::Refusal),
+    /// The character is gone (or no longer this user): the slot is let go.
+    UserGone,
+    /// The use lost what it needs: dropped, or (seated) the stand-up starts.
+    Lost(SeatLoss),
+    /// The slot has entrances but none is free: the slot is given back.
+    NoEntrance,
+    /// The slot is offered to the action layer (the grant's tick only).
+    Offered {
+        /// The entrance picked (`None`: the slot has no entrances).
+        entry: Option<Side>,
+        /// Feet to the slot's world translation, horizontal, metres.
+        feet_to_seat_m: f32,
+        /// The slot's yaw minus the body's, radians in [-pi, pi].
+        yaw_off: f32,
+    },
+    /// The body sat (`SeatEntered`).
+    Entered,
+    /// The body stood up (`SeatExited`): the use ends.
+    Exited,
+    /// The action layer refused the enter (`SeatRefused`), with that tick's refusals.
+    EnterRefused(SmallVec<[sf_action::Refusal; 2]>),
+}
+
+/// One seat-use transition of `user` (entity `entity`) on `slot` (module docs "Reports").
+#[derive(Message, Clone, Debug, PartialEq)]
+pub struct SeatReport {
+    pub user: UserKey,
+    pub entity: Entity,
+    pub slot: SlotRef,
+    pub step: SeatStep,
+}
+
+fn report(user: UserKey, u: &SeatUse, step: SeatStep) -> SeatReport {
+    SeatReport { user, entity: u.entity, slot: u.slot, step }
+}
+
 /// Where the pose-slot default runs (module docs).
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SeatSystems {
@@ -213,6 +287,11 @@ pub enum SeatSystems {
 fn yaw_of(rotation: Quat) -> f32 {
     let f = rotation * Vec3::Z;
     f.x.atan2(f.z)
+}
+
+/// An angle wrapped to [-pi, pi).
+fn wrap_angle(a: f32) -> f32 {
+    (a + PI).rem_euclid(TAU) - PI
 }
 
 fn world_pos(v: Vec3) -> WorldPos {
@@ -261,6 +340,36 @@ fn resolve_slot(
     })
 }
 
+/// What the offer step needs of `key`'s held `slot`: its def, its object's frame and its world
+/// frame; else the first of them that is missing.
+fn placed(
+    key: UserKey,
+    slot: SlotRef,
+    claims: &InteractionClaims,
+    defs: &InteractionDefs,
+    frames: &InteractionFrames,
+    index: &InteractionIndex,
+) -> Result<(Arc<InteractableDef>, Frame, Frame), SeatLoss> {
+    if claims.0.claim_on(slot).is_none_or(|c| c.user != key) {
+        return Err(SeatLoss::Claim);
+    }
+    let def = defs.get(slot.placement).filter(|d| usize::from(slot.slot) < d.slots.len()).ok_or(SeatLoss::Def)?;
+    let object = *frames.current(slot.placement).ok_or(SeatLoss::Frame)?;
+    let slot_world = index.0.get(slot).ok_or(SeatLoss::IndexRow)?.world;
+    Ok((Arc::clone(def), object, slot_world))
+}
+
+/// The `Offered` report: horizontal feet-to-seat distance, the slot's yaw minus the body's (as the
+/// action step senses it).
+fn offered_step(entry: Option<Side>, feet: Vec3, body: &ActionBody, slot_world: &Frame) -> SeatStep {
+    let to_seat = slot_world.translation - feet;
+    SeatStep::Offered {
+        entry,
+        feet_to_seat_m: Vec2::new(to_seat.x, to_seat.z).length(),
+        yaw_off: wrap_angle(yaw_of(slot_world.rotation) - body.loco.motion.yaw),
+    }
+}
+
 fn request(user: &InteractionUser, op: Op) -> ClaimRequest {
     ClaimRequest(Request { user: user.user, priority: user.priority, op })
 }
@@ -278,26 +387,30 @@ pub(crate) fn seat_requests(
     index: Res<InteractionIndex>,
     mut seats: ResMut<SeatUses>,
     mut out: MessageWriter<ClaimRequest>,
+    mut reports: MessageWriter<SeatReport>,
 ) {
     for a in approved.read() {
         let Some((entity, user)) = users.iter().find(|(_, u)| u.actor == a.activation.actor) else { continue };
-        if seats.0.contains_key(&user.user) {
-            continue;
-        }
         let placement = PlacementId(a.activation.target.0);
         let Some(def) = defs.get(placement) else { continue };
         let Some(slot) = resolve_slot(a, user, placement, &def.slots, &defs, &state, &claims, &index) else { continue };
+        if let Some(busy) = seats.0.get(&user.user) {
+            reports.write(report(user.user, busy, SeatStep::Busy(busy.phase)));
+            continue;
+        }
         let slot = SlotRef { placement, slot };
         let held = claims.0.claim_on(slot).is_some_and(|c| c.user == user.user);
-        let phase = if held {
-            SeatPhase::Granted
+        let (phase, step) = if held {
+            (SeatPhase::Granted, SeatStep::Held)
         } else {
             let mut terms = SlotTerms::of(&def.slots[usize::from(slot.slot)], claims.0.params());
             terms.enabled = index.0.get(slot).is_some();
             out.write(request(user, Op::Claim { slot, terms, tags: user.tags.clone() }));
-            SeatPhase::Asked
+            (SeatPhase::Asked, SeatStep::Asked)
         };
-        seats.0.insert(user.user, SeatUse { entity, slot, phase, entry: None, from: Vec3::ZERO });
+        let u = SeatUse { entity, slot, phase, entry: None, from: Vec3::ZERO };
+        reports.write(report(user.user, &u, step));
+        seats.0.insert(user.user, u);
     }
 }
 
@@ -314,6 +427,7 @@ pub(crate) fn seat_offers(
     mut bodies: Query<(&ActionBody, &mut SeatAim, Option<&mut SeatClips>)>,
     mut seats: ResMut<SeatUses>,
     mut out: MessageWriter<ClaimRequest>,
+    mut reports: MessageWriter<SeatReport>,
     mut commands: Commands,
 ) {
     for a in answered.read() {
@@ -321,10 +435,12 @@ pub(crate) fn seat_offers(
         let Some(u) = seats.0.get_mut(&a.request.user).filter(|u| u.phase == SeatPhase::Asked && u.slot == slot) else {
             continue;
         };
-        if a.result.is_ok() {
-            u.phase = SeatPhase::Granted;
-        } else {
-            seats.0.remove(&a.request.user);
+        match a.result {
+            Ok(_) => u.phase = SeatPhase::Granted,
+            Err(refusal) => {
+                reports.write(report(a.request.user, u, SeatStep::ClaimRefused(refusal)));
+                seats.0.remove(&a.request.user);
+            }
         }
     }
 
@@ -335,29 +451,32 @@ pub(crate) fn seat_offers(
             // The character is gone (or no longer this user): let the slot go.
             out.write(ClaimRequest(Request { user: *key, priority: u8::MAX, op: Op::Release }));
             clear_clips(&mut commands, u.entity, true);
+            reports.write(report(*key, u, SeatStep::UserGone));
             return false;
         };
         if u.phase == SeatPhase::Asked {
             return true;
         }
-        let holds = claims.0.claim_on(u.slot).is_some_and(|c| c.user == *key);
-        let placed = (|| {
-            let def = defs.get(u.slot.placement).filter(|d| usize::from(u.slot.slot) < d.slots.len())?;
-            Some((Arc::clone(def), *frames.current(u.slot.placement)?, index.0.get(u.slot)?.world))
-        })();
-        let Some((def, object, slot_world)) = placed.filter(|_| holds) else {
-            aim.0 = None;
-            return match u.phase {
-                SeatPhase::Seated | SeatPhase::Leaving => {
-                    // The stand-up still plays this seat's exit clip: the clips stay to `SeatExited`.
-                    u.phase = SeatPhase::Leaving;
-                    true
-                }
-                _ => {
-                    clear_clips(&mut commands, u.entity, clips.is_some());
-                    false
-                }
-            };
+        let (def, object, slot_world) = match placed(*key, u.slot, &claims, &defs, &frames, &index) {
+            Ok(placed) => placed,
+            Err(loss) => {
+                aim.0 = None;
+                return match u.phase {
+                    SeatPhase::Seated | SeatPhase::Leaving => {
+                        // The stand-up still plays this seat's exit clip: the clips stay to `SeatExited`.
+                        if u.phase == SeatPhase::Seated {
+                            reports.write(report(*key, u, SeatStep::Lost(loss)));
+                        }
+                        u.phase = SeatPhase::Leaving;
+                        true
+                    }
+                    _ => {
+                        clear_clips(&mut commands, u.entity, clips.is_some());
+                        reports.write(report(*key, u, SeatStep::Lost(loss)));
+                        false
+                    }
+                };
+            }
         };
         if u.phase == SeatPhase::Leaving {
             aim.0 = None;
@@ -374,11 +493,13 @@ pub(crate) fn seat_offers(
                     out.write(request(user, Op::Release));
                     aim.0 = None;
                     clear_clips(&mut commands, u.entity, clips.is_some());
+                    reports.write(report(*key, u, SeatStep::NoEntrance));
                     return false;
                 };
                 u.entry = Some(e.side);
             }
             u.phase = SeatPhase::Offered;
+            reports.write(report(*key, u, offered_step(u.entry, feet, body, &slot_world)));
         }
         let exit_entrance = u.entry.and_then(|side| pick_exit(slot_def, side, valid));
         let exit_side = exit_entrance.map_or(Side::Front, |e| e.side);
@@ -414,6 +535,7 @@ pub(crate) fn seat_events(
     mut characters: Query<(&ActionCharacter, &InteractionUser, &mut SeatAim)>,
     mut seats: ResMut<SeatUses>,
     mut out: MessageWriter<ClaimRequest>,
+    mut reports: MessageWriter<SeatReport>,
     mut commands: Commands,
 ) {
     seats.0.retain(|key, seat| {
@@ -428,6 +550,7 @@ pub(crate) fn seat_events(
                 ActionEventKind::SeatEntered(s) if s == seat.slot.slot && seat.phase == SeatPhase::Offered => {
                     out.write(request(user, Op::Occupy { slot: seat.slot }));
                     seat.phase = SeatPhase::Seated;
+                    reports.write(report(*key, seat, SeatStep::Entered));
                 }
                 ActionEventKind::SeatExited(s) if s == seat.slot.slot => {
                     // Leaving: the hold ended already, nothing to release.
@@ -436,12 +559,14 @@ pub(crate) fn seat_events(
                     }
                     aim.0 = None;
                     clear_clips(&mut commands, seat.entity, true);
+                    reports.write(report(*key, seat, SeatStep::Exited));
                     return false;
                 }
                 ActionEventKind::SeatRefused(s) if s == seat.slot.slot && seat.phase == SeatPhase::Offered => {
                     out.write(request(user, Op::Release));
                     aim.0 = None;
                     clear_clips(&mut commands, seat.entity, true);
+                    reports.write(report(*key, seat, SeatStep::EnterRefused(c.output.refusals.iter().copied().collect())));
                     return false;
                 }
                 _ => {}

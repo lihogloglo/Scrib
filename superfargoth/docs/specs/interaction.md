@@ -527,6 +527,24 @@ stand-up carries ~7 cm past the exit pose (action-layer rule data).
 
 **IN32c0 (2026-11-26):** from the offer to the end of the use the seat default puts `SeatClips { family, band_cm, enter, exit }` on the user (no entrance or no free exit: `Front`; `exit` follows `pick_exit`; kept through a lost-claim stand-up until `SeatExited`), inserted and removed rather than a required component, for the animation side to resolve its clip set.
 
+## As built (IN2c1, 2026-11-26): the seat use reports every step and exit
+
+Why: owner check ANIM-11 failed (E on "Sit" did nothing on any seat) and nothing said where the use stopped: the seat
+default had no signal on its exits, for the log, the prompt or an AI operator. `sf_interaction_bevy/src/seat.rs` now
+writes one `SeatReport { user, entity, slot, step }` per transition, never per tick (module docs "Reports"):
+`Asked` / `Held` (claim requested / already the user's), `Busy(phase)` (an approval ignored: the user is already in a
+seat use; names the running use), `ClaimRefused(refusal)`, `UserGone`, `Lost(SeatLoss::{Claim, Def, Frame, IndexRow})`
+(which part went missing, checked in that order; once when the use is dropped or when a seated user turns `Leaving`),
+`NoEntrance`, `Offered { entry, feet_to_seat_m, yaw_off }` (on the `Granted -> Offered` tick: horizontal metres from the
+feet to the slot, slot yaw minus the body's yaw), `Entered`, `Exited`, `EnterRefused(refusals)` (the action layer's
+`SeatRefused` with that tick's `ActionOutput::refusals`: rule + reason). An approval that is not a seat use (no def,
+no pose slot for the verb, no `InteractionUser` for the actor) reports nothing; the busy check now runs after that
+lookup. The framework crate has no log dependency: the game logs the reports (IN2c3). Tests: the six existing seat
+tests assert their exact step sequences, plus `Busy`, `Held`, `Lost(Frame | IndexRow | Def)` and "not a seat use
+reports nothing" (shell 59). Not tested: `UserGone`, `NoEntrance`. Known, not fixed: a use dropped for a missing def,
+frame or index row while its claim is still held writes no `Release` (today `IndexChange::Remove` also invalidates the
+claim, so `Lost(Claim)` comes first and hides it).
+
 ## As built (IN33a, 2026-11-26)
 
 `sf_interaction/src/door.rs` (+ `tests_door.rs`, 8 exact tests): the design of "Slot kinds" Door as pure functions.

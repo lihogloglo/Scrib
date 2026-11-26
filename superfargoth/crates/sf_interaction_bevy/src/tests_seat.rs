@@ -160,6 +160,7 @@ struct Log {
     answered: Vec<ClaimAnswered>,
     seat_events: Vec<(Entity, ActionEvent)>,
     movs: Vec<(Entity, RuleKey)>,
+    reports: Vec<SeatReport>,
 }
 
 fn write_commands(tick: Res<ActionTick>, mut presses: ResMut<Presses>, mut characters: Query<(Entity, &mut ActionCharacter)>) {
@@ -195,6 +196,11 @@ fn record(
     }
 }
 
+/// Every seat report, in `Last`: each frame's reports (fixed ticks and `Update`) in order.
+fn record_reports(mut log: ResMut<Log>, mut reports: MessageReader<SeatReport>) {
+    log.reports.extend(reports.read().cloned());
+}
+
 fn app() -> App {
     let mut app = App::new();
     app.add_plugins((TimePlugin, TunablesPlugin, ScriptsPlugin, InteractionPlugin, SfActionPlugin::<Flat>::default()))
@@ -204,7 +210,8 @@ fn app() -> App {
         .init_resource::<Presses>()
         .init_resource::<Log>()
         .add_systems(FixedUpdate, write_commands.in_set(ActionSystems::Command))
-        .add_systems(FixedUpdate, record.after(SeatSystems::Events));
+        .add_systems(FixedUpdate, record.after(SeatSystems::Events))
+        .add_systems(bevy_app::Last, record_reports);
     app.update();
     let owner = app.world_mut().spawn_empty().id();
     app.world_mut().write_message(IndexChange::Insert {
@@ -271,6 +278,41 @@ fn seat_kinds(app: &App, e: Entity) -> Vec<sf_action::EventKind> {
     app.world().resource::<Log>().seat_events.iter().filter(|(x, _)| *x == e).map(|(_, ev)| ev.kind).collect()
 }
 
+/// Centimetre / centiradian rounding of an `Offered` report (`yaw_off` as its magnitude: the chair
+/// faces back, so it sits at +-pi), for exact comparisons.
+fn rounded(step: SeatStep) -> SeatStep {
+    match step {
+        SeatStep::Offered { entry, feet_to_seat_m, yaw_off } => {
+            SeatStep::Offered { entry, feet_to_seat_m: centi(feet_to_seat_m), yaw_off: centi(yaw_off.abs()) }
+        }
+        s => s,
+    }
+}
+
+fn centi(x: f32) -> f32 {
+    (x * 100.0).round() / 100.0
+}
+
+/// `user`'s seat reports, [`rounded`]; every one names `entity` and `slot`.
+fn steps_of(app: &App, user: UserKey, entity: Entity, slot: SlotRef) -> Vec<SeatStep> {
+    let reports: Vec<_> = app.world().resource::<Log>().reports.iter().filter(|r| r.user == user).collect();
+    for r in &reports {
+        assert_eq!((r.entity, r.slot), (entity, slot), "{r:?}");
+    }
+    reports.into_iter().map(|r| rounded(r.step.clone())).collect()
+}
+
+/// [`steps_of`] on the chair.
+fn steps(app: &App, user: UserKey, entity: Entity) -> Vec<SeatStep> {
+    steps_of(app, user, entity, SLOT)
+}
+
+/// The chair offered from the origin facing +Z: front entrance, sqrt(0.1^2 + 0.6^2) = 0.608 m, a
+/// half turn.
+fn offered() -> SeatStep {
+    SeatStep::Offered { entry: Some(Side::Front), feet_to_seat_m: centi(0.37_f32.sqrt()), yaw_off: centi(PI) }
+}
+
 fn ever(app: &App, e: Entity, rule: &str) -> bool {
     let key = RuleKey::of(rule);
     app.world().resource::<Log>().movs.iter().any(|(x, k)| *x == e && *k == key)
@@ -318,6 +360,7 @@ fn an_approved_sit_claims_then_the_body_sits_and_the_claim_is_occupied() {
     assert_eq!(clips(&app, p), Some(chair_clips()), "seated: unchanged");
     assert_eq!(app.world().resource::<SeatUses>().get(player()).map(|u| u.phase), Some(SeatPhase::Seated));
     assert_eq!(app.world().resource::<SeatUses>().get(player()).and_then(|u| u.entry), Some(Side::Front));
+    assert_eq!(steps(&app, player(), p), vec![SeatStep::Asked, offered(), SeatStep::Entered]);
     // The body sits on the slot frame (world), facing its way.
     let body = app.world().get::<ActionBody>(p).unwrap();
     let feet = body.loco.position.to_f64().as_vec3();
@@ -346,6 +389,7 @@ fn a_jump_stands_up_and_releases_the_claim() {
     assert_eq!(aim(&app, p), None);
     assert_eq!(clips(&app, p), None, "gone after the exit");
     assert!(app.world().resource::<SeatUses>().get(player()).is_none());
+    assert_eq!(steps(&app, player(), p), vec![SeatStep::Asked, offered(), SeatStep::Entered, SeatStep::Exited]);
 }
 
 #[test]
@@ -373,6 +417,11 @@ fn removing_the_seat_while_seated_stands_the_body_up_and_frees_the_slot() {
     // No release follows the exit: the hold ended with the object.
     let releases = app.world().resource::<Log>().answered.iter().filter(|a| matches!(a.request.op, Op::Release)).count();
     assert_eq!(releases, 0);
+    assert_eq!(
+        steps(&app, player(), p),
+        vec![SeatStep::Asked, offered(), SeatStep::Entered, SeatStep::Lost(SeatLoss::Claim), SeatStep::Exited],
+        "lost once (not every tick it stays Leaving), then the stand-up's exit"
+    );
 }
 
 #[test]
@@ -394,6 +443,7 @@ fn a_second_user_on_an_occupied_seat_is_refused_and_stays_standing() {
     assert!(!ever(&app, n, ENTER));
     assert!(seat_kinds(&app, n).is_empty());
     assert!(app.world().resource::<SeatUses>().get(npc()).is_none());
+    assert_eq!(steps(&app, npc(), n), vec![SeatStep::Asked, SeatStep::ClaimRefused(Refusal::Taken)]);
 }
 
 #[test]
@@ -411,6 +461,16 @@ fn an_enter_refused_in_the_air_releases_the_claim_and_clears_the_aim() {
     assert_eq!(clips(&app, p), None, "gone after the refused enter");
     assert!(app.world().resource::<SeatUses>().get(player()).is_none());
     assert!(!ever(&app, p, ENTER));
+    let got = steps(&app, player(), p);
+    assert_eq!(got.len(), 3, "{got:?}");
+    assert_eq!(got[0], SeatStep::Asked);
+    // Falling from 6 m: no fixed numbers in the offer, only its entry side.
+    assert!(matches!(got[1], SeatStep::Offered { entry: Some(Side::Front), .. }), "{got:?}");
+    let SeatStep::EnterRefused(refusals) = &got[2] else { panic!("{got:?}") };
+    assert!(
+        refusals.contains(&sf_action::Refusal { rule: RuleKey::of(ENTER), reason: sf_action::Refused::State }),
+        "{refusals:?}"
+    );
 }
 
 #[test]
@@ -427,6 +487,96 @@ fn a_claim_lost_before_sitting_removes_the_clips_on_that_tick() {
     assert_eq!(aim(&app, p), None);
     assert_eq!(clips(&app, p), None);
     assert!(app.world().resource::<SeatUses>().get(player()).is_none());
+    assert_eq!(steps(&app, player(), p), vec![SeatStep::Asked, offered(), SeatStep::Lost(SeatLoss::Claim)]);
+}
+
+/// A grounded player at the origin whose sit was just offered (the enter runs).
+fn offered_app() -> (App, Entity) {
+    let mut app = app();
+    let p = spawn(&mut app, 1, Vec3::ZERO, player(), PLAYER, 30);
+    frames(&mut app, 10);
+    app.world_mut().write_message(sit_command());
+    frames(&mut app, 2);
+    assert_eq!(app.world().resource::<SeatUses>().get(player()).map(|u| u.phase), Some(SeatPhase::Offered));
+    (app, p)
+}
+
+#[test]
+fn a_second_approval_while_offered_or_seated_reports_busy_and_changes_nothing() {
+    let (mut app, p) = offered_app();
+    app.world_mut().write_message(sit_command());
+    frames(&mut app, 1);
+    assert_eq!(steps(&app, player(), p), vec![SeatStep::Asked, offered(), SeatStep::Busy(SeatPhase::Offered)]);
+    assert!(until(&mut app, 120, |a| mov(a, p) == RuleKey::of(LOOP)), "sat: {:?}", mov(&app, p));
+    frames(&mut app, 2);
+    // A script's `Activate` (no validation): the same silent no-op, now reported.
+    app.world_mut().write_message(ScriptActivate { target: Handle(CHAIR.0), actor: PLAYER, verb: Some(sit()) });
+    frames(&mut app, 2);
+    assert_eq!(
+        steps(&app, player(), p),
+        vec![SeatStep::Asked, offered(), SeatStep::Busy(SeatPhase::Offered), SeatStep::Entered, SeatStep::Busy(SeatPhase::Seated)]
+    );
+    assert_eq!(claim(&app), Some((player(), Phase::Occupied)));
+    assert_eq!(app.world().resource::<SeatUses>().get(player()).map(|u| u.phase), Some(SeatPhase::Seated));
+}
+
+#[test]
+fn an_approval_on_a_slot_already_held_reports_held_then_sits() {
+    let mut app = app();
+    let p = spawn(&mut app, 1, Vec3::ZERO, player(), PLAYER, 30);
+    frames(&mut app, 10);
+    let mut terms = sf_interaction::SlotTerms::of(&chair().slots[0], app.world().resource::<InteractionClaims>().0.params());
+    terms.enabled = true;
+    let op = Op::Claim { slot: SLOT, terms, tags: SmallVec::new() };
+    app.world_mut().write_message(ClaimRequest(Request { user: player(), priority: 30, op }));
+    frames(&mut app, 2);
+    assert_eq!(claim(&app), Some((player(), Phase::Reserved)), "held before the approval");
+    assert!(steps(&app, player(), p).is_empty(), "a claim alone is no seat use");
+    app.world_mut().write_message(sit_command());
+    assert!(until(&mut app, 120, |a| mov(a, p) == RuleKey::of(LOOP)), "sat: {:?}", mov(&app, p));
+    frames(&mut app, 2);
+    assert_eq!(steps(&app, player(), p), vec![SeatStep::Held, offered(), SeatStep::Entered]);
+    assert_eq!(claim(&app), Some((player(), Phase::Occupied)));
+}
+
+#[test]
+fn a_missing_frame_index_row_or_def_is_named_once_when_the_use_is_dropped() {
+    type Lose = fn(&mut App);
+    let cases: [(SeatLoss, Lose); 3] = [
+        (SeatLoss::Frame, |app| {
+            app.world_mut().resource_mut::<InteractionFrames>().current.remove(&CHAIR);
+        }),
+        (SeatLoss::IndexRow, |app| {
+            app.world_mut().resource_mut::<InteractionIndex>().0.remove(SLOT);
+        }),
+        (SeatLoss::Def, |app| {
+            app.world_mut().resource_mut::<InteractionDefs>().0.remove(&CHAIR);
+        }),
+    ];
+    for (loss, lose) in cases {
+        let (mut app, p) = offered_app();
+        lose(&mut app);
+        frames(&mut app, 3);
+        assert_eq!(steps(&app, player(), p), vec![SeatStep::Asked, offered(), SeatStep::Lost(loss)], "{loss:?}");
+        assert_eq!(aim(&app, p), None, "{loss:?}");
+        assert!(app.world().resource::<SeatUses>().get(player()).is_none(), "{loss:?}");
+    }
+}
+
+#[test]
+fn an_approval_that_is_no_seat_use_reports_nothing() {
+    let mut app = app();
+    let p = spawn(&mut app, 1, Vec3::ZERO, player(), PLAYER, 30);
+    frames(&mut app, 10);
+    // No def for the target.
+    app.world_mut().write_message(ScriptActivate { target: Handle(99), actor: PLAYER, verb: Some(sit()) });
+    // The chair, a verb it has no pose slot for.
+    app.world_mut().write_message(ScriptActivate { target: Handle(CHAIR.0), actor: PLAYER, verb: Some(TagId::of("talk")) });
+    // An actor that is no interaction user.
+    app.world_mut().write_message(ScriptActivate { target: Handle(CHAIR.0), actor: NPC_HANDLE, verb: Some(sit()) });
+    frames(&mut app, 4);
+    assert!(app.world().resource::<Log>().reports.is_empty(), "{:?}", app.world().resource::<Log>().reports);
+    assert_eq!(aim(&app, p), None);
 }
 
 // --- Seat clip binder (AN26c) -------------------------------------------------------------------
