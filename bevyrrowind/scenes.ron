@@ -5,7 +5,11 @@
 //   or level instead of cell (a synthetic test level, levels/<name>.ron; camera may name one of its cameras),
 //   camera ("ex,ey,ez,tx,ty,tz" meters; "+h" = h above ground, exteriors),
 //   hour (exteriors; the clock starts paused), flags (more view flags),
-//   build (cargo features the exe needs), description, look_for, checks (visual-checks.md ids).
+//   build (cargo features the exe needs), description, look_for, checks (visual-checks.md ids),
+//   ab (a look comparison: one tunable, two values, e.g.
+//     ab: (set: "far.impostor.depth_equal", a: (value: "true", label: "new"), b: (value: "false", label: "stock"));
+//     the scene starts on arm A, Tab switches live, one line on screen names the live arm. Such a scene fixes
+//     its camera, hour and weather (flags: ["--weather", "clear"]) so only the arm changes).
 // World meters: x east, z south; a cell is 117.0 m; Balmora is near (-293, 176),
 // Seyda Neen (-176, 995), the Red Mountain summit near (293, -878).
 #![enable(implicit_some)]
@@ -64,6 +68,21 @@
             description: "Bitter Coast trees west of Seyda Neen: impostor trees at the ~400 m handoff",
             look_for: "trees at 350-450 m don't change shape, brightness or size when F5 shows the tint flip from white to green",
             checks: ["FF-6"],
+        ),
+        (
+            name: "impostor-depth-ab",
+            cell: "Seyda Neen",
+            camera: "-150,+20,1000,-600,+0,950",
+            hour: 10.0,
+            flags: ["--weather", "clear"],
+            ab: (
+                set: "far.impostor.depth_equal",
+                a: (value: "true", label: "alpha test once, in the prepass (new)"),
+                b: (value: "false", label: "alpha test in both passes (stock)"),
+            ),
+            description: "Bitter Coast trees west of Seyda Neen, clear at 10:00: far impostor trees alpha-tested once (A) or as stock Bevy (B); Tab switches",
+            look_for: "trees past ~400 m are the same in A and B: no holes, no missing trees, no flicker",
+            checks: ["FF-7"],
         ),
         // ---- distant shadows (weather.md "Near-term visual fixes", Bug A) ----
         (

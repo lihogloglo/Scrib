@@ -37,6 +37,32 @@ pub struct SceneDef {
     /// Ids of the `docs/visual-checks.md` entries this scene serves.
     #[serde(default)]
     pub checks: Vec<String>,
+    /// A look comparison: one tunable, two values, switched live by a key in this one scene
+    /// (CONTRIBUTING "A look comparison is one scene with a live toggle").
+    #[serde(default)]
+    pub ab: Option<SceneAb>,
+}
+
+/// A scene's live A/B: the two arms of one tunable. The scene starts on arm A, Tab switches, and
+/// one line on screen names the live arm (`mw_devtools_bevy::scene_ab`). Give the scene a fixed
+/// weather (`flags: ["--weather", "clear"]`), hour and camera, so only the arm changes.
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SceneAb {
+    /// The tunable both arms set (a `--set` name, e.g. `"far.impostor.depth_equal"`).
+    pub set: String,
+    pub a: SceneArm,
+    pub b: SceneArm,
+}
+
+/// One arm of a [`SceneAb`].
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SceneArm {
+    /// The tunable's value in this arm, as `--set` takes it (`"true"`, `"0.5"`, `"high"`).
+    pub value: String,
+    /// A few words for the on-screen line (`"new"`, `"stock"`).
+    pub label: String,
 }
 
 impl SceneDef {

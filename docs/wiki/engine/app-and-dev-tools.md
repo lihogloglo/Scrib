@@ -13,7 +13,11 @@ a console and BRP for agents.
   (profiles, load order). Viewers: `view "<cell>"`, `character`, `scene <name>`. `clip-preview` only with feature `dev`.
 - **Scenes**: `scenes.ron` (`bevyrrowind/scenes.ron`; read from `--file`, cwd, next to the exe, then built in;
   `apps/bevyrrowind/src/scenes.rs:1`). A scene is a saved `view` command line plus what to look for; `scene --list`
-  lists them. Visual-check entries live in `bevyrrowind/docs/visual-checks.md` and `visual-checks/<system>.md`.
+  lists them. **Look comparisons** (CONTRIBUTING: one scene, live toggle): a scene's `ab: (set: "<tunable>", a: (value, label),
+  b: (value, label))` starts on arm A, Tab switches arms at the console layer, one line at the bottom names the live arm
+  (and says `compiling shaders` while a switch compiles pipelines), each switch logs `[A/B] arm ...`, and the F1 key help
+  starts hidden (`mw_devtools_bevy/src/scene_ab.rs`; `mw_game_core/src/scenes.rs` `SceneAb`). The load refuses an `ab` whose
+  tunable is unknown, restart-only or whose values don't parse (`scenes.rs` `parse`). Example: `impostor-depth-ab`. Visual-check entries live in `bevyrrowind/docs/visual-checks.md` and `visual-checks/<system>.md`.
 - **`--off` parts**: comma list or env `BEVYRROWIND_OFF`; enum `Part` in `mw_game_core/src/perf.rs:11` (terrain, near,
   far, sky, envmap, shadows, lights, particles, nif, farfield, ssao, bloom, gi, shadowcache, clouds, actors, walkers,
   physics, fog, froxels, ...). Decided at startup; `apply_off` (`mw_devtools_bevy/src/perf.rs:259`) drops spawners.

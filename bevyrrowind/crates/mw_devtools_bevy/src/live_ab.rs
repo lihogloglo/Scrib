@@ -15,7 +15,8 @@
 //! T clock speed (x1, x4, x20, x40), Shift+F12 copy camera (`--camera` string), Shift+C clouds on/off (also console
 //! `flip clouds`; F10 is the keybinds screen, `controls.rs`),
 //! C next weather (forced everywhere with its transition), F12 screenshot,
-//! B smooth ↔ vanilla character bodies (handled in `actors.rs`).
+//! B smooth ↔ vanilla character bodies (handled in `actors.rs`). A scene with an `ab` (a look
+//! comparison) also gets Tab and its arm line ([`crate::scene_ab`]) and starts with this help hidden.
 //! Agents reach the same switches over BRP ([`crate::remote`], `remote` feature), the
 //! dev console (backquote) as `on`/`off`/`flip <name>` ([`crate::console`]).
 
@@ -64,8 +65,14 @@ impl Plugin for LiveAbPlugin {
         if !app.is_plugin_added::<FrameTimeDiagnosticsPlugin>() {
             app.add_plugins(FrameTimeDiagnosticsPlugin::default());
         }
-        app.init_resource::<LiveAb>()
-            .add_systems(Startup, (spawn_overlay, pause_scene_clock))
+        app.init_resource::<LiveAb>();
+        // A look comparison (the scene's `ab`): its key and arm line, and the key help starts
+        // hidden (F1 shows it), so the screen holds two short lines.
+        if let Some(ab) = mw_game_core::scenes::active().and_then(|s| s.ab.clone()) {
+            app.world_mut().resource_mut::<LiveAb>().help = false;
+            app.add_plugins(crate::scene_ab::SceneAbPlugin(ab));
+        }
+        app.add_systems(Startup, (spawn_overlay, pause_scene_clock))
             .add_message::<sf_tunables_bevy::PresetApplied>()
             .add_systems(Update, (keys, preset_notes, overlay, skinned_wireframe).chain())
             .add_systems(PostUpdate, sun_shadows_off);

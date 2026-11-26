@@ -280,15 +280,20 @@ Status: **step 1 confirmed by owner 2026-10-19** (no flame/glow shadow blobs in 
 - Why: far impostors are now alpha-tested once, in the depth prepass; the main pass shades only the pixels the
   prepass kept (`far.impostor.depth_equal`, default on). Nothing should look different; a fault shows as holes or
   missing trees.
-- Kind: game location. Run: `scene handoff-forest` (Bitter Coast trees west of Seyda Neen, impostors from ~400 m).
-  A/B: the same with `--set far.impostor.depth_equal=false` (Bevy's stock state).
-- Log first: `sf_lod_bevy: far field of ...: ... N impostor models` with N > 0, and no line
-  `sf_lod_bevy: ... impostor parts have a main-pass pipeline and no prepass pipeline` (perf runs: counter
-  `far/impostors/no_prepass` = 0).
-- Look for (yes/no): 1. Do the trees past ~400 m look the same in both runs (shape, edges, brightness)? 2. Is any
-  far tree missing, see-through or holed, standing still or flying toward them (W) through the 350-450 m band?
-  3. Any flicker on the far trees while turning the camera?
-- Status: awaiting owner.
+- Kind: game location, look comparison in one scene. Run: `scene impostor-depth-ab` (Bitter Coast trees west of
+  Seyda Neen, clear weather, 10:00, clock paused; impostors from ~400 m). It starts on arm A (new); Tab switches
+  to B (stock Bevy) and back, and the line at the bottom names the live arm. The first switch compiles shaders
+  (the line says so) and may blink once: judge from the second switch on.
+- Log first: `[A/B] arm A (...): far.impostor.depth_equal = on` at the start, one `[A/B] arm ...` line per Tab;
+  `sf_lod_bevy: far field of ...: ... N impostor models` with N > 0, and no line
+  `sf_lod_bevy: ... impostor parts have a main-pass pipeline and no prepass pipeline`.
+- Look for (yes/no): 1. Switching with Tab (from the second switch on), do the trees past ~400 m stay the same
+  (shape, edges, brightness)? 2. In arm A, flying toward them (W) through the 350-450 m band: is any far tree
+  missing, see-through or holed? 3. In arm A, any flicker on the far trees while turning the camera?
+- Verdicts: 2026-11-26, two launches of `handoff-forest`. Run A (switch on; `110 impostor models`, no warn line):
+  no fault ("I don't see any change"), "No flicker". Run B (`--set far.impostor.depth_equal=false`): the same-look
+  question was not judged ("too many variables that change (weather etc). We need a test scene with a toggle").
+- Status: awaiting owner (question 1, on the toggle scene).
 
 ### RO-22: Near/far handoff band with GPU-culled statics (perf-push P3, 2026-11-12)
 - Why: near statics are no longer culled by distance on the CPU (`NoCpuCulling`); their visibility ranges (LOD levels,

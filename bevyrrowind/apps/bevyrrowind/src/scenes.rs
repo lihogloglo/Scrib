@@ -130,6 +130,16 @@ fn parse(text: &str, source: &str) -> crate::Result<Vec<SceneDef>> {
             return Err(format!("{source}: scene {:?} needs exactly one of `cell` and `level`", s.name).into());
         }
     }
+    // A look comparison names a tunable of this build and two values it takes (checked here,
+    // before any window; the run checks again against what its plugins registered).
+    if file.scenes.iter().any(|s| s.ab.is_some()) {
+        let catalog = mw_devtools_bevy::perf::tunables::catalog_store()?;
+        for s in &file.scenes {
+            if let Some(ab) = &s.ab {
+                mw_devtools_bevy::scene_ab::resolve(&catalog, ab).map_err(|e| format!("{source}: scene {:?}: {e}", s.name))?;
+            }
+        }
+    }
     Ok(file.scenes)
 }
 
@@ -166,6 +176,34 @@ mod tests {
                 assert!(mw_exterior_bevy::level::find(level).is_ok(), "scene {}: level {level} loads", s.name);
             }
         }
+    }
+
+    /// A look comparison changes one thing: its scene fixes the camera, and the weather wherever
+    /// it fixes an hour (an exterior), so only the arm differs (CONTRIBUTING "Tests and visual checks").
+    #[test]
+    fn look_comparisons_fix_everything_but_the_arm() {
+        let scenes = parse(BUILT_IN, "built-in").expect("scenes.ron parses");
+        let compared: Vec<_> = scenes.iter().filter(|s| s.ab.is_some()).collect();
+        assert!(!compared.is_empty(), "the registry has a scene with `ab`");
+        for s in compared {
+            assert!(s.fixed_camera(), "scene {}: `ab` needs a camera", s.name);
+            assert!(s.hour.is_none() || s.flags.iter().any(|f| f == "--weather"), "scene {}: `ab` at an hour needs --weather", s.name);
+        }
+    }
+
+    /// An `ab` on a tunable this build does not have, or with a value it refuses, fails the load.
+    #[test]
+    fn a_wrong_ab_fails_the_load() {
+        let scene = |ab: &str| format!(r#"#![enable(implicit_some)] (scenes: [(name: "x", cell: "Balmora", description: "d", ab: {ab})])"#);
+        let ok = r#"(set: "far.impostor.depth_equal", a: (value: "true", label: "new"), b: (value: "false", label: "stock"))"#;
+        assert_eq!(parse(&scene(ok), "t").expect("a catalogued bool").len(), 1);
+        let err = |ab: &str| parse(&scene(ab), "t").expect_err("refused").to_string();
+        assert_eq!(
+            err(r#"(set: "far.no_such", a: (value: "true", label: "new"), b: (value: "false", label: "stock"))"#),
+            "t: scene \"x\": ab: no such tunable \"far.no_such\""
+        );
+        assert!(err(r#"(set: "far.impostor.depth_equal", a: (value: "1.5", label: "new"), b: (value: "false", label: "stock"))"#)
+            .starts_with("t: scene \"x\": ab: arm A of far.impostor.depth_equal: "));
     }
 
     /// Flags after the scene name win, also over flags the scene sets itself.

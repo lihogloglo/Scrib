@@ -17,6 +17,7 @@ pub mod perf_panel;
 pub mod perf_panel_model;
 pub mod pipeline_watch;
 pub mod ready;
+pub mod scene_ab;
 pub mod switch_probe;
 pub mod switch_probe_model;
 #[cfg(feature = "remote")]
