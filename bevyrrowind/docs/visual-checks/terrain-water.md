@@ -161,14 +161,15 @@ bank of guide river 6, 11.5 m wide, 30 m before it enters lake 33. From `water.j
 the lake at its level, 317.76 m; mixing zone 28.8 m = 2.5 widths; water 0.5-0.7 m deep; lake link 60 runs on from
 the mouth across the lake). Tab switches `water.join.fade`: A = 1 "river fades into the lake (new)", B = 0 "river
 ends hard (before)"; one line on screen names the arm.
-Proof log lines: `worldgen water joins: 86 river ends: 23 lake, ...` at start; one `[A/B]` line per Tab.
+Proof log lines: `worldgen water joins: 99 river ends: 36 lake, ...` at start; one `[A/B]` line per Tab.
 Yes/no: (1) in A, looking down the river into the lake: does the river's water give way to the lake's gradually,
 with no straight cut across the mouth? (2) in A, is the lake one clean sheet past the mouth (B shows a river-wide
 stripe running on across the lake)? (3) in A, standing still: is the fade zone free of sparkle, crawling or a dot
 pattern? (4) from 30 m up over the mouth: still no seam in A?
 Known, not part of this check: no carved bed (wade-deep river). Since FL-4c the fade runs on along the lake link
-where a river stops at the lake's edge (9 of this world's 23 lake mouths); at least 7 short mouths are not carried
-yet and still end within ~4 m (open, water ledger).
+where a river stops at the lake's edge: 22 of this world's 23 river mouths into a lake since the 13 basin lakes got
+their lake link (`water.json` rerun 2026-11-27, 99 records: the 86 before, unchanged, + 13 links; heights unchanged);
+the last one (river 50) fades fully on its own 27.7 m in the lake.
 
 ### WA-14: Waterfall (FL-6b; `world:` x10s-b2w)
 

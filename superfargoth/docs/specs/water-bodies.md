@@ -164,8 +164,12 @@ a `lake_link`. **FL-4c (2026-11-26):** in a lake the fades follow the course, no
 lake and another starts in it within the first one's half width of its last point, the fade-out runs on along the
 second over the same zone, and the fade-in toward the outlet starts on the piece before the river that leaves the
 lake; a lake point takes the larger of the two, a stray piece with neither gets 0 (one hop: only the first seam
-carries). On x10hs-b2w 9 of the 23 lake mouths are carried on, 14 end at 0 on their own run; at
-least 7 of those are short runs no piece carries on yet (open, water ledger).
+carries). On x10hs-b2w 9 of the 23 lake mouths were carried on, 14 ended at 0 on their own run. Diagnosis
+(2026-11-27): 13 of the 14 end in the 13 basin lakes the water tool floods where a course crosses a dry closed basin;
+the tool cut the course into a piece flowing in and one flowing out and dropped the points between (outlet 147-636 m
+away), where Magna Urbis's own lakes get a `lake_link`. The tool now writes that run as a `lake_link` at the lake's
+level (scrib-worldgen e9130dc, records after the courses so no id moves): 22 of the 23 river mouths are carried, the
+last fades fully on its own 27.7 m run (zone 24.5 m). No change to the join rule.
 
 ### FL-5: guide bodies in the query, swimming carried by the current (worldgen-2, first)
 
