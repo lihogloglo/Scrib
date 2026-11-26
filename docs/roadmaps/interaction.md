@@ -80,7 +80,7 @@ Stages 2 and 3 run in parallel after Stage 1; Stage 6 can start any time (IN20 n
 | IN28 | `interaction.md` new "(d) World rules": decisions 6-8, caps, reuse, industry | docs | IN27 | **done 2026-11-26** (`interaction-world-rules.md`, 19.8 KB; noise via `InteractionNoise` → host → `NoiseEvent`; `Lit` → `GameplayLights` → MA16; IN17 moves `material` to `InteractableDef`) |
 | IN29 | `interaction-adapter.md`: activation per class, doors, lights, breakables, ignition, switches | docs | IN28 | **done 2026-11-26** (17.2 KB: 15-class activation table with OpenMW 4e718b50 cites, census defs, world-rules mapping, breakables, switches) |
 | IN30 | `world-reactions.md`: IN14 kinds (door, lever, light, fire), IN15 additions | docs | IN28 | **done 2026-11-26** (14-kind `WorldChange` table with concerns fed, `burnt` + door/lever/light reset rows, at-rest save, holder link wins) |
-| TV0b | `interaction.md` (c) rewrite (travel decisions 3-6; IN7, IN10, IN11, IN20-IN26) | docs | TV0, TV-R2 | doccheck |
+| TV0b | `interaction.md` (c) rewrite (travel decisions 3-6; IN7, IN10, IN11, IN20-IN26) | docs | TV0 | **done 2026-11-26** (`interaction-vehicles.md`; IN11c3a/b in travel.md) |
 
 ### Stage 1: use the world
 
@@ -147,11 +147,11 @@ AI consumers: AI31 and AI24 (IN9), AI27 (IN19), AI28 (IN18, IN19), AI8c (IN18), 
 |---|---|---|---|---|
 | IN20 | `GroundHit` carries the ground body and point velocity; kinematic velocity from the tick pose delta | `sf_physics`, `sf_controller` | - | **done 2026-11-25** (4 exact tests, 30/144 Hz) |
 | IN11 | Based movement on any moving body (lifts, platforms, cart beds, decks) | `sf_controller` | IN20 | as travel.md |
-| IN21 | Deck presentation: drawn pose, foot IK, camera interpolated base-local | `sf_controller_bevy`, `sf_camera` | IN11 | owner IN-11 |
+| IN21 | Deck presentation: drawn pose, foot IK, camera interpolated base-local | `sf_controller_bevy`, `sf_camera` | IN11c3a | owner IN-11 |
 | IN7 | Seat links on a moving owner: create/persist/delete, seat modes, dismount spot, jump off (rail half dropped) | `sf_interaction` | IN2, IN20 | exact; navmesh |
 | IN23 | Seat IK: pelvis to seat, feet to footrest/stirrup/deck, hands to rail/reins | `sf_anim_graph` | IN7 | owner IN-23 |
-| IN24 | Passenger state `{ vehicle, seat or base-local pose }`: save, `Boarded`/`Left`, base-relative replication | `sf_interaction`, `sf_save` | IN7, IN11 | mid-ride save/load |
-| IN22 | Deck-local nav: navmesh in the vehicle frame; NPCs walk a moving deck | `sf_nav(_bevy)` | IN11 | bow to stern |
+| IN24 | Passenger state `{ vehicle, seat or base-local pose }`: save, `Boarded`/`Left`, base-relative replication | `sf_interaction`, `sf_save` | IN7, IN11c3b | mid-ride save/load |
+| IN22 | Deck-local nav: navmesh in the vehicle frame; NPCs walk a moving deck | `sf_nav(_bevy)` | IN11c3a, NV9 | bow to stern |
 
 ### Stage 7: mounts (travel.md Stage 6; TV17, TV18 follow)
 

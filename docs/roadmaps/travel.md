@@ -78,7 +78,7 @@ formula), no ambushes, exploration-only reveal; operators are replaced here too 
 | TV-R1 | OpenMW (file + commit): providers, `DODT` counts per kind, placements, propylons, Mark/Recall | docs | - | **done 2026-11-25** (`docs/research/gameplay-2026-11-25/travel-data.md`) |
 | TV-R2 | Quadruped gaits (Morrowind creature clips, N-leg IK, crates), mount practice, deck-local nav | docs | - | **parked** (owner 2026-11-25: no mount research for now) |
 | TV0 | New spec `travel.md`: decisions 1-2, 7-10, saves, budgets, reuse check, industry comparison | docs | - | **done 2026-11-25** (8ec94f32; travel.md 27.6 KB) |
-| TV0b | `interaction.md` (c) rewrite: decisions 3-6, passenger state; rows IN7, IN10, IN11, IN20-IN26 | docs | TV0, TV-R2 | doccheck |
+| TV0b | `interaction.md` (c) rewrite: decisions 3-6, passenger state; rows IN7, IN10, IN11, IN20-IN26 | docs | TV0 (TV-R2 parked: mounts design-only) | **done 2026-11-26** (`interaction-vehicles.md` 26.7 KB; IN11c3 split into IN11c3a/b) |
 | TV0c | `services-adapter.md` "Travel": networks (strider star, boats, guides, gondolas), operator templates, options | docs | TV-R1, TV0 | doccheck |
 
 ### Stage 1: instant travel on every network (player-usable)
@@ -121,14 +121,15 @@ formula), no ambushes, exploration-only reveal; operators are replaced here too 
 | IN11c2c1 | Vertical ride swept: a lift carrying a rider into a ceiling stops the rider under it (no tunnelling, no pop through), rider stays grounded on the deck | `sf_controller` | IN11c2b | **done 2026-11-25** (head gap ≥ 9.94e-3 m, skin 0.01, at 2 and 10 m/s) |
 | IN11c2c2 | Crush between a moving base and a wall/ceiling (after IN11c2c1 the squeezed rider stays pinned and grounded while the deck passes 0.31 m into it; deck past `step_up` 0.45 m untested): `CharacterCrushed` event, rider pushed out or base blocked by its own rule, no explosion | `sf_controller`, `sf_physics_bevy` | IN11c2c1 | **done 2026-11-25** (one crush per episode: lift 2/10 m/s, cart into wall; depth ~0.11 m at 0.1 m threshold) |
 | IN11c2c3 | Crush follow-ups: game action bodies write `CharacterCrushed` (call `sf_physics_bevy::crushed` after `ActionSystems::Move` in `mw_walkers_bevy/src/physics.rs` ≈:517); squeezed action body must not play the fall state; release test when the lift reverses; a still kinematic pusher keeps the episode; `move.crush.depth_m` in CATALOG | `mw_walkers_bevy`, `sf_controller` | IN11c2c2 | headless: player crush event; reverse releases |
-| IN11c2d | Heavy dynamic bodies push the character (Jolt `mCanPushCharacter`: mass threshold), light ones are pushed | `sf_physics_bevy` | IN11c2b | headless: crate pushes, cup doesn't |
+| IN11c2d | Heavy dynamic bodies push the character (Jolt `mCanPushCharacter`: mass threshold), light ones are pushed | `sf_physics`, `sf_physics_bevy` | IN11c2b | headless: crate pushes, cup doesn't |
 | IN11c2e | Ride in traversal/fly/swim states and jump trajectory with base motion | `sf_controller`, `sf_action_bevy` | IN11c2b | exact: jump lands at the same deck spot |
-| IN11c3 | Pitching/rolling bases, rebase on fast bases; ms | `sf_controller` | IN11c2b-e | no slide-off at rest; ms |
-| IN21 | Deck presentation: drawn pose, foot IK, camera interpolated base-local | `sf_controller_bevy`, `sf_camera` | IN11 | drawn offset constant at rest; owner IN-11 (`level:` deck) |
-| IN7 | Seat links on a moving owner: create/persist/delete, seat modes, dismount spot, jump off (rail half dropped) | `sf_interaction` | IN2, IN20 | exact transitions; lands on navmesh |
+| IN11c3a | Pitching/rolling bases: full-rotation ride, upright capsule, twist-only facing (`interaction-vehicles.md` §2) | `sf_controller` | IN11c2b-e | no slide-off at rest; ms |
+| IN11c3b | Deck frame volume (airborne riders stay in the deck's frame) + floating-origin rebase while riding | `sf_controller`, `sf_physics_bevy` | IN11c3a | airborne drift sanity; rebase pop 0 |
+| IN21 | Deck presentation: drawn pose, foot IK, camera interpolated base-local | `sf_controller_bevy`, `sf_camera` | IN11c3a | drawn offset constant at rest; owner IN-11 (`level:` deck) |
+| IN7 | Seat links on a moving owner: create/persist/delete, seat modes, dismount spot, jump off (rail half dropped) | `sf_interaction(_bevy)`, `sf_action` | IN2, IN20 | exact transitions; lands on navmesh |
 | IN23 | Seat IK: pelvis to seat, feet to footrest/stirrup/deck, hands to rail/reins | `sf_anim_graph` | IN7, Kimodo clips | pelvis in tolerance; owner IN-23 |
-| IN24 | Passenger state `{ vehicle, seat or base-local pose }`: save, `Boarded`/`Left`, base-relative replication | `sf_interaction`, `sf_save` | IN7, IN11 | exact: mid-ride save/load |
-| IN22 | Deck-local nav: navmesh in the vehicle frame; NPCs walk a moving deck | `sf_nav(_bevy)` | IN11 | NPC walks bow to stern under way |
+| IN24 | Passenger state `{ vehicle, seat or base-local pose }`: save, `Boarded`/`Left`, base-relative replication | `sf_interaction`, `sf_save` | IN7, IN11c3b | exact: mid-ride save/load |
+| IN22 | Deck-local nav: navmesh in the vehicle frame; NPCs walk a moving deck | `sf_nav(_bevy)` | IN11c3a, NV9 | NPC walks bow to stern under way |
 
 ### Stage 4: real rides, striders and boats (needs Stage 3)
 
@@ -156,7 +157,7 @@ formula), no ambushes, exploration-only reveal; operators are replaced here too 
 |---|---|---|---|---|
 | IN25 | Mount locomotion profile (RDR2): speed, inertia, turn rate by speed, gait ladder | `sf_controller`, `sf_action` | TV-R2 | exact stop distance, turn radius |
 | IN26 | Procedural quadruped legs: N-leg foot placement, pelvis/spine pitch-roll, stride warp | `sf_anim_graph` | TV-R2 | no foot through a slope; owner IN-26 (guar) |
-| IN10 | Creature mount: mount/dismount by side, `RiderToMount`, astride seat, mounted gaits | `sf_interaction` | IN7, IN23, IN25, IN26 | exact hand-off; owner IN-10 |
+| IN10 | Creature mount: mount/dismount by side, `RiderToMount`, astride seat, mounted gaits | `sf_interaction`, `sf_action` | IN7, IN23, IN25, IN26 | exact hand-off; owner IN-10 |
 | TV17 | Whistle: mount paths to the caller, out-of-view fallback | `sf_interaction`, `sf_ai` | IN10, AI6 | arrives or fallback, never in view |
 | TV18 | Stamina, buck-off on a heavy hit, door dismount (mount tied, saved) | `sf_interaction` | IN10 | exact thresholds; lands on navmesh |
 | TV19 | Auto-ride the road graph to a pin or stop, hands-off camera | `sf_travel_bevy` | NV12, MAP3, TV17 | synthetic road graph; owner TV-6 |

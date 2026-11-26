@@ -16,14 +16,14 @@ the camera follows the drawn body at frame rate and never feeds gameplay.
   to a priority-ordered `RuleSet`; `Owner` at `:64`: `Sim`, `Warp`, `Clip`), `BASE_RULES`, `TRAVERSAL_RULES`
   (mantle waist/high, vault), holds (guard), look limits, grip (`grip.rs`) and brace (`brace.rs`). State is plain
   serde with integer clocks and no singleton player (`state.rs`), so it is net-ready.
-- **Moving bases** (IN11a): on ground with a body, `Locomotion::ride_base` (`mover.rs:326`, first in `begin`) moves
+- **Moving bases** (IN11a): on ground with a body, `Locomotion::ride_base` (`mover.rs:406`, first in `begin`) moves
   the feet with the base (rotation about its instantaneous centre from `GroundHit` point velocity and yaw rate) and
   turns yaw with it; `moved` excludes it, so an idle rider plays standing. Leaving keeps the base's horizontal
-  velocity in `inherited` (`:255`, runtime only), cleared on landing; a jump adds the base's vertical speed (`launch`).
+  velocity in `inherited` (`:322`, runtime only), cleared on landing; a jump adds the base's vertical speed (`launch`).
   Stage 0 `KinematicMover::carry` (IN11c1, `mover.rs:507`) sweeps the ride (`carry_slide` :717: blocks only on
   closing relative velocity, ignores the base) and applies pushes from `GroundProbe::contacts` (`probe.rs:137`, Jolt
   `CharacterVirtual` style; default none: the physics probe implements it in IN11c2a).
-- **Mover**: `sf_controller/src/mover.rs:35` (`MoverParams`), `:185` (`MoverMode`), `:214` (`Locomotion`);
+- **Mover**: `sf_controller/src/mover.rs:48` (`MoverParams`), `:214` (`MoverMode`), `:281` (`Locomotion`);
   `KinematicMover::step_batch` springs velocity and facing toward the intent (Holden spring, closed form), blends
   last update's root motion, collide-and-slides statics, steps up/down, predicts the `Trajectory`. All probes go
   through one batched `GroundProbe` call per stage (`probe.rs`). ORCA avoidance runs first (`avoid.rs`).
