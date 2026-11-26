@@ -239,7 +239,8 @@ pub enum Hold { Claim(SlotRef), Ticket(SlotRef) }   // one per user
   `interact.claim.lease_s`; Occupied has no lease. Leases count ticks (seconds × fixed rate).
 - `occupy` on entering (holder only), `release` on the exit's end. **Invalidation** releases, emits an event and
   promotes the queue when the owner object is destroyed, moved beyond `interact.claim.move_tolerance_m` or
-  `_deg`, unloaded, or its slot is disabled (a broken bed, a locked door's doorway), or when the user dies, is knocked
+  `_deg` (seats with `Occupancy::Attach` on a moving owner are exempt: moving is what they do,
+  [interaction-vehicles.md](interaction-vehicles.md) §4), unloaded, or its slot is disabled (a broken bed, a locked door's doorway), or when the user dies, is knocked
   down (`Takeover`) or leaves its worldspace. The user's executor then exits (a forced stand-up) or replans.
 - Claims are **not saved**: on load, `sf/ai` restores the NPC's activity and the AI's promotion resolve re-claims
   (ai.md "Tiers and budget"); a seated player saves `seated: Option<SlotRef>` in `CharacterSave` and re-claims first.

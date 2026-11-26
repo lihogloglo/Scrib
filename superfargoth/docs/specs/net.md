@@ -196,7 +196,12 @@ simulates ahead and the host corrects. "Local" = each machine computes its own, 
   read from baked root tracks, so a replay repeats the path. Warps onto static targets (ledges,
   seats from the bake) predict; paired moves onto NPCs are host-started (the client predicts only
   the wind-up); lunges toward an NPC aim at its interpolated pose and accept a small correction.
-- **Not predicted**: hits and damage, NPCs, props, claims, inventory, anything another player owns.
+- **Own ridden mount** (exception to "NPCs" below): while a player drives a mount (`Driver` seat), the mount's
+  body is predicted with the rider's character on the same commands and reconciled with it
+  ([interaction-vehicles.md](interaction-vehicles.md) "Passenger state"); it returns to host-only on dismount.
+  Passengers and decks are base-relative snapshots, never predicted vehicles.
+- **Not predicted**: hits and damage, NPCs (except an own ridden mount), props, claims, inventory, anything another
+  player owns.
 
 ## Hit authority and lag compensation
 

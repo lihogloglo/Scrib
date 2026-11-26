@@ -200,7 +200,7 @@ pub enum AboardAt { Seat(SlotRef), Deck { deck: u8, local: Iso, local_velocity: 
 - **Replication** ([net.md](net.md) "Prediction", rules 5, 8): an aboard snapshot carries `(vehicle, local pose, local
   velocity)` instead of a `WorldPos`; peers compose it with their own vehicle pose (UE `FBasedMovementInfo`), so
   remote riders never jitter. Own prediction runs base-local: exact on a pure route deck, corrected on a kind 3 deck.
-  The ridden own mount is predicted with its rider (to add to net.md "Prediction", net lane).
+  The ridden own mount is predicted with its rider (net.md "Prediction", own ridden mount).
 
 ### 7. Deck-local nav (IN22)
 
@@ -303,12 +303,11 @@ feel after IN11b) already awaits the owner.
 
 ## Open questions
 
-**Owner (taste and scope, each with a recommendation):**
-1. Jumping off a seat or deck at speed: a GTA-style tumble (roll, fall damage) above some speed? Recommended: yes,
-   above 3x `interact.seat.jump_off_speed_mps`; a normal landing below.
-2. Mount from behind (RDR2 vault) or onto a moving mount in the first mount slice? Recommended: later; by side only.
-3. Seated passengers: items and spells, or look only until mounted combat? Recommended: non-attack items and spells
-   yes, attacks with mounted combat.
+**Decided by the industry standard (meta, 2026-11-26; were owner questions):**
+1. Jumping off a seat or deck at speed: a GTA/RDR2-style tumble or stagger above 3x
+   `interact.seat.jump_off_speed_mps`; a normal landing below.
+2. Mount from behind (RDR2 vault) or onto a moving mount: later; the first mount slice mounts by side only.
+3. Seated passengers use items and non-attack spells; attacks come with mounted combat.
 
 **For TV-R2 (parked; do not invent the answers):** which creatures a pack may ride and where the saddle sits (bone
 or authored point); their gait clips, foot-contact curves and loop phases; leg chain types (two-bone, digitigrade,

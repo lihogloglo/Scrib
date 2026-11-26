@@ -2018,3 +2018,6 @@ New entries: one dated bullet, ≤ 3 lines, under "## 10. Decisions log" (newest
 - 2026-11-26 (owner, combat): Modern fists and blunt hits damage health (Cyberpunk 2077); non-lethal hits that empty health
   down the foe (knockout) instead of killing; mercy = spare or Finish a downed/yielded foe (C20-C23, roadmap decision 20).
   Morrowind's fatigue-first fists are Classic `CombatRules` only. Details Q10-Q15 pending owner.
+- 2026-11-26 (meta, vehicles, industry standard): jumping off a vehicle above 3x the jump-off speed tumbles (GTA/RDR2);
+  seated passengers use items and non-attack spells, attacks wait for mounted combat; mounting from behind or onto a
+  moving mount is later. An own ridden mount is predicted with its rider (net.md "Prediction"). interaction-vehicles.md.
