@@ -93,6 +93,11 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   `BodyCell` together, so the drawn position does not move; a refusal changes nothing and is asked again next
   frame. `Held` bodies wait for their release. Gap: a body whose placement no Active list and no overlay entry
   holds is not re-homed. Proof line `actors: N re-homed` (`, M without a held placement` when some wait; ≤ 1/s).
+  **A bodiless tier-0 actor's placement follows it** (AI10c3c2a, `mw_walkers_bevy/src/bodiless.rs`): deactivation
+  keeps the placement as the overlay holds it (`ResidentActors` away map); `follow_bodiless`, last of the Step chain,
+  moves it in the overlay (kept rotation) on the tick a routed, non-following stored actor's logical position enters
+  another cell or worldspace, so that cell's next fetch spawns the body there; no body and no state = pruned. Gaps:
+  an actor never loaded since start has nothing kept; a loaded cell is not re-read (AI10c3c2b).
   Tier 0 core (AI10a, `sf_ai/src/logical.rs`): `LogicalState::step` jumps event to event
   (route arrival, `DirectiveStack::next_deadline`, `LogicalEnv::next_window_edge` hook), each served kind taken up
   through `LogicalTransitions::transition` (StayNear waits in place or walks home, GoTo/Escort walk and end

@@ -431,6 +431,12 @@ Fact store, Nemesis-style relations and vendettas, bounded gossip, reputation pe
   it is placed, so a queued actor perceives and plans as tier 0. A stored body already standing on its state's spot
   (same worldspace, within its body radius) is placed there with no view test: nothing moves, so nothing pops in.
   Followers read their leader's state through the store, stepped after the actors they follow.
+- **As built (AI10c3c2a, 2026-11-27):** `mw_walkers_bevy::bodiless`. At an actor cell's deactivation `ActorPoseHook`
+  keeps its placement as the overlay holds it (`ResidentActors` away map; activation drops it, a discard keeps nothing).
+  Last in the Step chain, each kept placement of a bodiless stored actor on a route moves (`PlacementOverlay::move_to`,
+  kept rotation) when its logical position's `(worldspace, partition cell)` changes: one write per crossing; entries
+  with neither body nor state are pruned. Gaps: actors never loaded since start, followers; loaded cells wait for
+  `AI10c3c2b`.
 - **CPU tier** = host setting `sim.cpu_tier` (auto from cores, AI9d), apart from the graphics preset. Clients vary
   only presentation.
 

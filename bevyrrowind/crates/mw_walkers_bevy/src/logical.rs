@@ -320,7 +320,7 @@ pub fn add(app: &mut App) {
         FixedUpdate,
         (
             enter_tier0.after(AiAllocSystems::Allocate).before(AiLogicalSystems::Hold),
-            (note_served, step_tier0, after_step).chain().in_set(AiLogicalSystems::Step),
+            (note_served, step_tier0, after_step, crate::bodiless::follow_bodiless).chain().in_set(AiLogicalSystems::Step),
             promote_tier0.in_set(AiLogicalSystems::Promote),
         )
             .run_if(resource_exists::<GameClock>),
@@ -338,15 +338,25 @@ pub struct Tier0World<'w> {
 }
 
 impl Tier0World<'_> {
-    fn traverse(&self) -> TraverseTimes {
+    /// The tick's game instant.
+    pub(crate) fn now(&self) -> GameInstant {
+        self.clock.now
+    }
+
+    /// The worldspace graph (`None` without `NavWorldGraph`).
+    pub(crate) fn graph(&self) -> Option<&WorldGraph> {
+        self.graph.as_deref().map(|g| &g.0)
+    }
+
+    pub(crate) fn traverse(&self) -> TraverseTimes {
         self.tunables.as_ref().map_or_else(TraverseTimes::default, |t| TraverseTimes::from_tunables(&t.0))
     }
 
-    fn door(&self, id: LinkId) -> DoorState {
+    pub(crate) fn door(&self, id: LinkId) -> DoorState {
         self.doors.as_ref().map_or(DoorState::Closed, |d| d.state(id))
     }
 
-    fn time_scale(&self) -> f64 {
+    pub(crate) fn time_scale(&self) -> f64 {
         f64::from(self.clock.time_scale)
     }
 }
