@@ -161,7 +161,7 @@ waits for its type (AI28). Tests: `tests_light.rs` (6, whole pipeline).
 
 | Case | Trigger (shell) | `at` | Reveals the maker |
 |---|---|---|---|
-| Impact | rapier `ContactForceEvent` over the material's threshold (IN4) | contact point | no |
+| Impact | `PhysicsEvent::Contact` at `speed` >= `interact.noise.min_speed_mps` (IN4 reads the same reports) | contact point | no |
 | Thrown landing | first impact of a thrown prop | landing point | no |
 | Drop | a released held prop landing | landing point | if the dropper is within `interact.noise.reveal_m` |
 | Break | `Destroyed` (b) | object | no (yes for a melee break) |
@@ -193,7 +193,8 @@ waits for its type (AI28). Tests: `tests_light.rs` (6, whole pipeline).
 ## Reuse check (CONTRIBUTING rule 0)
 
 - **Bevy 0.20:** `FixedUpdate`, messages and observers, `Image` assets for the burn texture; no chemistry, fire or
-  gameplay light. Glue only. **Rapier:** `ContactForceEvent` with per-collider force thresholds is the impact trigger.
+  gameplay light. Glue only. **Rapier:** contacts come through `sf_physics` `PhysicsEvent::Contact` (solver impulse + normal speed change), not
+  `ContactForceEvent` (fires every step a resting load passes its force threshold; destruction spec "Impacts (IN4)").
 - **Our crates:** `sf_surface` (wetness), `sf_weather` (mean wind), `sf_effects` (flames, capped lights), the terrain
   and groundcover shaders (burn lookup), `sf_ai_bevy` `NoiseEvent` and `AiLightInputs` (host-mapped).
 - **Crates:** no chemistry or fire-spread crate (research §7); particles are `sf_effects`' business.

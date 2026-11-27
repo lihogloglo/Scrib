@@ -342,6 +342,9 @@ breaks: see [(d) World rules](interaction-world-rules.md) (IN28).
 | `interact.debris.shrink_s` | s | 0.5 | 0.1-3 | Guess (Industry: UE Chaos scale on removal [M]; IN1-S) | Presentation |
 | `interact.debris.speed_mps` | m/s | 2.5 | 0-10 | Guess (IN1c: launch away from the hit) | Presentation |
 | `interact.debris.spread` | ratio | 0.35 | 0-1 | Guess (IN1c: seeded direction, speed and spin jitter) | Presentation |
+| `interact.impact.speed_min_mps` | m/s | 3.0 | 0.5-10 | Guess (IN4-S: a 0.46 m fall; Source min speed) | Gameplay |
+| `interact.impact.impulse_min_ns` | N·s | 0.5 | 0-50 | Guess (IN4-S: Source `minhealthdmg` dead zone) | Gameplay |
+| `interact.impact.damage_per_ns` | ratio | 0.5 | 0-10 | Guess (IN4-S: Source `physdamagescale`, Chaos threshold) | Gameplay |
 | `interact.place.clearance_m` | m | 0.35 | 0.1-1.5 | Guess (a crate's half width; IN46) | Gameplay |
 | `interact.place.spread_m` | m | 0.4 | 0.1-2 | Guess (spiral spacing; reach √15 × 0.4 ≈ 1.5 m at 16 tries) | Gameplay |
 | `interact.place.floor_tries` | count | 16 | 1-64 | Guess (16 points ≈ 1.5 m reach at 0.4 m) | Gameplay |
@@ -410,7 +413,7 @@ IN27-IN30 and TV0b are stage 0). IN5 is folded into IN9 (owner 2026-11-11). The 
 | IN6 | Player moves furniture: promotion + carry/drag, slots follow, persistence | `sf_interaction_bevy` | IN2, IN35, static-scene B5a-2 | exact: overlay round trip moves slots; sanity: comes to rest; owner IN-6 |
 | IN1 | Crates and barrels break, tier 1: prop targets, health, stages, spill with damage, loot/salvage, debris + LOD, `Destroyed`, overlay blob | `sf_interaction(_bevy)` | IN0, combat C2c/C3 | exact: stage math, LOD gate, save round trip, event; sanity: debris rests, no NaN; owner IN-1 |
 | IN38 | Adapter breakables (crates, barrels, urns, sacks, pottery), materials, `NoiseKind` | `mw_interaction` | IN1, IN29 | exact rows on game data |
-| IN4 | Impact damage (thrown items, falls) from `ContactForceEvent` thresholds | `sf_interaction_bevy` | IN1 | exact: threshold maps to damage; sanity; owner IN-4 |
+| IN4 | Impact damage (thrown items, falls) from `PhysicsEvent::Contact` impulse thresholds (destruction spec "Impacts (IN4)") | `sf_interaction_bevy` | IN1 | exact: threshold maps to damage; sanity; owner IN-4 |
 | IN18 | `NoiseEvent` emitters: impacts, breaks, doors, throws, drops, bashes, lock picks (crime LW13); see [(d)](interaction-world-rules.md) | `sf_interaction_bevy` | IN4, IN33, AI8a | exact loudness per case |
 | IN37 | Bash locks/doors: strength-scaled lock damage, contents risk, `Bashed`, `LockRequest::Force` + offence hook | `sf_interaction`, `mw_interaction` | IN1, IN33 | exact thresholds |
 | IN14 | `WorldChange` vocabulary + placement diff ([world-reactions.md](world-reactions.md)) | `sf_interaction` | IN1, IN6, IN33 | one event per transition |

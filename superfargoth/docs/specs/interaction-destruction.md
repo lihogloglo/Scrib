@@ -363,6 +363,91 @@ listing via search summary); https://dev.epicgames.com/documentation/unreal-engi
 [7] https://falloutck.uesp.net/wiki/Precombined_References; https://forums.nexusmods.com/topic/5446017-precombined-meshes-what-destroys-them
 (U: search summaries, community knowledge)
 
+## Impacts (IN4; spec IN4-S 2026-11-27)
+
+"Damage in" (2): a thrown jar breaks on a wall, a crate dropped on a jar breaks it, a bottle knocked off a counter may
+break itself. Host only (clients get `Destroyed`); damage only, no noise (IN18b reads the same contacts itself).
+
+**Trigger: `PhysicsEvent::Contact`, not `ContactForce`.** `ContactForce` (`sf_physics` `body.rs:144`, `world.rs:696`)
+is rapier's contact-force event: it fires every step the pair's summed force passes `contact_force_threshold` (200 N
+default, `body.rs:240`) [8], so a 30 kg crate resting on a floor (294 N) reports each step it is awake, and the force
+spreads over steps for soft hits (the PH-10 lesson, `sf_physics_bevy` `character.rs:348`). `Contact` (`body.rs:171`)
+is the pair's solver normal `impulse` (N·s) this step plus `speed`, the normal velocity change it caused (`impulse ×
+(1/m_a + 1/m_b)`, fixed side infinite mass), reported only for awake dynamic `Layer::MOVING` bodies at `speed` or
+`slide` >= 0.3 m/s, never for bodies still settling, each pair once (`world.rs` `contact_reports`). A resting or
+sliding body changes its normal velocity by `g·dt` (0.16 m/s at 60 Hz) a step, so a speed gate removes it whatever its
+mass. It is the event impact audio already reads (`sf_audio_bevy` `physics.rs:31`).
+
+**Core** (IN4a, `sf_interaction` `impact.rs`, pure): `impact_damage(impulse_ns, speed_mps, &InteractParams) -> f32`
+= `interact.impact.damage_per_ns × (impulse_ns − interact.impact.impulse_min_ns)` when `speed_mps >=
+interact.impact.speed_min_mps` and the impulse passes the dead zone, else 0; non-finite input -> 0. `DAMAGE_IMPACT =
+TagId::of("impact")` beside `DAMAGE_SCRIPT` (`destroy.rs:37`). **Both bodies take the same raw amount** (Newton's third
+law: one impulse acts on both): fragility is per material and per health, not per mass, so the jar's 1-2 hp and the
+crate's 15 hp (`mw_interaction` `tunables.rs:58-68`) do the split, and the shell's `DestructionRules` `(impact,
+material)` factor scales it (stone 0, glass high: the adapter's data). A fixed side (floor, wall, a static crate) has
+no velocity change but the impulse is still real, so a jar thrown at a static crate chips the crate: impulse, not
+per-body Δv, is why a fixed target works. Impulse vs energy: Chaos compares collision strain (from impulses) with each
+cluster's damage threshold, scaled per physical material [9]; Source scales impact damage per prop
+(`physdamagescale`), ignores hits under a minimum (`minhealthdmg`) and has a minimum linear speed and a 2 kg floor in
+its impact tables [10]. Our three tunables are those three knobs (scale, dead zone, speed floor); the mass floor is
+not needed (a light body's impulse is small already).
+
+**Shell** (IN4b, `sf_interaction_bevy` `impact.rs`, `physics` feature, `FixedUpdate`, `.after(PhysicsSystems::Step)
+.before(DestroySystems::Damage)`; no ordering cycle today: `Apply` and `Damage` are not ordered against `Step`, debris
+already runs after both):
+
+- **This step's events only.** `PhysicsEvents` (`sf_physics_bevy` `lib.rs:168`) holds the whole frame's steps and is
+  cleared in `First`; its readers today run in `Update`. The shell keeps an `ImpactCursor(usize)` resource reset to 0
+  in `First` and reads `events.0[cursor..]`, then sets it to `len`: two steps in one frame never read the same event.
+- **Body -> placement.** `PhysicsStreaming` maps placement -> body only (`stream.rs:289` `body(ws, id)`); the shell
+  builds a `BTreeMap<BodyId, PlacementId>` from `Destructibles` (not `gone`) and `ActiveWorldspace` on a step with at
+  least one gated contact (the destructibles of loaded cells, a few hundred: negligible), so no change in
+  `sf_physics_bevy`. A body on neither side registered -> nothing.
+- **Filters.** A pair where either side is `DEBRIS` (cosmetic, never gameplay), `PROJECTILE` (combat's hit path,
+  C14, would count it twice) or `HELD` (the carry spring pressing into a wall is a push, not an impact) gives no
+  damage (`PhysicsWorld::layer`, `world.rs:410`). `RAGDOLL` and `POWERED` count (a body falling onto a jar).
+- **Out.** Per registered side, `PropDamage { placement, amount: impact_damage(impulse, speed), kind: DAMAGE_IMPACT,
+  point, dir, culprit: None }`, `dir` the contact normal into that side (`normal` for `b`, `-normal` for `a`); zero
+  amounts are not sent. The damage step's total-key sort (above, "Order") makes the result independent of event order.
+- **Culprit: `None` in IN4b (gap).** `CarryFeedback { holder, outcome: Thrown }` (`sf_physics_bevy` `carry.rs:99`)
+  names no body, so a thrown body's thrower is unknown; IN18's "Thrown landing" noise needs the same link. Row IN4c
+  (later, with the carry owner): the thrown `BodyId` in the feedback, a `Thrown(BodyId -> (UserKey, tick))` table in the
+  shell kept until the body sleeps, its key as the culprit (vandalism reads `Destroyed.culprit`).
+- **Needs** `PhysicsParams::contact_report_layers` non-empty (default `Layer::MOVING`); empty: no impacts, no cost.
+
+**Tunables** (`interact.impact.*`, on `InteractParams`, bound in `sf_interaction_bevy`, interaction.md table):
+
+| Key | Unit | Default | Range | Source | Kind |
+|---|---|---|---|---|---|
+| `interact.impact.speed_min_mps` | m/s | 3.0 | 0.5-10 | Guess (a 0.46 m fall; resting 0.16 m/s; Source min speed [10]) | Gameplay |
+| `interact.impact.impulse_min_ns` | N·s | 0.5 | 0-50 | Guess (Source `minhealthdmg` dead zone [10]) | Gameplay |
+| `interact.impact.damage_per_ns` | ratio | 0.5 | 0-10 | Guess (Source `physdamagescale`, Chaos threshold [9]) | Gameplay |
+
+Worked numbers at the defaults (inelastic, factor 1): a 0.4 kg bottle off a 0.9 m counter (4.2 m/s, 1.7 N·s) takes
+0.6 of its 1 hp and survives; thrown at 10 m/s (4 N·s) it takes 1.75 and breaks; a 1 kg pot dropped 3 m (7.7 m/s,
+7.7 N·s) takes 3.6 of 2 hp and breaks, and the same pot thrown at 10 m/s into a static crate (10 N·s) chips 4.75 of
+the crate's 15 hp (and breaks).
+
+**Tests.** IN4a (exact): under `speed_min_mps` 0 at any impulse; at the dead zone 0; linear above it (two points,
+exact bits); NaN/inf in -> 0; same inputs same bits. IN4b (headless exact, `--features physics`): a registered dynamic
+prop dropped from 3 m onto a fixed floor gets one `PropDamage` per impact with `impact_damage` of the event's own
+impulse and speed (read back from `PhysicsEvents`), and breaks at 1 hp; a 0.2 m drop gives none; a dynamic body
+falling on a registered fixed placement damages that placement only; an unregistered pair and a `DEBRIS` body give
+none; two physics steps in one frame do not double an event.
+
+**Industry comparison.** Matches Chaos (impulse-driven strain against a per-cluster threshold, per-material
+multiplier [9]) and Source (per-prop scale, minimum damage, speed floor [10]); Unity's usual `OnCollisionEnter`
+practice is the same impulse threshold. Bethesda (Havok in Skyrim/Fallout 4) destructibles taking physics-impact
+damage: U (not verified). RAGE fragment break strength (GTA V, RDR2): U.
+
+[8] https://rapier.rs/docs/user_guides/templates/advanced_collision_detection/ (contact force events: summed force
+magnitudes over a per-collider threshold, every step the contact lasts; U: search summary)
+[9] https://dev.epicgames.com/documentation/en-us/unreal-engine/chaos-fields-user-guide-in-unreal-engine,
+https://dev.epicgames.com/documentation/unreal-engine/API/PhysicsCore/FPhysicalMaterialDamageModifier (U: search
+summaries)
+[10] https://developer.valvesoftware.com/wiki/Impact_Damage_Table, https://developer.valvesoftware.com/wiki/Prop_physics
+(U: search summaries)
+
 ## As built (IN1a, 2026-11-27)
 
 `sf_interaction::destroy` (`destroy.rs`): `DestructState { health, stage }` (stage = stages reached, 0 intact),
