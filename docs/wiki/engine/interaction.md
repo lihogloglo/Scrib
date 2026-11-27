@@ -126,7 +126,7 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
 
 - No rest UI: `RestRequested` is only logged. Lying down (IN3b) and lean (IN3c) wait for baked bed and lean clips.
 - `interact.cook` is a stub (`sf_interaction/src/cook.rs:16`); defs are cooked by the game's bake step only.
-- Carry and world rules are spec only; breaking removes the object and spills a container's contents, no debris (IN1c); `STAT` urns in the near precombine (`--off scene` arm) stay drawn until IN38c3 keeps them out of it.
+- Carry and world rules are spec only; breaking removes the object and spills a container's contents, no debris (IN1c); breakable `STAT` urns stay out of the near precombine (`--off scene` arm, `mw_bake` `far.rs` `precombine_exclude`, IN38c3), so they break there too after a re-bake.
 - Lights: off-by-default lights get no def; the loop sound and the AI's light copy don't follow `LightChanged` yet.
 - History of each slice: [ledger](../../ledger/interaction.md).
 

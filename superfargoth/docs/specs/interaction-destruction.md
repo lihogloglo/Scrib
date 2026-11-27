@@ -456,3 +456,10 @@ false); `sf_scene_bevy` `residency_tests.rs` `hidden_queues_one_inactive_write_p
 rooted. `mw_rpg_bevy` `take_out`: a `Static` from `remove_live` then `hide_static` (`Streaming::hide_covered` under
 `resource_scope`, no-op without `Streaming`). Tests: `mw_scripts_bevy` `tests.rs` (listed vs unlisted), `mw_rpg_bevy`
 `tests_breakable.rs` (scene- and entity-drawn urn); the hide's true half is `sf_world_bevy`'s (no streamed cell here).
+
+## As built (IN38c3, 2026-11-27)
+
+`mw_bake` `far.rs`: `MwFarSource` keeps `breakable_statics` (lowercase `STAT` ids `classify` lists, `named_by_script`
+false: a named one is already vetoed by its token); `precombine_exclude` = script token or breakable static. The set is
+hashed into the fingerprint and `RULES_VERSION` 3 -> 4, so `lod.near` re-bakes once. Tests (`far.rs` `breakable_tests`):
+`build_near` over a wall and an urn keeps only the wall; adding an urn changes the fingerprint, a plain static does not.

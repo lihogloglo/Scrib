@@ -11,7 +11,8 @@ skip Bevy's CPU culling (`NoCpuCulling`). Streaming and the per-placement fallba
 
 **Precombine (default near path).**
 - Bake: `sf_lod::near` merges a cell's eligible statics per material and LOD level into cooked models, one per size
-  bucket (`BUCKET_EDGES` 0.5, 2, 8 m radius, `sf_lod/src/near.rs:21`); nothing is simplified or re-textured.
+  bucket (`BUCKET_EDGES` 0.5, 2, 8 m radius, `sf_lod/src/near.rs:21`); nothing is simplified or re-textured. The game's
+  veto (`FarSource::precombine_exclude`, `mw_bake` `far.rs`) keeps out statics a script names and breakable statics (IN38c3).
 - Load: a near `Load` request starts loading the cell's `CellPrecombine` asset when `config.precombine`, a far field is
   installed and the worldspace is not ray-traced (`sf_world_bevy/src/stream.rs:807-818`). The path comes from `Precombines`
   that `FarFieldPlugin` installs (`sf_lod_bevy/src/lib.rs:186-193`, product `NEAR_STEP`, loader `NearCombineLoader`).
