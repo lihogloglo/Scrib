@@ -455,3 +455,60 @@ fn promote_per_tick_is_live() {
     }
     assert_eq!(left, [2, 1, 0]);
 }
+
+/// `MA22b`: `sf/ai` v2 keeps the tier-0 store. Walkers mid-route, one standing actor and one woken
+/// after a push from outside the step save and load into a fresh app with the same clock: the
+/// states, their `until` and the due index read back exactly, and both apps then finish the same
+/// directives at the same instants in the same order.
+#[test]
+fn a_saved_tier_zero_store_loads_exactly_and_carries_on_identically() {
+    let mut a = app(BIG, Views { seen_x: 1e9 });
+    for (i, x) in [(1u128, 40.0), (2, 90.0), (3, 25.0)] {
+        let key = ActorKey(i);
+        stack_with(&mut a, key, DirectiveKind::GoTo(loc(x, 0.0)), DirectiveSource::Quest);
+        store_state(&mut a, key, loc(0.0, 0.0));
+    }
+    let stand = ActorKey(4);
+    stack_with(&mut a, stand, stay_near(loc(5.0, 5.0)), DirectiveSource::Record);
+    store_state(&mut a, stand, loc(5.0, 5.0));
+    for _ in 0..300 {
+        step(&mut a);
+    }
+    // A push from outside the step, then a wake: due at once although its state has no `until`.
+    let m = minute(&a);
+    a.world_mut().resource_mut::<AiDirectives>().get_mut(stand).unwrap().push(
+        DirectiveSpec::new(DirectiveKind::GoTo(loc(-30.0, 5.0)), DirectiveSource::Script).priority(9),
+        m,
+        &ModernPolicy,
+        &mut Vec::new(),
+    );
+    assert!(a.world_mut().resource_mut::<AiLogical>().wake(stand));
+
+    let saved = ai_save(a.world()).unwrap();
+    assert_eq!(saved.actors.len(), 4);
+    let woken = saved.actors[&stand].logical.as_ref().unwrap();
+    assert_eq!(woken.due, Some(GameInstant::ZERO));
+    assert_eq!(woken.state.until, None, "a plain wait: nothing due but the wake");
+    let walker = saved.actors[&ActorKey(2)].logical.as_ref().unwrap();
+    assert!(walker.state.route.is_some() && walker.state.until == walker.due, "{walker:?}");
+
+    let mut b = app(BIG, Views { seen_x: 1e9 });
+    b.world_mut().resource_mut::<Clock>().0 = a.world().resource::<Clock>().0;
+    // Stale state the load must replace.
+    store_state(&mut b, ActorKey(99), loc(1.0, 1.0));
+    // (The codec's byte round trip is `sf_ai`'s and `sf_save_bevy`'s test.)
+    ai_load(b.world_mut(), saved.clone());
+    // Every state with its due instant (the due index is `(due, key)` of exactly these).
+    assert_eq!(ai_save(b.world()), Some(saved.clone()));
+    assert!(!b.world().resource::<AiLogical>().contains(ActorKey(99)));
+
+    a.world_mut().resource_mut::<Ends>().0.clear();
+    for _ in 0..3000 {
+        step(&mut a);
+        step(&mut b);
+    }
+    let ends = |app: &App| app.world().resource::<Ends>().0.iter().map(|(e, at)| (e.actor, e.id, e.end, e.at, *at)).collect::<Vec<_>>();
+    assert_eq!(ends(&b), ends(&a));
+    assert_eq!(ends(&a).len(), 4, "three walkers arrive, the pushed GoTo completes: {:?}", ends(&a));
+    assert_eq!(ai_save(b.world()), ai_save(a.world()));
+}

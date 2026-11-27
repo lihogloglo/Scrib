@@ -495,7 +495,7 @@ saved: plans, traces, awareness, path requests, `DirectiveDone` events (rebuilt 
 actors). Belongs to the one state registry when it exists (vision §4.2.3).
 - **Section names are single-segment** (a family is the name before the first `/`, save.md "Registry"): hence
   `sf/aimemory`, not `sf/ai/memory` (audit 2026-11-09).
-- **As built (AI5):** one world section keyed by `ActorKey` (not overlay blobs), v1 = each actor's `SavedStack`; clock and key caveats: [ai-as-built.md](ai-as-built.md) "AI5".
+- **As built (AI5, MA22b):** one world section keyed by `ActorKey` (not overlay blobs); v2 = each actor's optional `SavedStack` and optional tier-0 `SavedLogical` (state + due instant), v1 (stacks only) migrates with no states; clock and key caveats: [ai-as-built.md](ai-as-built.md) "AI5".
 
 ## Scripting (Luau `@sf/ai`)
 

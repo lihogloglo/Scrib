@@ -46,7 +46,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sf_ai::{
     ActorKey, AiSave, DirectiveStack, LoadReport, Library, MethodId, OperatorId, PlanOutcome, StateKeys, TaskId, Trace,
-    TraceNames, TraceStore, format_directives, format_trace_with,
+    SavedLogical, TraceNames, TraceStore, format_directives, format_trace_with,
 };
 use sf_records::RecordDb;
 
@@ -241,37 +241,51 @@ impl AiDirectives {
         self.stacks.is_empty()
     }
 
-    /// The `sf/ai` value of this store.
+    /// The `sf/ai` value of this store alone (no tier-0 states: [`ai_save`] adds them).
     pub fn to_save(&self) -> AiSave {
         AiSave::from_stacks(self.iter())
     }
 
     /// Replaces the whole store with a loaded `sf/ai` (load is a full replace: an actor the save
-    /// lacks gets its record defaults when its stack is next built). A stack that breaks its
-    /// invariants is skipped with an error line; the section's check refuses those before any
-    /// load applies, so this only guards a caller that skipped it.
-    pub fn restore(&mut self, save: AiSave) {
+    /// lacks gets its record defaults when its stack is next built) and returns the save's tier-0
+    /// states for [`logical::AiLogical::restore`]. A stack that breaks its invariants is skipped
+    /// with an error line; the section's check refuses those before any load applies, so this
+    /// only guards a caller that skipped it.
+    pub fn restore(&mut self, save: AiSave) -> Vec<(ActorKey, SavedLogical)> {
         self.stacks.clear();
+        let mut states = Vec::new();
         for (actor, a) in save.actors {
-            match DirectiveStack::from_saved(actor, a.directives) {
-                Ok(stack) => {
-                    self.stacks.insert(actor, stack);
+            if let Some(directives) = a.directives {
+                match DirectiveStack::from_saved(actor, directives) {
+                    Ok(stack) => {
+                        self.stacks.insert(actor, stack);
+                    }
+                    Err(e) => log::error!(target: "sf_ai", "sf/ai: actor {}: {e}; record defaults instead", actor_hex(actor)),
                 }
-                Err(e) => log::error!(target: "sf_ai", "sf/ai: actor {}: {e}; record defaults instead", actor_hex(actor)),
+            }
+            if let Some(l) = a.logical {
+                states.push((actor, l));
             }
         }
+        states
     }
 }
 
-/// `get` of the `sf/ai` section (`sf_save_bevy::sections::ai`): `None` when no actor has AI state,
-/// so a world without AI writes no section (and loads back as one).
+/// `get` of the `sf/ai` section (`sf_save_bevy::sections::ai`): every directive stack and every
+/// tier-0 state ([`AiLogical`]); `None` when there are neither, so a world without AI
+/// writes no section (and loads back as one).
 pub fn ai_save(world: &World) -> Option<AiSave> {
-    world.get_resource::<AiDirectives>().filter(|d| !d.is_empty()).map(AiDirectives::to_save)
+    let stacks = world.get_resource::<AiDirectives>();
+    let states = world.get_resource::<AiLogical>();
+    let save = AiSave::from_parts(stacks.into_iter().flat_map(AiDirectives::iter), states.into_iter().flat_map(AiLogical::to_saved));
+    (!save.actors.is_empty()).then_some(save)
 }
 
-/// `set` of the `sf/ai` section: replaces [`AiDirectives`] (inserted if absent).
+/// `set` of the `sf/ai` section: replaces [`AiDirectives`] and [`AiLogical`] (each
+/// inserted if absent).
 pub fn ai_load(world: &mut World, save: AiSave) {
-    world.get_resource_or_insert_with(AiDirectives::default).restore(save);
+    let states = world.get_resource_or_insert_with(AiDirectives::default).restore(save);
+    world.get_resource_or_insert_with(AiLogical::default).restore(states);
 }
 
 /// `ai.directives`'s output for `actor`: a header line, then [`format_directives`].

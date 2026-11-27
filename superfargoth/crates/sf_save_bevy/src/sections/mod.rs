@@ -53,6 +53,7 @@ pub const OVERLAY_VERSION: u32 = 1;
 pub const RPG: &str = "rpg";
 pub const RPG_VERSION: u32 = 1;
 /// `sf/ai`: every actor's AI state (ai.md "Saves"); shape and version owned by `sf_ai::save`.
+/// v2: tier-0 states (`MA22b`); v1 is frozen in `sf_ai::save::legacy::v1`.
 pub const AI: &str = "ai";
 pub const AI_VERSION: u32 = sf_ai::AI_VERSION;
 /// `sf/services`: merchant purses (services.md "Saves"); shape and version owned by
@@ -280,14 +281,16 @@ pub fn characters(
 
 /// `sf/ai`: every actor's AI state by stable key (ai.md "Saves"; the game wires
 /// `sf_ai_bevy::ai_save` / `ai_load`). `get` returns `None` when no actor has AI state, so such a
-/// world writes no section and a save without one (from before AI5) loads as no AI state. The
-/// check refuses a stack that breaks its invariants, naming the actor, before anything applies.
+/// world writes no section and a save without one (from before AI5) loads as no AI state; a v1
+/// section loads with its stacks and no tier-0 states. The check refuses a stack that breaks its
+/// invariants, naming the actor, before anything applies.
 pub fn ai(
     get: impl Fn(&World) -> Option<AiSave> + Send + Sync + 'static,
     set: impl Fn(&mut World, AiSave) + Send + Sync + 'static,
 ) -> SaveSection {
     SaveSection::value(key(AI), AI_VERSION, get, set)
         .check(|_: &World, v: &AiSave| v.check().map_err(|e| e.to_string()))
+        .typed_step(1, sf_ai::save::legacy::v1::AiSave::migrate)
         .order(order::AI)
 }
 

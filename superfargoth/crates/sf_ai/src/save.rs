@@ -16,8 +16,11 @@
 //! **What is saved** (what can't be re-derived; Bethesda saves runtime package overrides and
 //! package data as change-form deltas, `OpenMW` saves each package's parameters and remaining
 //! duration): per actor, the directive stack as a [`SavedStack`] (entries with served minutes,
-//! the never-reused id sequence, the stack's clock, the serving mode). Later slices add the
-//! schedule cursor, tier-0 `(route, progress, until)`, activity and claim, running drive to
+//! the never-reused id sequence, the stack's clock, the serving mode) and, for an actor at tier 0,
+//! its [`LogicalState`] with its due instant as a [`SavedLogical`] (v2, `MA22b`: where it walks,
+//! how far, until when; tier 0 is the only record of where a bodiless actor is).
+//! Either may be absent (a tier-0 state whose stack is not built yet; a body with no tier-0
+//! state). Later slices add the schedule cursor, activity claim and running drive to
 //! [`ActorSave`] by version steps (frozen types in [`legacy`]). **Not saved**, rebuilt on load:
 //! plans, traces, awareness, path requests, [`DirectiveDone`](crate::DirectiveDone) events (a
 //! consumer polls [`DirectiveStack::status`], which answers from the saved id sequence; `OpenMW`
@@ -35,13 +38,18 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use sf_ids::ActorKey;
 
+use sf_ids::GameInstant;
+
 use crate::directive::{DirectiveStack, SavedStack, StackError};
+use crate::logical::LogicalState;
 
 /// Section key (owner `sf`, ai.md "Saves").
 pub const AI_SECTION: &str = "sf/ai";
 /// Schema version of [`AI_SECTION`]. A shape or meaning change bumps it, freezes the old types
 /// in [`legacy`] and adds a typed step (save.md "Versioning and migration").
-pub const AI_VERSION: u32 = 1;
+///
+/// v2 (`MA22b`): [`ActorSave`] carries the tier-0 state; v1 is frozen in [`legacy::v1`].
+pub const AI_VERSION: u32 = 2;
 
 /// The stored form of `sf/ai`: every actor the host holds AI state for, by stable key.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -49,10 +57,26 @@ pub struct AiSave {
     pub actors: BTreeMap<ActorKey, ActorSave>,
 }
 
+/// A loaded section's live stacks and tier-0 states, each in key order ([`AiSave::into_parts`]).
+pub type AiParts = (Vec<DirectiveStack>, Vec<(ActorKey, SavedLogical)>);
+
 /// One actor's saved AI state.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ActorSave {
-    pub directives: SavedStack,
+    /// Its directive stack (`None`: a tier-0 state whose stack the host had not built yet).
+    pub directives: Option<SavedStack>,
+    /// Its tier-0 state (`None`: not at tier 0; its body is streamed in, or it has none yet).
+    pub logical: Option<SavedLogical>,
+}
+
+/// A tier-0 state as the host's store holds it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SavedLogical {
+    pub state: LogicalState,
+    /// When the store steps it next: its `until`, or earlier when the host woke it (a push or a
+    /// cancel since its last step) or it serves nothing yet; `None` when nothing is due. Saved as
+    /// is so a load steps the same actors at the same instants, in the same order.
+    pub due: Option<GameInstant>,
 }
 
 /// A saved stack that breaks the stack's invariants (corrupt or forged data).
@@ -71,30 +95,93 @@ impl fmt::Display for AiSaveError {
 impl std::error::Error for AiSaveError {}
 
 impl AiSave {
-    /// The save form of `stacks` (keyed by their actors).
+    /// The save form of `stacks` (keyed by their actors), no tier-0 states.
     pub fn from_stacks<'a>(stacks: impl IntoIterator<Item = &'a DirectiveStack>) -> Self {
-        let actors = stacks.into_iter().map(|s| (s.actor(), ActorSave { directives: s.to_saved() })).collect();
+        Self::from_parts(stacks, std::iter::empty())
+    }
+
+    /// The save form of `stacks` and the tier-0 `states` (by actor; a key may be in either or
+    /// both).
+    pub fn from_parts<'a>(
+        stacks: impl IntoIterator<Item = &'a DirectiveStack>,
+        states: impl IntoIterator<Item = (ActorKey, SavedLogical)>,
+    ) -> Self {
+        let mut actors: BTreeMap<ActorKey, ActorSave> = stacks
+            .into_iter()
+            .map(|s| (s.actor(), ActorSave { directives: Some(s.to_saved()), logical: None }))
+            .collect();
+        for (actor, state) in states {
+            actors.entry(actor).or_insert(ActorSave { directives: None, logical: None }).logical = Some(state);
+        }
         Self { actors }
     }
 
     /// Refuses a section whose stacks break their invariants, naming the first such actor. Run
-    /// before anything is applied (`SaveSection::check`).
+    /// before anything is applied (`SaveSection::check`). A tier-0 state needs no check: any
+    /// value is one the host can step (a missing route end or placement holds the actor).
     pub fn check(&self) -> Result<(), AiSaveError> {
         for (actor, a) in &self.actors {
-            a.directives.check().map_err(|error| AiSaveError { actor: *actor, error })?;
+            if let Some(d) = &a.directives {
+                d.check().map_err(|error| AiSaveError { actor: *actor, error })?;
+            }
         }
         Ok(())
     }
 
-    /// The live stacks, in key order. Fails like [`check`](Self::check).
+    /// The live stacks, in key order (tier-0 states dropped). Fails like [`check`](Self::check).
     pub fn into_stacks(self) -> Result<Vec<DirectiveStack>, AiSaveError> {
-        self.actors
-            .into_iter()
-            .map(|(actor, a)| DirectiveStack::from_saved(actor, a.directives).map_err(|error| AiSaveError { actor, error }))
-            .collect()
+        self.into_parts().map(|(stacks, _)| stacks)
+    }
+
+    /// The live stacks and the tier-0 states, each in key order. Fails like [`check`](Self::check).
+    pub fn into_parts(self) -> Result<AiParts, AiSaveError> {
+        let mut stacks = Vec::new();
+        let mut states = Vec::new();
+        for (actor, a) in self.actors {
+            if let Some(d) = a.directives {
+                stacks.push(DirectiveStack::from_saved(actor, d).map_err(|error| AiSaveError { actor, error })?);
+            }
+            if let Some(l) = a.logical {
+                states.push((actor, l));
+            }
+        }
+        Ok((stacks, states))
     }
 }
 
-/// Frozen older `sf/ai` shapes, one module per version, each with its step to the next. None
-/// yet: version 1 is the first.
-pub mod legacy {}
+/// Frozen older `sf/ai` shapes, one module per version, each with its step to the next
+/// (`sf_save_bevy::sections::ai` registers the steps).
+pub mod legacy {
+    /// `sf.ai.v1` (AI5 until `MA22b`): stacks only, no tier-0 states.
+    pub mod v1 {
+        use std::collections::BTreeMap;
+
+        use serde::{Deserialize, Serialize};
+        use sf_ids::ActorKey;
+
+        use crate::directive::SavedStack;
+
+        #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+        pub struct AiSave {
+            pub actors: BTreeMap<ActorKey, ActorSave>,
+        }
+
+        #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+        pub struct ActorSave {
+            pub directives: SavedStack,
+        }
+
+        impl AiSave {
+            /// v1 -> v2: every stack kept, no tier-0 states (the host rebuilds them as any load
+            /// did before v2).
+            pub fn migrate(self) -> super::super::AiSave {
+                let actors = self
+                    .actors
+                    .into_iter()
+                    .map(|(k, a)| (k, super::super::ActorSave { directives: Some(a.directives), logical: None }))
+                    .collect();
+                super::super::AiSave { actors }
+            }
+        }
+    }
+}

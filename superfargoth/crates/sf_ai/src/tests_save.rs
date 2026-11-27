@@ -69,7 +69,7 @@ fn world() -> Vec<DirectiveStack> {
 #[test]
 fn the_section_key_and_version() {
     assert_eq!(AI_SECTION, "sf/ai");
-    assert_eq!(AI_VERSION, 1);
+    assert_eq!(AI_VERSION, 2);
 }
 
 #[test]
@@ -119,7 +119,7 @@ fn a_stack_that_breaks_its_invariants_is_refused_naming_the_actor() {
     let good = AiSave::from_stacks(&world());
     let edit = |f: &dyn Fn(&mut SavedStack)| {
         let mut save = good.clone();
-        f(&mut save.actors.get_mut(&GUARD).unwrap().directives);
+        f(save.actors.get_mut(&GUARD).unwrap().directives.as_mut().unwrap());
         save
     };
     let cases: [(AiSave, StackError); 3] = [
@@ -137,6 +137,61 @@ fn a_stack_that_breaks_its_invariants_is_refused_naming_the_actor() {
     let left = edit(&|s| s.serving = Serving::Directive(DirectiveId(1)));
     assert_eq!(left.check(), Ok(()));
     assert_eq!(AiSave::default().into_stacks(), Ok(Vec::new()));
+}
+
+/// A walker mid-route (woken: due before its `until`) and a standing actor without a stack yet.
+fn states() -> Vec<(ActorKey, SavedLogical)> {
+    use sf_ids::GameInstant;
+    let mut walking = LogicalState::new(place("town"), GameInstant::from_minutes(70));
+    walking.route = Some(RouteRef { from: place("town"), to: place("cave"), length_m: 120.5, speed_mps: 1.75 });
+    walking.progress_m = 33.25;
+    walking.arrive = Some(Arrival::Activity(ActivityRef::Use(PlacementId(0xbeef))));
+    walking.arrives = Some(GameInstant(4_321_000));
+    walking.until = walking.arrives;
+    walking.directive = Some(DirectiveId(4));
+    let mut standing = LogicalState::new(place("x"), GameInstant(17));
+    standing.activity = Some(ActivityRef::Wait);
+    standing.follow = Some(GUARD);
+    vec![
+        (GUARD, SavedLogical { state: walking, due: Some(GameInstant::ZERO) }),
+        (ActorKey(0x0B0D_1E55), SavedLogical { state: standing, due: None }),
+    ]
+}
+
+/// `MA22b`: v2 carries the tier-0 states beside the stacks, byte for byte, each with its due
+/// instant; a state without a stack and a stack without a state both survive.
+#[test]
+fn tier_zero_states_round_trip_beside_the_stacks() {
+    let live = world();
+    let save = AiSave::from_parts(&live, states());
+    assert_eq!(save.actors.len(), 4);
+    assert!(save.actors[&TRADER].logical.is_none());
+    assert!(save.actors[&ActorKey(0x0B0D_1E55)].directives.is_none());
+    let bytes = postcard::to_stdvec(&save).unwrap();
+    let decoded: AiSave = postcard::from_bytes(&bytes).unwrap();
+    assert_eq!(decoded, save);
+    decoded.check().unwrap();
+    let (mut stacks, loaded) = decoded.into_parts().unwrap();
+    let mut expected = live;
+    expected.sort_by_key(DirectiveStack::actor);
+    stacks.sort_by_key(DirectiveStack::actor);
+    assert_eq!(stacks, expected);
+    let mut want = states();
+    want.sort_by_key(|(k, _)| *k);
+    assert_eq!(loaded, want);
+    assert_eq!(postcard::to_stdvec(&AiSave::from_parts(&stacks, loaded)).unwrap(), bytes);
+}
+
+/// `MA22b`: a v1 section (stacks only) migrates to v2 with every stack and no tier-0 state.
+#[test]
+fn a_v1_section_migrates_with_its_stacks_and_no_states() {
+    use crate::save::legacy::v1;
+    let live = world();
+    let old = v1::AiSave { actors: live.iter().map(|s| (s.actor(), v1::ActorSave { directives: s.to_saved() })).collect() };
+    let v1_bytes = postcard::to_stdvec(&old).unwrap();
+    let new = postcard::from_bytes::<v1::AiSave>(&v1_bytes).unwrap().migrate();
+    assert_eq!(new, AiSave::from_stacks(&live));
+    assert!(new.actors.values().all(|a| a.logical.is_none() && a.directives.is_some()));
 }
 
 /// clock.md / ai-as-built "AI5 Clock": the tick's `now` is the saved world clock rounded down,

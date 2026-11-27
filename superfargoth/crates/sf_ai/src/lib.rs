@@ -108,7 +108,7 @@ pub use promote::{
     demote, resolve_promotion,
 };
 pub use react::{ReactConfig, ReactGoal, ReactInput, ReactState, investigate_point};
-pub use save::{AI_SECTION, AI_VERSION, ActorSave, AiSave, AiSaveError};
+pub use save::{AI_SECTION, AI_VERSION, ActorSave, AiParts, AiSave, AiSaveError, SavedLogical};
 pub use search::{
     OP_SEARCH, SearchGoal, SearchParamError, SearchPatternConfig, SearchState, register_search_operator, search_seed,
 };

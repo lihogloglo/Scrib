@@ -1,8 +1,9 @@
 //! `sf/ai` (ai.md "Build plan" AI5: "round trip; old saves load"), through the real section
 //! codec: several actors' directive stacks save and load byte-identically and carry on
 //! identically; a save from before AI5 loads with no AI state; a newer `sf/ai` and a stack that
-//! breaks its invariants are refused, naming the section, before anything applies. The shape
-//! golden is `tests/shapes/sf.ai.v1.json` (`tests_formats.rs`).
+//! breaks its invariants are refused, naming the section, before anything applies; a v1 section
+//! (`MA22b`) loads with its stacks and no tier-0 states. The shape goldens are
+//! `tests/shapes/sf.ai.v2.json` and the frozen `sf.ai.v1.json` (`tests_formats.rs`).
 
 use sf_ai::{
     ActorKey, AiSave, DirectiveId, DirectiveKind, DirectiveSource, DirectiveSpec, DirectiveStack, GameTime, Limit,
@@ -148,7 +149,7 @@ fn a_newer_or_broken_sf_ai_is_refused_before_anything_applies() {
 
     // A stack whose entries the id sequence never issued (corrupt or forged).
     let mut bad = AiSave::from_stacks(&stacks());
-    bad.actors.get_mut(&GUARD).unwrap().directives.next_id = 1;
+    bad.actors.get_mut(&GUARD).unwrap().directives.as_mut().unwrap().next_id = 1;
     let broken = with_extra(&base.path, &[(key.clone(), sections::AI_VERSION, SectionFlags::NONE, sf_save::encode(&bad))]);
     let err = load(&mut b, LoadRequest::path(&broken)).unwrap_err();
     assert!(
@@ -156,4 +157,30 @@ fn a_newer_or_broken_sf_ai_is_refused_before_anything_applies() {
         "{err}"
     );
     assert_eq!(state(&b), before);
+}
+
+/// `MA22b`: a save written with `sf/ai` v1 (stacks only) migrates through the typed step and loads
+/// every stack exactly, with no tier-0 state; the re-save writes v2.
+#[test]
+fn a_v1_sf_ai_loads_its_stacks_through_the_step_with_no_tier_zero_states() {
+    use sf_ai::save::legacy::v1;
+    let dir = tempfile::tempdir().unwrap();
+    let (mut a, _) = new_game(dir.path());
+    let base = save(&mut a, SaveRequest::quick());
+    let key = sections::key(sections::AI);
+    assert!(SaveFile::open(std::fs::read(&base.path).unwrap()).unwrap().entry(&key).is_none());
+    let live = stacks();
+    let old = v1::AiSave { actors: live.iter().map(|s| (s.actor(), v1::ActorSave { directives: s.to_saved() })).collect() };
+    let path = with_extra(&base.path, &[(key.clone(), 1, SectionFlags::NONE, sf_save::encode(&old))]);
+
+    let (mut b, _) = new_game(dir.path());
+    let report = load(&mut b, LoadRequest::path(&path)).unwrap();
+    assert_eq!(report.migrated, [(key.clone(), 1, sections::AI_VERSION)]);
+    let got = b.world().resource::<Ai>().0.clone();
+    assert!(got.actors.values().all(|a| a.logical.is_none()), "{got:?}");
+    let mut original = live;
+    original.sort_by_key(DirectiveStack::actor);
+    assert_eq!(got.into_stacks().unwrap(), original);
+    let again = save(&mut b, SaveRequest::quick());
+    assert_eq!(SaveFile::open(std::fs::read(&again.path).unwrap()).unwrap().entry(&key).unwrap().version, 2);
 }

@@ -28,7 +28,8 @@
 //! - **Cleanup** ([`AiLogicalSystems::Cleanup`]): a body whose key left the store loses its
 //!   marker and gets the allocated tier back, with a staggered `first_decide_tick`.
 //!
-//! Host only (tiers are host-authoritative). The store is plain data (MA22 saves it).
+//! Host only (tiers are host-authoritative). The store is plain data: `sf/ai` v2 saves every
+//! state with its due instant ([`AiLogical::to_saved`], [`AiLogical::restore`], `MA22b`).
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -41,8 +42,8 @@ use bevy_ecs::system::SystemParam;
 use bevy_time::{Fixed, Time};
 use sf_ai::{
     ActivityRef, ActorKey, DirectiveDone, DirectiveStack, EnteredFrom, GameTime, LogicalCtx, LogicalEnv, LogicalState, Placement,
-    PromoteConfig, PromoteEnv, PromoteQueue, PromoteRequest, PromoteTick, Resolve, RouteRef, StackPolicy, Tier, Transition,
-    TransitionInput, first_decide_after, resolve_promotion,
+    PromoteConfig, PromoteEnv, PromoteQueue, PromoteRequest, PromoteTick, Resolve, RouteRef, SavedLogical, StackPolicy, Tier,
+    Transition, TransitionInput, first_decide_after, resolve_promotion,
 };
 use sf_controller_bevy::ControllerSystems;
 use sf_ids::GameInstant;
@@ -198,6 +199,34 @@ impl AiLogical {
     /// In key order.
     pub fn iter(&self) -> impl Iterator<Item = (ActorKey, &LogicalState)> {
         self.states.iter().filter_map(|(k, s)| s.state.as_ref().map(|s| (*k, s)))
+    }
+
+    /// The `sf/ai` form of every state, in key order, each with its due instant as the index
+    /// holds it (a woken state is due at once whatever its `until`).
+    pub fn to_saved(&self) -> impl Iterator<Item = (ActorKey, SavedLogical)> + '_ {
+        self.states
+            .iter()
+            .filter_map(|(k, s)| s.state.as_ref().map(|state| (*k, SavedLogical { state: state.clone(), due: s.due })))
+    }
+
+    /// Replaces the whole store with loaded states (load is a full replace, like
+    /// [`AiDirectives::restore`]); each keeps its saved due instant, so the next
+    /// [`step_logical`] steps the same actors in the same order as before the save.
+    pub fn restore(&mut self, states: impl IntoIterator<Item = (ActorKey, SavedLogical)>) {
+        self.states.clear();
+        self.due.clear();
+        self.scratch.clear();
+        for (key, SavedLogical { state, due }) in states {
+            if let Some(d) = due {
+                self.due.insert((d, key));
+            }
+            if let Some(old) = self.states.insert(key, Slot { state: Some(state), due }).and_then(|s| s.due) {
+                // A repeated key (never from a section's map): the last one wins, index included.
+                if Some(old) != due {
+                    self.due.remove(&(old, key));
+                }
+            }
+        }
     }
 
     /// Where `key` is at `t` ([`LogicalState::position_at`]), a follower reading its leader's
