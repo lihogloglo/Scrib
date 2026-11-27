@@ -62,7 +62,7 @@ a cell model with no per-tree positions: it supports this choice and gives the h
 | Cascade big to small | Horizon layers (V), Wildlands (U) | rocks, canopy, understorey, ground | match |
 | Debris below cliffs, sized | Houdini scree workflows (U); no game talk found (WG-R §4.7) | talus fall process, Pareto sizes | match (our design) |
 | Rocks prune foliage | UE PCG Difference, Self Pruning (U) | rocks first, footprints as obstacles | match |
-| Density measured over a sample of the whole class | forest inventory (FIA ratio-of-means over mapped plots, U); UE PCG / Foliage Spawner: artist tunes on a view (U) | calibration on a hash-ordered tile sample (E2o.e) | match (inventory form) |
+| Density measured over a sample of the whole class | forest inventory (FIA ratio-of-means over mapped plots, U); UE PCG / Foliage Spawner: artist tunes on a view (U) | calibration on a hash-ordered tile sample (E2o.e), sized from a pilot's ratio variance (E2o.g) | match (inventory form) |
 | Steady-state species competition | Ecormier-Nocca 2021 (V) | suitability min only | gap by choice (Later) |
 | GPU placement per frame | Horizon, ~250 us (V) | CPU, once, cached file | gap by choice (co-op safe) |
 
@@ -162,9 +162,35 @@ first), canopy, understorey, ground flora. "Shared" = the rocks slice reuses it 
      the bake's "a few minutes", the lever is `calib_area_ha` (data). Sampling error (D): ratio-of-means CV ~ the
      between-tile CV of winners/ha over `sqrt(n)` tiles, so more mixed tiles at the same area lower it; E2o.f compares
      `reached` with the world over census land per class.
-   - **Result file.** `A`, `m`, `g`, `W`, the sample's tiles, land and `m_t`, steps, joint checks and the ceiling flag per class go to `<guide>/scatter/calibration.toml`
+     **Sample size** (E2o.g; two-stage: a pilot sets the final `n`, the survey standard when the variance is unknown,
+     Cochran 1977 ch. 4 and 6, U; Brus, *Spatial Sampling with R*, ch. 7, U). Motive (E2o.f, x10s): the classes with
+     mixed samples (51-130 tiles) reached 0.99-1.00 of the world, the pure ones on 37-40 tiles 0.88 (tundra), 0.91,
+     1.14: same area, too few tiles. The `calib_area_ha` prefix is the **pilot** (at least `calib_tiles_min` tiles
+     holding `c`, all of them when the class has fewer). When the per-class iteration first finishes, each
+     converged class is sized from its last pilot measurement: per tile `i` of its sample, `x_i` = its `c` land (ha,
+     census cells) and `y_i` = winners at `c` points; `R = sum y / sum x` (its `W`), residual
+     `s_d^2 = sum (y_i - R x_i)^2 / (n0 - 1)`, `CV_r = s_d / (R x_mean)` (the ratio estimator's unit CV, Cochran
+     eq. 6.9 form, U), `n_inf = (calib_z x CV_r / calib_tol)^2`, `n = n_inf / (1 + n_inf / N(c))` (finite population),
+     clamped to `[n0, min(N(c), calib_tiles_max)]`. The sample becomes the first `n` tiles holding `c` in the same
+     world order (the pilot is its prefix; mixed tiles still serve every class), sized **once** (the pilot's variance
+     estimate decides; a re-size per check would chase noise and lose the cost bound). Then the joint checks run as
+     above on the sized samples: a class whose sized `W` is out of tol is reopened and steps on its sized sample.
+     Ceiling, out-of-steps and `R = 0` classes keep the pilot (no reopen can use more tiles; their `W` is reported
+     with its error). Relative SE of `reached`, every class: `CV_r x sqrt((1 - n / N(c)) / n)`, `CV_r` recomputed on
+     the final sample; a class at `calib_tiles_max` with `calib_z x rse > calib_tol` carries the bake warning `class
+     <name>: sample capped at n tiles, reached W +-p %`. Why `calib_z` 2: the acceptance is `reached` vs the world
+     within `calib_tol` at the same `g`, which is the sampling error alone; 2 SE is ~95 % (Cochran's `t = 2`
+     convention, U; FIA states its precision standards at 1 SE, 67 %, 3 % per million acres of timberland area,
+     FSH 2409.13 and Hansen 2001, U). **Cost** (D): pure x10s classes at a guessed `CV_r` 0.4-0.75 (12 % off on 38
+     tiles read as 1-2 SE) need 256-900 tiles at `calib_z` 2, `calib_tol` 0.05, so the cap binds on the worst; added
+     work is only the sized tiles' share of the joint checks and reopened steps (at most `calib_iters` runs), on top
+     of today's 14.1 s, each class at most `calib_tiles_max` tiles (~2600 ha at x10s's ~6.5 ha tiles). E2o.h prints
+     `n`, `CV_r`, `rse` and the seconds. **Rejected:** a final joint check over the whole land (exact): a world canopy
+     pass per check, and the canopy pass dominates the 262 s first load (E2o.m), up to `calib_iters` of them; it
+     stays the limit case (a class with `N(c) <= n` is measured whole, exact).
+   - **Result file.** `A`, `m`, `g`, `W`, the sample's tiles (pilot and sized), land and `m_t`, `CV_r`, `rse`, the cap flag, steps, joint checks and the ceiling flag per class go to `<guide>/scatter/calibration.toml`
      beside the product (diagnostics and tests read it). They are functions of hashed inputs (the species file with
-     its class targets, values, seed, fields), so the product hash needs no extra part; the six new bake tunables
+     its class targets, values, seed, fields), so the product hash needs no extra part; the bake tunables
      (`census_step_m`, `calib_*`, `intensity_scale_max`) are species-file declared values, hashed with the others
      (`flora.rs` `product_inputs` hashes the whole `SpeciesFile`, V). Load-only values stay out of that file (Design 10).
 5. **Size mark** (shared form). Per candidate, before competition: reverse-J (truncated exponential in height,
@@ -346,8 +372,8 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
 | WG-E2o.d | diagnosis: calibration `reached` vs the world at the same `g`, term by term | `mw_worldgen` (test only) | E2o.m | `canopy_density_trace_on_x10s` gap table | ledger line naming the cause and the fix row |
 | WG-E2o.e | spec: calibration tiles = a hash-ordered sample of the class's tiles (one world order), `W` = class winners / class land with no rescale (`m_t` reported), joint check at the final `g` reopening converged classes out of tol (Design 4) | docs (`worldgen-scatter.md`) | E2o.d | n/a | ledger line |
 | WG-E2o.f | build E2o.e: `calib_tiles` sample, no `bias`, joint check loop, `m_t` + tiles + joint checks in `calibration.toml` | Scrib `sf_worldgen` (`scatter_calib.rs`, `tests_scatter_calib.rs`) | E2o.e | two-class fixture whose purest tiles differ in weight from the class mean, class land above `calib_area_ha`: `reached` within `calib_tol` of the class's winners/ha over its whole land at the kept `g` (fails with the purest-tile choice); a class converging first on mixed tiles is re-measured and reopened; same on 1 and N threads; same inputs same `g`; then `canopy_density_trace_on_x10s`: reached vs world (census land) per class, tiles per class, calibration s | `test -p sf_worldgen -p mw_worldgen` + clippy dependents; ledger line |
-| WG-E2o.g | spec: calibration sample size from the sampling error (E2o.f: tundra 0.88, rainforest 0.91, taiga 1.14 of the world on 37-40 pure tiles): the inventory sample-size rule `n = (z CV / E)^2` (Cochran 1977, U) on the measured between-tile CV of the first run, the sample extended along the same order (prefix kept), its tunables and cost on x10s | docs (`worldgen-scatter.md` Design 4, Tunables) | E2o.f | n/a | ledger line |
-| WG-E2o.h | build E2o.g | Scrib `sf_worldgen` (`scatter_calib.rs`, `tests_scatter_calib.rs`) | E2o.g | per E2o.g; then `canopy_density_trace_on_x10s`: reached / world within `calib_tol` for every class not flagged, calibration s | `test -p sf_worldgen -p mw_worldgen` + clippy dependents; ledger line |
+| WG-E2o.g | spec: calibration sample size from the sampling error (E2o.f: tundra 0.88, rainforest 0.91, taiga 1.14 of the world on 37-40 pure tiles): the inventory sample-size rule `n = (z CV / E)^2` (Cochran 1977, U) on the measured between-tile CV of the first run, the sample extended along the same order (prefix kept), its tunables and cost on x10s | docs (`worldgen-scatter.md` Design 4, Tunables) | E2o.f | n/a | ledger line (done 2026-11-27) |
+| WG-E2o.h | build E2o.g: pilot (`calib_tiles_min`), one sizing of converged classes from the pilot's residuals, sized samples in the joint checks, `CV_r` / `rse` / pilot tiles / cap flag in `calibration.toml`, 3 declared values | Scrib `sf_worldgen` (`scatter_calib.rs`, `tests_scatter_calib.rs`, `scatter_species.rs`) | E2o.g | fixture: a class with high between-tile CV gets more tiles than a uniform one, `n` == the formula on the pilot residuals, pilot is a prefix of the sized sample, reached within tol of the whole class, cap respected + warning, 1 vs N threads; then `canopy_density_trace_on_x10s`: reached / world within `calib_tol` for every class not flagged, calibration s | `test -p sf_worldgen -p mw_worldgen` + clippy dependents; ledger line |
 | WG-E2p | full radius round a focus at load (Design 10), one global remainder budget | Scrib `sf_worldgen` (`scatter.rs` `Params` + `budget_cut_layers` remainder form), `mw_worldgen` (`flora.rs` `place`, `extra`), app `world.rs` (pass the eye of `:89` to the content fn and on at `:291`; `--set scatter.full_radius_m` read like `scatter.budget`) | E2o.3 | inside the radius == unbudgeted set; total == `max(budget, inside)` capped by the set; outside nests with the budget; no focus == today's cut | `test -p mw_worldgen` + clippy `bevyrrowind` |
 | WG-E2q | stand cap per tile at load (`canopy_stems_per_ha_max`, Design 10), before the radius and budget | Scrib `sf_worldgen` (value moved from `scatter_species.rs` to `scatter.rs` `Params`: out of the product hash), `mw_worldgen` (`flora.rs` `place`), app `world.rs` (`--set` like `scatter.budget`) | E2p | no tile above the cap, inside the radius too; the cap's survivors are the lowest ranks; cap 2000 == uncapped on a 400/ha fixture; a cap change reads the product (no rebuild) | same |
 | WG-E3a | rock columns, `[rock_units]` table (entries: library class or pack model) | Scrib `sf_worldgen` (`scatter_species.rs`) | E2a | round trip; bad weight or unknown entry kind rejected | `test -p sf_worldgen` |
@@ -507,6 +533,10 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
   as E2o.e; a converged class's joint measurement is pushed, ceiling and out-of-steps classes keep their `g`; the last
   check reopens nothing; the file adds `calib_tiles`, `calib_weight_mean`, `joint_checks`, `reopened`. x10s: 14.1 s, 2
   checks (grassland reopened); reached / world 0.99-1.00 on mixed samples, 0.88 (tundra), 0.91 and 1.14 on ~38 tiles.
+- **WG-E2o.g** (2026-11-27, spec): Design 4 "Sample size": the `calib_area_ha` prefix is a pilot (>= `calib_tiles_min`
+  tiles); converged classes are sized once from its ratio-estimator residuals, `n = (calib_z CV_r / calib_tol)^2` with
+  the finite-population correction, capped by `calib_tiles_max`, extended along the same order; `rse` reported, a capped
+  class out of tol warns. Whole-land joint check rejected on cost (one world canopy pass per check). E2o.h builds it.
 
 ## Tunables
 
@@ -527,6 +557,8 @@ Prefix `scatter.`; source Guess unless noted. Species columns go in the file's `
 | `census_step_m` | m | 4-128 | 16 | Guess (~15 samples per 250 m stand wavelength) |
 | `calib_area_ha` | ha | 10-2000 | 200 | Guess (~2000 winners at 10/ha: ~8 % clustered sampling error, D); class land of the hash-ordered tile sample (E2o.e) |
 | `calib_iters` / `calib_tol` / `calib_saturation` | count / ratio / ratio | 1-8 / 0.01-0.25 / 0-1 | 4 / 0.05 / 0.25 | research Finding 3 (2-4 steps, D); tol and saturation Guess; `calib_iters` also bounds the joint checks (E2o.e) |
+| `calib_z` | ratio | 1-3 | 2 | Cochran 1977 `t = 2` (~95 %, U): `calib_z` SE of `reached` within `calib_tol` (Design 4 "Sample size", E2o.g) |
+| `calib_tiles_min` / `calib_tiles_max` | count / count | 10-100 / 50-4000 | 30 / 400 | min: large-sample rule of the ratio variance (Cochran, U; pilot variance bias ~1/n0); max: Guess, cost bound (~2600 ha per class at x10s, D) |
 | `intensity_scale_max` | ratio | 1-40 | 16 | Guess: bound of the class multiplier `s = g / m` (Design 4; E2n: `m` ~0.3, `g` 2-3 for dense classes gives `s` ~10); candidates reach `s x region_prior_max x T` locally and the parent draws scale with it |
 | `full_radius_m` | m | 0-8000 | 1000 | Guess (UE PCG generation radius, U; Design 10 arithmetic); 0 = off. Load only: v1 `Params` beside `budget`, not hashed |
 | `tile_m`, `seed`, `water_margin_m`, `budget`, `size_priority` | | | v1 | kept (`scatter.rs:49-73`) |
@@ -581,7 +613,8 @@ offspring 3-30. (2) Stand densities 300-700 /ha temperate, 1000-3000 boreal, and
 per species (one open-grown study). (6) Ripley K or g(r) of real stands (test bands). (7) Random sequential adsorption
 near 55 % (cover after 3 rounds: measured by E2m). (8) Luby 1986 round structure (U); the `(2r - 1) R` radius is ours
 (D), proven by the tile-alone test. Rocks: (9) talus 15-40 and scarp 45-60 deg. (10) shadow angle (abstract only).
-(11) D 1.6-3 (one quote of 1.6). (12) sorting beta 0.3-0.7 (ours). (13) sink 10-40 %.
+(11) D 1.6-3 (one quote of 1.6). (12) sorting beta 0.3-0.7 (ours). (13) sink 10-40 %. (14) the ratio-estimator
+variance and two-stage sample-size forms (Cochran 1977, not read in full; standard textbook forms, D).
 
 ## Open questions (owner)
 
