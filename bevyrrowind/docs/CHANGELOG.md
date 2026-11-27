@@ -3,6 +3,8 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-27 (interaction loop, IN18c): NPCs can now hear doors, breaking things and knocks: each interaction noise is
+  handed to NPC hearing (a thrown jar's landing draws them to where it fell, not to the thrower).
 - 2026-11-27 (interaction loop, IN18b): doors opening or closing, things breaking and objects knocking or landing now
   make interaction noises (a heavy material carries further; a thrown jar's landing names the thrower without giving
   them away). Guards don't hear them yet: the hand-over to NPC hearing is the next step (IN18c).

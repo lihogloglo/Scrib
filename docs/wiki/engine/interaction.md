@@ -135,8 +135,11 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   `material_ref_m` from `InteractionMaterials`, revealed), `Destroyed` of registered destructibles (object, reach x
   `speed_mul_max`, culprit, not revealed) and, with `physics`, this step's contacts (`NoiseCursor`; louder side of indexed
   placements with a known material; `Thrown` body -> `ThrownLanding` + thrower; debris pieces, `PROJECTILE`, `HELD` silent)
-  into `NoiseInbox`; `NoiseSystems::Emit` writes the merged `InteractionNoise` (`space: None`). No host maps it to
-  `NoiseEvent` yet (IN18c); no `Drop` case yet.
+  into `NoiseInbox`; `NoiseSystems::Emit` writes the merged `InteractionNoise` (`space: None`). No `Drop` case yet.
+- **Noise to NPC hearing (IN18c, `mw_interaction_bevy/src/noise.rs`).** The game copies each `InteractionNoise` into one
+  `sf_ai_bevy::NoiseEvent` after `NoiseSystems::Emit` and `AiPerceptionSystems::Hearing` (heard on the next perception
+  tick), stamped with `AiPerceptClock::tick`; `maker` -> `source` (same keys), kind from `InteractionNoiseKinds` (ids from
+  256: door, break, object; material tags `register`ed). Skipped while either message type is missing.
 
 ## Bevy features used
 

@@ -210,6 +210,14 @@ known material, kind its `noise`; a body in `Thrown` gives `ThrownLanding` namin
 `PROJECTILE`, `HELD` silent; a changed active world clears the windows. `space` is `None` (the active worldspace). Not
 yet: the `Drop` case (dropper within `reveal_m`). 4 headless exact tests (`tests_noise.rs`).
 
+**As built (IN18c, 2026-11-27).** `mw_interaction_bevy/src/noise.rs` (`sf_ai_bevy` has no interaction edge, so no
+cycle): each `InteractionNoise` -> one `NoiseEvent` (`at` as `WorldPos`, `space`, `loudness_m`, `reveals_maker` copied;
+`maker` -> `PerceptTarget`, same keys; no `notify`), stamped with the perception clock's tick (the stamp every `NoiseEvent`
+carries), kinds from `InteractionNoiseKinds` (`noise.door`, `noise.break`, `noise.object` from id 256, disjoint from the
+player's 0..; a material's tag `register`ed; unknown = `noise.object`) until `NoiseKind` records exist. Order: after
+`NoiseSystems::Emit` and `AiPerceptionSystems::Hearing` (heard next perception tick, deterministic; same tick would need the
+door/destroy/impact steps before hearing, which the physics order does not promise). 2 headless exact tests.
+
 ## Reuse check (CONTRIBUTING rule 0)
 
 - **Bevy 0.20:** `FixedUpdate`, messages and observers, `Image` assets for the burn texture; no chemistry, fire or

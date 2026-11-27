@@ -53,6 +53,9 @@
 //!   inserts the records ([`breakable::insert_records`]).
 //! - **Rest** (`IN3a`): the shell's `RestRequested` (a static bed's approved `sleep`) is logged, the
 //!   host's only consumer until a rest UI exists.
+//! - **Noise** ([`noise`], `IN18c`): each shell `InteractionNoise` (door, break, impact, thrown
+//!   landing) is reported to perception as one `sf_ai_bevy::NoiseEvent` (kinds from
+//!   [`noise::KIND_BASE`], maker as source), heard on the next perception tick.
 //!
 //! Log lines: `interact: N furniture defs loaded (S slots)` at startup and
 //! `interact: indexed M furniture placements in <worldspace> (x, y, z)` once per cell activation.
@@ -65,6 +68,7 @@ pub mod door_body;
 pub mod index;
 pub mod input;
 pub mod light;
+pub mod noise;
 mod report;
 #[cfg(test)]
 mod tests;
@@ -76,6 +80,8 @@ mod tests_breakable;
 mod tests_door_body;
 #[cfg(test)]
 mod tests_light;
+#[cfg(test)]
+mod tests_noise;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -97,6 +103,7 @@ pub use breakable::{BreakSettings, BreakablesTable};
 pub use door::{DoorHook, DoorPivot, DoorPivots, SwingDoor, SwingDoors};
 pub use index::{ResidentFurniture, SitSwitch};
 pub use input::furniture_prompt;
+pub use noise::InteractionNoiseKinds;
 pub use light::{LightAnchor, LightAnchors, LightFactsTable, LightHook, ResidentLights, SnuffSwitch};
 
 /// The baked furniture defs, by base record.
@@ -186,4 +193,5 @@ pub fn add_with_defs(app: &mut App, defs: FurnitureDefs) {
         .add_systems(FixedUpdate, door_body::block_sweeps.after(DoorSystems::Plan).before(DoorSystems::Commit))
         .add_systems(FixedUpdate, door_body::move_bodies.after(DoorSystems::Commit).before(PhysicsSystems::Step))
         .add_systems(Update, (door_body::pose_new_bodies, door_body::follow_pivots).chain().after(PhysicsSystems::Stream));
+    noise::add(app);
 }

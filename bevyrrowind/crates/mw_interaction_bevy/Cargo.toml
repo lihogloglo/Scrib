@@ -44,6 +44,10 @@ mw_interaction.workspace = true
 # `Focus` (the ray's raw hit, the HUD's prompt) and `UsePresses` (the latched Use press).
 mw_player_bevy.workspace = true
 mw_world.workspace = true
+# `NoiseKindId`, `PerceptTarget`: an interaction noise as perception names it (IN18c).
+sf_ai.workspace = true
+# `NoiseEvent`, `AiPerceptClock`, `AiPerceptionSystems`: the host reports interaction noises (IN18c).
+sf_ai_bevy.workspace = true
 # `Store` / `Manifest`: where the baked defs are.
 sf_bake.workspace = true
 # `WorldTransform`: placement frames.

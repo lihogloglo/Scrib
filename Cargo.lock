@@ -5641,6 +5641,8 @@ dependencies = [
  "mw_player_bevy",
  "mw_world",
  "postcard",
+ "sf_ai",
+ "sf_ai_bevy",
  "sf_bake",
  "sf_controller",
  "sf_coords",
