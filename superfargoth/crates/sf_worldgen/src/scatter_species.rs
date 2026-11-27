@@ -106,6 +106,18 @@ fn vegetation_declared() -> Vec<Declared> {
           "cap on canopy stems per hectare of a tile, kept in rank order"),
         d("scatter.region_prior_max", 3.0, "ratio", 1.0, 10.0, "Guess",
           "upper bound of a learned region prior on parent intensity"),
+        d("scatter.census_step_m", 16.0, "m", 4.0, 128.0, "Guess",
+          "grid step of the class census (class land area and canopy weight mean)"),
+        d("scatter.calib_area_ha", 200.0, "ha", 10.0, 2000.0, "Guess",
+          "class land the canopy calibration runs on, purest parent tiles first"),
+        d("scatter.calib_iters", 4.0, "count", 1.0, 8.0, "Guess",
+          "most fixed-point steps of the canopy calibration per class"),
+        d("scatter.calib_tol", 0.05, "ratio", 0.01, 0.25, "Guess",
+          "calibration stops when winners per ha are this close to the class target"),
+        d("scatter.calib_saturation", 0.25, "ratio", 0.0, 1.0, "Guess",
+          "a raise of the competition scale by f that raises winners by less than this x f is the crown ceiling"),
+        d("scatter.intensity_scale_max", 16.0, "ratio", 1.0, 40.0, "Guess",
+          "bound of the canopy class multiplier g / m"),
     ]
 }
 
@@ -294,6 +306,12 @@ pub struct ScatterValues {
     pub shade_per_crown: f64,
     pub canopy_stems_per_ha_max: f64,
     pub region_prior_max: f64,
+    pub census_step_m: f64,
+    pub calib_area_ha: f64,
+    pub calib_iters: u32,
+    pub calib_tol: f64,
+    pub calib_saturation: f64,
+    pub intensity_scale_max: f64,
 }
 
 impl ScatterValues {
@@ -317,12 +335,15 @@ impl ScatterValues {
                 "scatter species: stand thresholds clearing {c} < sparse {s} < inner {i} do not hold"
             )));
         }
-        let rounds = get("scatter.competition_rounds")?;
-        if rounds.fract() != 0.0 {
-            return Err(Error::Invalid(format!(
-                "scatter species: scatter.competition_rounds = {rounds} is not a whole count"
-            )));
-        }
+        let whole = |name: &str| -> Result<f64> {
+            let n = get(name)?;
+            if n.fract() != 0.0 {
+                return Err(Error::Invalid(format!("scatter species: {name} = {n} is not a whole count")));
+            }
+            Ok(n)
+        };
+        let rounds = whole("scatter.competition_rounds")?;
+        let iters = whole("scatter.calib_iters")?;
         Ok(Self {
             stand_wavelength_m: get("scatter.stand_wavelength_m")?,
             stand_clearing_threshold: c,
@@ -338,6 +359,14 @@ impl ScatterValues {
             shade_per_crown: get("scatter.shade_per_crown")?,
             canopy_stems_per_ha_max: get("scatter.canopy_stems_per_ha_max")?,
             region_prior_max: get("scatter.region_prior_max")?,
+            census_step_m: get("scatter.census_step_m")?,
+            calib_area_ha: get("scatter.calib_area_ha")?,
+            // Whole and inside 1..=8 (checked above).
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            calib_iters: iters as u32,
+            calib_tol: get("scatter.calib_tol")?,
+            calib_saturation: get("scatter.calib_saturation")?,
+            intensity_scale_max: get("scatter.intensity_scale_max")?,
         })
     }
 }

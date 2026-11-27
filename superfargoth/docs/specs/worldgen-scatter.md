@@ -444,6 +444,10 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
   the clamp are ceilings; load values go to v1 `Params` (the species file is hashed whole, so the stand cap there
   rebuilt the product); the full radius uses one global remainder (per-group overshot the budget); E2o.1's 5 % test
   was ~1 sd. Checked true: Matern II `g0`, ceilings 164/55 per ha, RSA 2.19x, 480-draw arithmetic, E2m/E2n rates.
+- **WG-E2o.1** (2026-11-27, `scatter.rs` `CanopyTargets`, `species_candidates`; `scatter_species.rs`): canopy per
+  Design 4 (`T(c) s(c) D share prior`, one acceptance at the parent and at a background point, offspring Poisson
+  plain), lower layers `su` once; `census_step_m`, `calib_*`, `intensity_scale_max` declared. `flora` passes
+  `CanopyTargets::uncalibrated` (`m` = `g` = 1) until E2o.3. Test `canopy_candidates_meet_the_class_target_and_the_weight_enters_once`.
 
 ## Tunables
 

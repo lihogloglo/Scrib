@@ -81,7 +81,7 @@ impl Fields for Ramp {
             temperature_c: 10.0,
             precipitation_mm: 800.0,
             moisture: 0.5,
-            class: None,
+            class: Some(0),
             slope_deg: y * SLOPE_PER_M,
             aspect_deg: 0.0,
             altitude_m: 100.0,
@@ -133,6 +133,7 @@ impl Fixture {
             water: &self.water,
             height: &height,
             rocks: None,
+            canopy: test_targets(&self.file),
         }
     }
 

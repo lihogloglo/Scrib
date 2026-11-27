@@ -7,7 +7,7 @@ use super::*;
 use crate::climate::ClimateFile;
 use crate::climate_classes::ClassTable;
 use crate::guide::RegionMap;
-use crate::scatter::{CandidateRules, WaterMask};
+use crate::scatter::{CandidateRules, WaterMask, test_targets};
 use crate::scatter_fields::{FieldSample, NeutralFields, Suitability};
 use crate::scatter_species::SpeciesFile;
 use crate::scatter_stand::{StandMap, StandRules};
@@ -83,14 +83,14 @@ fn computed() -> LayerWinners {
             temperature_c: 10.0,
             precipitation_mm: 800.0,
             moisture: 0.5,
-            class: None,
+            class: Some(0),
             slope_deg: 0.0,
             aspect_deg: 0.0,
             altitude_m: 100.0,
             curvature: 0.0,
             water_distance_m: 1000.0,
         },
-        class_names: Vec::new(),
+        class_names: vec!["forest".to_owned()],
     };
     let none = |_: f64, _: f64| false;
     let rules = CandidateRules {
@@ -102,6 +102,7 @@ fn computed() -> LayerWinners {
         water: &WaterMask::default(),
         height: &|_: f64, _: f64| 0.0,
         rocks: None,
+        canopy: test_targets(&file),
     };
     let stand = StandMap::build(StandRules { values: &file.values, seed: 7, canopy: &suit }, &fields, &none, rules.tile_rect((-1, 2)));
     let mut won = rules.tile_layers(&fields, &stand, (-1, 2));

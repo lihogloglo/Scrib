@@ -62,14 +62,14 @@ fn neutral() -> NeutralFields {
             temperature_c: 10.0,
             precipitation_mm: 800.0,
             moisture: 0.5,
-            class: None,
+            class: Some(0),
             slope_deg: 0.0,
             aspect_deg: 0.0,
             altitude_m: 100.0,
             curvature: 0.0,
             water_distance_m: 1000.0,
         },
-        class_names: Vec::new(),
+        class_names: vec!["forest".to_owned()],
     }
 }
 
@@ -88,7 +88,7 @@ fn candidates(file: &SpeciesFile, suit: &[Suitability], rect: [f64; 4]) -> Vec<C
     let fields = neutral();
     let none = |_: f64, _: f64| false;
     let stand = StandMap::build(StandRules { values: &file.values, seed: 55, canopy: suit }, &fields, &none, rect);
-    let cand = CandidateRules { file, suitability: suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0, rocks: None };
+    let cand = CandidateRules { file, suitability: suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0, rocks: None, canopy: test_targets(file) };
     cand.candidates(&fields, &stand, rect)
 }
 
@@ -193,7 +193,7 @@ fn a_tile_alone_equals_the_same_square_of_a_larger_build() {
     let (file, suit) = parse(DENSE);
     let fields = neutral();
     let none = |_: f64, _: f64| false;
-    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0, rocks: None };
+    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0, rocks: None, canopy: test_targets(&file) };
     let tile = (1, 1);
     let rect = cand.tile_rect(tile);
     let stand = StandMap::build(StandRules { values: &file.values, seed: 55, canopy: &suit }, &fields, &none, rect);

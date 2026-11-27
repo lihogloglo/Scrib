@@ -137,14 +137,18 @@ pub(crate) fn draw(base: u64, i: u64, k: u64) -> f64 {
 //
 // Per species and per parent tile (edge `scatter.tile_m`), a truncated Thomas process: `n = floor(kappa_max A + u)`
 // parents from the hash stream of (seed, parent tile, species), thinned at the parent by `kappa / kappa_max`
-// (Lewis and Shedler 1979), `kappa = (1 - b) parent_per_ha x suitability x stand x prior`; each kept parent has
-// Poisson(`offspring_mean x suitability`) offspring by inversion, offset by a Gaussian of `cluster_sigma_m`
-// (Box-Muller) and rejected beyond `THOMAS_REACH_SIGMAS` sigma, so a parent's reach is exact. A uniform background
-// stream per parent tile carries the share `b = background_fraction` of the candidates, thinned at the point by the
-// same factors (suitability squared: the cluster's parent and offspring factors). `stand` is the stand density `D`
-// for the canopy (0 in a clearing, forced or mosaic; a canopy candidate in a clearing is dropped) and 1 for lower
-// layers (thinned at the point by the light, WG-E2f below). `prior` is the caller's region prior, clamped to
-// `[0, scatter.region_prior_max]`. Each candidate gets a size mark by inversion ([`size_mark`]; canopy quantiles
+// (Lewis and Shedler 1979); each kept parent has Poisson(`offspring_mean`) offspring by inversion, offset by a
+// Gaussian of `cluster_sigma_m` (Box-Muller) and rejected beyond `THOMAS_REACH_SIGMAS` sigma, so a parent's reach is
+// exact. A uniform background stream per parent tile carries the share `b = background_fraction` of the candidates,
+// thinned at the point by the same weight. The weight enters once (WG-E2o; the inhomogeneous Neyman-Scott form):
+// - canopy, from the class target ([`CanopyTargets`]): intensity `lambda = T(c) s(c) w`, `w = D x share x prior`,
+//   `D` the stand density (it carries the best canopy suitability; 0 in a clearing, forced or mosaic: a canopy
+//   candidate in a clearing is dropped), `share` the species' part of the canopy suitability at the point, `s(c) =
+//   g(c) / m(c)` the class multiplier clamped to `scatter.intensity_scale_max`; parents `(1 - b) lambda /
+//   offspring_mean`, background `b lambda`;
+// - lower layers, per species: parents `(1 - b) parent_per_ha x suitability x prior`, background `b parent_per_ha
+//   offspring_mean x suitability x prior` (thinned at the point by the light, WG-E2f below).
+// `prior` is the caller's region prior, clamped to `[0, scatter.region_prior_max]`. Each candidate gets a size mark by inversion ([`size_mark`]; canopy quantiles
 // scaled by `scatter.edge_size_ratio` in the edge band), its crown radius `crown_a_m + crown_b h`, and a tie-break
 // hash for the competition's priority (size mark, then hash). Exclusion (WG-E2g) is tested at every instance's own
 // point: no forced clearing, sea, lake or river band ([`WaterMask`]), and for an offspring the region prior and the
@@ -173,6 +177,82 @@ const BACKGROUND_SALT: u64 = 0xb6c0_2d00_0000_1e2d;
 /// Square metres per hectare.
 // tunables: const (units)
 pub(crate) const M2_PER_HA: f64 = 10_000.0;
+
+/// One biome class's canopy target and its bake calibration (spec "Design" 4).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ClassTarget {
+    /// `T`: canopy winners per hectare of the class's land (`class.<name>.stems_per_ha`).
+    pub stems_per_ha: f64,
+    /// `m`: the class mean of the canopy weight `sum_s w_s` over its land, mosaic clearings at 0 (the census).
+    pub weight_mean: f64,
+    /// `g`: the competition scale (the calibration; 1 = uncalibrated).
+    pub scale: f64,
+}
+
+/// The canopy targets per class id ([`FieldSample::class`]; spec "Design" 4). A point with no class, a class past
+/// the end, or a class with `T` or `m` at 0 gets no canopy.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CanopyTargets {
+    pub classes: Vec<ClassTarget>,
+}
+
+impl CanopyTargets {
+    /// The targets of the file's `[classes]` for the fields' class names, uncalibrated (`m` = `g` = 1: the class
+    /// census and calibration set them, spec "Design" 4); a name the file lacks has `T` = 0.
+    #[must_use]
+    pub fn uncalibrated(file: &SpeciesFile, class_names: &[String]) -> Self {
+        let classes = class_names
+            .iter()
+            .map(|n| ClassTarget {
+                stems_per_ha: file.classes.get(n).map_or(0.0, |e| e.v),
+                weight_mean: 1.0,
+                scale: 1.0,
+            })
+            .collect();
+        Self { classes }
+    }
+
+    fn get(&self, class: Option<u8>) -> Option<&ClassTarget> {
+        self.classes.get(usize::from(class?))
+    }
+
+    /// The class multiplier `s = g / m`, clamped to `scale_max`; 0 for a class with no canopy.
+    #[must_use]
+    pub fn multiplier(&self, class: Option<u8>, scale_max: f64) -> f64 {
+        match self.get(class) {
+            Some(t) if t.stems_per_ha > 0.0 && t.weight_mean > 0.0 => (t.scale / t.weight_mean).clamp(0.0, scale_max),
+            _ => 0.0,
+        }
+    }
+
+    /// The multiplier of `class` is clamped (its `m` is too low for `g`): it gets fewer stems than `T` (the bake's
+    /// `weight mean m too low` warning).
+    #[must_use]
+    pub fn clamps(&self, class: Option<u8>, scale_max: f64) -> bool {
+        self.get(class).is_some_and(|t| t.stems_per_ha > 0.0 && t.weight_mean > 0.0 && t.scale / t.weight_mean > scale_max)
+    }
+
+    /// `T(c) s(c)`, stems per hectare per unit weight.
+    #[must_use]
+    pub fn intensity_per_ha(&self, class: Option<u8>, scale_max: f64) -> f64 {
+        self.get(class).map_or(0.0, |t| t.stems_per_ha) * self.multiplier(class, scale_max)
+    }
+
+    /// `max_c T(c) s(c)`: the Lewis-Shedler bound's class part, the same for the whole world.
+    #[allow(clippy::cast_possible_truncation)] // class ids are u8
+    #[must_use]
+    pub fn max_intensity_per_ha(&self, scale_max: f64) -> f64 {
+        (0..self.classes.len().min(256)).map(|c| self.intensity_per_ha(Some(c as u8), scale_max)).fold(0.0, f64::max)
+    }
+}
+
+/// The fixtures' canopy: one class (id 0), `m` = `g` = 1, `T` = the sum of the canopy rows' `parent_per_ha x
+/// offspring_mean` (the pre-E2o density at full suitability). Leaked: a few bytes per test.
+#[cfg(test)]
+pub(crate) fn test_targets(file: &SpeciesFile) -> &'static CanopyTargets {
+    let t = file.species.iter().filter(|s| s.layer == Layer::Canopy).map(|s| s.parent_per_ha * s.offspring_mean).sum();
+    Box::leak(Box::new(CanopyTargets { classes: vec![ClassTarget { stems_per_ha: t, weight_mean: 1.0, scale: 1.0 }] }))
+}
 
 /// The integer key of a candidate; output order (spec "Determinism across tiles").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -275,6 +355,8 @@ pub struct CandidateRules<'a> {
     pub height: &'a (dyn Fn(f64, f64) -> f64 + Sync),
     /// The rock layer, run first (WG-E3d); `None`: vegetation only.
     pub rocks: Option<RockLayer<'a>>,
+    /// The canopy's class targets (WG-E2o).
+    pub canopy: &'a CanopyTargets,
 }
 
 /// The rock layer of the passes (spec "Rocks (WG-E3)"): its candidate rules and the ground they read.
@@ -437,6 +519,53 @@ impl CandidateRules<'_> {
         slope.is_none_or(|h| hat(&h, f.slope_deg) > 0.0) && shore.is_none_or(|h| hat(&h, f.water_distance_m) > 0.0)
     }
 
+    /// `share_s = su_s / sum_c su_c` over the canopy species at `(x, y)` (`su` = species `s`'s suitability there;
+    /// 1 with one canopy species).
+    fn canopy_share(&self, fields: &dyn Fields, s: usize, x: f64, y: f64, su: f64) -> f64 {
+        let mut sum = 0.0;
+        for (c, sp) in self.file.species.iter().enumerate() {
+            if sp.layer == Layer::Canopy {
+                sum += if c == s { su } else { self.suitability[c].at(&self.sample(fields, sp, x, y)) };
+            }
+        }
+        if sum > 0.0 { su / sum } else { 0.0 }
+    }
+
+    /// (`max_c T(c) s(c)` for the canopy, else 0; parent and background intensity bounds per m2) of species `s`:
+    /// candidates per m2 at weight 1 are canopy `max T s x prior_max`, lower layers `parent_per_ha x offspring_mean x
+    /// prior_max x boost`; the parents carry `1 - b` of it, the background `b`. `None`: a canopy with no class target.
+    fn bounds(&self, s: usize, boost: f64) -> Option<(f64, f64, f64)> {
+        let sp = &self.file.species[s];
+        let v = &self.file.values;
+        let ts_max = if sp.layer == Layer::Canopy {
+            let m = self.canopy.max_intensity_per_ha(v.intensity_scale_max);
+            (m > 0.0).then_some(m)?
+        } else {
+            0.0
+        };
+        let per_ha = if sp.layer == Layer::Canopy { ts_max } else { sp.parent_per_ha * sp.offspring_mean * boost };
+        let full = per_ha * v.region_prior_max / M2_PER_HA;
+        let b = sp.background_fraction;
+        let kappa_max = if sp.offspring_mean > 0.0 { (1.0 - b) * full / sp.offspring_mean } else { 0.0 };
+        Some((ts_max, kappa_max, b * full))
+    }
+
+    /// The weight of species `s` at a point of sample `f`, over its bound (in `[0, 1]`: the Lewis-Shedler
+    /// acceptance); `dp` = the stand factor x the prior over `prior_max`. Canopy `T(c) s(c) D share prior / (max T s x
+    /// prior_max)`, lower layers `suitability x prior / prior_max` (the weight enters once, spec "Design" 4).
+    #[allow(clippy::too_many_arguments)] // the point, its sample and the species' bound
+    fn weight(&self, fields: &dyn Fields, s: usize, f: &FieldSample, ts_max: f64, x: f64, y: f64, dp: f64) -> f64 {
+        let su = self.suitability[s].at(f);
+        if self.file.species[s].layer != Layer::Canopy {
+            return su * dp;
+        }
+        if su <= 0.0 {
+            return 0.0;
+        }
+        let ts = self.canopy.intensity_per_ha(f.class, self.file.values.intensity_scale_max);
+        ts / ts_max * dp * self.canopy_share(fields, s, x, y, su)
+    }
+
     /// The candidates of one species (unsorted).
     // Tile indices of world metres and hashed counts of a few thousand per tile.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
@@ -451,7 +580,6 @@ impl CandidateRules<'_> {
     ) {
         let sp = &self.file.species[s];
         let v = &self.file.values;
-        let suit = &self.suitability[s];
         let canopy = sp.layer == Layer::Canopy;
         // Lower layers: the dominating intensity is raised by the edge boost, then each point is thinned by
         // `lerp(stol, 1, L) x (1 + edge_boost in the band) / (1 + edge_boost)` (Lewis-Shedler at the point).
@@ -460,7 +588,6 @@ impl CandidateRules<'_> {
         let t = self.tile_m;
         let area = t * t;
         let pmax = v.region_prior_max;
-        let b = sp.background_fraction;
         let sigma = sp.cluster_sigma_m;
         let reach = THOMAS_REACH_SIGMAS * sigma;
         let inside = |x: f64, y: f64| x >= rect[0] && x < rect[2] && y >= rect[1] && y < rect[3];
@@ -468,6 +595,11 @@ impl CandidateRules<'_> {
         let prior = |x: f64, y: f64| (self.prior)(s, x, y).clamp(0.0, pmax) / pmax;
         let sample = |x: f64, y: f64| self.sample(fields, sp, x, y);
         let point_ok = |x: f64, y: f64| prior(x, y) > 0.0 && self.point_hats(fields, sp, x, y);
+        let Some((ts_max, kappa_max, bg_max)) = self.bounds(s, boost) else { return };
+        let weight = |x: f64, y: f64, d: f64| {
+            let f = sample(x, y);
+            self.weight(fields, s, &f, ts_max, x, y, d * prior(x, y))
+        };
         // `keep` is the point's uniform for the light thinning (lower layers).
         let mut emit = |key: CandidateKey, x: f64, y: f64, edge: bool, u: f64, tiebreak: u64, keep: f64| {
             if !canopy {
@@ -484,8 +616,6 @@ impl CandidateRules<'_> {
             out.push(Candidate { key, pos: [x, y], size_m, crown_m: sp.crown_a_m + sp.crown_b * size_m, tiebreak });
         };
         let species = s as u32;
-        let kappa_max = (1.0 - b) * sp.parent_per_ha / M2_PER_HA * pmax * boost;
-        let bg_max = b * sp.parent_per_ha / M2_PER_HA * sp.offspring_mean * pmax * boost;
         let tx0 = ((rect[0] - reach) / t).floor() as i32;
         let ty0 = ((rect[1] - reach) / t).floor() as i32;
         let tx1 = ((rect[2] + reach) / t).floor() as i32;
@@ -505,12 +635,11 @@ impl CandidateRules<'_> {
                     if dx.hypot(dy) > reach {
                         continue;
                     }
-                    let su = suit.at(&sample(px, py));
                     let Some((d, _, _)) = stand_at(px, py) else { continue };
-                    if draw(base, j, 2) >= su * d * prior(px, py) {
+                    if draw(base, j, 2) >= weight(px, py, d) {
                         continue;
                     }
-                    let m = poisson(sp.offspring_mean * su, draw(base, j, 3));
+                    let m = poisson(sp.offspring_mean, draw(base, j, 3));
                     let ob = mix(base ^ (j + 1).wrapping_mul(0xa076_1d64_78bd_642f));
                     for o in 0..u64::from(m) {
                         let r = sigma * (-2.0 * (1.0 - draw(ob, o, 0)).ln()).sqrt();
@@ -541,9 +670,8 @@ impl CandidateRules<'_> {
                     if !inside(x, y) {
                         continue;
                     }
-                    let su = suit.at(&sample(x, y));
                     let Some((d, edge, forced)) = stand_at(x, y) else { continue };
-                    if draw(bb, i, 2) >= su * su * d * prior(x, y) || !self.dry_ground(x, y, forced) {
+                    if draw(bb, i, 2) >= weight(x, y, d) || !self.dry_ground(x, y, forced) {
                         continue;
                     }
                     let key = CandidateKey { layer: sp.layer, species, tile, parent: BACKGROUND, offspring: i as u32 };

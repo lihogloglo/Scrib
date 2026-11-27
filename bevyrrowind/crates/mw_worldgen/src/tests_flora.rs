@@ -577,7 +577,7 @@ fn canopy_density_trace_on_x10s() {
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
 
-    use sf_worldgen::scatter::{CandidateRules, Cover, compete};
+    use sf_worldgen::scatter::{CandidateRules, CanopyTargets, Cover, compete};
     use sf_worldgen::scatter_fields::{Fields, Suitability};
     use sf_worldgen::scatter_stand::{StandClass, StandMap, StandRules};
 
@@ -637,6 +637,7 @@ fn canopy_density_trace_on_x10s() {
         run.prior.get(s).and_then(|p| p.get(usize::from(r))).and_then(|p| p.get(c)).copied().unwrap_or(0.0)
     };
     let height = |x: f64, y: f64| world.height(x, y);
+    let targets = CanopyTargets::uncalibrated(lf, &names);
     let rules = CandidateRules {
         file: lf,
         suitability: &suit,
@@ -646,6 +647,7 @@ fn canopy_density_trace_on_x10s() {
         water: &water,
         height: &height,
         rocks: None,
+        canopy: &targets,
     };
     let excluded = |x: f64, y: f64| world.excluded(x, y);
     let grow = rules.layer_grows().into_iter().find(|(l, _)| *l == Layer::Canopy).map(|(_, g)| g).unwrap();

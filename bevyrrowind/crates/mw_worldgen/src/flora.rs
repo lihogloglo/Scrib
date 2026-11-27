@@ -55,7 +55,7 @@ use sf_worldgen::climate_map::ClimateMap;
 use sf_worldgen::guide::Guide;
 use sf_worldgen::reach::VALID_FILE;
 use sf_worldgen::roads::RoadNetwork;
-use sf_worldgen::scatter::{CandidateKey, CandidateRules, LayerWinners, Params, WaterMask, budget_cut_layers};
+use sf_worldgen::scatter::{CandidateKey, CandidateRules, CanopyTargets, LayerWinners, Params, WaterMask, budget_cut_layers};
 use sf_worldgen::scatter_product::{self, InputsHash};
 use sf_worldgen::scatter_fields::{Fields, GridFields, Suitability};
 use sf_worldgen::scatter_species::{Hat, Layer, SpeciesFile, species_declared};
@@ -877,6 +877,8 @@ pub fn winners(
         prior.get(s).and_then(|p| p.get(usize::from(r))).and_then(|p| p.get(c)).copied().unwrap_or(0.0)
     };
     let height = |x: f64, y: f64| world.height(x, y);
+    // Uncalibrated (m = g = 1) until the class census and calibration are wired (WG-E2o.3).
+    let targets = CanopyTargets::uncalibrated(file, names);
     let rules = CandidateRules {
         file,
         suitability: &suit,
@@ -886,6 +888,7 @@ pub fn winners(
         water,
         height: &height,
         rocks: None,
+        canopy: &targets,
     };
     let stand = StandRules { values: &file.values, seed: prm.seed, canopy: &canopy };
     let excluded = |x: f64, y: f64| world.excluded(x, y);

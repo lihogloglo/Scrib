@@ -84,7 +84,7 @@ fn neutral() -> NeutralFields {
             temperature_c: 10.0,
             precipitation_mm: 800.0,
             moisture: 0.5,
-            class: None,
+            class: Some(0),
             slope_deg: 0.0,
             aspect_deg: 0.0,
             altitude_m: 100.0,
@@ -92,7 +92,7 @@ fn neutral() -> NeutralFields {
             // Far: only the exact inland water brings a reed's hat in range.
             water_distance_m: 1000.0,
         },
-        class_names: Vec::new(),
+        class_names: vec!["forest".to_owned()],
     }
 }
 
@@ -175,7 +175,7 @@ fn parse() -> (SpeciesFile, Vec<Suitability>) {
 fn winners(water: &WaterMask, excluded: &(dyn Fn(f64, f64) -> bool + Sync)) -> (SpeciesFile, Vec<Candidate>) {
     let (file, suit) = parse();
     let fields = neutral();
-    let cand = CandidateRules { file: &file, suitability: &suit, seed: 77, tile_m: 256.0, prior: &one, water, height: &height, rocks: None };
+    let cand = CandidateRules { file: &file, suitability: &suit, seed: 77, tile_m: 256.0, prior: &one, water, height: &height, rocks: None, canopy: test_targets(&file) };
     let stand = StandMap::build(StandRules { values: &file.values, seed: 77, canopy: &suit }, &fields, excluded, cand.tile_rect((0, 0)));
     let won = cand.tile_winners(&fields, &stand, (0, 0));
     (file, won)

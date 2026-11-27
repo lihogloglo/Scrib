@@ -2,7 +2,8 @@
 #![allow(clippy::float_cmp)] // exact comparisons are the point of these tests
 //! WG-E2d: v2 candidates. A tile built alone returns, bit for bit, what a larger build returns over its rect; the
 //! pair correlation g(r) at the clump scale shows the Thomas clusters; the reverse-J size marks have the declared
-//! slope of log N(>h).
+//! slope of log N(>h). WG-E2o.1: the canopy meets its class target before competition, the class multiplier clamps,
+//! and the weight enters once (half the suitability, half the candidates).
 
 use super::*;
 use crate::scatter_fields::{FieldSample, NeutralFields};
@@ -37,14 +38,14 @@ fn neutral() -> NeutralFields {
             temperature_c: 10.0,
             precipitation_mm: 800.0,
             moisture: 0.5,
-            class: None,
+            class: Some(0),
             slope_deg: 0.0,
             aspect_deg: 0.0,
             altitude_m: 100.0,
             curvature: 0.0,
             water_distance_m: 1000.0,
         },
-        class_names: Vec::new(),
+        class_names: vec!["forest".to_owned()],
     }
 }
 
@@ -60,14 +61,14 @@ fn build(text: &str, rect: [f64; 4], stand_rect: [f64; 4], disc: [f64; 3]) -> Ve
     let excl = move |x: f64, y: f64| (x - disc[0]).hypot(y - disc[1]) <= disc[2];
     let rules = StandRules { values: &file.values, seed: 55, canopy: &suit };
     let stand = StandMap::build(rules, &fields, &excl, stand_rect);
-    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0, rocks: None };
+    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0, rocks: None, canopy: test_targets(&file) };
     cand.candidates(&fields, &stand, rect)
 }
 
 fn rules_rect(text: &str, tile: (i32, i32)) -> ([f64; 4], f64) {
     let file = SpeciesFile::parse_toml(text).expect("fixture parses");
     let suit: Vec<Suitability> = file.species.iter().map(|s| Suitability::new(s, &[])).collect();
-    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0, rocks: None };
+    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0, rocks: None, canopy: test_targets(&file) };
     (cand.tile_rect(tile), cand.competition_reach_m())
 }
 
@@ -180,4 +181,142 @@ fn size_marks_stay_in_range_for_both_laws() {
     assert_eq!(poisson(0.0, 0.5), 0);
     let mean = (0..10_000).map(|i| f64::from(poisson(12.0, (f64::from(i) + 0.5) / 10_000.0))).sum::<f64>() / 10_000.0;
     assert!((mean - 12.0).abs() < 0.05, "Poisson(12) mean {mean}");
+}
+
+/// A canopy tree and a ground fern on one temperature hat, no mosaic clearing (threshold 0).
+const TARGETED: &str = r#"
+[params]
+"scatter.stand_clearing_threshold" = { v = 0.0, unit = "ratio", min = 0, max = 1, source = "Guess" }
+
+[columns]
+hat_temperature_c = { unit = "C", min = -40, max = 40, source = "Guess" }
+
+[[species]]
+name = "tree"
+layer = "canopy"
+size_law = "reverse_j"
+hat_temperature_c = [0, 10, 30, 40]
+
+[[species]]
+name = "fern"
+layer = "ground"
+size_law = "reverse_j"
+hat_temperature_c = [0, 10, 30, 40]
+"#;
+
+/// Class 0 west of x = 2000 m, class 1 east of it; one temperature everywhere.
+struct TwoClasses {
+    temperature_c: f64,
+    names: Vec<String>,
+}
+
+impl Fields for TwoClasses {
+    fn sample(&self, x: f64, _: f64) -> FieldSample {
+        FieldSample { temperature_c: self.temperature_c, class: Some(u8::from(x >= 2000.0)), ..neutral().sample }
+    }
+
+    fn class_names(&self) -> &[String] {
+        &self.names
+    }
+}
+
+/// Two 4 km2 classes side by side.
+const TWO_RECT: [f64; 4] = [0.0, 0.0, 4000.0, 2000.0];
+
+struct Arm {
+    /// Per class: canopy candidates, ground candidates, mean of `w` on a 4 m grid.
+    canopy: [f64; 2],
+    ground: [f64; 2],
+    m: [f64; 2],
+}
+
+/// The candidates of [`TARGETED`] over [`TWO_RECT`] at `temperature_c`, with `targets` (`None`: T 100 and 400,
+/// `m` this arm's own, `g` 1).
+fn two_class_arm(temperature_c: f64, targets: Option<&CanopyTargets>) -> (Arm, CanopyTargets) {
+    let file = SpeciesFile::parse_toml(TARGETED).expect("fixture parses");
+    let fields = TwoClasses { temperature_c, names: vec!["sparse".to_owned(), "dense".to_owned()] };
+    let suit: Vec<Suitability> = file.species.iter().map(|s| Suitability::new(s, fields.class_names())).collect();
+    let canopy_suit = vec![suit[0].clone()];
+    let rules = StandRules { values: &file.values, seed: 55, canopy: &canopy_suit };
+    let grown = [TWO_RECT[0] - 100.0, TWO_RECT[1] - 100.0, TWO_RECT[2] + 100.0, TWO_RECT[3] + 100.0];
+    let stand = StandMap::build(rules, &fields, &|_: f64, _: f64| false, grown);
+    // The class means of `w = D` (one canopy species, prior 1), clearings at 0, on cell centres of a 4 m grid.
+    let mut m = [0.0; 2];
+    let mut n = [0.0; 2];
+    let step = 4.0;
+    for iy in 0..500 {
+        for ix in 0..1000 {
+            let (x, y) = ((f64::from(ix) + 0.5) * step, (f64::from(iy) + 0.5) * step);
+            let p = stand.at(x, y);
+            let c = usize::from(x >= 2000.0);
+            m[c] += if p.class == StandClass::Clearing { 0.0 } else { p.d };
+            n[c] += 1.0;
+        }
+    }
+    let m = [m[0] / n[0], m[1] / n[1]];
+    let own = CanopyTargets {
+        classes: vec![
+            ClassTarget { stems_per_ha: 100.0, weight_mean: m[0], scale: 1.0 },
+            ClassTarget { stems_per_ha: 400.0, weight_mean: m[1], scale: 1.0 },
+        ],
+    };
+    let used = targets.unwrap_or(&own);
+    let cand = CandidateRules {
+        file: &file,
+        suitability: &suit,
+        seed: 55,
+        tile_m: 256.0,
+        prior: &one,
+        water: &WaterMask::default(),
+        height: &|_: f64, _: f64| 0.0,
+        rocks: None,
+        canopy: used,
+    };
+    let cover = Cover::new(file.values.shade_per_crown);
+    let per_class = |layer: Layer| {
+        let mut k = [0.0; 2];
+        for c in cand.layer_candidates(&fields, &stand, TWO_RECT, layer, &cover) {
+            k[usize::from(c.pos[0] >= 2000.0)] += 1.0;
+        }
+        k
+    };
+    (Arm { canopy: per_class(Layer::Canopy), ground: per_class(Layer::Ground), m }, own)
+}
+
+/// `|got - want| <= 3 sd` of a Thomas count of mean `want` (`sd = sqrt(want (1 + offspring_mean))`).
+fn within_3sd(what: &str, got: f64, want: f64) {
+    let o = SpeciesFile::parse_toml(TARGETED).expect("fixture parses").species[0].offspring_mean;
+    let sd = (want * (1.0 + o)).sqrt();
+    println!("{what}: {got} vs {want:.0} (3 sd {:.0})", 3.0 * sd);
+    assert!((got - want).abs() <= 3.0 * sd, "{what}: {got} vs {want:.0}, more than 3 sd ({sd:.0}) off");
+}
+
+#[test]
+fn canopy_candidates_meet_the_class_target_and_the_weight_enters_once() {
+    let ha = 400.0; // each class: 2 km x 2 km
+    let (full, targets) = two_class_arm(10.0, None);
+    println!("class means m {:.3} {:.3}", full.m[0], full.m[1]);
+    assert!(full.m.iter().all(|&m| m > 0.1 && m < 1.0), "m {:?}", full.m);
+    within_3sd("class 0 canopy (T 100)", full.canopy[0], 100.0 * ha);
+    within_3sd("class 1 canopy (T 400)", full.canopy[1], 400.0 * ha);
+
+    // Half the suitability, `m` held: half the canopy (D halves; the old form, su at parent and offspring with D
+    // carrying it too, gave an eighth) and half the ground flora (the old form gave a quarter).
+    let (half, _) = two_class_arm(5.0, Some(&targets));
+    for c in 0..2 {
+        within_3sd(&format!("class {c} canopy at half su"), half.canopy[c], 0.5 * full.canopy[c]);
+        within_3sd(&format!("class {c} ground at half su"), half.ground[c], 0.5 * full.ground[c]);
+    }
+    assert!(full.ground.iter().all(|&g| g > 1000.0), "ground {:?}", full.ground);
+
+    // su 0.05: `m` under 1 / intensity_scale_max (16), `s` clamps and each class gets `T m s_max`, not `T`.
+    let (low, low_targets) = two_class_arm(0.5, None);
+    let s_max = SpeciesFile::parse_toml(TARGETED).expect("fixture parses").values.intensity_scale_max;
+    for (c, t) in [100.0, 400.0].into_iter().enumerate() {
+        assert!(low.m[c] < 1.0 / s_max, "class {c} m {}", low.m[c]);
+        #[allow(clippy::cast_possible_truncation)]
+        let id = Some(c as u8);
+        assert!(low_targets.clamps(id, s_max) && !targets.clamps(id, s_max));
+        within_3sd(&format!("class {c} canopy clamped"), low.canopy[c], t * low.m[c] * s_max * ha);
+    }
 }

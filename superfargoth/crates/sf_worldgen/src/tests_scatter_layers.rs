@@ -64,14 +64,14 @@ fn neutral() -> NeutralFields {
             temperature_c: 10.0,
             precipitation_mm: 800.0,
             moisture: 0.5,
-            class: None,
+            class: Some(0),
             slope_deg: 0.0,
             aspect_deg: 0.0,
             altitude_m: 100.0,
             curvature: 0.0,
             water_distance_m: 1000.0,
         },
-        class_names: Vec::new(),
+        class_names: vec!["forest".to_owned()],
     }
 }
 
@@ -103,7 +103,7 @@ fn no_lower_instance_in_an_earlier_stem_footprint() {
     let (file, suit) = parse();
     let fields = neutral();
     let none = |_: f64, _: f64| false;
-    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0, rocks: None };
+    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0, rocks: None, canopy: test_targets(&file) };
     let rect = cand.tile_rect((0, 0));
     let stand = StandMap::build(StandRules { values: &file.values, seed: 55, canopy: &suit }, &fields, &none, rect);
     let won = cand.tile_winners(&fields, &stand, (0, 0));
@@ -127,7 +127,7 @@ fn lower_layers_sit_in_more_light_than_uniform_points() {
     let (file, suit) = parse();
     let fields = neutral();
     let none = |_: f64, _: f64| false;
-    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0, rocks: None };
+    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0, rocks: None, canopy: test_targets(&file) };
     let rect = cand.tile_rect((0, 0));
     let stand = StandMap::build(StandRules { values: &file.values, seed: 55, canopy: &suit }, &fields, &none, rect);
     let won = cand.tile_winners(&fields, &stand, (0, 0));
@@ -174,7 +174,7 @@ fn a_layered_tile_alone_equals_the_same_square_of_a_larger_build() {
     let (file, suit) = parse();
     let fields = neutral();
     let none = |_: f64, _: f64| false;
-    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0, rocks: None };
+    let cand = CandidateRules { file: &file, suitability: &suit, seed: 55, tile_m: 256.0, prior: &one, water: &WaterMask::default(), height: &|_: f64, _: f64| 0.0, rocks: None, canopy: test_targets(&file) };
     let grows = cand.layer_grows();
     println!("grows {grows:?}");
     assert_eq!(grows.iter().map(|g| g.0).collect::<Vec<_>>(), [Layer::Canopy, Layer::Understorey, Layer::Ground]);
