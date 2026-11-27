@@ -46,17 +46,7 @@ fn rocks_on_x10s() {
     std::fs::create_dir_all(&dir).unwrap();
     let (climate, climate_s) = x10s_copy(&src, &dir);
 
-    // The geology product, from the shipped table resolved in the guide's palette (outside the guide folder, so
-    // the rock layer reads the shipped table as the game does).
-    let t = Instant::now();
-    let text = std::fs::read_to_string(root.join("bevyrrowind/worldgen").join(crate::geology::TABLE_FILE)).unwrap();
-    let adapter = AdapterGeology::from_toml(&text).unwrap();
-    let layers = sf_worldgen::layers::GuideLayers::read(&dir).unwrap().expect("x10s has layers.json");
-    let table = tmp.path().join("geology.resolved.toml");
-    std::fs::write(&table, adapter.resolved_toml(&layers.palette).unwrap()).unwrap();
-    let req = sf_worldgen::geology::GeologyRequest { base: dir.clone(), table, sets: Vec::new(), out: dir.clone() };
-    sf_worldgen::geology::run_geology(&req).unwrap();
-    let geology_s = t.elapsed().as_secs_f64();
+    let geology_s = make_geology(&root, tmp.path(), &dir);
 
     let t = Instant::now();
     let vfs = mw_vfs::mount_install(&install, sf_vfs::Vfs::builder()).unwrap().vfs;
@@ -113,6 +103,180 @@ fn rocks_on_x10s() {
     unit_table(&full, grid, &dir);
     let values = flora::rocks::values_of(&full.learned.file).unwrap();
     context_table(&full, values.size_dim);
+}
+
+/// The geology product in `dir`, from the shipped table resolved in the guide's palette (written to `tmp`, outside
+/// the guide folder, so the rock layer reads the shipped table as the game does); returns its seconds.
+fn make_geology(root: &Path, tmp: &Path, dir: &Path) -> f64 {
+    let t = Instant::now();
+    let text = std::fs::read_to_string(root.join("bevyrrowind/worldgen").join(crate::geology::TABLE_FILE)).unwrap();
+    let adapter = AdapterGeology::from_toml(&text).unwrap();
+    let layers = sf_worldgen::layers::GuideLayers::read(dir).unwrap().expect("x10s has layers.json");
+    let table = tmp.join("geology.resolved.toml");
+    std::fs::write(&table, adapter.resolved_toml(&layers.palette).unwrap()).unwrap();
+    let req = sf_worldgen::geology::GeologyRequest { base: dir.to_owned(), table, sets: Vec::new(), out: dir.to_owned() };
+    sf_worldgen::geology::run_geology(&req).unwrap();
+    t.elapsed().as_secs_f64()
+}
+
+/// Library seed of the stand-in libraries [`rock_placements_on_x10s`] builds (the bake's per-class seeds sit behind
+/// `sf_rockgen`'s `bake` feature, which this crate does not take): counts do not depend on it, variant bounds do a
+/// little.
+// tunables: const (fixture seed)
+const STAND_IN_SEED: u64 = 1;
+
+/// RG-P6 (rockgen.md "(f)"): the library rocks on x10s as the `view world:` load makes them. One scatter pass with
+/// the default parameters and the rock layer over a geology product made from the shipped table (no towns, as the
+/// `worldgen-flora` census); libraries of every built-in class at the `rockgen.*` defaults (stand-in seed,
+/// [`STAND_IN_SEED`]). Prints the library rocks the scatter marks, the placements resolved and dropped, per class
+/// placements and variants used; the content index (`build_pages` + `build_directory` at the default
+/// `IndexParams`, encoded bytes = `IndexPage::to_bytes` + `CellDirectory::to_bytes`) over the flora and pack-rock
+/// lists without and with the library list (seconds, MB, placements, cells, pages; models other than library
+/// variants index as points in both arms: no bake here); library rocks per 1 km ring (0-1, 1-2, 2-3 km, horizontal)
+/// around three points: the centres of the densest, the p90 and the p50 occupied square kilometre.
+#[test]
+#[ignore = "measurement: rock placements"]
+#[allow(clippy::too_many_lines)]
+fn rock_placements_on_x10s() {
+    use sf_rockgen::{BoulderParams, CLASSES, Libraries, LibrarySettings, build_library};
+    use sf_world::{IndexParams, Placement, build_directory, build_pages};
+
+    let Ok((install, _)) = mw_install::MorrowindInstall::detect(None) else {
+        eprintln!("no Morrowind install detected; skipping");
+        return;
+    };
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let src = std::env::var_os("SCRIB_X10S").map_or_else(|| root.join("target/worldgen/x10s"), PathBuf::from);
+    if !src.join("heights.f32").exists() {
+        eprintln!("no guide at {}; skipping", src.display());
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("guide");
+    std::fs::create_dir_all(&dir).unwrap();
+    let _ = x10s_copy(&src, &dir);
+    make_geology(&root, tmp.path(), &dir);
+
+    let vfs = mw_vfs::mount_install(&install, sf_vfs::Vfs::builder()).unwrap().vfs;
+    let content = mw_records::load(&vfs, &install.game_files()).unwrap();
+    let cache = std::cell::RefCell::new(HashMap::<String, Option<([f32; 3], [f32; 3])>>::new());
+    let bounds = |model: &str| {
+        if let Some(b) = cache.borrow().get(model) {
+            return *b;
+        }
+        let b = sf_vfs::VfsPath::new(model)
+            .ok()
+            .and_then(|path| vfs.read(&path).ok())
+            .and_then(|bytes| mw_nif::load(&bytes).ok())
+            .and_then(|m| mw_nif::visible_bounds(&m));
+        cache.borrow_mut().insert(model.to_owned(), b);
+        b
+    };
+    let ext = mw_world::ids::exterior();
+    let tiles = GuideTiles::open(&dir, ext.clone()).unwrap();
+    let source = mw_world::MwWorldSource::build(&content.db, &mw_world::SourceOptions::default());
+    let prm = Params::default();
+    let (file, f, water, clearings) = flora::guide_inputs(&dir, &tiles, &prm).unwrap();
+    let rs = RockSource::read(&dir).unwrap();
+    let towns = TownMask::default();
+    let t = Instant::now();
+    let run = flora::scatter_world(&content.db, &source, &bounds, &tiles, &f, &water, &file, clearings.as_ref(), &towns, prm, Some(&dir), Some(&rs))
+        .unwrap();
+    let scatter_s = t.elapsed().as_secs_f64();
+
+    let t = Instant::now();
+    let libs = Libraries::new(CLASSES.iter().map(|c| {
+        (c.name.to_owned(), build_library(&c.params(BoulderParams::default()), &LibrarySettings::default(), STAND_IN_SEED))
+    }));
+    let libs_s = t.elapsed().as_secs_f64();
+    let marked = run.rocks.iter().filter(|r| matches!(r.mesh, RockMesh::Class { .. })).count();
+    let t = Instant::now();
+    let lib = flora::rocks::library_placements(&run, &libs);
+    let resolve_s = t.elapsed().as_secs_f64();
+    assert_eq!(lib.placements.len() + lib.dropped, marked, "every marked library rock is placed or dropped");
+    assert!(lib.placements.iter().all(|p| p.transform.pos.to_f64().is_finite() && p.transform.scale.is_finite()));
+
+    let base: Vec<Placement> = flora::placements(&run).into_iter().chain(flora::rocks::rock_placements(&run)).collect();
+    let models = |m: &sf_vfs::VfsPath| lib.models.get(m).copied();
+    let params = IndexParams::default();
+    let index = |with: bool| {
+        let t = Instant::now();
+        let all = base.iter().cloned().chain(lib.placements.iter().filter(|_| with).cloned());
+        let (pages, stats) = build_pages(&params, all, &models);
+        let directory = build_directory(ext.clone(), &params, &pages);
+        let secs = t.elapsed().as_secs_f64();
+        let bytes = pages.iter().map(|p| p.to_bytes().len()).sum::<usize>() + directory.to_bytes().len();
+        (stats, secs, bytes as f64 / 1e6)
+    };
+    let (without, without_s, without_mb) = index(false);
+    let (with, with_s, with_mb) = index(true);
+    assert!(with.duplicate_ids.is_empty(), "library rock ids are unique among the content");
+    assert_eq!(with.missing_models, without.missing_models, "every library model indexes with its variant bounds");
+
+    println!(
+        "RG-P6 rock placements on {} (scatter {scatter_s:.1} s, {} libraries built in {libs_s:.2} s)",
+        src.display(),
+        libs.len()
+    );
+    println!("scatter: {}", flora::summary_line(&run));
+    println!(
+        "library rocks: {marked} marked, {} placed, {} dropped, {} variants used; resolve {resolve_s:.3} s",
+        lib.placements.len(),
+        lib.dropped,
+        lib.models.len()
+    );
+    let mut per_class: BTreeMap<&str, (usize, std::collections::BTreeSet<&str>)> = BTreeMap::new();
+    for p in &lib.placements {
+        let id = p.model.as_ref().unwrap().as_str();
+        let (class, _) = sf_rockgen::placed::parse_model_id(id).unwrap();
+        let e = per_class.entry(class).or_default();
+        e.0 += 1;
+        e.1.insert(id);
+    }
+    println!("| class | placements | variants used |");
+    println!("|---|---:|---:|");
+    for (class, (n, ids)) in &per_class {
+        println!("| {class} | {n} | {} |", ids.len());
+    }
+    println!("| index | placements | cells | pages | build s | MB |");
+    println!("|---|---:|---:|---:|---:|---:|");
+    for (name, s, secs, mb) in [("without library", &without, without_s, without_mb), ("with library", &with, with_s, with_mb)] {
+        println!("| {name} | {} | {} | {} | {secs:.2} | {mb:.1} |", s.placements, s.cells, s.pages);
+    }
+    println!("index with library: +{:.2} s, +{:.1} MB", with_s - without_s, with_mb - without_mb);
+    rings_table(&lib.placements);
+}
+
+/// Library rocks per 1 km ring (horizontal, engine x / z) around the centres of the densest, the p90 and the p50
+/// occupied square kilometre.
+fn rings_table(placements: &[sf_world::Placement]) {
+    // tunables: const (the measurement's ring width, km in m)
+    const KM: f64 = 1000.0;
+    let xz: Vec<(f64, f64)> = placements.iter().map(|p| p.transform.pos.to_f64()).map(|v| (v.x, v.z)).collect();
+    let mut squares: HashMap<(i64, i64), usize> = HashMap::new();
+    for &(x, z) in &xz {
+        *squares.entry(((x / KM).floor() as i64, (z / KM).floor() as i64)).or_default() += 1;
+    }
+    let mut occupied: Vec<((i64, i64), usize)> = squares.into_iter().collect();
+    if occupied.is_empty() {
+        println!("no library rocks: no rings");
+        return;
+    }
+    occupied.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    println!("{} occupied km2", occupied.len());
+    println!("| point | centre x / z m | rocks in its km2 | 0-1 km | 1-2 km | 2-3 km |");
+    println!("|---|---|---:|---:|---:|---:|");
+    for (name, q) in [("densest", 0.0), ("p90", 0.1), ("p50", 0.5)] {
+        let ((sx, sz), n) = occupied[((occupied.len() - 1) as f64 * q).round() as usize];
+        let (cx, cz) = ((sx as f64 + 0.5) * KM, (sz as f64 + 0.5) * KM);
+        let mut rings = [0usize; 3];
+        for &(x, z) in &xz {
+            if let Some(r) = rings.get_mut(((x - cx).hypot(z - cz) / KM).floor() as usize) {
+                *r += 1;
+            }
+        }
+        println!("| {name} | {cx:.0} / {cz:.0} | {n} | {} | {} | {} |", rings[0], rings[1], rings[2]);
+    }
 }
 
 /// Per geology unit: dry land (guide samples above sea level), rocks/ha per context and all, pack-model share.

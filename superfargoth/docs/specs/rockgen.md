@@ -735,3 +735,9 @@ unreadable: logged, left out; `--off rocklibrary` = new `Part::RockLibrary`: not
 `WorldgenContent` gains `models` (looked up before the bake's by `content_models`) and `rock_libraries`; with a
 `ROCK_LIBRARY` placement, `worldgen::add` registers the `RockSpawner` in `Startup` after `exterior::setup_spawners`
 (before the `PostStartup` hooks, so RG-P5b's physics hook will wrap it), materials at the max variant LOD count.
+
+**RG-P6 (2026-11-27).** `mw_worldgen` `tests_rocks_x10.rs` `rock_placements_on_x10s` (ignored, release, `SCRIB_X10S`;
+stand-in library seed, no towns): of 16,286 budgeted rocks (2.21 M before the 200 k budget) 9,628 are library rocks, all
+placed (0 dropped), 128 variants (16 x 8 classes; block 2,970 ... talus 75); index +9,628 placements, +2,647 cells, +1
+page, +1.0 MB (18.4 -> 19.4), build +0.00 s; at most 22 per km2 (1,352 km2 occupied), 23-41 within 1 km of the densest,
+p90 and p50 km2. Frame cost goes with the WG-E3 sitting.
