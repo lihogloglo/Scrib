@@ -114,6 +114,71 @@ in placement order from a cursor; a target catches up with its elapsed ticks, ea
 so with room for every check the result is bit-exact IN17c1. `Flammable::structure` (serde default) +
 `FireBody::in_settlement` (host's zone lookup) = immune to spread. 3 exact tests in `tests_fire.rs`.
 
+### Rules and fire shell (IN39, spec 2026-11-27)
+
+**Checks.** Bevy 0.20: `FixedUpdate`, messages, resources; nothing fire-shaped. Our crates: `sf_effects` is the
+actors' magic-effect step (`sf_effects/src/lib.rs:1`), not flames; `sf_surface_bevy`'s shelter is a GPU depth capture
+(`lib.rs:8`), no CPU query; `sf_weather` gives the mean wind (`map.rs:305` `wind()`); the shell depends on none of
+them (render stacks; the `DeformGround` closure pattern, `sf_surface_bevy/src/deform.rs:178`, instead). Crates:
+`bevy_hanabi` (MIT/Apache GPU particles) shows no Bevy 0.20 release (README table ends at 0.18, read 2026-11-27, U),
+so the flame presenter starts from the pack's flame meshes and is its own row's reuse check. Industry: Far Cry 2's
+fire ([dev write-up](https://symmetricaldatasecurity.blogspot.com/2020/12/far-cry-how-fire-burns-and-spreads.html),
+[Levesque interview](https://gamedeveloper.com/game-platforms/interview-how-i-far-cry-2-i-s-fire-fuels-spreads)):
+cells with hit points that burning neighbours drain, extra drain downwind, faster uphill (hot gases), fire as a fear
+area for AI, emitters moved to stay in front of the camera. Ours: heat = their hit points, the same wind bias, AI
+reads burning objects as lights and `Ignited` changes, the presenter picks lights near the camera. Uphill bias is not
+modelled (gap, industry-audit.md when IN39b lands).
+
+**Host inputs** (resources the game fills; the shell never names weather, surface or physics):
+`InteractionRules(Rules)`; `FireWeather { wind: Vec2, indoors: bool }` (mean wind at the player, the active space's
+interior flag); `FireWetness`, `FireShelter`, `FireZones`: `Option<Arc<dyn Fn(Vec3) -> f32 | bool + Send + Sync>>`
+(`sf_surface::sample`'s wet channel; one upward ray on the host's physics probe; the adapter's settlement zones).
+Shelter and zone answers are cached per placement and dropped on its `Insert`/`Move` ("cached while it rests"). Unset
+closures = dry, open sky, wild. Materials: `InteractionMaterials` (IN18b, shared). The registry `Interactables`
+(placement -> def, frame) follows `IndexChange` like the light registry, for every def with a `material`.
+
+**IN39a rules shell.** `InteractionObjectStates(ObjectStates)` + `RuleCause { placement, source, culprit:
+Option<UserKey> }` (hits, spell areas, water contact, a torch; any writer, sorted by a total key as `PropDamage`),
+material from `Interactables` (unregistered: dropped), into the core `RuleQueue`; `step_rules` in `RuleSystems`
+(`FixedUpdate`, after `InteractionSystems::Apply`, before `DestroySystems::Damage`). Every event is one `RuleApplied {
+tick, event, culprit, source }`; routes: Added/Removed/Expired mirror into `InteractionStateTags` (verbs gate on
+`Burning`, `Wet`); `LIT` on a registered light sets its `LightState` (+ `LightChanged`, cause the source's first tag);
+`Damage` -> one `PropDamage` (per evaluation; a held source re-sends its cause each tick); `Stage(i)` -> `PropStage`;
+`Change(k)` -> `WorldChanged` (culprit, cause = first source tag); `Noise(k)` -> `NoiseInbox` (material reach, maker
+the culprit, not revealed); `Effect(e)` -> `RuleEffect { tick, placement, effect, at }` for the host's presentation.
+**`PropStage { placement, stage, kind, culprit, point }`** (destroy shell, after the tick's damage): health := min(health,
+def.health x stages[stage].at), so stages up to `stage` cross and queue breaks as a hit; past, gone, unknown or (but
+`DAMAGE_SCRIPT`) `ignore_external`: nothing.
+
+**IN39b fire step.** Bodies = registered placements whose material is `flammable`, at the frame's translation, in
+`FireSystems` after `RuleSystems`, on the same `ObjectStates`. Wetness 0 indoors or sheltered, else `FireWetness(pos)`;
+at `>= interact.rules.wet_threshold` the shell refreshes `Wet` (`wet_ttl_s`) before `step_fire` (`FireEnv { wind }`).
+Culprits (`FireCulprits`, placement -> (user, cause tag)): a rule-lit body takes its `RuleApplied` culprit and source tag;
+a heat ignition inherits the nearest body burning at the tick's start (distance, then placement); Doused/Charred forget.
+`Ignited` (heat, or `RuleApplied` Added(`BURNING`)) and `Burnt` -> `WorldChanged` via `from_fire` (site from
+`ChangeOwners`, at the body).
+
+**IN39c fire outputs.** Each burning destructible takes `PropDamage { kind: DAMAGE_FIRE ("fire", new core const),
+amount: interact.fire.damage_per_s / tick_hz, point: pos, dir: +Y, culprit }` (the adapter's `DestructionRules (fire,
+material)` scales it). `Burnt` -> `PropStage` (`burnt_stage`, else the def's last stage); a `Destroyed` of kind fire on
+a `Charred` placement maps to no `WorldChange` (its `Burnt` said it). `BurningObjects` (placement -> at, since, region,
+`light`): `light` on the `interact.fire.lights_max` earliest-started per region (then placement; a light keeps its slot
+until it goes out, no flicker); `FireChanged { tick, placement, output, at }` for the presenter; a burning placement
+that is not a registered light joins `GameplayLights` (`interact.fire.light_radius_m`, intensity 1) while it burns.
+
+**IN39d save.** Core `ObjectStates::rest_bytes(placement, now)` / `from_rest_bytes(.., now)` (version, then per state
+tag id + remaining ticks, `u32::MAX` = until removed) and `Fire::rest_bytes` / `restore` (version, heat bits, elapsed
+burn ticks or none, queued flag): remaining time, never absolute ticks, so a save loads exact at any tick count. Shell:
+`ObjectStatesChanged { placement, bytes }` on change (the host's overlay blob, (b) "Save"), `ObjectStatesRest` applies
+one; an unloaded placement drops its states and fire after its last write. No blob = fresh. Fire runs on ticks while
+resident; a clock jump (rest, travel) advances nothing (Far Cry 2 burns only near the player too).
+
+**Later rows (game, `mw_interaction_bevy`).** IN39e: the host fills `FireWeather`, `FireWetness`, `FireShelter`,
+`FireZones` (sf_weather, sf_surface, its probe, IN41's zones). IN39f: the presenter (flame model + smoke per
+`BurningObjects` within `interact.fire.effect_lod_m`, shadowless point lights on the `light` ones, char from the stage
+swap), owner check IN-39. **New tunables** (rows below): `interact.fire.damage_per_s`; `lights_max`, `light_radius_m`
+(IN39c) and `effect_lod_m` (IN39f) get declared with their rows.
+
 ### Ground burn grid (IN40)
 
 Per region a coarse grid (`interact.burn.cell_m` cells, `interact.burn.region_cells` a side; one byte of burn, one of
@@ -223,9 +288,9 @@ door/destroy/impact steps before hearing, which the physics order does not promi
 - **Bevy 0.20:** `FixedUpdate`, messages and observers, `Image` assets for the burn texture; no chemistry, fire or
   gameplay light. Glue only. **Rapier:** contacts come through `sf_physics` `PhysicsEvent::Contact` (solver impulse + normal speed change), not
   `ContactForceEvent` (fires every step a resting load passes its force threshold; destruction spec "Impacts (IN4)").
-- **Our crates:** `sf_surface` (wetness), `sf_weather` (mean wind), `sf_effects` (flames, capped lights), the terrain
+- **Our crates:** `sf_surface` (wetness), `sf_weather` (mean wind), fire presentation is the host's (IN39f; `sf_effects` is the actors' magic-effect step, not flames), the terrain
   and groundcover shaders (burn lookup), `sf_ai_bevy` `NoiseEvent` and `AiLightInputs` (host-mapped).
-- **Crates:** no chemistry or fire-spread crate (research §7); particles are `sf_effects`' business.
+- **Crates:** no chemistry or fire-spread crate (research §7); `bevy_hanabi` for particles is the presenter's check (IN39f; no Bevy 0.20 release seen 2026-11-27).
 - **Projects:** OpenMW has no fire spread or snuffing (lights are records with an off-by-default flag); nothing to
   port. So: **our own** rules in `sf_interaction`, thin systems in `sf_interaction_bevy`.
 
@@ -263,7 +328,8 @@ Gaps go in [industry-audit.md](industry-audit.md) when built (none known).
 | `interact.fire.wind_bias` | ratio | 0.6 | 0-1 | Guess (Industry: Far Cry 2 wind-driven [M]) | Gameplay |
 | `interact.fire.wind_ref_mps` | m/s | 8 | 1-30 | Guess | Gameplay |
 | `interact.fire.rain_douse` | ratio | 0.6 | 0-1 | Guess | Gameplay |
-| `interact.fire.light_radius_m` | m | 6 | 1-20 | Guess | Presentation |
+| `interact.fire.light_radius_m` | m | 6 | 1-20 | Guess (also the AI's fire light reach, IN39c) | Gameplay |
+| `interact.fire.damage_per_s` | 1/s (raw damage) | 5 | 0-100 | Guess (the adapter's `DestructionRules (fire, material)` scales it) | Gameplay |
 | `interact.fire.effect_lod_m` | m | 60 | 10-300 | Guess | Presentation |
 | `interact.burn.cell_m` | m | 2 | 0.5-8 | Guess (Industry: Divinity surface cells [S]) | Gameplay |
 | `interact.burn.region_cells` | count | 256 | 32-1024 | Guess (= 512 m at 2 m) | Gameplay |
@@ -302,7 +368,7 @@ they size the grid). Material values, rule rows and `LightDef` are mod data, not
 
 ## Save and net
 
-TTL states save their remaining time, `Lit` and `Charred` as tags, burn cells as a sparse list (the `interaction`
+TTL states save their remaining time (IN39d codec), `Lit` and `Charred` as tags, burn cells as a sparse list (the `interaction`
 overlay blob, (b) "Save"); old saves load Fresh with lights at `lit_default`. Host-authoritative: clients receive
 state changes, `LightChanged`, burn-cell deltas (batched at `interact.burn.upload_hz`) and noises; flames and char
 are seeded per client.

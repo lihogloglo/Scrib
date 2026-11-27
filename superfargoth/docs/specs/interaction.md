@@ -421,7 +421,7 @@ IN27-IN30 and TV0b are stage 0). IN5 is folded into IN9 (owner 2026-11-11). The 
 | IN36 | Thrown props hit people: damage/stagger by mass × speed (capped), assault when seen, Classic off | `sf_interaction_bevy`, `sf_combat` | IN4, Q2 | exact curve; owner IN-36 |
 | IN19 | `Lit`, snuff/relight verb, light follows, `LightChanged`; see [(d)](interaction-world-rules.md) | `sf_interaction(_bevy)`, `mw_interaction` | IN31 | exact events; owner IN-19 |
 | IN17 | Rules core: `InteractionRules`, states + TTL, `Wet`, budgeted wind spread; see [(d)](interaction-world-rules.md) | `sf_interaction` | IN28, IN1 | exact on a synthetic grid; rain stops it |
-| IN39 | Fire in game: effects (capped lights), charred stage, damage, extinguish | `sf_interaction_bevy`, `sf_effects` | IN17 | sanity; owner IN-39 |
+| IN39 | Fire in game: effects (capped lights), charred stage, damage, extinguish (world-rules "Rules and fire shell (IN39)", rows IN39a-f) | `sf_interaction_bevy`, `mw_interaction_bevy` | IN17 | sanity; owner IN-39 |
 | IN40 | Ground burn grid: groundcover/terrain tint, fast regrow | `sf_interaction_bevy` | IN17 | exact regrow; owner IN-40 |
 | IN41 | Adapter: ignition sources, flammables, town rule (Q1), Classic off | `mw_interaction` | IN39, IN40 | exact rows; Classic ignites nothing |
 | IN44 | Measurement: claims, spread, debris, burn grid ms, High, 4060 laptop | tests | IN39, IN40 | `#[ignore = "measurement: ..."]`; perf ledger |
