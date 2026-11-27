@@ -217,10 +217,16 @@ or logs in the town, no Imperial towers, Balmora towers at corners. Known: roads
 no deck on the Odai crossing, lake/river optics borrow the coastal look, terrain detail may poke through narrow beds.
 Note 2026-11-26: rounds 1-3 were seen on `x10s-b2w` (launch line above); the chain's current folder is `x10hs-b2w` (HC-1 low shores), where round 4 launches after WG-W1g (`worldgen-hydrology.md` "Verification").
 
-### WG-E2: scatter v2 forest structure on x10s (planned 2026-11-26, after WG-E2j; spec `worldgen-scatter.md`)
-Not built yet: nothing to launch. Launch then: `bash bevyrrowind/tools/owner_launch.sh view "world:<x10s arm dir>"`
-(the arm folder is named when E2j lands). Places: Bitter Coast and Ascadian Isles (dense forest), a road through
-forest, a town edge, Grazelands (open). Live: `--set scatter.budget=N`, `scatter.canopy_stems_per_ha_max`.
+### WG-E2: scatter v2 forest structure on x10s (built 2026-11-27 on `wt/ecosystems`, rows E2i-E2q; spec `worldgen-scatter.md`)
+Status: **awaiting owner** (launch after `wt/ecosystems` merges to main: `owner_launch.sh` runs main's dev build).
+Arm: `C:/cargo-target/scrib/worldgen/x10hs-b2w-e2` (a copy of `x10hs-b2w`: roads, water, Balmora 2.0; plus its
+`climate/`, `scrib-worldgen climate`, blake3 e8fdcb31). First load writes `scatter/` in the arm (~5 min, 1.5 GB; headless 316 s), later loads read it (~6 s).
+Launch: `owner_launch.sh view "world:C:/cargo-target/scrib/worldgen/x10hs-b2w-e2" --hour 12 --camera -6600,+290,760,-6437,+226,585`
+(Bitter Coast forest cell). Other places (`--camera`): Ascadian Isles forest `3900,+660,3900,4097,+568,4097`; road through
+forest `-4300,+1000,-8650,-4184,+857,-8765`; Balmora town edge `-2480,+70,2120,-2866,+8,2040` (TN-3's); Grazelands `9700,+130,-19100,9949,+66,-19312`.
+Launch flags: `--set scatter.budget=N`, `--set scatter.canopy_stems_per_ha_max=N`. Log: `worldgen flora:` summary + full-radius line.
+Known: the climate makes most of Bitter Coast (76 %) and Ascadian Isles (84 %) shrubland and Grazelands 77 % desert
+(WG-E1 data, not the scatter); forest per class is under target where flagged (`worldgen flora: calibration:` lines).
 1. In the Bitter Coast and Ascadian Isles, do trees stand in stands with crowns snug together, not overlapping?
 2. Are there clearings at roads and towns, with a fringe of smaller trees and shrubs at their edge?
 3. Are big trees in the stand cores and smaller ones at edges and in gaps?
