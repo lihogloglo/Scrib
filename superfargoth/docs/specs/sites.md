@@ -252,6 +252,11 @@ back to the region map.
   order anchor (weight overlap with any guide stamp, both ways), overlap (earlier pad), water (was wet, within the margin
   of a shore/bank, or below sea + margin), cut, band (slope at 0 < w < 1 over `pad.max_band_deg`, new). Pads go last;
   a run drops the old ones first (same bytes twice). Refused sites keep their V1 verdict (judged unpadded).
+- **WG-V1b.1 (2026-11-27)** `sf_worldgen::sites::clearings::Clearings` (`site_clearings.rs`, tests
+  `tests_site_clearings.rs`): sites not dropped and not kept towns (their anchor stamps and WG-X5 built-up mask already
+  clear them; a format-1 `radius_m` is a town extent) give ring + `clearing_m` (else disc + `clearing_m`); roads give
+  capsules of `width_m / 2 + clearing.road_m` round chords every `clearing.road_step_m` (new, 2 m) of the ribbon spline.
+  Sparse 64 m bucket grid (speed only; equals one bucket on a 70 k point grid, any order).
 
 ## Tunables
 
@@ -263,6 +268,7 @@ back to the region map.
 | `sites.anchor_gap_m` | m | 0-1000 | 150 | Guess |
 | `sites.<row>.clearing_m` | m | 0-60 | 12 | Guess (owner Q1) |
 | `clearing.road_m` | m | 0-30 | 6 | Guess (owner Q1) |
+| `clearing.road_step_m` | m | 0.5-20 | 2 | chord error h²/8R (2.5 cm on a 20 m bend), quality/cost, Guess |
 | `reach.cell_m` | m | 2-60 | guide spacing (18.288) | quality/cost, Guess |
 | `reach.max_walk_deg` | deg | read | 46 | `MoverParams::max_slope_deg` (`mover.rs:91`) |
 | `reach.swim_factor` | x | 1-10 | 3 | Guess |

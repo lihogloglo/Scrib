@@ -31,6 +31,9 @@ use crate::{Error, Result};
 #[path = "tests_sites.rs"]
 mod tests;
 
+#[path = "site_clearings.rs"]
+pub mod clearings;
+
 #[path = "site_pads.rs"]
 pub mod pads;
 
