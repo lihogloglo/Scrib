@@ -466,7 +466,7 @@ summaries)
 (U: search summaries; IN4-REV search: the table page is a stub listing the SDK's player/NPC thresholds, 24 in/s
 minimum linear speed, nothing under 2 kg, small objects under 5 kg above 36 in/s)
 
-## Bashing (IN37; spec IN37-S 2026-11-27)
+## Bashing (IN37; spec IN37-S 2026-11-27, review IN37-REV 2026-11-27)
 
 Owner 2026-11-25: locks and doors are bashed by strength, with a weapon or fists, risking health and contents, a crime
 if reported; doors are bashed open, never destroyed. Crime owns the lock (`LockState.hp`, `broken`, the offences,
@@ -484,7 +484,7 @@ wood says nothing of its lock; the threshold axis is new.
 
 | Game | Forcing a lock | Ours |
 |---|---|---|
-| Daggerfall [1] | each weapon blow on a door rolls under (20 - lock strength)%; bashing wears the weapon, trains no skill, noise draws guards in town | **match** wear, noise, no skill; **departs**: hp per blow, not a roll (no lucky first hit; deterministic for co-op) |
+| Daggerfall [1] | each blow is one roll: an interior door opens on (20 - lock value)%, a town door on (25 - lock value)%; a town bash is noticed 10% of the time (failed: attempted breaking and entering; succeeded: breaking and entering; guards spawn); in a dungeon any bash turns the enemies hostile; magically held doors never give; bashing an open door slams it shut; weapon wear (U) | **match** noise and blame, no skill, `impossible` locks (crime's) never give; **departs**: hp per blow, not a roll (no lucky first hit; deterministic for co-op) |
 | Baldur's Gate 3 [2] | doors and chests have hit points and a damage threshold (a blow under it does nothing; over it, full damage); some damage types double; fire or acid on a chest destroys contents; examine shows hp | **match**: hp (crime's), `threshold`, per-kind factor, contents risk per blow |
 | Cyberpunk 2077 | "force open" doors gated by the Body attribute (one check, no blows) | **departs**: a strength gate only through `threshold` (a weak blow never forces a strong door) |
 | Skyrim, KCD2, Morrowind/OpenMW | no forcing: pick, key or spell | **departs** (owner); Classic preset keeps bash off (interaction-adapter.md) |
@@ -495,7 +495,7 @@ wood says nothing of its lock; the threshold axis is new.
 pub const VERB_BASH: TagId = TagId::of("bash");
 pub struct Blow { pub force: f32 /* the adapter's: strength x weapon */, pub kind: TagId /* blunt, blade, hand.. */,
                   pub bare_handed: bool }
-pub struct BashRules { pub kind_factor: BTreeMap<TagId, f32> /* unknown = 1 */,
+pub struct BashRules { pub bare_kind: Option<TagId>, pub kind_factor: BTreeMap<TagId, f32> /* unknown = 1 */,
                        pub threshold: BTreeMap<TagId, f32> /* by the target def's material; unknown = 0 */,
                        pub self_per_force: f32, pub wear_per_force: f32,
                        pub contents_risk_per_force: f32, pub contents_risk_max: f32 }  // adapter record; neutral default
@@ -504,33 +504,46 @@ pub fn bash(rules: &BashRules, blow: &Blow, material: Option<TagId>) -> BashResu
 pub const fn bash_seed(placement: PlacementId, user: UserKey, tick: Tick) -> u64;   // splitmix64 chain as break_seed
 ```
 
+`bare_handed` is set by the adapter's fist kind (`BashRules.bare_kind: Option<TagId>`, `None` = never bare; the
+framework's damage kinds are only `script` and `impact`, `hand` is the game's `mw_interaction` `kind::HAND`).
 `f = force x kind_factor(kind)`; `lock_damage = 0` if `f < threshold(material)`, else `floor(f)` (BG3: no mitigation
 over the threshold); `self_damage = force x self_per_force` only bare-handed, `weapon_wear = force x wear_per_force`
 only armed; `contents_risk = min(force x contents_risk_per_force, contents_risk_max)` (raw force: the contents feel
 the blow, not the lock). Non-finite or negative force = a zero result. `Bashed { tick, placement, culprit, kind,
 force, result, point, seed }` is the core event. `from_bashed(&Bashed, &ChangeSite) -> WorldChange` (kind
-`CHANGE_BASHED`, cause the blow's kind, `ChangeDetail::Force(u32)` = `lock_damage`: world-reactions "Carries" `force`).
+`CHANGE_BASHED`, cause the blow's kind, `ChangeDetail::Force(u32)` = `floor(force)`, the raw blow as world-reactions
+"Carries" says: a blow under the threshold is just as loud a nuisance; crime reads `lock_damage` from `Bashed`, never
+from the change). Two users bashing one lock in one tick: `fold_tick` keeps the first change ("other kinds once"),
+crime still gets both `Bashed` (review).
 
 **Shell** (`sf_interaction_bevy/src/bash.rs`, `BashSystems`):
 
 - **Inputs, host-filled:** `BashRules` (resource; default neutral: factor 1, threshold 0, risks 0) and `BashBlows`, a
   closure `UserKey -> Option<Blow>` (the FireWetness pattern; unfilled or `None` = the use does nothing).
 - **Verb** (`Update`, after `ActivationSystems::Default`): a `UseApproved` with verb `bash` on a placement whose def
-  offers `bash` queues one `PendingBlow { user, placement, blow, land: tick + interact.bash.windup_s }`, the blow read
-  at the press. One pending blow per user; a press inside `interact.bash.recover_s` of the user's last landed blow is
-  dropped. A script `Activate` with `bash` (no user) does nothing.
-- **Hits** (`FixedUpdate`, `BashSystems::Land`): a `PropDamage` with a culprit on a placement that is **not** a
-  registered destructible and whose def offers `bash` with its `requires` met is a blow landing now: `Blow { force:
-  amount, kind, bare_handed: kind == hand }` (the attack already swung; combat prop targets C2c/C3 send these). `DAMAGE_IMPACT` is
+  offers `bash`; the user is the `InteractionUser` whose `actor` is `activation.actor` (the door and light defaults'
+  rule; none, e.g. a script `Activate` naming no user, does nothing). It queues one `PendingBlow { user, placement,
+  blow, land: tick + ceil(interact.bash.windup_s x tick_hz) }` (ticks from the effective params, `door.rs`
+  `effective_params`), the blow read at the press. One pending blow per user; a press inside `interact.bash.recover_s`
+  of the user's last landed blow is dropped.
+- **Hits** (`FixedUpdate`, `BashSystems::Hits`): a `PropDamage` with a culprit on a placement that is **not** a
+  registered destructible and whose def offers `bash` with its `requires` met (`InteractionStateTags`) is a blow
+  landing now (a `PendingBlow` due this tick, reach not re-checked: the swing connected): `Blow { force: amount, kind,
+  bare_handed: Some(kind) == rules.bare_kind }` (the attack already swung; combat prop targets C2c/C3 send these). `DAMAGE_IMPACT` is
   never a blow, so a thrown crate never forces a lock (a thrown body's impact names its thrower as culprit,
   `impact.rs:210`; impacts reach only registered destructibles today, a guard for later). Destructibles keep their own path: a locked crate breaks,
   lock included (interaction-adapter.md "Breakables").
-- **Land** (`FixedUpdate`, in the IN39 chain after `InteractionSystems::Apply`, before `DestroySystems::Damage`):
-  due blows in (land tick, user, placement) order. Dropped when the target left (no def) or its `requires` fail now
+- **Order (review):** `Hits` and `Land` are two systems: one system cannot hold a `MessageReader<PropDamage>` and a
+  `MessageWriter<PropDamage>` (shared vs exclusive access to `Messages<PropDamage>`, a param conflict at init). In the
+  IN39 chain: `Apply -> RuleSystems -> FireSystems -> BashSystems::Hits -> BashSystems::Land -> DestroySystems::Damage`.
+  Combat writes its prop hits `.before(BashSystems::Hits)`; a later writer's hit is read next tick (the reader's cursor
+  keeps it), never lost. Land's own `PropDamage` names registered destructibles, which `Hits` skips: no loop.
+- **Land** (`FixedUpdate`, `BashSystems::Land`): due blows in (land tick, user, placement) order. Dropped when the target left (no def) or its `requires` fail now
   (unlocked meanwhile), or the user's `ActionBody` feet are over `interact.bash.reach_m` from the point. Else: `bash`,
   one `Bashed` message; a registered destructible target also gets `PropDamage { amount: force, kind, culprit }`
   (same tick); one `Noise` (`NoiseCase::Bash`, bash reach x material ratio, maker the culprit, revealed: the basher is
-  in plain sight of the sound) into `NoiseInbox`; `from_bashed` into the change inbox. Point = the def's door slot
+  in plain sight of the sound) into `NoiseInbox`; `from_bashed` into IN39a's `ChangeInbox` (whichever of IN37b and IN39a lands first
+  adds it). Point = the def's door slot
   doorway when it has one, else the object origin (`InteractionFrames::current`).
 - **Not saved:** a pending blow is under a second; lost on save or unload. Lock hp is crime's (`sf/crime` overlay).
 - **Net:** host-authoritative; clients get `Bashed` (seed included) and play the swing; the result never comes from a
@@ -539,16 +552,23 @@ force, result, point, seed }` is the core event. `from_bashed(&Bashed, &ChangeSi
 **Crime's side (LW6, crime lane, not IN37):** `sf_crime_bevy` reads `Bashed` for every target with an `ObjectLaw` and
 sends `LockRequest::Force { object, damage: lock_damage }`, a zero damage included (an attempt: `UnlockAttempted`,
 trespass when owned); on `Forced` it writes `CHANGE_LOCK_BROKEN` into the change inbox and, on a placement with a door
-slot, one `ScriptActivate { verb: open }` with the basher as actor (the gate now passes; the door default swings it
-open). The dependency stays one-way: crime's host reads interaction's message.
+slot, one `ScriptActivate { verb: open }` with the basher as actor (a `Handle`: the `InteractionUser` whose `user` is
+the culprit gives its `actor`; the gate now passes, the door default swings it open). The dependency stays one-way:
+crime's host reads interaction's message. Review 2026-11-27: `sf_crime(_bevy)` has no `LockState`, `ObjectLaw` or
+`LockRequest` yet (LW3), so this is the contract LW6 builds to.
 
-**Game (`mw_interaction(_bevy)`):** fills `BashBlows` from Strength and the readied weapon (OpenMW's melee scale
-`fDamageStrengthBase + fDamageStrengthMult x 0.1 x Strength` on the weapon's max damage, `apps/openmw/mwclass/npc.cpp`
-`hit`, U: not re-read this pass; fists: `mw.interaction.bash.fist_force` x the same scale), `BashRules` from
-`mw.interaction.bash.*` (`Guess`; the scale is set against crime's `mw.crime.lock_hp_per_level`, so an iron weapon at
-Strength 50 forces a level-50 lock in about 7 blows), the `bash` verb on locked `DOOR`/`CONT` defs (hold list, after
+**Game (`mw_interaction(_bevy)`):** fills `BashBlows` from Strength and the readied weapon: OpenMW's melee blow
+(`apps/openmw/mwmechanics/combat.cpp` `adjustWeaponDamage`, called from `mwclass/npc.cpp` `hit`, commit `c5fbd66f`):
+the attack's `min + (max - min) x attackStrength` (a bash is a full swing: `max` of the weapon's best attack) x the
+weapon's normalised condition x `(fDamageStrengthBase + Strength x fDamageStrengthMult x 0.1)`. Fists: OpenMW's
+hand-to-hand is the HandToHand skill x `fMin/fMaxHandToHandMult`, Strength (x Strength / 40) only behind a launcher
+option (`getHandToHandDamage`); ours departs (owner: by strength): `mw.interaction.bash.fist_force` x the Strength
+scale, kind `hand` = `bare_kind`. `BashRules` from `mw.interaction.bash.*` (`Guess`; set against crime's
+`mw.crime.lock_hp_per_level` 2: with the GMSTs 0.5 / 0.1 (U: Morrowind.esm values not read here) the scale is 1.0 at
+Strength 50, so a max-14 weapon at full condition hits 14 and forces a level-50 lock (100 hp) in 8 blows at factor 1), the `bash` verb on locked `DOOR`/`CONT` defs (hold list, after
 `pick`, `requires: [locked]`, the tag crime mirrors; Modern only), and applies each `Bashed` result: `self_damage` to
-health, `weapon_wear` to the weapon's condition (Morrowind's `fWeaponDamageMult` wear on a hit, U), and per fragile
+health, `weapon_wear` to the weapon's condition (OpenMW `reduceWeaponCondition`: `max(1, fWeaponDamageMult x damage)` whole
+points per hit; `wear_per_force` is that factor, the game rounds and floors at 1), and per fragile
 item in a container (potions, glass: the adapter's list) one seeded roll (`seed`, item index) under `contents_risk`
 removes it as broken.
 
@@ -562,13 +582,14 @@ removes it as broken.
 |---|---|---|---|
 | IN37a | core `bash`, `Blow`, `BashRules`, `BashResult`, `Bashed`, `bash_seed`, `from_bashed` + `ChangeDetail::Force` | `sf_interaction/src/{bash.rs,lib.rs,world_change.rs,tests_bash.rs}` | under threshold 0 damage, over = floor(f); kind factor; fists self damage, armed wear only; risk capped; NaN = zero; seed stable; mapper field for field |
 | IN37b | shell: `BashRules`/`BashBlows` resources, verb queue, `PropDamage` hits, land, `Bashed`, noise, change, destructible `PropDamage`, 3 tunables | `sf_interaction_bevy/src/{bash.rs,lib.rs,tests_bash.rs}` | headless: press -> one `Bashed` at land tick with the result; second press in recovery dropped; requires lost before land -> none; out of reach -> none; culprit hit on a non-destructible lock -> `Bashed` same tick, impact none; locked destructible -> `PropDamage` too; one noise, one `WorldChanged` |
-| IN37c | game: `BashBlows`, `BashRules` from `mw.interaction.bash.*`, `bash` verb on locked DOOR/CONT (Modern), apply self damage, wear, contents rolls | `mw_interaction(_bevy)` | exact: blow for Strength 50 + iron weapon, fists; verb only when `locked`; seeded contents rolls remove the expected items |
+| IN37c | game: `BashBlows`, `BashRules` from `mw.interaction.bash.*`, `bash` verb on locked DOOR/CONT (Modern), apply self damage, wear, contents rolls | `mw_interaction(_bevy)` | exact: blow for Strength 50 + a max-14 weapon at full and half condition, fists; verb only when `locked`; seeded contents rolls remove the expected items |
 | IN37d | presenter: the readied weapon's power attack clip (Morrowind clips) for the swing, impact sparks or splinters; owner look | `mw_interaction_bevy` presenter | owner check (visual-checks entry) |
 
 Live play needs crime LW6 (the `locked` mirror and `Force`): until then IN37b/c test with the tag set by hand.
 
-[1] https://en.uesp.net/wiki/Daggerfall:Lockpicking (U: via search summary; Daggerfall Unity's `AttemptBash` source
-not read). [2] https://www.gamerevolution.com/guides/943548-baldurs-gate-3-break-sturdy-medium-toughness-greater-toughness-doors-walls-objects,
+[1] Daggerfall Unity (Interkarma/daggerfall-unity, commit `3d85a283`): `Assets/Scripts/Internal/DaggerfallActionDoor.cs`
+`AttemptBash` (interior, 20 - lock), `Assets/Scripts/Game/PlayerActivate.cs` (town doors, 25 - lock, the 10% notice);
+weapon wear on a bash not found in those files (U); https://en.uesp.net/wiki/Daggerfall:Lockpicking (U). [2] https://www.gamerevolution.com/guides/943548-baldurs-gate-3-break-sturdy-medium-toughness-greater-toughness-doors-walls-objects,
 https://www.pcinvasion.com/how-to-open-locked-doors-and-chests-in-baldurs-gate-3/ (U: guides via search summaries).
 Cyberpunk 2077 Body door gate: common knowledge, no source read (U).
 
