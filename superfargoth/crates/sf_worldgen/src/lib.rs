@@ -76,6 +76,7 @@ pub mod metrics;
 pub mod mfd;
 pub mod perturb;
 pub mod placed;
+pub mod reach;
 pub mod recipe;
 pub mod resample;
 pub mod roads;

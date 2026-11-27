@@ -225,6 +225,12 @@ back to the region map.
   unknown), duplicate keys refused; format 1 reads as kept `town`s, reach `any`, no access class; `to_json/write`
   always write format 2, empty fields skipped, so read(write(x)) == x. Required in format 2: header `seed` + three
   hashes, per site `key, centre_m, kind, kept`.
+- **WG-V1.1 (2026-11-27)** `sf_worldgen::reach` (`reach.rs`, tests `tests_reach.rs`): `ReachGround::sample` (pure
+  per-cell map; height = water surface over water), `ReachMap::flood` runs two serial Dijkstra floods, `foot` (water
+  never entered) and `swim`; µs costs, lowest `(cost, swam)` kept, heap pops ties by cell index. Wall = the ground
+  gradient under the step (2 x 2 cells for a diagonal, rise + cross gradient for a straight step) above
+  `reach.max_walk_deg`, not the step's own rise: a diagonal across a 47 deg face would otherwise read 37 deg and leak.
+  `best(cell, Reach)` gives `(travel_us, Via)`. `reach.*` values declared (`reach::declared`).
 
 ## Tunables
 
