@@ -118,6 +118,14 @@ fetch, the surface-wetness pattern; no per-blade state). Saved as a sparse list 
 (`LIGHT_STATE_OWNER` = `light`, bytes 0/1, others rejected). `at` is the world-frame `Vec3` of the core. Tests:
 `tests_light.rs` (6 exact). Next: the shell (IN19b).
 
+**As built (IN19b, 2026-11-27).** `sf_interaction_bevy/src/light.rs`: `Lights` (first `Light` slot; a re-insert keeps
+the state, else `lit_default`), the `Lit` tag and `GameplayLights { placement, pos, radius_m, intensity, lit }` kept in
+the same system on insert, move, remove, use and `LightRest` (a restore, no event). Default after
+`ActivationSystems::Default`: snuff / relight (no verb toggles), culprit = the actor's `InteractionUser`. The state gate is
+the verbs' `requires` (snuff `all: [Lit]`, relight `none: [Lit]`); the core refuses what passes none (a script's). **No
+`space` field:** the index holds only the active space's resident ring, so the host copies every entry. `WorldChange`
+waits for its type (AI28). Tests: `tests_light.rs` (6, whole pipeline).
+
 ## Noise (IN18; impacts IN4, people IN36)
 
 | Case | Trigger (shell) | `at` | Reveals the maker |

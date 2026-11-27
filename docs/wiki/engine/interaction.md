@@ -5,7 +5,8 @@
 Furniture, doors, beds and the census classes are smart objects: each carries a def (slots, verbs, entrances),
 its slots go in a point index while resident, users claim slots through one host table, and every use (player
 input, NPC, script) takes one activation path. Built today: seats (approach then sit), swing doors, focus and
-prompts, the rest hook, the light state core. Carry, destruction, the light shell and world rules are spec only.
+prompts, the rest hook, light state (core + shell). Carry, destruction, the game's light hook and world rules are
+spec only.
 
 ## How it works
 
@@ -57,8 +58,12 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
 - **Rest hook.** An approved `VERB_SLEEP` (`sf_interaction/src/rest.rs:10`) use writes one `RestRequested`
   (`sf_interaction_bevy/src/rest.rs:28`, `rest_default` `rest.rs:45`). The game only logs it
   (`report.rs:85`): no rest UI exists yet.
-- **Light state (core only).** `LightState` (`sf_interaction/src/light.rs:51`): snuff / relight via `use_verb`
-  (typed refusals), rule `set`, `LightChanged`, one rest byte (owner `light`). No shell or game wiring yet (IN19b, IN19c).
+- **Light state.** `LightState` (`sf_interaction/src/light.rs:51`): snuff / relight via `use_verb` (typed refusals),
+  rule `set`, `LightChanged`, one rest byte (owner `light`). Shell (`sf_interaction_bevy/src/light.rs`): `Lights`
+  (`:77`) registers objects with a `Light` slot from `IndexChange` (`register` `:191`, after the door registry, so
+  validation sees `Lit` the same tick), keeps the `Lit` state tag and `GameplayLights` (`:117`, the AI's lights,
+  never the GPU's); `light_default` (`:240`) runs an approved snuff / relight (no verb toggles) and writes
+  `LightChanged`; `LightRest` (`:149`) restores a saved state with no event. No game wiring yet (IN19c).
 
 ## Bevy features used
 
@@ -80,7 +85,7 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
 
 - No rest UI: `RestRequested` is only logged. Lying down (IN3b) and lean (IN3c) wait for baked bed and lean clips.
 - `interact.cook` is a stub (`sf_interaction/src/cook.rs:16`); defs are cooked by the game's bake step only.
-- Carry, destruction, the light shell and game hook, world rules and `pick_spot` for NPC errands are spec only.
+- Carry, destruction, the game's light hook, world rules and `pick_spot` for NPC errands are spec only.
 - History of each slice: [ledger](../../ledger/interaction.md).
 
 ## Specs

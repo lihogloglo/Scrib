@@ -55,6 +55,12 @@
 //!   [`sf_interaction::VERB_SLEEP`] use by an [`InteractionUser`] writes one [`RestRequested`];
 //!   the rest UI is the host's.
 //!
+//! - Light as state (`IN19b`, [`light`] module docs): [`Lights`] registers every resident object
+//!   with a [`sf_interaction::SlotKind::Light`] slot from the [`IndexChange`]s and keeps its
+//!   [`sf_interaction::LIT`] state tag and its [`GameplayLights`] entry (the AI's lights); the
+//!   default ([`LightSystems`]) runs an approved snuff / relight and writes [`LightChanged`]. A
+//!   [`LightRest`] puts a registered light in its saved state.
+//!
 //! Not here: game wiring (`IN32`).
 
 use std::collections::BTreeMap;
@@ -76,6 +82,7 @@ use smallvec::SmallVec;
 pub mod activate;
 pub mod door;
 pub mod focus;
+pub mod light;
 pub mod rest;
 pub mod seat;
 pub mod seat_clips;
@@ -88,6 +95,8 @@ mod tests_door;
 #[cfg(test)]
 mod tests_focus;
 #[cfg(test)]
+mod tests_light;
+#[cfg(test)]
 mod tests_rest;
 #[cfg(test)]
 mod tests_seat;
@@ -98,6 +107,7 @@ pub use activate::{
 };
 pub use door::{Door, DoorChanged, DoorMoved, DoorRest, DoorSweep, DoorSweeps, DoorSystems, Doors};
 pub use focus::{FocusCandidates, FocusState, PlayerFocus};
+pub use light::{GameplayLight, GameplayLights, Light, LightChanged, LightRest, LightSystems, Lights};
 pub use rest::{RestRequested, RestSystems};
 pub use seat::{
     EndPoseFree, EndPoseTest, InteractionUser, SeatClips, SeatLoss, SeatPhase, SeatReport, SeatStep, SeatSystems, SeatUse, SeatUses,
@@ -409,7 +419,7 @@ impl Plugin for InteractionPlugin {
             .init_resource::<DoorSweeps>()
             .add_message::<DoorMoved>()
             .add_message::<DoorRest>()
-            .add_systems(FixedUpdate, (sync_params, step, door::register).chain().in_set(InteractionSystems::Apply))
+            .add_systems(FixedUpdate, (sync_params, step, door::register, light::register).chain().in_set(InteractionSystems::Apply))
             .configure_sets(
                 FixedUpdate,
                 (DoorSystems::Plan, DoorSystems::Commit).chain().after(InteractionSystems::Apply),
@@ -432,6 +442,12 @@ impl Plugin for InteractionPlugin {
             .add_message::<RestRequested>()
             .configure_sets(Update, RestSystems.after(ActivationSystems::Default))
             .add_systems(Update, rest::rest_default.in_set(RestSystems))
+            .init_resource::<Lights>()
+            .init_resource::<GameplayLights>()
+            .add_message::<LightChanged>()
+            .add_message::<LightRest>()
+            .configure_sets(Update, LightSystems.after(ActivationSystems::Default))
+            .add_systems(Update, light::light_default.in_set(LightSystems))
             .configure_sets(
                 FixedUpdate,
                 SeatClipSystems.after(SeatSystems::Offer).before(sf_action_bevy::ActionSystems::Step),
