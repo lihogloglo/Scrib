@@ -23,6 +23,8 @@ mw_rpg_bevy.workspace = true
 mw_world.workspace = true
 serde.workspace = true
 sf_action_bevy.workspace = true
+# Every actor's directive stack (`sf/ai`, ai.md "Saves").
+sf_ai_bevy.workspace = true
 # The content calendar (`CalendarView`) for the save menu's in-game date (clock.md "Calendar (C3)").
 sf_calendar = { workspace = true, features = ["bevy"] }
 sf_camera.workspace = true
@@ -44,6 +46,8 @@ sf_world_bevy.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
+# The `sf/ai` round trip builds a scripted travel stack.
+sf_ai.workspace = true
 # The effects round trip runs fixed ticks.
 bevy_time = { workspace = true, features = ["std"] }
 # The moved test: save, fresh state, load on the installed game's records.

@@ -298,8 +298,10 @@ sequence never issued, a duplicate id, serving an unissued id). `sf_save_bevy::s
 (after overlay, clock, RPG; before the adapter), `check` refuses a broken stack naming the actor before anything
 applies; shape golden `tests/shapes/sf.ai.v1.json`. `sf_ai_bevy`: `AiDirectives` is now a **resource** keyed by
 `ActorKey` (was a component on the `AiActor` entity), `ai_save` / `ai_load` are the section's accessors (`None`
-when empty, so a world without AI writes no section; load replaces the whole store). Not wired into the game
-(no `AiPlugin` there yet). Tests: `sf_ai` `tests_save.rs` (3), `sf_save_bevy` `tests_ai.rs` (3) + the shape
+when empty, so a world without AI writes no section; load replaces the whole store). Wired into the game by
+MA22a (2026-11-27): `mw_saves_bevy::register` adds `sections::ai(ai_save, ai_load)`, so script and record
+directive stacks ride every save; a save without the section clears the store (`AiSave::default`). Tier-0
+`AiLogical` states are not in it yet (MA22b, section v2). Tests: `sf_ai` `tests_save.rs` (3), `sf_save_bevy` `tests_ai.rs` (3) + the shape
 golden, `sf_ai_bevy` accessor test; the four released save goldens now load with `sf/ai` wired.
 
 Design, and why (research: `OpenMW` `esm3/aisequence.cpp` and `mwmechanics/aisequence.cpp` read for behaviour;

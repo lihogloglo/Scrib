@@ -47,8 +47,9 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
 - **AI shell** (`sf_ai_bevy`): `AiPlugin`, trace store, `AiLibrary` loaded from records, `ai.select`, optional gizmos,
   and `AiExecPlugin` (`exec.rs:151`: `AiExecutor`, `AiSystems::Execute` in `FixedUpdate` inside
   `ControllerSystems::Drive` before `NavSystems::Corridor`, tunables `ai.exec.*`).
-  Added by `mw_walkers_bevy::walkers::add` (`walkers.rs:768`); the `sf/ai` save section exists in
-  `sf_save_bevy/src/sections/mod.rs:282` (filled once MA2 wires directive stacks).
+  Added by `mw_walkers_bevy::walkers::add` (`walkers.rs:768`); the `sf/ai` save section
+  (`sf_save_bevy/src/sections/mod.rs:285`) is registered by `mw_saves_bevy::register` (MA22a): directive stacks
+  save and load; tier-0 logical states do not yet (MA22b).
 - **What NPCs actually do** (`mw_ai`, Bevy-free; `mw_walkers_bevy/src/walkers.rs`, added at `exterior.rs:229`):
   `WanderVocabulary` + `WanderDriver` (`mw_ai/src/methods.rs:55,156`: HTN tasks `wander` / `do_idle` / `do_walk` over
   `sf_ai::exec::PlanRunner`, `AI_W` idle rolls and PGRD wander destination hints from `wander.rs`) drive ground

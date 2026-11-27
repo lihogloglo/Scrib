@@ -253,6 +253,8 @@ pub fn register(app: &mut App) {
             }
         },
     ))
+    // Every actor's directive stack (scripted AITravel, followers...), by stable actor key.
+    .add_save_section(sections::ai(sf_ai_bevy::ai_save, sf_ai_bevy::ai_load))
     .add_save_section(sections::characters(host_character, restore_characters))
     .add_save_section(SaveSection::value(
         SectionKey::new(OWNER, RPG).expect("valid key"),
@@ -663,6 +665,37 @@ mod tests {
         load(&mut app);
         let loaded = &app.world().resource::<Rpg>().services;
         assert_eq!(loaded.purses.iter().map(|(k, p)| (*k, *p)).collect::<Vec<_>>(), [(FARGOTH, purse)]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `MA22a`: `sf/ai` through the game's registration (no install). A world without AI state
+    /// writes no section, and loading it (like a save from before the section) clears the store;
+    /// a keyed NPC's scripted `AITravel` stack comes back exactly.
+    #[test]
+    fn a_scripted_travel_stack_round_trips_and_a_save_without_ai_loads_none() {
+        use sf_ai::{DirectiveKind, DirectiveSource, DirectiveSpec, DirectiveStack, GameTime, ModernPolicy};
+        use sf_ai_bevy::AiDirectives;
+
+        let root = temp_root("ai");
+        let mut app = bare_app(root.clone());
+        app.init_resource::<AiDirectives>();
+        let now = GameTime { day: 3, minute: 600 };
+        let to = Location::new(WorldspaceId::from("wilderness"), WorldPos::new(IVec3::new(2, -1, 0), Vec3::new(10.0, 20.0, 3.0)));
+        let mut stack = DirectiveStack::new(FARGOTH, now);
+        stack.push(DirectiveSpec::new(DirectiveKind::GoTo(to), DirectiveSource::Script), now, &ModernPolicy, &mut Vec::new());
+
+        save(&mut app);
+        app.world_mut().resource_mut::<AiDirectives>().insert(stack.clone());
+        load(&mut app);
+        assert!(app.world().resource::<AiDirectives>().is_empty(), "no section: no AI state");
+
+        app.world_mut().resource_mut::<AiDirectives>().insert(stack.clone());
+        save(&mut app);
+        // A stack the save doesn't know goes: load is a full replace.
+        app.world_mut().resource_mut::<AiDirectives>().insert(DirectiveStack::new(BARREL, now));
+        load(&mut app);
+        let store = app.world().resource::<AiDirectives>();
+        assert_eq!(store.iter().collect::<Vec<_>>(), [&stack]);
         let _ = std::fs::remove_dir_all(&root);
     }
 
