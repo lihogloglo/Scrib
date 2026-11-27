@@ -684,6 +684,17 @@ Review (IN3-REV, 2026-11-27): every type, set and line above checked against `sf
 static beds get `sleep` (the bake, which alone knows the record class), hand IK through the existing `HandIk` ops and
 `grip.rs` (no `LimbIk` in `sf_anim`), IN3a/IN3d crates. OpenMW line cites are the research doc's, not re-read.
 
+## As built (IN3a, 2026-11-27)
+
+`sf_interaction::VERB_SLEEP` (`rest.rs`); `sf_interaction_bevy::rest`: `RestRequested { tick, user, actor, placement,
+slot }`, `rest_default` in `RestSystems` (`Update`, after `ActivationSystems::Default`), matching `verb == Some(VERB_SLEEP)`
+and the approval's `InteractionUser` by actor. Adapter: the bed `sleep` row is Offered and first in the bed's focus order
+(Classic `RestMenu`, `Switch::Sit`); `mw_interaction::bed_verb(kind, class)` pushed by the bake on static beds
+(`InteractDefsStep::VERSION` 3, so the next bake rebuilds `mw.interact.defs`); the game logs `interact: rest requested
+<placement> by <user>`, and a static bed's prompt is "Sleep" through the existing furniture-prompt path. Tests:
+`tests_rest.rs` (whole pipeline: one press -> one request, handled / gated / `lie` / no user -> none),
+`static_beds_get_sleep_above_their_pose_verbs`, `static_beds_sleep_and_scripted_beds_keep_use`, `tests_activation` rows.
+
 ## As built (IN33a, 2026-11-26)
 
 `sf_interaction/src/door.rs` (+ `tests_door.rs`, 8 exact tests): the design of "Slot kinds" Door as pure functions.

@@ -1,10 +1,13 @@
-//! The game's log of the shell's seat reports and refused uses (`sf_interaction_bevy::SeatReport`,
-//! `UseRefused`): the framework writes the trail, the game logs it, one line per message.
+//! The game's log of the shell's seat reports, refused uses and rest requests
+//! (`sf_interaction_bevy::SeatReport`, `UseRefused`, `RestRequested`): the framework writes the trail,
+//! the game logs it, one line per message.
 //!
 //! - Normal path (`info!`): `seat: <user> asks | holds | offered | entered | exited <placement> slot <n>`.
 //! - A step that ends a use without sitting (`warn!`): `seat: use dropped: <reason>, <user> on
 //!   <placement> slot <n>`; an approval ignored while the user is in a use: `seat: use ignored: ...`.
 //! - A gate's refusal (`warn!`): `interact: use refused: target <handle> verb <verb> reason <reason>`.
+//! - A rest request (`info!`, `IN3a`): `interact: rest requested <placement> by <user>`. No rest UI
+//!   exists yet: the line is the host's whole consumer.
 //!
 //! Names: the player prints as `player`, the seat rules as their ids (`interact.sit.enter`), the
 //! shell's door verbs as `open` / `close`; every other id prints as `{:?}` (the `activate:` line
@@ -13,7 +16,7 @@
 use bevy_ecs::prelude::*;
 use bevy_log::{info, warn};
 use sf_interaction::{TagId, UserKey, VERB_CLOSE, VERB_OPEN, fnv1a32};
-use sf_interaction_bevy::{SIT_APPROACH, SIT_ENTER, SIT_EXIT, SIT_LOOP, SeatReport, SeatStep, UseRefused};
+use sf_interaction_bevy::{RestRequested, SIT_APPROACH, SIT_ENTER, SIT_EXIT, SIT_LOOP, SeatReport, SeatStep, UseRefused};
 
 use crate::input::PLAYER_USER;
 
@@ -78,8 +81,17 @@ fn refused_line(r: &UseRefused) -> String {
     format!("interact: use refused: target {:?} verb {} reason {:?}", r.activation.target, verb_name(r.verb), r.reason)
 }
 
-/// `Update`: one log line per [`SeatReport`] and per [`UseRefused`] (module docs).
-pub(crate) fn log_reports(mut seats: MessageReader<SeatReport>, mut refused: MessageReader<UseRefused>) {
+/// One rest request as a log line.
+fn rest_line(r: &RestRequested) -> String {
+    format!("interact: rest requested {:?} by {}", r.placement, user_name(r.user))
+}
+
+/// `Update`: one log line per [`SeatReport`], [`UseRefused`] and [`RestRequested`] (module docs).
+pub(crate) fn log_reports(
+    mut seats: MessageReader<SeatReport>,
+    mut refused: MessageReader<UseRefused>,
+    mut rests: MessageReader<RestRequested>,
+) {
     for r in seats.read() {
         match seat_line(r) {
             (true, line) => warn!("{line}"),
@@ -89,20 +101,23 @@ pub(crate) fn log_reports(mut seats: MessageReader<SeatReport>, mut refused: Mes
     for r in refused.read() {
         warn!("{}", refused_line(r));
     }
+    for r in rests.read() {
+        info!("{}", rest_line(r));
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use bevy_app::{App, Update};
     use bevy_ecs::prelude::*;
-    use sf_interaction::{Refusal, Side, SlotRef, TagId, VERB_OPEN};
-    use sf_interaction_bevy::{SeatLoss, SeatPhase, SeatReport, SeatStep, UseRefused};
+    use sf_interaction::{Refusal, Side, SlotRef, TagId, Tick, VERB_OPEN};
+    use sf_interaction_bevy::{RestRequested, SeatLoss, SeatPhase, SeatReport, SeatStep, UseRefused};
     use sf_script_bevy::sf_script::Handle;
     use sf_script_bevy::{Activated, PLAYER};
     use sf_world::PlacementId;
     use smallvec::smallvec;
 
-    use super::{SIT_APPROACH, SIT_ENTER, fnv1a32, log_reports, refused_line, seat_line};
+    use super::{SIT_APPROACH, SIT_ENTER, fnv1a32, log_reports, refused_line, rest_line, seat_line};
     use crate::input::PLAYER_USER;
 
     const SLOT: SlotRef = SlotRef { placement: PlacementId(7), slot: 1 };
@@ -195,14 +210,30 @@ mod tests {
     }
 
     #[test]
-    fn log_reports_reads_both_messages() {
+    fn rest_request_line() {
+        let r = RestRequested { tick: Tick(3), user: PLAYER_USER, actor: PLAYER, placement: PlacementId(0x2a), slot: None };
+        assert_eq!(rest_line(&r), format!("interact: rest requested {:?} by player", PlacementId(0x2a)));
+    }
+
+    #[test]
+    fn log_reports_reads_every_message() {
         let mut app = App::new();
-        app.add_message::<SeatReport>().add_message::<UseRefused>().add_systems(Update, log_reports);
+        app.add_message::<SeatReport>()
+            .add_message::<UseRefused>()
+            .add_message::<RestRequested>()
+            .add_systems(Update, log_reports);
         app.world_mut().write_message(report(SeatStep::NoEntrance));
         app.world_mut().write_message(UseRefused {
             activation: Activated { target: Handle(12), actor: PLAYER, verb: None },
             verb: None,
             reason: TagId(42),
+        });
+        app.world_mut().write_message(RestRequested {
+            tick: Tick(1),
+            user: PLAYER_USER,
+            actor: PLAYER,
+            placement: PlacementId(0x2a),
+            slot: None,
         });
         app.update();
         app.update();

@@ -259,3 +259,27 @@ fn families_and_class_verbs() {
     let shown = InteractReport { defs: Some(out), ..InteractReport::default() }.to_string();
     assert!(shown.contains("CONT 1 defs, ACTI 1 defs"), "{shown}");
 }
+
+/// `IN3a`: a static (`STAT`) bed gets the slotless `sleep` at the class rank, above its pose verbs; a
+/// scripted (`ACTI`) bed keeps `use` and no `sleep` (its script owns the sleep); a seat gets neither.
+#[test]
+fn static_beds_sleep_and_scripted_beds_keep_use() {
+    let records = vec![
+        record("furn_bed", Kind::Bed),
+        FurnitureRecord { record: "ACTI", ..record("active_bed", Kind::Bed) },
+        record("furn_chair", Kind::Seat),
+    ];
+    let soups = [("furn_bed", bed()), ("active_bed", bed()), ("furn_chair", chair())]
+        .into_iter()
+        .map(|(id, s)| (format!("meshes/f/{id}.nif"), Ok((s, Vec::new()))))
+        .collect();
+    let out = interact_defs(&records, &soups, &FurnitureParams::default(), &MeasureParams::default());
+    let verbs = |id: &str| out.def(&RecordId::new(id)).unwrap().verbs.iter().map(|v| (v.verb, v.priority)).collect::<Vec<_>>();
+    let rank = mw_interaction::CLASS_VERB_PRIORITY;
+    assert_eq!(verbs("furn_bed"), [(TagId::of("sleep"), rank)]);
+    assert_eq!(verbs("active_bed"), [(TagId::of("use"), rank)]);
+    assert!(verbs("furn_chair").is_empty());
+    let bed = out.def(&RecordId::new("furn_bed")).unwrap();
+    assert!(bed.slots.iter().all(|s| s.verb.priority < rank));
+    assert_eq!(out.activator_defs, 1);
+}

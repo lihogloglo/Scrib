@@ -5,14 +5,14 @@ use std::f32::consts::{FRAC_PI_2, PI};
 use glam::{Quat, Vec3};
 use sf_interaction::{
     ClipFamily, DOOR_OPEN, DoorDef, Frame, IkTargets, InteractableDef, Occupancy, Side, SlotDef, SlotKind, SlotRef,
-    TagFilter, TagId, VERB_CLOSE, VERB_OPEN, VerbDef, VerbTarget, rank_verbs,
+    TagFilter, TagId, VERB_CLOSE, VERB_OPEN, VERB_SLEEP, VerbDef, VerbTarget, rank_verbs,
 };
 use sf_records::RecordId;
 use smallvec::{SmallVec, smallvec};
 
 use crate::activation::{RecordClass, verb};
 use crate::defs::{
-    Basis, CLASS_VERB_PRIORITY, Facing, Measured, POSE_VERB_PRIORITY, USER_NPC, class_verb, def_for, door_def,
+    Basis, CLASS_VERB_PRIORITY, Facing, Measured, POSE_VERB_PRIORITY, USER_NPC, bed_verb, class_verb, def_for, door_def,
 };
 use crate::furniture::Kind;
 use crate::tunables::FurnitureParams;
@@ -482,4 +482,27 @@ fn door_class_verb_is_still_open() {
     let open = class_verb(RecordClass::Door).expect("a door opens");
     assert_eq!((open.verb, open.priority), (TagId::of(verb::OPEN), CLASS_VERB_PRIORITY));
     assert!(open.requires.matches(&[]));
+}
+
+/// `IN3a`: a static bed (no class verb) gets the slotless `sleep` at the class rank, so its press is
+/// Sleep and `lie` / the edge `sit`s follow on the hold list; a scripted `ACTI` or a `CONT` bed and
+/// every other kind get none.
+#[test]
+fn static_beds_get_sleep_above_their_pose_verbs() {
+    let sleep = VerbDef { verb: VERB_SLEEP, priority: CLASS_VERB_PRIORITY, requires: TagFilter::default() };
+    assert_eq!(VERB_SLEEP, TagId::of(verb::SLEEP));
+    assert_eq!(bed_verb(Kind::Bed, None), Some(sleep.clone()));
+    assert_eq!(bed_verb(Kind::Bed, Some(RecordClass::Furniture(Kind::Bed))), Some(sleep.clone()));
+    assert_eq!(bed_verb(Kind::Bed, Some(RecordClass::Activator)), None);
+    assert_eq!(bed_verb(Kind::Bed, Some(RecordClass::Container)), None);
+    for kind in [Kind::Seat, Kind::Table, Kind::Counter, Kind::Shelf] {
+        assert_eq!(bed_verb(kind, None), None, "{kind:?}");
+    }
+    let mut d = def(Kind::Bed, &measured([1.0, 2.0], 0.74, Facing::PosZ));
+    d.verbs.push(sleep);
+    let p = placement();
+    let ranked: Vec<TagId> = rank_verbs(&d, p, &[], |_| true).iter().map(|c| c.verb).collect();
+    assert_eq!(ranked[0], VERB_SLEEP);
+    assert_eq!(ranked.len(), 4);
+    assert!(ranked[1..].iter().all(|v| *v == TagId::of(verb::LIE) || *v == TagId::of(verb::SIT)), "{ranked:?}");
 }

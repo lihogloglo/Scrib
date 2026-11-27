@@ -27,7 +27,7 @@ pub use activation::{
     runs_default,
 };
 pub use defs::{
-    Basis, CLASS_VERB_PRIORITY, Facing, Measured, POSE_VERB_PRIORITY, USER_NPC, class_verb, def_for, door_def,
+    Basis, CLASS_VERB_PRIORITY, Facing, Measured, POSE_VERB_PRIORITY, USER_NPC, bed_verb, class_verb, def_for, door_def,
 };
 pub use furniture::{Kind, classify};
 pub use measure::measure;

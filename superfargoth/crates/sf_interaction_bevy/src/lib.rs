@@ -51,6 +51,10 @@
 //!   the rest and writes [`DoorMoved`]. A [`DoorRest`] puts a registered door at rest in a restored
 //!   state (one [`DoorMoved`] with `snap: true`).
 //!
+//! - Rest (`IN3a`, [`rest`] module docs): the default ([`RestSystems`]) of an approved
+//!   [`sf_interaction::VERB_SLEEP`] use by an [`InteractionUser`] writes one [`RestRequested`];
+//!   the rest UI is the host's.
+//!
 //! Not here: game wiring (`IN32`).
 
 use std::collections::BTreeMap;
@@ -72,6 +76,7 @@ use smallvec::SmallVec;
 pub mod activate;
 pub mod door;
 pub mod focus;
+pub mod rest;
 pub mod seat;
 pub mod seat_clips;
 #[cfg(test)]
@@ -83,6 +88,8 @@ mod tests_door;
 #[cfg(test)]
 mod tests_focus;
 #[cfg(test)]
+mod tests_rest;
+#[cfg(test)]
 mod tests_seat;
 
 pub use activate::{
@@ -91,6 +98,7 @@ pub use activate::{
 };
 pub use door::{Door, DoorChanged, DoorMoved, DoorRest, DoorSweep, DoorSweeps, DoorSystems, Doors};
 pub use focus::{FocusCandidates, FocusState, PlayerFocus};
+pub use rest::{RestRequested, RestSystems};
 pub use seat::{
     EndPoseFree, EndPoseTest, InteractionUser, SeatClips, SeatLoss, SeatPhase, SeatReport, SeatStep, SeatSystems, SeatUse, SeatUses,
     seat_target,
@@ -421,6 +429,9 @@ impl Plugin for InteractionPlugin {
             .add_systems(Update, seat::seat_requests.in_set(SeatSystems::Request))
             .configure_sets(Update, DoorSystems::Default.after(ActivationSystems::Default))
             .add_systems(Update, door::door_default.in_set(DoorSystems::Default))
+            .add_message::<RestRequested>()
+            .configure_sets(Update, RestSystems.after(ActivationSystems::Default))
+            .add_systems(Update, rest::rest_default.in_set(RestSystems))
             .configure_sets(
                 FixedUpdate,
                 SeatClipSystems.after(SeatSystems::Offer).before(sf_action_bevy::ActionSystems::Step),

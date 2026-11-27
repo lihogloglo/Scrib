@@ -263,11 +263,11 @@ pub const ROWS: &[Row] = {
         row(R::Activator, C::Always, verb::USE, "Use", A::Script),
         // Census furniture: pose slots (defs.rs); Classic inert.
         furniture(Kind::Seat, verb::SIT, "Sit"),
+        // A static bed's press is Sleep (the rest hook, IN3a; `defs::bed_verb`), lie and sit on hold.
+        // Classic: no def (inert); vanilla rests by the rest key and scripted beds' `ShowRestMenu`.
+        row(R::Furniture(Kind::Bed), C::Always, verb::SLEEP, "Sleep", A::Rest).modern(Switch::Sit, Classic::RestMenu),
         furniture(Kind::Bed, verb::LIE, "Lie down"),
         furniture(Kind::Bed, verb::SIT, "Sit"),
-        row(R::Furniture(Kind::Bed), C::Always, verb::SLEEP, "Sleep", A::Rest)
-            .modern(Switch::Sit, Classic::RestMenu)
-            .not_yet("IN3"),
         furniture(Kind::Table, verb::LEAN, "Lean"),
         furniture(Kind::Counter, verb::LEAN, "Lean"),
         furniture(Kind::Shelf, verb::BROWSE, "Browse").not_yet("later (browse)"),

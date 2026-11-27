@@ -83,7 +83,7 @@ fn furniture_verbs_follow_the_sit_switch() {
         offered(R::Furniture(kind), |_| false, sw).map(|r| r.verb).collect()
     };
     assert_eq!(verbs(Kind::Seat, &on), [verb::SIT]);
-    assert_eq!(verbs(Kind::Bed, &on), [verb::LIE, verb::SIT]);
+    assert_eq!(verbs(Kind::Bed, &on), [verb::SLEEP, verb::LIE, verb::SIT]);
     assert_eq!(verbs(Kind::Table, &on), [verb::LEAN]);
     assert_eq!(verbs(Kind::Counter, &on), [verb::LEAN]);
     assert!(verbs(Kind::Shelf, &on).is_empty());
@@ -94,6 +94,11 @@ fn furniture_verbs_follow_the_sit_switch() {
     for r in rows(R::Furniture(Kind::Seat)) {
         assert_eq!((r.classic, r.switch), (Classic::Off, Some(Switch::Sit)));
     }
+    // IN3a: a bed's press is Sleep (the rest hook); Classic records the vanilla rest menu.
+    assert_eq!(prompt(R::Furniture(Kind::Bed), |_| false), Some("Sleep"));
+    let sleep = rows(R::Furniture(Kind::Bed)).find(|r| r.verb == verb::SLEEP).expect("the sleep row");
+    assert_eq!((sleep.action, sleep.classic, sleep.switch), (DefaultAction::Rest, Classic::RestMenu, Some(Switch::Sit)));
+    assert_eq!(sleep.available, Availability::Offered);
 }
 
 /// No verb without a handler: actions not built yet are never offered, with their slice named.
@@ -107,6 +112,7 @@ fn unbuilt_actions_are_not_offered() {
         DefaultAction::Take,
         DefaultAction::Script,
         DefaultAction::Pose,
+        DefaultAction::Rest,
     ];
     for r in ROWS {
         match r.available {
@@ -121,13 +127,12 @@ fn unbuilt_actions_are_not_offered() {
     assert!(not_yet(R::Light, verb::RELIGHT));
     assert!(not_yet(R::Door, verb::BASH));
     assert!(not_yet(R::Container, verb::BASH));
-    assert!(not_yet(R::Furniture(Kind::Bed), verb::SLEEP));
     assert!(not_yet(R::Npc, verb::SEARCH));
     assert!(not_yet(R::Npc, verb::PICKPOCKET));
     assert!(not_yet(R::Creature, verb::TALK));
     let slice = |class, v: &str| rows(class).find(|r| r.verb == v).map(|r| r.available);
     assert_eq!(slice(R::Light, verb::SNUFF), Some(Availability::NotYet("IN19")));
-    assert_eq!(slice(R::Furniture(Kind::Bed), verb::SLEEP), Some(Availability::NotYet("IN3")));
+    assert_eq!(slice(R::Furniture(Kind::Bed), verb::SLEEP), Some(Availability::Offered));
     assert_eq!(slice(R::Container, verb::BASH), Some(Availability::NotYet("IN37")));
 }
 
@@ -185,7 +190,9 @@ fn default_handlers_run_on_their_own_verbs_only() {
     }
     // The pose verbs are the seat default's; unbuilt actions run on nothing.
     assert_eq!(runs_on(DefaultAction::Pose), [verb::SIT, verb::LIE, verb::LEAN]);
-    for action in [DefaultAction::Bash, DefaultAction::ToggleLit, DefaultAction::Rest, DefaultAction::Loot] {
+    // The rest hook runs on `sleep` only (IN3a).
+    assert_eq!(runs_on(DefaultAction::Rest), [verb::SLEEP]);
+    for action in [DefaultAction::Bash, DefaultAction::ToggleLit, DefaultAction::Loot] {
         assert!(runs_on(action).is_empty(), "{action:?}");
     }
 }

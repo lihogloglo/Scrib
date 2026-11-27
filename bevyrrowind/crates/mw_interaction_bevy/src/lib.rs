@@ -28,14 +28,16 @@
 //! - **Focus**: the focus ray's raw first hit (`mw_player_bevy::Focus::hit`) is the player's one
 //!   `FocusCandidates` per fixed tick (score from distance; none: empty). A target with a def
 //!   prompts the verb its focus offers, from the furniture rows (`mw_interaction::activation::ROWS`:
-//!   "Sit", "Lie down", "Lean"); every other target keeps `activatable`'s name and verb, and so
-//!   does a def'd census container or activator whose best verb is its class's own (the baked
+//!   "Sit", "Lie down", "Lean", a static bed's "Sleep"); every other target keeps `activatable`'s
+//!   name and verb, and so does a def'd census container or activator whose best verb is its class's own (the baked
 //!   slotless class verb, `IN32c0`: "Open", "Use"; its pose verbs follow in the hold list), with
 //!   that verb's own row prompt when `activatable`'s is another (an open swing door's `close`:
 //!   "Close", `IN33c2c`).
 //! - **Activation**: each latched Use press (`mw_player_bevy::UsePresses`, written by
 //!   `mw_scripts_bevy`) becomes one `ActivateCommand` ([`FocusState::command`], best verb and slot;
 //!   a def-less target's primary use) between `InteractionSystems::Focus` and `::Activate`.
+//! - **Rest** (`IN3a`): the shell's `RestRequested` (a static bed's approved `sleep`) is logged, the
+//!   host's only consumer until a rest UI exists.
 //!
 //! Log lines: `interact: N furniture defs loaded (S slots)` at startup and
 //! `interact: indexed M furniture placements in <worldspace> (x, y, z)` once per cell activation.
@@ -138,7 +140,10 @@ pub fn add_with_defs(app: &mut App, defs: FurnitureDefs) {
         .add_systems(FixedUpdate, input::candidates.after(InteractionSystems::Apply).before(InteractionSystems::Focus))
         .add_systems(FixedUpdate, input::commands.after(InteractionSystems::Focus).before(InteractionSystems::Activate))
         .add_systems(Update, door::save_rest.after(DoorSystems::Default))
-        .add_systems(Update, report::log_reports.after(sf_interaction_bevy::SeatSystems::Request))
+        .add_systems(
+            Update,
+            report::log_reports.after(sf_interaction_bevy::SeatSystems::Request).after(sf_interaction_bevy::RestSystems),
+        )
         .add_systems(FixedUpdate, door_body::block_sweeps.after(DoorSystems::Plan).before(DoorSystems::Commit))
         .add_systems(FixedUpdate, door_body::move_bodies.after(DoorSystems::Commit).before(PhysicsSystems::Step))
         .add_systems(Update, (door_body::pose_new_bodies, door_body::follow_pivots).chain().after(PhysicsSystems::Stream));

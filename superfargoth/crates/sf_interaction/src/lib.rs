@@ -8,6 +8,7 @@
 //! - [`index`]: the point index of resident slots (grid buckets) and `find_slots`.
 //! - [`verbs`]: `rank_verbs` (the uses an object offers now) and the per-player `FocusStabilizer`.
 //! - [`door`]: the swing-door state machine (toggle, step, leaf pose, close-behind schedule).
+//! - [`rest`]: the rest hook's slotless verb `VERB_SLEEP`.
 //! - [`entrance`]: `pick_entrance` / `pick_exit` (side order, the shell's validity checks).
 //! - [`cook`]: `interact.cook`, the one-time def bake (stub).
 //! - [`params`]: the core's tunables as plain fields (`interact.*`, bound by `sf_interaction_bevy`).
@@ -21,6 +22,7 @@ pub mod door;
 pub mod entrance;
 pub mod index;
 pub mod params;
+pub mod rest;
 pub mod verbs;
 
 pub use claims::{
@@ -37,6 +39,7 @@ pub use door::{DOOR_OPEN, DOOR_REST_VERSION, DOOR_STATE_OWNER, DoorChanged, Door
 pub use entrance::{pick_entrance, pick_exit, to_local};
 pub use index::{IndexedSlot, KindTag, PointIndex, SlotUser, compose};
 pub use params::InteractParams;
+pub use rest::VERB_SLEEP;
 pub use verbs::{FocusStabilizer, VerbChoice, VerbTarget, rank_verbs};
 
 #[cfg(test)]
