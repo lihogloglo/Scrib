@@ -11,7 +11,8 @@ use bevy::time::{Fixed, Time};
 use bevy_app::FixedUpdate;
 use glam::{DVec3, Vec3};
 use sf_ai::{
-    DirectiveDone, DirectiveEnd, DirectiveId, DirectiveKind, DirectiveSource, DirectiveSpec, DirectiveStack, EnteredFrom, GameTime,
+    DirectiveDone, DirectiveEnd, DirectiveId, DirectiveKind, DirectiveSource, DirectiveSpec, DirectiveStack, EnteredFrom, FastForwardRules,
+    GameTime,
     LogicalCtx, LogicalEnv, LogicalState, LogicalTransitions, ModernPolicy, Placement, PlayerViews, PromoteConfig, PromoteEnv,
     RouteRef, Tier, TierCaps,
 };
@@ -511,4 +512,198 @@ fn a_saved_tier_zero_store_loads_exactly_and_carries_on_identically() {
     assert_eq!(ends(&b), ends(&a));
     assert_eq!(ends(&a).len(), 4, "three walkers arrive, the pushed GoTo completes: {:?}", ends(&a));
     assert_eq!(ai_save(b.world()), ai_save(a.world()));
+}
+
+// --- Time skip (MA7b) ---------------------------------------------------------------------------
+
+/// Records which actors the rules saw, in order, and moves every `StayNear` state 1 m along x.
+#[derive(Default)]
+struct Nudge(std::sync::Mutex<Vec<ActorKey>>);
+
+impl FastForwardRules for Nudge {
+    fn after_fast_forward(
+        &self,
+        state: &mut LogicalState,
+        stack: &mut DirectiveStack,
+        _span: (GameInstant, GameInstant),
+        _ctx: &LogicalCtx<'_>,
+        _events: &mut Vec<DirectiveDone>,
+    ) {
+        self.0.lock().unwrap().push(stack.actor());
+        if matches!(
+            stack.top().map(|d| &d.spec.kind),
+            Some(DirectiveKind::StayNear { .. })
+        ) {
+            state.pos = Location::new(ws(), state.pos.pos.offset(Vec3::X));
+        }
+    }
+}
+
+#[test]
+fn a_skip_crosses_every_stored_state_not_only_due_ones() {
+    let mut app = app(BIG, Views { seen_x: 1e9 });
+    let (walker, waiter, bare) = (ActorKey(1), ActorKey(2), ActorKey(3));
+    stack_with(
+        &mut app,
+        walker,
+        DirectiveKind::GoTo(loc(100.0, 0.0)),
+        DirectiveSource::Record,
+    );
+    store_state(&mut app, walker, loc(0.0, 0.0));
+    stack_with(
+        &mut app,
+        waiter,
+        stay_near(loc(0.0, 10.0)),
+        DirectiveSource::Record,
+    );
+    store_state(&mut app, waiter, loc(0.0, 10.0));
+    store_state(&mut app, bare, loc(5.0, 5.0));
+    // One tick: both take up their directive; the walk is due at its arrival (25 game min on).
+    step(&mut app);
+    let from = now(&app);
+    let to = from.plus(3_600_000);
+    let tr = LogicalTransitions::new();
+    let ctx = LogicalCtx {
+        env: &Env,
+        transitions: &tr,
+        policy: &ModernPolicy,
+        time_scale: TS,
+    };
+    let rules = Nudge::default();
+    let mut events = Vec::new();
+    let world = app.world_mut();
+    let mut directives = world.remove_resource::<AiDirectives>().unwrap();
+    let mut store = world.resource_mut::<AiLogical>();
+    let stats = fast_forward_logical(
+        &mut store,
+        &mut directives,
+        (from, to),
+        &ctx,
+        &rules,
+        &mut events,
+    );
+
+    assert_eq!((stats.states, stats.stepped), (3, 2), "{stats:?}");
+    assert_eq!(
+        *rules.0.lock().unwrap(),
+        [walker, waiter],
+        "key order; the actor without a stack is skipped"
+    );
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(
+        (events[0].actor, events[0].end),
+        (walker, DirectiveEnd::Completed)
+    );
+    let at = |k: ActorKey| store.get(k).unwrap().position_at(to, &Env, TS);
+    assert!(
+        at(walker).pos.delta(loc(100.0, 0.0).pos).length() < 1e-6,
+        "{:?}",
+        at(walker)
+    );
+    assert!(
+        at(waiter).pos.delta(loc(1.0, 10.0).pos).length() < 1e-6,
+        "{:?}",
+        at(waiter)
+    );
+    assert!(at(bare).pos.delta(loc(5.0, 5.0).pos).length() < 1e-6);
+    for (key, saved) in store.to_saved() {
+        if key != bare {
+            assert_eq!(
+                saved.due, saved.state.until,
+                "{key:?}: the due index is rebuilt"
+            );
+        }
+        assert!(saved.state.at <= to, "{key:?}");
+    }
+}
+
+#[test]
+fn skips_merge_into_one_span_until_taken() {
+    let (a, b, c) = (
+        GameInstant::from_minutes(60),
+        GameInstant::from_minutes(120),
+        GameInstant::from_minutes(180),
+    );
+    let mut skips = AiTimeSkips::default();
+    skips.record(b, a);
+    assert_eq!(skips.pending(), None, "no skip backwards");
+    skips.record(a, b);
+    skips.record(b, c);
+    assert_eq!(skips.take(), Some((a, c)));
+    assert_eq!(skips.take(), None);
+}
+
+/// The promote system's arm on the tick after a skip: [`AiTierZero::promote_dark`], nothing seen.
+#[derive(Resource)]
+struct Dark;
+
+fn dark_promote_system(
+    mut t0: AiTierZero,
+    clock: Res<Clock>,
+    mut placed: ResMut<Placed>,
+    alloc: Res<AiAllocStats>,
+    mut bodies: Query<(&AiActor, &mut Mover)>,
+) {
+    let now = clock.0.now;
+    let body_at = |k: ActorKey| {
+        bodies
+            .iter()
+            .find(|(a, _)| a.0 == k)
+            .map(|(_, m)| Location::new(ws(), m.loco.position))
+    };
+    let out = t0.promote_dark(now, TS, &Env, &Views { seen_x: 1e9 }, &body_at);
+    for (key, tier, p) in out.placed {
+        if let Some((_, mut m)) = bodies.iter_mut().find(|(a, _)| a.0 == key) {
+            m.loco.position = p.at.pos;
+        }
+        placed.0.push((key, tier, p, alloc.tick));
+    }
+}
+
+#[test]
+fn in_the_dark_every_waiting_entry_is_placed_in_one_tick() {
+    let mut app = app(BIG, Views { seen_x: -1e9 });
+    sight_tests::target(&mut app, Vec3::ZERO);
+    let bodies: Vec<Entity> = (1..=10u8)
+        .map(|i| held(&mut app, u128::from(i), -f32::from(i), -50.0 - f64::from(i)))
+        .collect();
+    for _ in 0..3 {
+        step(&mut app);
+    }
+    let s = *app.world().resource::<AiLogicalStats>();
+    assert_eq!(
+        (s.states, s.queued, s.placed),
+        (10, 10, 0),
+        "every spot is seen: {s:?}"
+    );
+    assert!(s.waiting > 0, "{s:?}");
+    app.insert_resource(Dark).add_systems(
+        FixedUpdate,
+        dark_promote_system
+            .in_set(AiLogicalSystems::Promote)
+            .run_if(resource_exists::<Dark>)
+            .after(promote_system),
+    );
+    step(&mut app);
+    assert!(
+        app.world().resource::<AiLogical>().is_empty(),
+        "all ten placed on the dark tick"
+    );
+    let placed = &app.world().resource::<Placed>().0;
+    assert_eq!(placed.len(), 10);
+    for (key, _, p, _) in placed {
+        let e = bodies[usize::try_from(key.0).unwrap() - 1];
+        assert_eq!(
+            app.world().get::<Mover>(e).unwrap().loco.position,
+            p.at.pos,
+            "{key:?}"
+        );
+        assert!(
+            p.at.pos
+                .delta(loc(-50.0 - f64::from(u8::try_from(key.0).unwrap()), 0.0).pos)
+                .length()
+                < 1e-6,
+            "{key:?} on its state's spot"
+        );
+    }
 }

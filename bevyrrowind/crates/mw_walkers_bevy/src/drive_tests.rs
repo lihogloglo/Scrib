@@ -95,7 +95,7 @@ pub(super) fn app_with(extra: impl FnOnce(&mut App)) -> App {
     .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)))
     .insert_resource(Floor(TerrainProbe(FlatFloor)))
     .insert_resource(NavMeshes(Box::new(backend)))
-    .insert_resource(Pathgrids(PathGrids::default()))
+    .insert_resource(Pathgrids(std::sync::Arc::new(PathGrids::default())))
     .init_resource::<MwGround>()
     .insert_resource(GroundOnPhysics(false));
     add_drive(&mut app, mw_ai::wander_library());

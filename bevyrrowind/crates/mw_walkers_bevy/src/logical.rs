@@ -34,6 +34,18 @@
 //! 4. **Stand-down**: `drive` stands a marked body, `drive_directives` skips it.
 //! 5. **Proof line** ([`proof_line`]): `tier0: N logical, Q queued, P placed (X other-space)`,
 //!    when a count changed, at most once a second.
+//! 6. **Time skip** (`MA7b`; rest, wait, travel, training: `OpenMW`'s `Actors::fastForwardAi`):
+//!    the tick after a host recorded a span in [`AiTimeSkips`], Enter demotes every awake body
+//!    with a stack that is not dead, held (knocked down: unconscious) or paralysed ([`PARALYZE`]
+//!    above 0), each at the span's start where its body stood; Step crosses the whole store over
+//!    the span (`AiTierZero::fast_forward`) with `mw_ai::MorrowindFastForward` (wanderers onto a
+//!    pathgrid point of their cell, travellers walked to where tier 0 puts them); Promote runs
+//!    with the screen dark (`AiTierZero::promote_dark`: no views, every queued body tried), so
+//!    the awake bodies stand where the span left them on the first frame after the fade.
+//!    Occupancy (the 60-unit test) reads every body, the player and the stored states, each
+//!    fast-forwarded actor's entry moved to where it was placed (`OpenMW` moves actors one by
+//!    one). Water-only: a body moving as a pure swimmer (`Fly { hover: None }`, the walkers'
+//!    swimmer scaffold); a stored actor without a body is never water-only (named gap).
 //!
 //! **Gaps (named):** inside a worldspace a route is a straight leg (start to door, door to door,
 //! door to goal) until `NV12f` loads the baked route graph (`docs/roadmaps/nav.md`): tier 0 then
@@ -46,6 +58,7 @@
 //! noted).
 
 use std::cell::RefCell;
+use std::sync::{Arc, Mutex};
 
 use bevy_app::{App, FixedUpdate};
 use bevy_ecs::prelude::*;
@@ -53,23 +66,31 @@ use bevy_ecs::system::SystemParam;
 use bevy_log::{debug, info};
 use bevy_math::Vec3;
 use bevy_time::Time;
-use sf_ai::{DirectiveDone, DirectiveId, FaceTarget, LogicalCtx, LogicalEnv, LogicalState, LogicalTransitions, PlayerViews, PromoteEnv, RouteRef, Tier};
-use sf_ai_bevy::{AiActor, AiAllocSystems, AiDirectives, AiLogical, AiLogicalBody, AiLogicalSystems, AiTier, AiTierZero, demote_body};
-use sf_controller_bevy::{Avoider, Dormant, Held, Mover, MoverParams};
+use sf_ai::{DirectiveDone, DirectiveId, DirectiveStack, FaceTarget, FastForwardRules, LogicalCtx, LogicalEnv, LogicalState, LogicalTransitions, PlayerViews, PromoteEnv, RouteRef, Tier};
+use sf_ai_bevy::{
+    AiActor, AiAllocSystems, AiDirectives, AiLogical, AiLogicalBody, AiLogicalSystems, AiTier, AiTierZero, AiTimeSkips, demote_body,
+};
+use sf_controller_bevy::{Avoider, Dormant, Held, Mover, MoverMode, MoverParams};
 use sf_coords::WorldPos;
 use sf_ids::{ActorKey, GameInstant};
 use sf_nav::{DEFAULT_EXTENT, DoorState, NavBackend, QueryFilter, RouteRules, TraverseTimes, WorldGraph};
 use sf_nav_bevy::{NavCorridor, NavDoorStates, NavMeshes, NavQueries, NavWorldGraph};
 use sf_sky_bevy::GameClock;
+use sf_stats_bevy::{StatTableRes, Stats};
 use sf_world::{LinkId, Location, PlacementId, WorldspaceId};
 use sf_world_bevy::ActiveWorldspace;
 
 use crate::directive_drive::DirectiveDrive;
 use crate::directives::{AiPackageExtras, Renewing};
+use crate::greeting::PARALYZE;
 use crate::in_view::{AiViewer, InViewSettings, View, ViewRules, actor_sphere, sees};
 use crate::reaction::Reaction;
 use crate::script_ai::{AiRuns, Served, record_runs};
-use crate::walkers::{ActorSpace, Walker, clear_corridor_goal};
+use crate::physics::Dead;
+use crate::walkers::{ActorSpace, Pathgrids, Walker, clear_corridor_goal};
+use mw_ai::{MorrowindFastForward, PathGrids};
+use mw_game_core::player::PlayerBody;
+use sf_action_bevy::ActionBody;
 
 // --- Routes -----------------------------------------------------------------------------------
 
@@ -307,6 +328,54 @@ pub struct Tier0Tick {
     pub counts: Tier0Counts,
     /// The counts last logged, and when (fixed-clock seconds).
     logged: (Tier0Counts, Option<f64>),
+    /// This tick fast-forwarded a time skip: Promote runs dark (module docs, 6).
+    dark: bool,
+}
+
+/// The fast-forward's RNG seed, xored with each actor's key and the span's end
+/// (`MorrowindFastForward`): deterministic per actor and skip.
+// tunables: const (RNG seed: a fixed stream id, not a tuned value)
+const FAST_FORWARD_SEED: u64 = 0x4d41_3762;
+
+/// Who stands where during a fast-forward, for the 60-unit occupancy test: `None` is the player.
+type Occupants = Arc<Mutex<Vec<(Option<ActorKey>, Location)>>>;
+
+/// `MorrowindFastForward` with the occupancy kept current: after each actor's rule, its entry moves
+/// to where the rule left it, so the next actor's test sees it there (`OpenMW` moves actors one by
+/// one).
+struct SkipRules {
+    inner: MorrowindFastForward,
+    occupants: Occupants,
+}
+
+impl SkipRules {
+    fn new(grids: Arc<PathGrids>, occupants: Occupants, water_only: Vec<ActorKey>) -> Self {
+        let read = Arc::clone(&occupants);
+        let occupied = Arc::new(move |at: &Location, r: f32| {
+            read.lock().is_ok_and(|o| o.iter().any(|(_, l)| l.worldspace == at.worldspace && l.pos.delta_f32(at.pos).length() <= r))
+        });
+        let water_only = Arc::new(move |k: ActorKey| water_only.binary_search(&k).is_ok());
+        Self { inner: MorrowindFastForward::new(grids, occupied, water_only, FAST_FORWARD_SEED), occupants }
+    }
+}
+
+impl FastForwardRules for SkipRules {
+    fn after_fast_forward(
+        &self,
+        state: &mut LogicalState,
+        stack: &mut DirectiveStack,
+        span: (GameInstant, GameInstant),
+        ctx: &LogicalCtx<'_>,
+        events: &mut Vec<DirectiveDone>,
+    ) {
+        self.inner.after_fast_forward(state, stack, span, ctx, events);
+        let key = Some(stack.actor());
+        if let Ok(mut occupants) = self.occupants.lock() {
+            for (_, at) in occupants.iter_mut().filter(|(k, _)| *k == key) {
+                *at = state.pos.clone();
+            }
+        }
+    }
 }
 
 /// The proof line's cadence: at most one line a second (also `crate::poses`' line).
@@ -400,47 +469,69 @@ pub(crate) fn default_radius_m() -> f32 {
 pub(crate) fn enter_tier0(
     clock: Res<GameClock>,
     directives: Res<AiDirectives>,
+    skips: Option<Res<AiTimeSkips>>,
+    table: Option<Res<StatTableRes>>,
     mut store: ResMut<AiLogical>,
     mut commands: Commands,
     bodies: Query<
-        (Entity, &AiActor, &Mover, &ActorSpace, Option<&AiTier>, Has<Dormant>),
+        (Entity, &AiActor, &Mover, &ActorSpace, Option<&AiTier>, Has<Dormant>, Has<Dead>, Option<&Stats>),
         (Without<AiLogicalBody>, Without<Held>),
     >,
 ) {
-    for (entity, actor, mover, space, tier, dormant) in &bodies {
+    // A time skip (module docs, 6): every awake body enters too, where it stood when the clock jumped.
+    let skip = skips.as_deref().and_then(AiTimeSkips::pending);
+    let now = skip.map_or(clock.now, |(from, _)| from);
+    let paralyze = table.as_deref().and_then(|t| t.0.find(PARALYZE));
+    for (entity, actor, mover, space, tier, dormant, dead, sheet) in &bodies {
         let key = actor.0;
         let logical = tier.map_or(dormant, |t| t.tier == Tier::Logical);
-        if !(logical || store.contains(key)) || directives.get(key).is_none() {
+        let paralysed = || {
+            table.as_deref().zip(sheet).zip(paralyze).is_some_and(|((t, s), i)| s.view(&t.0).modified(i) > 0.0)
+        };
+        let skipped = skip.is_some() && !dead && !paralysed();
+        if !(logical || skipped || store.contains(key)) || directives.get(key).is_none() {
             continue;
         }
         let body = Location::new(space.0.clone(), mover.loco.position);
-        demote_body(&mut commands, &mut store, entity, key, body, clock.now);
+        demote_body(&mut commands, &mut store, entity, key, body, now);
     }
 }
 
-/// Notes what each due state's stack serves before the step ([`AiRuns`]) and clears the tick.
+/// Notes what each due state's stack serves before the step ([`AiRuns`]; every state on a skip's
+/// tick) and clears the tick.
 #[allow(clippy::needless_pass_by_value)]
-fn note_served(clock: Res<GameClock>, store: Res<AiLogical>, directives: Res<AiDirectives>, mut tick: ResMut<Tier0Tick>) {
+fn note_served(
+    clock: Res<GameClock>,
+    store: Res<AiLogical>,
+    directives: Res<AiDirectives>,
+    skips: Option<Res<AiTimeSkips>>,
+    mut tick: ResMut<Tier0Tick>,
+) {
     let tick = &mut *tick;
     tick.served.clear();
     tick.events.clear();
     tick.renewed.clear();
     let now = clock.now;
+    let skip = skips.as_deref().and_then(AiTimeSkips::pending).is_some();
     for (key, state) in store.iter() {
-        let due = state.directive.is_none() || state.until.is_some_and(|u| u <= now);
+        let due = skip || state.directive.is_none() || state.until.is_some_and(|u| u <= now);
         if due && let Some(stack) = directives.get(key) {
             tick.served.push((key, Served::of(stack)));
         }
     }
 }
 
-#[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
+#[allow(clippy::needless_pass_by_value, clippy::type_complexity, clippy::too_many_arguments)]
 fn step_tier0(
     mut t0: AiTierZero,
     world: Tier0World,
     mut tick: ResMut<Tier0Tick>,
+    mut skips: Option<ResMut<AiTimeSkips>>,
+    grids: Option<Res<Pathgrids>>,
+    player: (Query<&ActionBody, With<PlayerBody>>, Option<Res<ActiveWorldspace>>),
     bodies: Query<(Entity, &AiActor, &Mover, &ActorSpace, Option<&Reaction>, Option<&Walker>, Option<&NavCorridor>)>,
 ) {
+    let skip = skips.as_deref_mut().and_then(AiTimeSkips::take);
     if t0.store().is_empty() {
         return;
     }
@@ -454,9 +545,41 @@ fn step_tier0(
     let policy = Renewing::default();
     let ctx = LogicalCtx { env: &env, transitions: &world.transitions.0, policy: &policy, time_scale: world.time_scale() };
     let mut events = std::mem::take(&mut tick.events);
-    t0.step(world.clock.now, &ctx, &mut events);
+    if let Some((from, _)) = skip {
+        let rules = skip_rules(t0.store(), grids.as_deref(), &player, bodies.iter().map(|(_, a, m, s, ..)| (a.0, m, s)));
+        t0.fast_forward((from, world.clock.now), &ctx, &rules, &mut events);
+        tick.dark = true;
+    } else {
+        t0.step(world.clock.now, &ctx, &mut events);
+    }
     tick.events = events;
     tick.renewed = policy.take();
+}
+
+/// The fast-forward's rules over this tick's world: the pathgrids, who stands where (every stored
+/// state, every other body, the player in the active worldspace), the pure swimmers.
+fn skip_rules<'m>(
+    store: &AiLogical,
+    grids: Option<&Pathgrids>,
+    player: &(Query<&ActionBody, With<PlayerBody>>, Option<Res<ActiveWorldspace>>),
+    bodies: impl Iterator<Item = (ActorKey, &'m Mover, &'m ActorSpace)>,
+) -> SkipRules {
+    let mut occupants: Vec<(Option<ActorKey>, Location)> = store.iter().map(|(k, s)| (Some(k), s.pos.clone())).collect();
+    let mut water_only = Vec::new();
+    for (key, mover, space) in bodies {
+        if matches!(mover.loco.mode, MoverMode::Fly { hover: None }) {
+            water_only.push(key);
+        }
+        if !store.contains(key) {
+            occupants.push((Some(key), Location::new(space.0.clone(), mover.loco.position)));
+        }
+    }
+    water_only.sort_unstable();
+    let (players, active) = player;
+    let worldspace = active.as_ref().and_then(|a| a.0.clone()).unwrap_or_else(mw_world::ids::exterior);
+    occupants.extend(players.iter().map(|b| (None, Location::new(worldspace.clone(), b.loco.position))));
+    let grids = grids.map_or_else(|| Arc::new(PathGrids::default()), |g| Arc::clone(&g.0));
+    SkipRules::new(grids, Arc::new(Mutex::new(occupants)), water_only)
 }
 
 /// The step's ends into [`AiRuns`] and the debug log (as `drive_directives` sends its own), and
@@ -521,6 +644,7 @@ fn promote_tier0(
 ) {
     let mut queued = 0;
     tick.placements.clear();
+    let dark = std::mem::take(&mut tick.dark);
     if !t0.store().is_empty() {
         let index = key_index(bodies.iter().map(|((e, a, ..), _)| (a.0, e)));
         // A marked, awake body whose state stands (or walks) in another worldspace: its state, to
@@ -546,11 +670,16 @@ fn promote_tier0(
             let graph = world.graph.as_deref().map(|g| &g.0);
             let env = WorldGraphEnv::new(graph, &door, world.traverse(), &speed, &nowhere, &body);
             let (viewers, settings, active) = &views;
-            let snapshot = view_snapshot(viewers.iter(), active.as_ref().and_then(|a| a.0.as_ref()));
+            // Dark (the tick after a skip): no views, so every body is placed where its state stands.
+            let snapshot = if dark { Vec::new() } else { view_snapshot(viewers.iter(), active.as_ref().and_then(|a| a.0.as_ref())) };
             let rules = settings.as_ref().map_or_else(ViewRules::default, |s| s.rules);
             let nav = meshes.as_deref().map(|m| &*m.0);
             let promote = ViewsEnv { views: &snapshot, rules, nav, filter, body_radius: &radius };
-            t0.promote(world.clock.now, world.time_scale(), &env, &promote, &body)
+            if dark {
+                t0.promote_dark(world.clock.now, world.time_scale(), &env, &promote, &body)
+            } else {
+                t0.promote(world.clock.now, world.time_scale(), &env, &promote, &body)
+            }
         };
         queued = out.queued;
         for (key, _tier, p) in out.placed {

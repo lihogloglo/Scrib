@@ -335,6 +335,14 @@ impl PromoteQueue {
         entries.sort_unstable_by(Queued::order);
     }
 
+    /// Clears every pending retry, so the next `run` may try each entry (a time skip: the screen
+    /// was dark, what waited on a view may be placed now).
+    pub fn retry_all(&mut self) {
+        for q in &mut self.entries {
+            q.next_try = 0;
+        }
+    }
+
     /// Runs one tick: tries at most `config.per_tick` entries in order with `resolve`, skipping
     /// (free) those whose retry is pending. A placed entry leaves the queue and is reported; a
     /// waiting one stays, tried again at `tick + config.retry_ticks(tick_s)`.

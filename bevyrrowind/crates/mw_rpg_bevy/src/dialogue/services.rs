@@ -64,6 +64,7 @@ use sf_rpg::{
 };
 use sf_rpg_ui::{DialogueAction, DialogueRequest, DialogueView};
 use sf_calendar::CalendarView;
+use sf_ai_bevy::AiTimeSkips;
 use sf_sky_bevy::GameClock;
 use sf_stats_bevy::sf_stats::{CauseKind, IncreaseSource, StatOp, StatOwner};
 use sf_stats_bevy::{StatCommand, StatTick};
@@ -1148,10 +1149,11 @@ fn globals_or(values: [Option<f32>; 5], fallback: Calendar) -> Calendar {
 }
 
 /// Hours services passed skip the game clock ([`GameClock::skip`], clock.md: what the sky, held
-/// lights, AI timers, Lua's `core.game_time()` and saves read), rounded down to the ms. Without
-/// a clock (headless, interiors before the exterior plugin) only the `MWScript` calendar moved.
+/// lights, AI timers, Lua's `core.game_time()` and saves read), rounded down to the ms, and the
+/// span goes to [`AiTimeSkips`]: the actors fast-forward on the next tick (`MA7b`). Without a
+/// clock (headless, interiors before the exterior plugin) only the `MWScript` calendar moved.
 #[allow(clippy::needless_pass_by_value)] // system parameters
-pub(super) fn advance_sky(mut rpg: ResMut<Rpg>, clock: Option<ResMut<GameClock>>) {
+pub(super) fn advance_sky(mut rpg: ResMut<Rpg>, clock: Option<ResMut<GameClock>>, skips: Option<ResMut<AiTimeSkips>>) {
     if rpg.sky_hours <= 0.0 {
         return;
     }
@@ -1160,7 +1162,11 @@ pub(super) fn advance_sky(mut rpg: ResMut<Rpg>, clock: Option<ResMut<GameClock>>
         debug!("services: no game clock; {hours} h passed on the MWScript calendar only");
         return;
     };
+    let from = clock.now;
     clock.skip(sf_sky_bevy::sf_ids::clock::hours_ms(f64::from(hours)));
+    if let Some(mut skips) = skips {
+        skips.record(from, clock.now);
+    }
 }
 
 /// Queued service events go out as [`ServiceEventMessage`]s (checked before taking, so `Rpg`
@@ -1903,6 +1909,20 @@ mod calendar_tests {
 
     fn skip(app: &mut App, hours: u64) {
         app.world_mut().resource_mut::<GameClock>().skip(hours * MS_PER_HOUR);
+    }
+
+    /// `MA7b`: hours a service passed reach the AI as one skipped span, from the instant before.
+    #[test]
+    fn passed_hours_record_the_skip_for_the_ai() {
+        let mut app = app(true);
+        app.init_resource::<AiTimeSkips>();
+        app.update();
+        let from = app.world().resource::<GameClock>().now;
+        app.world_mut().resource_mut::<Rpg>().sky_hours = 8.0;
+        app.update();
+        let to = app.world().resource::<GameClock>().now;
+        assert_eq!(to, from.plus(8 * MS_PER_HOUR));
+        assert_eq!(app.world().resource::<AiTimeSkips>().pending(), Some((from, to)));
     }
 
     #[test]

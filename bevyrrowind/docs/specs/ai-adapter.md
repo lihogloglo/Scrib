@@ -356,6 +356,14 @@ roll per span (OpenMW: per waited hour), no `z += 60` / ground snap (promotion s
 paralysed actors not moved (seam; caller, MA7b), travellers not teleported (tier 0 walked the `GoTo`). Gap:
 `WanderPlanner`'s allowed set differs (no connectivity, no closest removal, no single-node extension).
 
+As built (MA7b, `OpenMW` `Actors::fastForwardAi` 2413 at `b8285cc9`): `advance_sky` (`mw_rpg_bevy` services) records each
+clock skip in `sf_ai_bevy::AiTimeSkips` (merged spans; a resource, since a frame may run no fixed tick). Next tick
+(`mw_walkers_bevy/src/logical.rs`): Enter demotes every awake body with a stack, not dead, held (knocked down) or
+paralysed (`paralyze` > 0), at the span start; Step runs `AiTierZero::fast_forward` (whole store, not only due states)
+with `MorrowindFastForward` plus live occupancy (every state, other bodies, the player; each actor's entry moved as it
+is placed); Promote is `promote_dark` (no views, retries cleared, no per-tick cap). Gaps: water-only = a body moving as
+a pure swimmer (bodiless: never); tier 0 does not know paralysis (a dormant paralysed actor still crosses the span).
+
 ## Schedules for vanilla NPCs (owner 2026-11-08, modern addition)
 
 - A data pack `bevyrrowind/data/ai/schedules/` of `sf.ai.schedule` records plus assignment records (by class,

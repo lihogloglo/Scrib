@@ -114,8 +114,11 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   simulated seconds (game ms / `time_scale`), arrival fixed when the route is taken up. `fast_forward` = step + the
   adapter's `FastForwardRules`: Morrowind's is `mw_ai::MorrowindFastForward` (MA7a, `mw_ai/src/fast_forward.rs`:
   a `StayNear` top with radius > 0 is placed on one of OpenMW's `allowed_positions` of its cell's pathgrid, one roll
-  seeded by actor key and span end, nudged 5/15/30 % toward a neighbour when the occupancy seam says taken; not called
-  by the game until MA7b). Promotion core (AI10b, `sf_ai/src/promote.rs`):
+  seeded by actor key and span end, nudged 5/15/30 % toward a neighbour when the occupancy seam says taken). Time skip
+  (MA7b): `advance_sky` records the span in `AiTimeSkips`; next tick the game demotes every awake actor with a stack
+  (not dead, knocked down or paralysed) at the span start, `AiTierZero::fast_forward` crosses the whole store with
+  `MorrowindFastForward` (live occupancy), and `promote_dark` places every queued body with no view test, retries
+  cleared and no per-tick cap (`mw_walkers_bevy/src/logical.rs` module docs, 6). Promotion core (AI10b, `sf_ai/src/promote.rs`):
   `PromoteQueue` holds every actor granted tier 1/2 still tier 0 (pins, then nearest player, then key), tries at most
   `per_tick` a tick, a waiter retried after `retry_s` (skips free, so seen waiters never starve unseen ones);
   `resolve_promotion` places at `position_at(t)` snapped, else back along its route (`backtrack_step_m` up to

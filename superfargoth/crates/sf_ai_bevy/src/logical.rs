@@ -27,6 +27,11 @@
 //!   the game moves its body to the placement.
 //! - **Cleanup** ([`AiLogicalSystems::Cleanup`]): a body whose key left the store loses its
 //!   marker and gets the allocated tier back, with a staggered `first_decide_tick`.
+//! - **Time skip** (`MA7b`; rest, wait, travel): the host that skips the clock records the span in
+//!   [`AiTimeSkips`]; on the next tick the game demotes its awake actors, steps the whole store
+//!   over the span with its [`FastForwardRules`] ([`AiTierZero::fast_forward`], or the plain
+//!   [`fast_forward_logical`]) and promotes with the screen dark ([`AiTierZero::promote_dark`]:
+//!   every queued entry tried at once, the game passing no views).
 //!
 //! Host only (tiers are host-authoritative). The store is plain data: `sf/ai` v2 saves every
 //! state with its due instant ([`AiLogical::to_saved`], [`AiLogical::restore`], `MA22b`).
@@ -41,7 +46,7 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
 use bevy_time::{Fixed, Time};
 use sf_ai::{
-    ActivityRef, ActorKey, DirectiveDone, DirectiveStack, EnteredFrom, GameTime, LogicalCtx, LogicalEnv, LogicalState, Placement,
+    ActivityRef, ActorKey, DirectiveDone, DirectiveStack, EnteredFrom, FastForwardRules, GameTime, LogicalCtx, LogicalEnv, LogicalState, Placement,
     PromoteConfig, PromoteEnv, PromoteQueue, PromoteRequest, PromoteTick, Resolve, RouteRef, SavedLogical, StackPolicy, Tier,
     Transition, TransitionInput, first_decide_after, resolve_promotion,
 };
@@ -362,6 +367,48 @@ pub fn step_logical(
     out
 }
 
+/// A time skip over the whole store (`MA7b`; rest, wait, travel): every stored state with a stack
+/// steps to `span.1` ([`LogicalState::step`], every event in order) and then goes through the
+/// adapter's `rules` ([`FastForwardRules::after_fast_forward`]), as [`sf_ai::fast_forward`] does
+/// for one actor; leaders before followers, each group in key order, whatever the due index says
+/// (a state not due still crosses the span). The due index is rebuilt; a state without a stack
+/// keeps its due instant. `events` gets every directive end of the span.
+pub fn fast_forward_logical(
+    store: &mut AiLogical,
+    directives: &mut AiDirectives,
+    span: (GameInstant, GameInstant),
+    ctx: &LogicalCtx<'_>,
+    rules: &dyn FastForwardRules,
+    events: &mut Vec<DirectiveDone>,
+) -> LogicalStepStats {
+    let AiLogical { states, due, scratch } = store;
+    let mut out = LogicalStepStats { states: states.len(), ..LogicalStepStats::default() };
+    scratch.clear();
+    scratch.extend(states.keys().copied());
+    scratch.sort_unstable_by_key(|k| (follows(states, directives, ctx, *k), *k));
+    for &key in scratch.iter() {
+        let Some(stack) = directives.get_mut(key) else { continue };
+        let Some(mut state) = states.get_mut(&key).and_then(|s| s.state.take()) else { continue };
+        let n = {
+            let env = StoreEnv::new(ctx.env, states, ctx.time_scale);
+            let ctx = LogicalCtx { env: &env, ..*ctx };
+            let n = state.step(stack, span.1, &ctx, events);
+            rules.after_fast_forward(&mut state, stack, span, &ctx, events);
+            n
+        };
+        out.stepped += 1;
+        out.events += n;
+        if let Some(slot) = states.get_mut(&key) {
+            slot.due = state.until;
+            slot.state = Some(state);
+        }
+    }
+    scratch.clear();
+    due.clear();
+    due.extend(states.iter().filter_map(|(k, s)| s.due.map(|d| (d, *k))));
+    out
+}
+
 /// Whether `key` steps as a follower: it follows someone, or the directive its next step takes
 /// up (served, not yet served by the state: a new state, a changed stack) transitions to
 /// `Follow`.
@@ -453,6 +500,35 @@ pub fn demote_body(
 
 // --- Components and resources -----------------------------------------------------------------
 
+/// Clock skips (rest, wait, travel) not yet fast-forwarded (`MA7b`): the host that calls
+/// `GameClock::skip` records the span here, the game's tier-0 systems take it on the next fixed
+/// tick. Skips recorded before that tick merge into one span (earliest start, latest end). A
+/// resource, not a message: a frame may run no fixed tick.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AiTimeSkips {
+    pending: Option<(GameInstant, GameInstant)>,
+}
+
+impl AiTimeSkips {
+    /// The clock went from `from` to `to` at once (nothing when `to <= from`).
+    pub fn record(&mut self, from: GameInstant, to: GameInstant) {
+        if to <= from {
+            return;
+        }
+        self.pending = Some(self.pending.map_or((from, to), |(a, b)| (a.min(from), b.max(to))));
+    }
+
+    /// The span waiting for the next tick.
+    pub fn pending(&self) -> Option<(GameInstant, GameInstant)> {
+        self.pending
+    }
+
+    /// Takes the span (the tick fast-forwarding it).
+    pub fn take(&mut self) -> Option<(GameInstant, GameInstant)> {
+        self.pending.take()
+    }
+}
+
 /// On an [`AiActor`] body whose key is in [`AiLogical`]: tier 0 in fact, the game's walker stands
 /// down. Added by [`demote_body`], removed in [`AiLogicalSystems::Cleanup`] once the key left the
 /// store.
@@ -542,6 +618,7 @@ impl Default for AiLogicalPlugin {
 impl Plugin for AiLogicalPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AiLogical>()
+            .init_resource::<AiTimeSkips>()
             .init_resource::<AiDirectives>()
             .init_resource::<AiLogicalStats>()
             .init_resource::<AiPromoteSettings>()
@@ -593,6 +670,38 @@ impl AiTierZero<'_> {
         s
     }
 
+    /// [`fast_forward_logical`] over the store and [`AiDirectives`], counted into [`AiLogicalStats`].
+    pub fn fast_forward(
+        &mut self,
+        span: (GameInstant, GameInstant),
+        ctx: &LogicalCtx<'_>,
+        rules: &dyn FastForwardRules,
+        events: &mut Vec<DirectiveDone>,
+    ) -> LogicalStepStats {
+        let s = fast_forward_logical(&mut self.store, &mut self.directives, span, ctx, rules, events);
+        self.stats.states = s.states;
+        self.stats.stepped += s.stepped;
+        self.stats.events += s.events;
+        s
+    }
+
+    /// [`AiTierZero::promote`] on the tick after a time skip, the screen dark: every queued
+    /// entry is tried this tick (pending retries cleared, no per-tick cap). The game passes a
+    /// `world` that sees nothing, so each one is placed where its state stands.
+    pub fn promote_dark(
+        &mut self,
+        now: GameInstant,
+        time_scale: f64,
+        env: &dyn LogicalEnv,
+        world: &dyn PromoteEnv,
+        body_at: &dyn Fn(ActorKey) -> Option<Location>,
+    ) -> PromoteTick {
+        self.queue.queue.retry_all();
+        let all = u32::try_from(self.queue.queue.len()).unwrap_or(u32::MAX).max(1);
+        let config = PromoteConfig { per_tick: all, ..self.settings.config };
+        self.promote_with(now, time_scale, env, world, body_at, &config)
+    }
+
     /// [`promote_logical`] on the allocator's tick with [`AiPromoteSettings`], counted (and timed
     /// with timings on) into [`AiLogicalStats`].
     pub fn promote(
@@ -603,12 +712,24 @@ impl AiTierZero<'_> {
         world: &dyn PromoteEnv,
         body_at: &dyn Fn(ActorKey) -> Option<Location>,
     ) -> PromoteTick {
+        let config = self.settings.config;
+        self.promote_with(now, time_scale, env, world, body_at, &config)
+    }
+
+    fn promote_with(
+        &mut self,
+        now: GameInstant,
+        time_scale: f64,
+        env: &dyn LogicalEnv,
+        world: &dyn PromoteEnv,
+        body_at: &dyn Fn(ActorKey) -> Option<Location>,
+        config: &PromoteConfig,
+    ) -> PromoteTick {
         let tick = self.alloc.as_deref().map_or(0, |a| a.tick);
         let tick_s = tick_seconds(self.fixed.as_deref());
-        let config = self.settings.config;
         let AiPromoteQueue { queue, timings, .. } = &mut *self.queue;
         let started = (*timings).then(Instant::now);
-        let out = promote_logical(queue, &mut self.store, tick, tick_s, &config, now, time_scale, env, world, body_at);
+        let out = promote_logical(queue, &mut self.store, tick, tick_s, config, now, time_scale, env, world, body_at);
         let s = &mut *self.stats;
         s.promote_us = started.map(|t| t.elapsed().as_secs_f32() * MICROS_PER_S);
         s.states = self.store.len();
