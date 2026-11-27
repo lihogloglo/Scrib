@@ -7,6 +7,8 @@
 //!   invalidation reasons and the sorted same-tick batch.
 //! - [`index`]: the point index of resident slots (grid buckets) and `find_slots`.
 //! - [`verbs`]: `rank_verbs` (the uses an object offers now) and the per-player `FocusStabilizer`.
+//! - [`destroy`]: tier 1 destruction maths: `apply_damage` (stages crossed, overkill), the debris
+//!   distance gate, the per-tick break queue, the health + stage rest state.
 //! - [`door`]: the swing-door state machine (toggle, step, leaf pose, close-behind schedule).
 //! - [`rest`]: the rest hook's slotless verb `VERB_SLEEP`.
 //! - [`light`]: light as state: `LightDef`, the `Lit` toggle (snuff / relight, rule sets), `LightChanged`,
@@ -22,6 +24,7 @@
 pub mod claims;
 pub mod cook;
 pub mod def;
+pub mod destroy;
 pub mod door;
 pub mod entrance;
 pub mod index;
@@ -41,6 +44,9 @@ pub use def::{
     TagId, VerbDef, WorkstationDef, fnv1a32,
 };
 pub use cook::cook;
+pub use destroy::{
+    BreakQueue, DESTRUCT_REST_VERSION, DESTRUCT_STATE_OWNER, DestructState, Hit, apply_damage, debris_lod,
+};
 pub use door::{DOOR_OPEN, DOOR_REST_VERSION, DOOR_STATE_OWNER, DoorChanged, DoorState, VERB_CLOSE, VERB_OPEN, swing_sign};
 pub use entrance::{pick_entrance, pick_exit, to_local};
 pub use index::{IndexedSlot, KindTag, PointIndex, SlotUser, compose};
@@ -55,6 +61,8 @@ pub use verbs::{FocusStabilizer, VerbChoice, VerbTarget, rank_verbs};
 
 #[cfg(test)]
 mod tests_claims;
+#[cfg(test)]
+mod tests_destroy;
 #[cfg(test)]
 mod tests_door;
 #[cfg(test)]

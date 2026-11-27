@@ -5,8 +5,8 @@
 Furniture, doors, beds and the census classes are smart objects: each carries a def (slots, verbs, entrances),
 its slots go in a point index while resident, users claim slots through one host table, and every use (player
 input, NPC, script) takes one activation path. Built today: seats (approach then sit), swing doors, focus and
-prompts, the rest hook, snuff / relight of fire lights (core, shell and the game's light hook). Carry, destruction
-and world rules are spec only.
+prompts, the rest hook, snuff / relight of fire lights (core, shell and the game's light hook), the destruction
+core's maths (no shell yet). Carry and world rules are spec only.
 
 ## How it works
 
@@ -32,6 +32,10 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   `SlotRef`), skipping moving or hand-held props, other users' claims and slots a resting prop covers
   (`interact.place.clearance_m`); none: the first clear point of a golden-angle floor spiral the caller projects
   (`interact.place.spread_m`, `floor_tries`), else the anchor. Pure and order-independent; the AI claims the result.
+- **Destruction core.** `apply_damage` (`sf_interaction/src/destroy.rs`, IN1a): health floors at 0; each stage whose
+  `at` the health fraction reaches is crossed once, in def order, several per hit; `overkill` (damage past zero over
+  full health) feeds the adapter's spill curve. `debris_lod` (`interact.debris.lod_m`), `BreakQueue` (at most
+  `interact.debris.breaks_per_tick` per tick, the rest next tick) and the `destruct` rest state (stage + health).
 - **Claims.** `Claims` (`sf_interaction/src/claims.rs:225`): priority with preemption of Reserved claims only,
   queue tickets, leases, exclusion groups, one body hold per user plus hand claims, typed `Refusal`
   (`claims.rs:114`), invalidation reasons. Requests are applied as one sorted batch per tick
@@ -95,7 +99,7 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
 
 - No rest UI: `RestRequested` is only logged. Lying down (IN3b) and lean (IN3c) wait for baked bed and lean clips.
 - `interact.cook` is a stub (`sf_interaction/src/cook.rs:16`); defs are cooked by the game's bake step only.
-- Carry, destruction, world rules and `pick_spot` for NPC errands are spec only.
+- Carry and world rules are spec only; destruction has its core maths only (no prop targets, swap or debris: IN1b).
 - Lights: off-by-default lights get no def; the loop sound and the AI's light copy don't follow `LightChanged` yet.
 - History of each slice: [ledger](../../ledger/interaction.md).
 

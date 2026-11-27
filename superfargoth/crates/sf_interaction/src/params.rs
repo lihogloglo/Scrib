@@ -43,6 +43,10 @@ pub struct InteractParams {
     pub place_spread_m: f32,
     /// Spiral points the floor fallback tries before the anchor itself, count (range 1-64).
     pub place_floor_tries: u8,
+    /// Beyond this from a client's camera a break spawns no debris bodies, m (range 5-100).
+    pub debris_lod_m: f32,
+    /// Breaks applied per tick; the rest wait for the next tick, count (range 1-32).
+    pub debris_breaks_per_tick: u8,
     /// Fixed simulation rate leases count in, ticks per second.
     pub tick_hz: f32,
 }
@@ -86,6 +90,10 @@ impl Default for InteractParams {
             place_spread_m: 0.4,
             // tunables: const (bound from interact.place.floor_tries in sf_interaction_bevy (IN46b); Guess)
             place_floor_tries: 16,
+            // tunables: const (bound from interact.debris.lod_m in sf_interaction_bevy (IN1a); Guess, Chaos debris removal by distance)
+            debris_lod_m: 25.0,
+            // tunables: const (bound from interact.debris.breaks_per_tick in sf_interaction_bevy (IN1a); Guess)
+            debris_breaks_per_tick: 6,
             // tunables: const (bound from the app's fixed timestep in sf_interaction_bevy; net.md 60 Hz tick)
             tick_hz: 60.0,
         }

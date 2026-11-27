@@ -223,6 +223,7 @@ fn def_defaults_are_the_struct_defaults() {
         (&DOOR_CLOSE_BEHIND_S, d.door_close_behind_s),
         (&PLACE_CLEARANCE_M, d.place_clearance_m),
         (&PLACE_SPREAD_M, d.place_spread_m),
+        (&DEBRIS_LOD_M, d.debris_lod_m),
     ];
     let counts = [
         (&PRIORITY_AMBIENT, d.priority_ambient),
@@ -232,6 +233,7 @@ fn def_defaults_are_the_struct_defaults() {
         (&QUEUE_CAPACITY, d.queue_capacity),
         (&HAND_MAX, d.hand_max),
         (&PLACE_FLOOR_TRIES, d.place_floor_tries),
+        (&DEBRIS_BREAKS_PER_TICK, d.debris_breaks_per_tick),
     ];
     assert_eq!(floats.len() + counts.len(), TUNABLES.len(), "one def per field but tick_hz");
     for (def, field) in floats {

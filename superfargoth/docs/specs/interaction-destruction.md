@@ -83,3 +83,13 @@ lever position (save.md "Overlay blobs", blob version table); spilled, looted an
 placements; a removed object is an overlay removal; reset classes per [world-reactions.md](world-reactions.md) (IN15).
 **Risk**: low for tier 1; medium for chunks (content); high for structures.
 
+
+## As built (IN1a, 2026-11-27)
+
+`sf_interaction::destroy` (`destroy.rs`): `DestructState { health, stage }` (stage = stages reached, 0 intact),
+`apply_damage(def, state, damage) -> Hit { state, crossed, overkill }`: health floors at 0; every stage from the current
+one with `health / def.health <= at` is crossed in def order (descending `at`, the cook's job), several per hit, never
+twice; overkill = damage past zero / `def.health`; zero, negative or non-finite damage is a no-op. `debris_lod` (inclusive,
+NaN = no bodies), `BreakQueue<T>` (`take_tick(n)`, FIFO carry-over), rest state `[v1, stage, health f32 LE]` under owner
+`destruct` (stage past the def is the shell's to clamp). `interact.debris.{lod_m, breaks_per_tick}` bound in
+`sf_interaction_bevy`; `awake_max` / `fade_s` wait for the shell (IN1b). Tests: `tests_destroy.rs` (6).

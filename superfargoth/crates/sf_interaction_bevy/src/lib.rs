@@ -204,6 +204,13 @@ pub const PLACE_SPREAD_M: Def<f32> = gp(def!(float "interact.place.spread_m" = 0
 pub const PLACE_FLOOR_TRIES: Def<u32> = gp_count(def!(count "interact.place.floor_tries" = 16)
     .range(1, 64)
     .help("Floor spiral points tried before a prop is put down at the anchor itself"));
+pub const DEBRIS_LOD_M: Def<f32> = pres(def!(float "interact.debris.lod_m" = 25.0)
+    .range(5.0, 100.0)
+    .unit(Unit::Meters)
+    .help("Beyond this from the camera a break spawns no debris bodies (Chaos debris removal by distance; IN1)"));
+pub const DEBRIS_BREAKS_PER_TICK: Def<u32> = gp_count(def!(count "interact.debris.breaks_per_tick" = 6)
+    .range(1, 32)
+    .help("Breaks applied per tick; the rest wait for the next tick (IN1)"));
 
 /// The `interact.*` tunables [`InteractParams`] has, bound by [`InteractionPlugin`].
 pub const TUNABLES: &[&dyn AnyDef] = &[
@@ -225,6 +232,8 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &PLACE_CLEARANCE_M,
     &PLACE_SPREAD_M,
     &PLACE_FLOOR_TRIES,
+    &DEBRIS_LOD_M,
+    &DEBRIS_BREAKS_PER_TICK,
 ];
 
 // --- Resources ----------------------------------------------------------------------------------
@@ -487,6 +496,8 @@ impl Plugin for InteractionPlugin {
         bind!(app, PLACE_CLEARANCE_M, |p, v| p.place_clearance_m = v);
         bind!(app, PLACE_SPREAD_M, |p, v| p.place_spread_m = v);
         bind!(app, PLACE_FLOOR_TRIES, |p, v| p.place_floor_tries = to_u8(v));
+        bind!(app, DEBRIS_LOD_M, |p, v| p.debris_lod_m = v);
+        bind!(app, DEBRIS_BREAKS_PER_TICK, |p, v| p.debris_breaks_per_tick = to_u8(v));
     }
 }
 
