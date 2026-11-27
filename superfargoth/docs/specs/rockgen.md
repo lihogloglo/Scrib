@@ -309,6 +309,10 @@ grooves, exfoliation shells (Later: low value per T§5); ropy pahoehoe (a textur
 
 ### (f) Placement in the game (RG-P, specced 2026-11-27)
 
+Reviewed 2026-11-27 (adversarial, every cited path read): fixed the physics scaled-copy growth (point 8), the shared
+solid list with the navmesh (8), string interning (4), the index's `ModelInfo` type (5), the end-band rule and the P3
+range test (6), and named the unused `Library::pick` (3).
+
 The scatter's **library rocks** (`mw_worldgen` `flora_rocks.rs:377` `RockPlacement`: class name, variant hash,
 transform whose uniform scale is the size mark in m, `sink` share of the short axis, regime) reach the generated world
 as ordinary streamed placements of one content-pack class, drawn by a rock spawner. Research:
@@ -317,7 +321,8 @@ as ordinary streamed placements of one content-pack class, drawn by a rock spawn
 
 **Reuse check (V = source read 2026-11-27).** Bevy 0.20: entities sharing one `Mesh` and one material handle batch
 into one instanced draw with GPU preprocessing and multi-draw indirect; `MeshTag` rides per instance and does not split
-the batch (`vendor/bevy_pbr/src/render/mesh.rs:1261-1275`, V); LOD is one entity per level with `VisibilityRange`
+the batch (it is a field of the per-instance `MeshUniform`, `vendor/bevy_pbr/src/render/mesh.rs:605-606`, filled at
+`:1261-1275`, V); LOD is one entity per level with `VisibilityRange`
 (dithered crossfade, V); there is no instance-list component outside our vendored `gpu_instance_batch` (V), so shared
 handles are the native path. Framework: `PlacementClass::Custom(u16)` is "Content-pack defined"
 (`sf_world/src/placement.rs:77-78`, V) and `PlacementSpawners` maps a class to a `PlacementSpawner` with
@@ -351,13 +356,19 @@ their ring with the dithered end band.
    longest LOD0 side), `lift_m = (0.5 - sink) x bounds.extent().z x scale` (sf_rockgen's +Z is the short axis and the
    mesh is centred, `boulder.rs:6-7, 305`; the rock lab seats rocks the same way, `level/rock_lab.rs:381-385`). The
    placement's position moves by `lift_m` along its rotated up (+Y), its scale becomes `splat(scale)`. Unknown class
-   or an empty library: the rock is dropped and counted in the summary line.
+   or an empty library: the rock is dropped and counted in the summary line. `Library::pick(seed)` (`library.rs:125`,
+   a mix64 + multiply-shift over a placement seed) is not used: the scatter's hash is already uniform 64-bit (modulo
+   bias <= 32 / 2^64) and modulo is its documented contract; one rule, stated on the scatter side.
 4. **The placement.** Class `ROCK_LIBRARY = PlacementClass::Custom(3)` (adapter constant beside `CONTAINER` 1 and
    `ACTIVATOR` 2, `mw_world/src/source.rs:25-27`), `base = RecordRef::new("rockgen", <class>)`, `model = Some(id)`,
    flags default, id = `library_rocks`' (`ROCK_ID_NAMESPACE`). They join `WorldgenContent.extra` as `"rocks library"`
    (`worldgen.rs:101-108`). Regime is dropped until the cover (RG-9i) needs it (then it enters the id or the material
-   key, decided there). Memory: ~130 B per placement, ~215 MB on x10s beside the 20.8 M flora placements (+8 %).
-5. **Bounds for the index.** `WorldgenContent` gains `models: HashMap<VfsPath, ModelInfo>`: per used id the variant's
+   key, decided there). Memory: ~130 B per placement, ~215 MB on x10s beside the 20.8 M flora placements (+8 %). That
+   inline size holds only if the strings are shared: `RecordRef::new` and `VfsPath::new` each allocate an `Arc<str>`
+   (`sf_world/src/records.rs:101-107`, `sf_vfs/src/path.rs:11`), so the builder makes one `RecordRef` per class and one
+   `VfsPath` per (class, index) and clones them (a refcount), never one per rock.
+5. **Bounds for the index.** `WorldgenContent` gains `models: HashMap<VfsPath, sf_world::ModelInfo>` (`min`, `max`,
+   `bytes`, `lod_distance`: `sf_world/src/index.rs:27-34`, not `sf_model::ModelInfo`): per used id the variant's
    LOD0 bounds in the engine frame (`[x, y, z] -> [x, z, -y]`, as `rock_mesh`, `sf_rockgen_bevy/src/lib.rs:140-141`),
    `bytes 0` (meshes are shared and resident for the session; the per-placement overhead covers the entity),
    `lod_distance 0` (no limit known: the ring end and size culling decide). `worldgen.rs` `add` (`:204-215`) looks up
@@ -365,10 +376,15 @@ their ring with the dithered end band.
 6. **Spawner** (`sf_rockgen_bevy::RockSpawner`, framework): holds per (class, index) the LOD mesh handles (built once
    from the libraries with `rock_mesh`), per class one `RockMaterial` handle per LOD (plus a default set), and
    `RockLodSettings`. `spawn`: parse the id; a root under `cx.parent` with `cx.local`; children `lod_bundles` with
-   ranges `lod_ranges(reference size x scale, levels, settings)` whose last level ends at `cx.max_distance` with
-   `cx.end_band` (as `chain_ranges`, `spawn.rs:349-365`), every range through `shared_range` (`spawn.rs:395-427`: Bevy's
-   65535 range slots; per-instance ranges must be snapped); `NoCpuCulling` on the parts when `StaticGpuCulling::on`
-   (the statics' rule, `spawn.rs:306-313`); `MeshTag` = the id's low 32 bits (texture offset). Returns the part count.
+   ranges `lod_ranges(reference size x scale, levels, settings)` (`sf_rockgen_bevy/src/lib.rs:189`; its last level is
+   open-ended) whose last level is ended by `chain_ranges`' rule (`spawn.rs:351-365`): with `cx.end_band > 0` its end
+   margin is `[max_distance, max_distance + end_band]`, else it ends at `cx.max_distance` (already size-culled:
+   `SpawnCx::end`, `spawn.rs:76-86`). Every range goes through `shared_range` (`spawn.rs:407-427`: Bevy's 65535 range
+   slots; per-instance ranges must be snapped); `NoCpuCulling` on the parts when `StaticGpuCulling::on` (the rule the
+   `StaticSpawner` applies to `Static` only, `spawn.rs:284-313`; library rocks never move, so they take it too);
+   `MeshTag` = the id's low 32 bits (texture offset). Returns the part count. The parts carry no `lod_live::LodPart`, so
+   a live `LodScreen` change does not re-range them until their cell re-streams: accepted, rock switches follow their
+   own `rockgen.lod.*` law, not the screen error.
    Same shadow behaviour as the statics (casters by default). The LOD switch law stays `size x lod1_distance x
    growth^k` (owner-approved in the rock lab; distance proportional to size = a constant projected size, the screen-size
    rule UE uses).
@@ -377,12 +393,22 @@ their ring with the dithered end band.
    the rock lab's path (`cooked_material_with` + `RockTextures::from_standard`, tiling = the terrain's texel repeat),
    factored out of `rock_lab.rs` so both use one builder. Per geology unit textures (basalt vs tuff) need the unit on
    the placement: later, with RG-9k.
-8. **Collision.** `hook_physics` (`mw_walkers_bevy/src/physics.rs:688-693`) wraps `ROCK_LIBRARY` too; the game's
-   `ShapeLoader` (`physics.rs:100-109`) answers `rockgen/` ids with the variant `Hull` as a `CollisionMesh` (points
-   axis-converted as the mesh; the conversion is a proper rotation, so the outward winding holds; `SurfaceId::DEFAULT`
-   until the adapter names a stone surface) -> `StaticShape` (parry `TriMesh`). Per-rock scale reuses the hook's scaled
-   copies (`stream.rs:650-660`); hulls are at most `max_vertices` points, so copies are small. A convex-polyhedron
-   shape kind would be cheaper for contacts but is a new `ShapeRef` kind for every static: not in RG-P.
+8. **Collision.** `ROCK_LIBRARY` joins `mw_world::source::MOVER_SOLID` (`source.rs:31-32`), the one list the physics
+   hook (`hook_physics(.., MOVER_SOLID)`, `mw_walkers_bevy/src/physics.rs:688-693`) and the navmesh filter
+   (`mw_bake::nav::is_solid`, `nav.rs:141-144`) share, never a second list. The game's `ShapeLoader` (the
+   `PhysicsShapeSource` closure, `physics.rs:102-107`; type `sf_physics_bevy/src/stream.rs:53`) answers `rockgen/` ids
+   with the variant `Hull` as a `CollisionMesh` (points axis-converted as the mesh; the conversion is a proper rotation,
+   so the outward winding holds; `SurfaceId::DEFAULT` until the adapter names a stone surface) -> `StaticShape` (parry
+   `TriMesh`). The generated world has no nav bake yet; when it gets one, its geometry source must answer `rockgen/`
+   ids the same way, or `is_solid` rocks add no geometry (the rule for an empty `collision.cook`). **Scaled copies.**
+   The hook scales a mesh by a cached copy per exact scale (`stream.rs:650-660`; `MeshShape.scaled`,
+   `sf_physics/src/shape.rs:30, 80-95`: a `Vec` searched linearly, keyed by the scale's bits, never evicted). Pack
+   statics reuse a few scales; library rocks have a continuous scale, so every rock ever activated would leave one copy
+   for the session. RG-P5b therefore prunes the cache: a copy no body holds (its `SharedShape` strong count back to the
+   cache's own) is dropped when its body is removed, so the cache is bounded by the live R0 bodies. Industry: PhysX
+   `PxMeshScale` and Jolt `ScaledShape` apply a per-instance scale to one shared mesh without a copy (U); parry has no
+   scaled-mesh wrapper, so a copy per live scale is our equivalent. A convex-polyhedron shape kind would be cheaper for
+   contacts but is a new `ShapeRef` kind for every static: not in RG-P.
 9. **Switch.** `--off rocklibrary` (one word, as `--off farfield`) leaves the list out (the A/B arm for the WG-E3 check and `perf ab`).
 
 ## Tunables (slice RG-1, `rockgen.boulder.*`, all `Lifetime::Bake`, `Scope::Dev`)
@@ -448,7 +474,9 @@ P3 and P4 need only P1. Then the WG-E3 owner check (`visual-checks/worldgen.md`)
   `variant(class, index)`; claims `sf_rockgen/src/placed.rs`, `lib.rs`, tests). Test: id round trip for every built-in
   class name and `parse_model_id` refuses other prefixes or a non-number index; on a 3-variant fixture library `resolve`
   gives `index = hash % 3`, `scale = mark / size_m`, `lift_m = (0.5 - sink) x extent.z x scale` exactly; unknown class
-  and empty library give `None`; `read_libraries` over a store baked by `LibraryStep` gives `content_hash`-equal libraries.
+  and empty library give `None`; `read_libraries` over a store baked by `LibraryStep` gives `content_hash`-equal libraries
+  (it reads `manifest.get(LIBRARY_STEP, <class name>)`: the product subject is the class name, `bake.rs:82-84`; a class
+  the manifest lacks is absent, not an error).
 - **RG-P2: library rocks as placements** (`mw_worldgen` `flora_rocks.rs` `library_placements(run, libs) ->
   (Vec<Placement>, HashMap<VfsPath, ModelInfo>, dropped)`; `ROCK_LIBRARY` in `mw_world/src/source.rs`; `mw_worldgen`
   gains the `sf_rockgen` dependency: manifest, `cargo deny`, hakari). Test (fixture run + fixture `Libraries`): one
@@ -456,9 +484,11 @@ P3 and P4 need only P1. Then the WG-E3 owner check (`visual-checks/worldgen.md`)
   back; each info's bounds are the variant's LOD0 bounds axis-converted; an unknown class is dropped and counted.
 - **RG-P3: `RockSpawner`** (`sf_rockgen_bevy` new `spawner.rs`; gains `sf_world_bevy`: manifest, deny, hakari). Test
   (headless `World` with mesh and material assets): a rock spawns `lod_levels` parts under its root, two rocks of one
-  variant share mesh handles, the last part's range ends at `shared_range` of `cx.max_distance` + band, every range
-  passes `shared_range` unchanged (already snapped), `NoCpuCulling` present iff `StaticGpuCulling(true)`, an unknown
-  id spawns 0, `needs_model` false.
+  variant share mesh handles and two classes' rocks share none, with `end_band > 0` the last part's end margin equals
+  `shared_range` of `[max_distance, max_distance + end_band]` and with 0 it ends at `shared_range` of `max_distance`,
+  every part's range equals `shared_range` of the unsnapped `lod_ranges` value (compare to the snap of the expected
+  input, not by re-snapping the output: the log-grid rounding is not guaranteed idempotent), `NoCpuCulling` present iff
+  `StaticGpuCulling(true)`, an unknown id spawns 0, `needs_model` false.
 - **RG-P4: rock materials from adapter data** (`bevyrrowind/worldgen/rock_textures.toml`; `mw_exterior_bevy` new
   `rock_materials.rs` builder, `level/rock_lab.rs` uses it). Test: the shipped file parses; every class row names a
   built-in class; a class without a row takes `default`; unknown keys rejected (pure parse + resolve test).
@@ -466,9 +496,13 @@ P3 and P4 need only P1. Then the WG-E3 owner check (`visual-checks/worldgen.md`)
   `worldgen.rs` `add` reads them before `model_infos`, registers `RockSpawner` for `ROCK_LIBRARY` when the content has
   library rocks; `--off rocklibrary`). Test: the `world_content.rs` content-index test with a fixture library rock
   indexes it with model info (not a point) and the log line counts `+ rocks library N`.
-- **RG-P5b: collision** (`mw_walkers_bevy/src/physics.rs`: `ROCK_LIBRARY` in the hooked classes, `rockgen/` branch in
-  the shape source). Test: a fixture hull id gives a `StaticShape` whose AABB equals the axis-converted hull points'; a
-  non-`rockgen/` path still takes the `collision.cook` lookup; an unknown variant gives `None`.
+- **RG-P5b: collision** (`mw_world/src/source.rs`: `ROCK_LIBRARY` in `MOVER_SOLID`; `mw_walkers_bevy/src/physics.rs`:
+  `rockgen/` branch in the shape source; `sf_physics/src/shape.rs`: prune scaled copies no body holds). Test: a fixture
+  hull id gives a `StaticShape` whose AABB equals the axis-converted hull points'; a non-`rockgen/` path still takes the
+  `collision.cook` lookup; an unknown variant gives `None`; `MeshShape` with three scaled copies of which one is still
+  held keeps exactly that one after the prune (`sf_physics` unit test); `nav/tests.rs` `is_solid` over `MOVER_SOLID`
+  still passes. `sf_physics` and `mw_walkers_bevy` are also edited by the interaction and NPC AI lanes: touch only the
+  named functions (merge risk).
 - **RG-P6: measurement** (`mw_worldgen` test only, `#[ignore = "measurement: rock placements"]` on `SCRIB_X10S`):
   library placements, dropped, index build seconds and MB with and without them, library rocks per 1 km ring at three
   points. Ledger line. Frame cost (`perf ab` on `--off rocklibrary`) goes with the WG-E3 owner sitting.
