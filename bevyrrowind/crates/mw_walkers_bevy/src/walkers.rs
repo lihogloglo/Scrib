@@ -1198,6 +1198,8 @@ fn add_drive(app: &mut App, vocab: Arc<WanderVocabulary>) {
         (
             // MA2c2: script AI pushes onto the stacks, before the drive serves them.
             crate::script_ai::apply_script_pushes.before(crate::directive_drive::drive_directives),
+            // MA2c3a: the dead run no package (`GetCurrentAIPackage` -1).
+            crate::script_ai::clear_dead_runs.after(crate::directive_drive::drive_directives),
             // MA2d2: the directive stack's serving directive, between the reactions and the wander.
             crate::directive_drive::drive_directives
                 .in_set(ControllerSystems::Drive)

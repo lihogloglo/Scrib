@@ -8,9 +8,13 @@
 //!   resolver and extras as [`crate::directives::seed_directives`]), from where the actor stands
 //!   now, with a [`DirectiveSource::Script`] source, and pushed through [`mw_ai::MorrowindPolicy`]
 //!   (`OpenMW` `AiSequence::stack`: an actual package cancels the cancellable ones, so a script
-//!   travel ends the record wander). A push for an actor with no entity or no stack yet (not
-//!   spawned, not seeded) is dropped with a `debug!`; its target not resolving is skipped as a
-//!   record package's is. A repeat the push's clock step renews keeps its extras and home
+//!   travel ends the record wander). A bodiless tier-0 actor (`MA2c3a`: its key in
+//!   [`AiLogical`], no entity) takes the push on its stored stack, mapped from where its state
+//!   last stood, its origin the record id its record directives carry; the next tier-0 step serves
+//!   it and the body it later gets serves it too (its stack wins over the seed). A push for an
+//!   actor with neither a body nor a tier-0 state, or with no stack yet (never spawned, not
+//!   seeded), is dropped with a `debug!`; its target not resolving is skipped as a record
+//!   package's is. A repeat the push's clock step renews keeps its extras and home
 //!   ([`crate::directives::Renewing`], `MA2d4`); a wander's home is where the actor stands when
 //!   it first serves ([`crate::directive_drive`]).
 //! - **The reads** port `OpenMW`'s `AiSequence::execute` (`aisequence.cpp` @ 5f3aafb, lines
@@ -21,7 +25,15 @@
 //!   package (:366), false when it ran on (:370). A cancelled directive never sets done (`erase`,
 //!   :131-138). A suspended stack (another layer drives) changes nothing.
 //!
-//! Ours: `OpenMW` saves `mDone` / `mLastAiPackage`; [`AiRuns`] is not saved yet (the next tick
+//! - **The dead** ([`clear_dead_runs`], `MA2c3a`): a character that dies runs no package, so
+//!   `GetCurrentAIPackage` reads -1 (`OpGetCurrentAIPackage`, :403-422) and `GetAIPackageDone`
+//!   keeps its value (:181-195 has no death test).
+//!
+//! Ours: `OpenMW` reads -1 only once the death animation finished; we read it from the death
+//! itself (our death clip hands the body to the ragdoll after `crate::physics::DEATH_HANDOFF`). A bodiless push
+//! keeps no extras (a script wander's idle table): a respawn rebuilds only the record
+//! directives' extras (`crate::directives::extras_of`), as for any script directive across a
+//! cell unload. `OpenMW` saves `mDone` / `mLastAiPackage`; [`AiRuns`] is not saved yet (the next tick
 //! rebuilds the last package; a done flag on an empty stack is lost on load).
 
 use std::collections::BTreeMap;
@@ -41,6 +53,7 @@ use tes3::esp::AiPackage;
 
 use crate::directive_drive::{DirectiveDrive, follow_renewals};
 use crate::directives::{AiPackageExtras, Renewing, SpawnedActors};
+use crate::physics::Dead;
 use crate::walkers::ActorSpace;
 
 /// A script's AI package for `actor`'s stack, as the record struct with the same meaning
@@ -174,10 +187,23 @@ pub(crate) fn apply_script_pushes(
     let mut events = Vec::new();
     let policy = Renewing::default();
     for push in pushes.read() {
-        let Some((_, _, space, mover, character, mut extras, mut drive)) =
-            by_key.get(&push.actor).and_then(|e| actors.get_mut(*e).ok())
-        else {
-            debug!("script ai: {:?} has no walker; the push is dropped", push.actor);
+        let mut body = by_key.get(&push.actor).and_then(|e| actors.get_mut(*e).ok());
+        let (home, origin) = if let Some((_, _, space, mover, character, ..)) = body.as_ref() {
+            let origin = match character {
+                Some(Character::Record { id, .. }) => id.clone(),
+                _ => RecordId::new(""),
+            };
+            (Location::new(space.0.clone(), mover.loco.position), origin)
+        } else if let Some(state) = logical.as_deref().and_then(|l| l.get(push.actor)) {
+            // MA2c3a: a bodiless tier-0 actor, from where its state last stood; its record id
+            // from the stack's record directives (every one carries it as its origin).
+            let origin = store
+                .get(push.actor)
+                .and_then(|s| s.iter().find_map(|d| d.spec.origin.clone()))
+                .unwrap_or_else(|| RecordId::new(""));
+            (state.pos.clone(), origin)
+        } else {
+            debug!("script ai: {:?} has no walker and no tier-0 state; the push is dropped", push.actor);
             dropped += 1;
             continue;
         };
@@ -186,11 +212,7 @@ pub(crate) fn apply_script_pushes(
             dropped += 1;
             continue;
         };
-        let origin = match character {
-            Some(Character::Record { id, .. }) => id.clone(),
-            _ => RecordId::new(""),
-        };
-        let ctx = PackageCtx { actor: origin, home: Location::new(space.0.clone(), mover.loco.position), resolver: &resolver };
+        let ctx = PackageCtx { actor: origin, home, resolver: &resolver };
         let (mut spec, extra) = match directive(&push.package, &ctx) {
             Ok(mapped) => mapped,
             Err(reason) => {
@@ -205,8 +227,12 @@ pub(crate) fn apply_script_pushes(
             // AI10c2: a tier-0 actor takes the push up on the next tier-0 step.
             store.wake(push.actor);
         }
-        follow_renewals(&policy, drive.as_deref_mut(), extras.as_mut(), stack);
-        if let Some(mut extras) = extras {
+        let (drive, mut extras) = match body.as_mut() {
+            Some((_, _, _, _, _, extras, drive)) => (drive.as_deref_mut(), extras.as_mut()),
+            None => (None, None),
+        };
+        follow_renewals(&policy, drive, extras.as_deref_mut(), stack);
+        if let Some(extras) = extras {
             extras.0.retain(|(d, _)| stack.get(*d).is_some());
             if extra != PackageExtra::None {
                 extras.0.push((id, extra));
@@ -218,4 +244,22 @@ pub(crate) fn apply_script_pushes(
         debug!("directive {:?} of actor {:?} ended ({:?}) by a script push", e.id, e.actor, e.end);
     }
     info!("script ai: {stacked} push(es) stacked, {dropped} dropped");
+}
+
+/// `FixedUpdate`, after the directive drive: a character that just died runs no package any more
+/// (`GetCurrentAIPackage` reads -1; `OpenMW` `OpGetCurrentAIPackage`, `aiextensions.cpp` @ 5f3aafb
+/// 403-422). Its done flag stays as it was (`OpGetAiPackageDone`, :181-195, reads it whatever the
+/// death). A dead body is [`sf_controller_bevy::Held`], so [`sf_controller_bevy::Dormant`]: the
+/// drive never sets its last package again.
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn clear_dead_runs(died: Query<&AiActor, Added<Dead>>, runs: Option<ResMut<AiRuns>>) {
+    let Some(mut runs) = runs else {
+        return;
+    };
+    for actor in &died {
+        let run = runs.get(actor.0);
+        if run.last.is_some() {
+            runs.0.insert(actor.0, AiRun { last: None, ..run });
+        }
+    }
 }

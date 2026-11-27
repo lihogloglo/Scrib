@@ -241,6 +241,13 @@ alone); `sync_ai_runs` copies it into the RPG host; `impl MwAi for View`. Fixed:
 (`instances.rs`) didn't forward `ai()` (global/local scripts pushed nothing). `mw_rpg_bevy` now depends on
 `mw_walkers_bevy` directly (already reachable through `mw_scripts_bevy`). Gaps -> MA2c3, MA2d4.
 
+As built (MA2c3a, 2026-11-27): `clear_dead_runs` (FixedUpdate, after `drive_directives`) clears the last package of an
+actor whose root just got `Dead`, so `GetCurrentAIPackage` reads -1 (OpenMW `OpGetCurrentAIPackage` :403-422; ours from
+the death, OpenMW once the death animation finished); `GetAIPackageDone` keeps its value (:181-195, no death test). A push
+to a bodiless tier-0 actor (key in `AiLogical`, no entity) lands on its stored stack, home = the state's `pos`, origin =
+its record directives' origin, and wakes the state; its later body serves it (the stored stack wins over the seed). Gap:
+a bodiless push keeps no extras (a script wander's idles), as any script directive across a respawn.
+
 ## AI settings (stats + considerations)
 
 Hello, Fight, Flee, Alarm (`aisetting.hpp`) are magnitude stats on the sheet (`sf_stats`, stats-adapter naming),

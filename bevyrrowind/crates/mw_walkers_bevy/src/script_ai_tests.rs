@@ -4,15 +4,19 @@
 
 use bevy_math::Vec3;
 use mw_world::convert::UNIT_METERS_F64;
-use sf_ai::{DirectiveDone, DirectiveEnd, DirectiveId, DirectiveKind, DirectiveSource, GameTime};
+use sf_ai::{DirectiveDone, DirectiveEnd, DirectiveId, DirectiveKind, DirectiveSource, DirectiveStatus, GameTime, LogicalState};
+use sf_ai_bevy::{AiActor, AiLogical};
 use sf_controller_bevy::Mover;
 use sf_coords::WorldPos;
-use sf_ids::ActorKey;
+use sf_ids::{ActorKey, GameInstant};
 use sf_world::Location;
 use tes3::esp::{AiPackage, AiTravelPackage};
 
-use super::directive_drive_tests::{HZ, spawn, stack};
+use super::directive_drive_tests::{HZ, spawn, spawn_with, stack};
 use super::drive_tests::{app_with, home, nav_ws};
+use crate::directive_drive::DirectiveDrive;
+use crate::directives::AiPackageExtras;
+use crate::physics::Dead;
 use crate::script_ai::{AiPackageKind, AiRun, AiRuns, ScriptAiPush, Served, next_run};
 
 /// `AITravel`'s point in Morrowind units: 8 m east of home (engine `(x, y, z)` is units
@@ -134,4 +138,76 @@ fn the_reads_follow_openmw_execute() {
     // Empty: no package, done as it was; suspended: unchanged.
     assert_eq!(next_run(finished, a, Served::Empty, &[]), AiRun { done: true, last: None });
     assert_eq!(next_run(ran, a, Served::Suspended, &[]), ran);
+}
+
+/// `MA2c3a`: a dead actor runs no package: `GetCurrentAIPackage` reads -1 (`OpenMW`
+/// `OpGetCurrentAIPackage`) from its death on, and `GetAIPackageDone` keeps its value.
+#[test]
+fn a_dead_actor_reads_no_package_and_keeps_done() {
+    let mut app = app_with(|_| {});
+    let (e, _) = spawn(&mut app, 1, Vec::new());
+    app.update();
+    assert_eq!(run(&app, 1), AiRun { done: false, last: Some(AiPackageKind::Wander) }, "alive: the wander runs");
+    app.world_mut().resource_mut::<AiRuns>().0.insert(ActorKey(1), AiRun { done: true, last: Some(AiPackageKind::Wander) });
+    app.world_mut().entity_mut(e).insert(Dead);
+    for tick in 0..HZ {
+        app.update();
+        assert_eq!(run(&app, 1), AiRun { done: true, last: None }, "tick {tick}: dead");
+    }
+}
+
+/// `MA2c3a`: a script travel pushed to a bodiless tier-0 actor (its key in [`AiLogical`], its body
+/// gone) lands on its stored stack: it cancels the record wander, carries a script source and the
+/// record's origin, and wakes the tier-0 state; the body the actor later gets (its stored stack
+/// wins over the seed) serves the travel and walks to the point.
+#[test]
+fn a_push_to_a_bodiless_tier0_actor_lands_on_its_stored_stack_and_its_body_serves_it() {
+    let mut app = app_with(|app| {
+        app.init_resource::<AiLogical>();
+    });
+    let (e, ids) = spawn_with(&mut app, 1, Vec::new(), |s| s.repeating().origin("arrille"));
+    app.update();
+    app.world_mut().despawn(e);
+    let mut state = LogicalState::new(Location::new(nav_ws(), home()), GameInstant::ZERO);
+    state.directive = Some(ids[0]);
+    state.until = Some(GameInstant::from_minutes(600));
+    app.world_mut().resource_mut::<AiLogical>().insert(ActorKey(1), state);
+
+    let point = home().offset(Vec3::new(8.0, 0.0, 0.0));
+    let package = AiPackage::Travel(AiTravelPackage { location: travel_units(point), reset: 0 });
+    app.world_mut().write_message(ScriptAiPush { actor: ActorKey(1), package });
+    app.update();
+    let s = stack(&app, 1);
+    assert_eq!(s.len(), 1, "the travel cancelled the record wander");
+    assert!(s.get(ids[0]).is_none());
+    let top = s.top().expect("the travel");
+    assert_eq!(top.spec.source, DirectiveSource::Script);
+    assert_eq!(top.spec.origin.as_ref().map(sf_records::RecordId::as_str), Some("arrille"), "the record's origin");
+    let DirectiveKind::GoTo(goal) = &top.spec.kind else { panic!("a go_to, got {:?}", top.spec.kind) };
+    assert!(goal.pos.delta_f32(point).length() < 0.01, "the goal is the pushed point");
+    let travel = top.id;
+    let saved: Vec<_> = app.world().resource::<AiLogical>().to_saved().collect();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].1.due, Some(GameInstant::ZERO), "the push woke the tier-0 state");
+
+    // Promoted: the store lets go and the body spawns as `seed_directives` leaves it on a stored
+    // stack (no record extras for a script directive, a fresh drive).
+    app.world_mut().resource_mut::<AiLogical>().remove(ActorKey(1));
+    let body = super::drive_tests::spawn_wanderer(&mut app, &nav_ws(), home(), 1, 11);
+    app.world_mut().entity_mut(body).insert((AiActor(ActorKey(1)), AiPackageExtras(Vec::new()), DirectiveDrive::default()));
+    app.update();
+    assert_eq!(stack(&app, 1).status(travel), DirectiveStatus::Serving, "the body serves the travel");
+    assert_eq!(run(&app, 1), AiRun { done: false, last: Some(AiPackageKind::Travel) });
+    let mut arrived = false;
+    for _ in 0..(20 * HZ) {
+        app.update();
+        if stack(&app, 1).get(travel).is_none() {
+            arrived = true;
+            break;
+        }
+    }
+    assert!(arrived, "the travel never finished");
+    let at = app.world().get::<Mover>(body).unwrap().loco.position;
+    assert!(at.delta_f32(point).with_y(0.0).length() <= 2.0, "it walked to the point");
+    assert_eq!(run(&app, 1), AiRun { done: true, last: Some(AiPackageKind::Travel) });
 }
