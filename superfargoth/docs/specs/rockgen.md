@@ -705,3 +705,8 @@ seam. `generate_formation(f, mesh, size_m, seed)` takes the boulder params for m
 `rockgen.boulder.aspect_spread` (octaves, default 1, in the library key): each seed scales both aspect ratios by its
 own `2^(±spread)` on a separate stream. Shown in the rock lab's formation row. Open: recipes as adapter data (RG-A1),
 placement rules, V-HACD or per-piece hulls for collision, an SDF difference for carved arches and caves (RG-7).
+
+**RG-P1 (2026-11-27).** `sf_rockgen/src/placed.rs` (+ `placed/tests.rs`): `Libraries`, `Resolved`, `model_id` /
+`parse_model_id` (prefix `MODEL_PREFIX`; ids with a sign, a leading zero or a separator in the class are refused, so the
+round trip is exact), `resolve` and `variant` as "(f)" 2-3; `read_libraries` + `ReadError` under `bake`. Ids are plain
+`String`s (the crate takes no `sf_vfs`): the content builder wraps them in a `VfsPath`, unchanged by its lowercasing.
