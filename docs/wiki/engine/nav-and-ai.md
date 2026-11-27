@@ -47,8 +47,9 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
 - **AI shell** (`sf_ai_bevy`): `AiPlugin`, trace store, `AiLibrary` loaded from records, `ai.select`, optional gizmos,
   and `AiExecPlugin` (`exec.rs:151`: `AiExecutor`, `AiSystems::Execute` in `FixedUpdate` inside
   `ControllerSystems::Drive` before `NavSystems::Corridor`, tunables `ai.exec.*`).
-  Added by `mw_walkers_bevy::walkers::add` (`walkers.rs:768`); the `sf/ai` save section exists in
-  `sf_save_bevy/src/sections/mod.rs:282` (filled once MA2 wires directive stacks).
+  Added by `mw_walkers_bevy::walkers::add` (`walkers.rs:768`); the `sf/ai` save section
+  (`sf_save_bevy/src/sections/mod.rs:285`) is registered by `mw_saves_bevy::register` (MA22a): directive stacks
+  and tier-0 logical states (`AiLogical`, with their due instants; section v2, MA22b) save and load.
 - **What NPCs actually do** (`mw_ai`, Bevy-free; `mw_walkers_bevy/src/walkers.rs`, added at `exterior.rs:229`):
   `WanderVocabulary` + `WanderDriver` (`mw_ai/src/methods.rs:55,156`: HTN tasks `wander` / `do_idle` / `do_walk` over
   `sf_ai::exec::PlanRunner`, `AI_W` idle rolls and PGRD wander destination hints from `wander.rs`) drive ground
@@ -78,7 +79,10 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   body (position, zero velocity, `Mover::snap`, corridor goal cleared, wander re-chosen, `GoTo` restarted); a
   placement in another worldspace puts the state back (AI10c3 moves bodies). A marked body stays rendered where it
   stood: `drive` stands it first (`walkers.rs:809`), `drive_directives` skips it (`directive_drive.rs:318`); script
-  pushes and late packages `wake` it. Proof line `tier0: N logical, Q queued, P placed (X other-space)` (≤ 1/s).
+  pushes and late packages `wake` it; a script push to a bodiless tier-0 actor lands on its stored stack (MA2c3a,
+  `script_ai.rs` `apply_script_pushes`), and a dead actor reads `GetCurrentAIPackage` -1 (`clear_dead_runs`); the reads' `AiRuns` ride saves as `mw/ai_runs`
+  (MA2c3b, `mw_saves_bevy` `AiRunsSave`).
+  Proof line `tier0: N logical, Q queued, P placed (X other-space)` (≤ 1/s).
   **Bodies keep their pose across a cell unload** (AI10c3a, `mw_walkers_bevy/src/poses.rs:86` `ActorPoseHook`,
   installed on the actor class at `directives.rs:273`): when an actor placement leaves R0 (not a discard), a body
   that moved more than 1e-3 m on the ground plane or 1e-3 rad of yaw is `PlacementOverlay::move_to` its
@@ -93,6 +97,15 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   `BodyCell` together, so the drawn position does not move; a refusal changes nothing and is asked again next
   frame. `Held` bodies wait for their release. Gap: a body whose placement no Active list and no overlay entry
   holds is not re-homed. Proof line `actors: N re-homed` (`, M without a held placement` when some wait; ≤ 1/s).
+  **A bodiless tier-0 actor's placement follows it** (AI10c3c2a, `mw_walkers_bevy/src/bodiless.rs`): deactivation
+  keeps the placement as the overlay holds it (`ResidentActors` away map); `follow_bodiless`, last of the Step chain,
+  moves it in the overlay (kept rotation) on the tick a routed, non-following stored actor's logical position enters
+  another cell or worldspace, so that cell's next fetch spawns the body there; no body and no state = pruned. Gaps:
+  an actor never loaded since start has nothing kept. Into an Active cell (AI10c3c2b1) it gets its body at once:
+  the promotion rules pick an unseen spot on the navmesh (else it waits `ai.tier.promote_retry_s`),
+  `spawn_bodiless` calls `Streaming::spawn_into` there, and the body is re-marked and promoted like any stored one.
+  Proof (AI10c3c2b2): `ai.tier0: N bodies spawned into loaded cells, M kept placements moved` (counts since start in
+  `sf_ai_bevy::AiBodilessStats`, also on `ai.stats`).
   Tier 0 core (AI10a, `sf_ai/src/logical.rs`): `LogicalState::step` jumps event to event
   (route arrival, `DirectiveStack::next_deadline`, `LogicalEnv::next_window_edge` hook), each served kind taken up
   through `LogicalTransitions::transition` (StayNear waits in place or walks home, GoTo/Escort walk and end
@@ -101,8 +114,11 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   simulated seconds (game ms / `time_scale`), arrival fixed when the route is taken up. `fast_forward` = step + the
   adapter's `FastForwardRules`: Morrowind's is `mw_ai::MorrowindFastForward` (MA7a, `mw_ai/src/fast_forward.rs`:
   a `StayNear` top with radius > 0 is placed on one of OpenMW's `allowed_positions` of its cell's pathgrid, one roll
-  seeded by actor key and span end, nudged 5/15/30 % toward a neighbour when the occupancy seam says taken; not called
-  by the game until MA7b). Promotion core (AI10b, `sf_ai/src/promote.rs`):
+  seeded by actor key and span end, nudged 5/15/30 % toward a neighbour when the occupancy seam says taken). Time skip
+  (MA7b): `advance_sky` records the span in `AiTimeSkips`; next tick the game demotes every awake actor with a stack
+  (not dead, knocked down or paralysed) at the span start, `AiTierZero::fast_forward` crosses the whole store with
+  `MorrowindFastForward` (live occupancy), and `promote_dark` places every queued body with no view test, retries
+  cleared and no per-tick cap (`mw_walkers_bevy/src/logical.rs` module docs, 6). Promotion core (AI10b, `sf_ai/src/promote.rs`):
   `PromoteQueue` holds every actor granted tier 1/2 still tier 0 (pins, then nearest player, then key), tries at most
   `per_tick` a tick, a waiter retried after `retry_s` (skips free, so seen waiters never starve unseen ones);
   `resolve_promotion` places at `position_at(t)` snapped, else back along its route (`backtrack_step_m` up to

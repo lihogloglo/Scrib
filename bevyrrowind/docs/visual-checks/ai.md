@@ -129,3 +129,16 @@ Log: `ai: N wanderers on navmesh, M on pathgrid fallback (since start: X navmesh
 - Q3: go back to where that NPC started: is there no second copy of it standing there? (expected yes)
 - Status: awaiting owner. Headless: the swap on a hand-built cell tree (AI10c3b2) and one test against the real
   streaming runtime (AI10c3b3: the body outlives its home cell, no twin when it reloads).
+
+### AI-17: a far NPC walks into the loaded town without a pop or a twin (AI10c3c2b2, 2026-11-27)
+- Kind: game, dev build. `owner_launch.sh view "Balmora" --hour 12` (exterior, noon), F11 drops the player.
+- Do: walk through Balmora for ~30 s (so its NPCs get bodies), run ~300 m out along the road north until the town
+  is out of sight, wait ~30 s, then come back and stand at the town's edge looking into the streets for 60 s.
+- Proof log line: `ai.tier0: N bodies spawned into loaded cells, M kept placements moved` with N > 0 (an NPC that
+  walked into a loaded cell while it had no body got one at once); `ai.stats` prints the same counts.
+- Q1: while you watch the streets, does any NPC appear out of nothing in front of you? (expected no: they appear
+  only out of view)
+- Q2: do you see the same NPC twice (two copies standing or walking)? (expected no)
+- Q3: do NPCs walk in from the side streets as you wait, rather than the streets staying empty? (expected yes)
+- Status: awaiting owner. Headless: three scenes on the real streaming runtime (AI10c3c2b1) and their counts
+  (AI10c3c2b2: one crossing write and one spawn per walker).

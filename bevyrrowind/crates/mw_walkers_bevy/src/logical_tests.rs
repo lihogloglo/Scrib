@@ -499,6 +499,111 @@ mod game {
         assert_eq!((after.directive, &after.route), (before.directive, &before.route), "the stored state, not a new one");
     }
 
+    // --- MA7b: a time skip ------------------------------------------------------------------
+
+    /// A pathgrid star in the room around (20, 20): the centre and four nodes 3 m off, both ways.
+    fn star() -> mw_ai::PathGraph {
+        use tes3::esp::{PathGrid, PathGridPoint};
+        #[expect(clippy::cast_possible_truncation, reason = "room coordinates in units are small")]
+        let units = |x: f64, z: f64| [(x / mw_world::convert::UNIT_METERS_F64).round() as i32, (-z / mw_world::convert::UNIT_METERS_F64).round() as i32, 0];
+        let metres = [(20.0, 20.0), (17.0, 20.0), (23.0, 20.0), (20.0, 17.0), (20.0, 23.0)];
+        let mut points: Vec<PathGridPoint> =
+            metres.iter().map(|&(x, z)| PathGridPoint { location: units(x, z), auto_generated: 0, connection_count: 0 }).collect();
+        let mut connections = Vec::new();
+        points[0].connection_count = 4;
+        connections.extend([1u32, 2, 3, 4]);
+        for p in &mut points[1..] {
+            p.connection_count = 1;
+            connections.push(0);
+        }
+        let grid = PathGrid { cell: ws().as_str().into(), points, connections, ..PathGrid::default() };
+        mw_ai::PathGraph::from_record(&grid, &mw_ai::CellKey::interior(ws().as_str())).unwrap()
+    }
+
+    /// A one-stat table (Paralyze) and a sheet for actor `key` with `magnitude` on it.
+    fn paralysed_sheet(app: &mut App, key: u128, magnitude: f32) -> sf_stats_bevy::Stats {
+        use sf_stats_bevy::sf_stats::{
+            ApplyCtx, Cause, CauseKind, Inputs, Settle, Sheet, StatDef, StatIdx, StatKind, StatOp, StatOwner, StatTable, TestModel,
+        };
+        let def = StatDef {
+            key: crate::greeting::PARALYZE.into(),
+            kind: StatKind::Value { min: 0.0, cap: None },
+            group: "effects".into(),
+            public: false,
+            label: String::new(),
+        };
+        let table = std::sync::Arc::new(StatTable::new(vec![def], &[]).expect("table builds"));
+        app.insert_resource(sf_stats_bevy::StatTableRes(std::sync::Arc::clone(&table)));
+        let rules = TestModel::default().rules();
+        let owner = StatOwner::Actor(ActorKey(key));
+        let inputs = Inputs::default();
+        let mut sheet = Sheet::new(&table);
+        let ctx = ApplyCtx { owner, cause: Cause { kind: CauseKind::Rules, source: None, tick: 0 }, inputs: &inputs };
+        let ops = [StatOp::SetBase { stat: StatIdx(0), value: magnitude }];
+        assert_eq!(sf_stats_bevy::sf_stats::apply(&table, &rules, &mut sheet, &ops, &ctx, &mut Vec::new()), 0);
+        sheet.settle(&table, &rules, &inputs, Settle::NewCharacter);
+        sf_stats_bevy::Stats::new(owner, sheet, inputs)
+    }
+
+    /// A walker whose whole stack is one `GoTo` (no wander under it).
+    fn traveller(app: &mut App, key: u128, from: WorldPos, to: DirectiveKind) -> (Entity, DirectiveId) {
+        let e = spawn_wanderer(app, &ws(), from, key, 13);
+        let now = GameTime::from(app.world().resource::<GameClock>().now);
+        let mut stack = DirectiveStack::new(ActorKey(key), now);
+        let id = stack.push(DirectiveSpec::new(to, DirectiveSource::Record), now, &MorrowindPolicy, &mut Vec::new());
+        app.world_mut().resource_mut::<AiDirectives>().insert(stack);
+        app.world_mut().entity_mut(e).insert((AiActor(ActorKey(key)), AiPackageExtras(Vec::new()), DirectiveDrive::default()));
+        (e, id)
+    }
+
+    /// An 8 h rest with three awake walkers: the wanderer stands on one of `OpenMW`'s allowed
+    /// positions of its cell's pathgrid, the traveller at its destination, the paralysed one where
+    /// it was; all three are bodies at their tier again on the tick after the skip.
+    #[test]
+    fn an_eight_hour_skip_places_wanderers_and_travellers_not_the_paralysed() {
+        let mut app = game(BIG);
+        let graph = star();
+        let home = at(20.0, 20.0);
+        let allowed = mw_ai::allowed_positions(&graph, home, 6.0);
+        assert_eq!(allowed.len(), 4, "the centre is removed: {allowed:?}");
+        let mut grids = mw_ai::PathGrids::default();
+        grids.grids.insert(mw_ai::CellKey::interior(ws().as_str()), graph);
+        app.insert_resource(crate::walkers::Pathgrids(std::sync::Arc::new(grids)));
+        let (wanderer, _) = actor(&mut app, 1, home, Vec::new());
+        let dest = at(35.0, 5.0);
+        let (walker, goto) = traveller(&mut app, 2, at(5.0, 5.0), go_to(35.0, 5.0));
+        let (still, still_ids) = actor(&mut app, 3, at(8.0, 35.0), vec![go_to(30.0, 35.0)]);
+        let sheet = paralysed_sheet(&mut app, 3, 1.0);
+        app.world_mut().entity_mut(still).insert(sheet);
+        app.update();
+        app.update();
+        assert!(!stored(&app, 1) && !stored(&app, 2) && !stored(&app, 3), "all awake");
+        let still_at = position(&app, still);
+
+        let from = now(&app);
+        app.world_mut().resource_mut::<GameClock>().skip(8 * 3_600_000);
+        let to = now(&app);
+        app.world_mut().resource_mut::<sf_ai_bevy::AiTimeSkips>().record(from, to);
+        app.update();
+        assert!(!stored(&app, 1) && !stored(&app, 2), "both placed on the dark tick");
+        assert!(!stored(&app, 3), "the paralysed one never entered");
+        assert!(app.world().resource::<sf_ai_bevy::AiTimeSkips>().pending().is_none());
+
+        let w = position(&app, wanderer);
+        let on = allowed.iter().map(|p| planar(w, *p)).fold(f32::INFINITY, f32::min);
+        println!("MA7b: wanderer at {w:?}, {on} m from an allowed position");
+        assert!(on < 0.3, "{w:?} not on an allowed position {allowed:?}");
+        assert!(planar(w, home) > 2.0, "it stands on a node away from its home");
+        let t = position(&app, walker);
+        assert!(planar(t, dest) < 0.3, "the traveller is at {t:?}, not its destination");
+        assert_eq!(status(&app, 2, goto), DirectiveStatus::Ended);
+        assert!(planar(position(&app, still), still_at) < 0.1, "the paralysed actor moved");
+        assert_eq!(status(&app, 3, still_ids[0]), DirectiveStatus::Serving, "its GoTo did not cross the span");
+        for e in [wanderer, walker, still] {
+            assert!(!app.world().entity(e).contains::<AiLogicalBody>());
+        }
+    }
+
     #[test]
     fn no_game_clock_no_tier_zero() {
         let mut app = app_with(|_| {});

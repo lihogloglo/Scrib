@@ -298,9 +298,17 @@ sequence never issued, a duplicate id, serving an unissued id). `sf_save_bevy::s
 (after overlay, clock, RPG; before the adapter), `check` refuses a broken stack naming the actor before anything
 applies; shape golden `tests/shapes/sf.ai.v1.json`. `sf_ai_bevy`: `AiDirectives` is now a **resource** keyed by
 `ActorKey` (was a component on the `AiActor` entity), `ai_save` / `ai_load` are the section's accessors (`None`
-when empty, so a world without AI writes no section; load replaces the whole store). Not wired into the game
-(no `AiPlugin` there yet). Tests: `sf_ai` `tests_save.rs` (3), `sf_save_bevy` `tests_ai.rs` (3) + the shape
-golden, `sf_ai_bevy` accessor test; the four released save goldens now load with `sf/ai` wired.
+when empty, so a world without AI writes no section; load replaces the whole store). Wired into the game by
+MA22a (2026-11-27): `mw_saves_bevy::register` adds `sections::ai(ai_save, ai_load)`, so script and record
+directive stacks ride every save; a save without the section clears the store (`AiSave::default`).
+MA22b (2026-11-27): `sf/ai` **v2**: `ActorSave { directives: Option<SavedStack>, logical: Option<SavedLogical> }`,
+`SavedLogical { state: LogicalState, due }` (the store's due instant as is: a woken state stays due at once, so a load
+steps the same actors in the same order); `ai_save` merges `AiDirectives` + `AiLogical::to_saved`, `ai_load` replaces
+both (`AiLogical::restore`); v1 frozen in `sf_ai::save::legacy::v1`, typed step = no states; goldens `sf.ai.v2.json` +
+frozen `sf.ai.v1.json`. Tests: `sf_ai` `tests_save.rs` (3), `sf_save_bevy` `tests_ai.rs` (3) + the shape
+golden, `sf_ai_bevy` accessor test; the four released save goldens now load with `sf/ai` wired. MA22b: `sf_ai` +2 (v2 round
+trip with states, v1 migrate), `sf_save_bevy` +1 (v1 section through the step), `sf_ai_bevy` +1 (store save/load then
+3000 ticks: same ends, same instants, same order).
 
 Design, and why (research: `OpenMW` `esm3/aisequence.cpp` and `mwmechanics/aisequence.cpp` read for behaviour;
 UESP Skyrim save format, ACHR change form `CHANGE_ACTOR_EXTRA_PACKAGE_DATA`; Unreal: behaviour-tree state is

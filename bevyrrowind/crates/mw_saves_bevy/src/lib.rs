@@ -24,6 +24,10 @@
 //!   - `mw/rpg` ([`MwRpgSave`]): the rest of `RpgState`: NPC dialogue state (disposition changes,
 //!     greetings), container inventories, script locals and globals. Actor keys that are not
 //!     placement ids (entity bits of spawned characters: `dialogue.rs` `actor_key`) are left out.
+//!   - `mw/ai_runs` (`MA2c3b`, [`AiRunsSave`]): what the AI script reads answer
+//!     (`mw_walkers_bevy::script_ai::AiRuns`: `GetAIPackageDone`, `GetCurrentAIPackage`), as
+//!     `OpenMW` saves `AiSequence::mDone` / `mLastAiPackage`; placement-id actors only. A save from
+//!     before the section loads with none (not done, no package until the next AI tick).
 //!   - `mw/scripts` (DQ-4b2b, v2 DQ-5c): the global script instances, running or stopped, and the
 //!     local (object) ones, live and parked, with their locals by name and type
 //!     (`mw_rpg_bevy::dialogue::GlobalScripts::snapshot`; a v1 save loads with no local). Load replaces
@@ -90,6 +94,7 @@ use mw_game_core::doors::{ARRIVAL_EYE_M, DoorUser};
 use mw_game_core::player::PlayerBody;
 use mw_player_bevy::RestoreBody;
 use mw_rpg_bevy::dialogue::{GlobalScripts, Rpg, RpgState, ScriptsSave};
+use mw_walkers_bevy::script_ai::{AiPackageKind, AiRun, AiRuns};
 
 pub mod menu;
 pub use menu::{OpenSaveLoad, SAVELOAD};
@@ -104,6 +109,9 @@ pub const RPG_VERSION: u32 = 1;
 /// keeps them and starts the locals empty (DQ-5c).
 pub const SCRIPTS: &str = "scripts";
 pub const SCRIPTS_VERSION: u32 = 2;
+/// `mw/ai_runs`: [`AiRunsSave`].
+pub const AI_RUNS: &str = "ai_runs";
+pub const AI_RUNS_VERSION: u32 = 1;
 /// Version of the host character's `mw` extension blob ([`PlayerExt`]).
 pub const PLAYER_EXT_VERSION: u32 = 1;
 /// The host's character key (`mw_game_core::player::HOST_KEY`).
@@ -118,6 +126,70 @@ pub struct MwRpgSave {
     pub inventories: BTreeMap<ActorKey, CharacterRpg>,
     pub locals: BTreeMap<(ActorKey, RecordId), f32>,
     pub globals: BTreeMap<RecordId, f32>,
+}
+
+/// `mw/ai_runs`: each placement-id actor's [`AiRun`] (the walkers' runs with stable keys).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiRunsSave {
+    pub runs: BTreeMap<ActorKey, AiRunSave>,
+}
+
+/// One actor's [`AiRun`] as saved.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiRunSave {
+    pub done: bool,
+    pub last: Option<SavedPackage>,
+}
+
+/// [`AiPackageKind`] as saved (its own type: the save format never follows a code rename).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SavedPackage {
+    Wander,
+    Travel,
+    Escort,
+    Follow,
+    Activate,
+}
+
+impl From<AiPackageKind> for SavedPackage {
+    fn from(kind: AiPackageKind) -> Self {
+        match kind {
+            AiPackageKind::Wander => Self::Wander,
+            AiPackageKind::Travel => Self::Travel,
+            AiPackageKind::Escort => Self::Escort,
+            AiPackageKind::Follow => Self::Follow,
+            AiPackageKind::Activate => Self::Activate,
+        }
+    }
+}
+
+impl From<SavedPackage> for AiPackageKind {
+    fn from(kind: SavedPackage) -> Self {
+        match kind {
+            SavedPackage::Wander => Self::Wander,
+            SavedPackage::Travel => Self::Travel,
+            SavedPackage::Escort => Self::Escort,
+            SavedPackage::Follow => Self::Follow,
+            SavedPackage::Activate => Self::Activate,
+        }
+    }
+}
+
+impl AiRunsSave {
+    /// The runs of placement-id actors that differ from the default (an absent entry reads the same).
+    pub fn of(runs: &AiRuns) -> Self {
+        let runs = runs
+            .0
+            .iter()
+            .filter(|(k, r)| stable(**k) && **r != AiRun::default())
+            .map(|(k, r)| (*k, AiRunSave { done: r.done, last: r.last.map(SavedPackage::from) }))
+            .collect();
+        Self { runs }
+    }
+
+    pub fn into_runs(self) -> AiRuns {
+        AiRuns(self.runs.into_iter().map(|(k, r)| (k, AiRun { done: r.done, last: r.last.map(AiPackageKind::from) })).collect())
+    }
 }
 
 /// The host character's `mw` extension blob.
@@ -251,6 +323,17 @@ pub fn register(app: &mut App) {
             if let Some(mut ids) = w.get_resource_mut::<sf_effects_bevy::EffectIds>() {
                 ids.0 = v.ids;
             }
+        },
+    ))
+    // Every actor's directive stack (scripted AITravel, followers...), by stable actor key.
+    .add_save_section(sections::ai(sf_ai_bevy::ai_save, sf_ai_bevy::ai_load))
+    // What `GetAIPackageDone` / `GetCurrentAIPackage` read (load replaces the runs wholesale).
+    .add_save_section(SaveSection::value(
+        SectionKey::new(OWNER, AI_RUNS).expect("valid key"),
+        AI_RUNS_VERSION,
+        |w: &World| w.get_resource::<AiRuns>().map(AiRunsSave::of).filter(|s| !s.runs.is_empty()),
+        |w: &mut World, v: AiRunsSave| {
+            *w.get_resource_or_insert_with(AiRuns::default) = v.into_runs();
         },
     ))
     .add_save_section(sections::characters(host_character, restore_characters))
@@ -663,6 +746,70 @@ mod tests {
         load(&mut app);
         let loaded = &app.world().resource::<Rpg>().services;
         assert_eq!(loaded.purses.iter().map(|(k, p)| (*k, *p)).collect::<Vec<_>>(), [(FARGOTH, purse)]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `MA22a`: `sf/ai` through the game's registration (no install). A world without AI state
+    /// writes no section, and loading it (like a save from before the section) clears the store;
+    /// a keyed NPC's scripted `AITravel` stack comes back exactly.
+    #[test]
+    fn a_scripted_travel_stack_round_trips_and_a_save_without_ai_loads_none() {
+        use sf_ai::{DirectiveKind, DirectiveSource, DirectiveSpec, DirectiveStack, GameTime, ModernPolicy};
+        use sf_ai_bevy::AiDirectives;
+
+        let root = temp_root("ai");
+        let mut app = bare_app(root.clone());
+        app.init_resource::<AiDirectives>();
+        let now = GameTime { day: 3, minute: 600 };
+        let to = Location::new(WorldspaceId::from("wilderness"), WorldPos::new(IVec3::new(2, -1, 0), Vec3::new(10.0, 20.0, 3.0)));
+        let mut stack = DirectiveStack::new(FARGOTH, now);
+        stack.push(DirectiveSpec::new(DirectiveKind::GoTo(to), DirectiveSource::Script), now, &ModernPolicy, &mut Vec::new());
+
+        save(&mut app);
+        app.world_mut().resource_mut::<AiDirectives>().insert(stack.clone());
+        load(&mut app);
+        assert!(app.world().resource::<AiDirectives>().is_empty(), "no section: no AI state");
+
+        app.world_mut().resource_mut::<AiDirectives>().insert(stack.clone());
+        save(&mut app);
+        // A stack the save doesn't know goes: load is a full replace.
+        app.world_mut().resource_mut::<AiDirectives>().insert(DirectiveStack::new(BARREL, now));
+        load(&mut app);
+        let store = app.world().resource::<AiDirectives>();
+        assert_eq!(store.iter().collect::<Vec<_>>(), [&stack]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `MA2c3b`: `mw/ai_runs` through the game's registration (no install). The AI script reads
+    /// answer after a load as before the save: a done package on an emptied stack (`OpenMW`
+    /// `mDone` with `mLastAiPackage` none) and a travel still running; an entity-bits key is left
+    /// out; a save without the section loads with no runs.
+    #[test]
+    fn the_ai_script_reads_round_trip_and_a_save_without_them_loads_none() {
+        let root = temp_root("ai-runs");
+        let mut app = bare_app(root.clone());
+        app.init_resource::<AiRuns>();
+        let spawned = ActorKey(42);
+        let set_runs = |app: &mut App| {
+            let mut runs = app.world_mut().resource_mut::<AiRuns>();
+            runs.0.insert(FARGOTH, AiRun { done: true, last: None });
+            runs.0.insert(BARREL, AiRun { done: false, last: Some(AiPackageKind::Travel) });
+            runs.0.insert(spawned, AiRun { done: true, last: Some(AiPackageKind::Wander) });
+        };
+
+        save(&mut app);
+        set_runs(&mut app);
+        load(&mut app);
+        assert_eq!(*app.world().resource::<AiRuns>(), AiRuns::default(), "no section: no runs");
+
+        set_runs(&mut app);
+        save(&mut app);
+        app.world_mut().resource_mut::<AiRuns>().0.insert(FARGOTH, AiRun { done: false, last: Some(AiPackageKind::Follow) });
+        load(&mut app);
+        let runs = app.world().resource::<AiRuns>();
+        assert_eq!(runs.get(FARGOTH), AiRun { done: true, last: None }, "GetAIPackageDone 1, GetCurrentAIPackage -1");
+        assert_eq!(runs.get(BARREL), AiRun { done: false, last: Some(AiPackageKind::Travel) });
+        assert_eq!(runs.0.len(), 2, "the entity-bits key is not saved");
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -431,6 +431,22 @@ Fact store, Nemesis-style relations and vendettas, bounded gossip, reputation pe
   it is placed, so a queued actor perceives and plans as tier 0. A stored body already standing on its state's spot
   (same worldspace, within its body radius) is placed there with no view test: nothing moves, so nothing pops in.
   Followers read their leader's state through the store, stepped after the actors they follow.
+- **As built (AI10c3c2a, 2026-11-27):** `mw_walkers_bevy::bodiless`. At an actor cell's deactivation `ActorPoseHook`
+  keeps its placement as the overlay holds it (`ResidentActors` away map; activation drops it, a discard keeps nothing).
+  Last in the Step chain, each kept placement of a bodiless stored actor on a route moves (`PlacementOverlay::move_to`,
+  kept rotation) when its logical position's `(worldspace, partition cell)` changes: one write per crossing; entries
+  with neither body nor state are pruned. Gaps: actors never loaded since start, followers; loaded cells wait for
+  `AI10c3c2b`.
+- **As built (AI10c3c2b1, 2026-11-27):** same module. Right after the follow, a kept bodiless stored actor (not a
+  follower) whose cell is Active is resolved by `sf_ai::resolve_promotion` (the promotion's `ViewsEnv`: spot, then back
+  along its route, navmesh snap, unseen), at most `ai.tier.promote_per_tick` tries a tick in id order; a wait retries
+  after `ai.tier.promote_retry_s` (game ms over the clock's scale). The pick goes to `Streaming::spawn_into` at that spot
+  (exclusive system, last of the Step chain), the overlay takes it there, activation drops the kept entry, and
+  `enter_tier0` re-marks the body: the store keeps its state until it is placed.
+- **As built (AI10c3c2b2, 2026-11-27):** the follow's writes and the spawns count into `sf_ai_bevy::AiBodilessStats`
+  (since start; the game inserts it, `ai.stats` prints `bodiless: N bodies spawned into loaded cells, M kept placements
+  moved` only when it exists); `report_bodiless`, last of the Step chain, logs `ai.tier0: N bodies spawned into loaded
+  cells, M kept placements moved` when they changed, at most once a second. Owner scene AI-17.
 - **CPU tier** = host setting `sim.cpu_tier` (auto from cores, AI9d), apart from the graphics preset. Clients vary
   only presentation.
 
@@ -479,7 +495,7 @@ saved: plans, traces, awareness, path requests, `DirectiveDone` events (rebuilt 
 actors). Belongs to the one state registry when it exists (vision §4.2.3).
 - **Section names are single-segment** (a family is the name before the first `/`, save.md "Registry"): hence
   `sf/aimemory`, not `sf/ai/memory` (audit 2026-11-09).
-- **As built (AI5):** one world section keyed by `ActorKey` (not overlay blobs), v1 = each actor's `SavedStack`; clock and key caveats: [ai-as-built.md](ai-as-built.md) "AI5".
+- **As built (AI5, MA22b):** one world section keyed by `ActorKey` (not overlay blobs); v2 = each actor's optional `SavedStack` and optional tier-0 `SavedLogical` (state + due instant), v1 (stacks only) migrates with no states; clock and key caveats: [ai-as-built.md](ai-as-built.md) "AI5".
 
 ## Scripting (Luau `@sf/ai`)
 

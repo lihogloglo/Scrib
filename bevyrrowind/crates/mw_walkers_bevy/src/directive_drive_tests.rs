@@ -50,7 +50,7 @@ pub(super) fn spawn(app: &mut App, key: u128, before: Vec<DirectiveKind>) -> (En
 
 /// [`spawn`] with the wander's spec shaped by `stay` (a limit, no repeat), its stack started at
 /// the [`GameClock`]'s instant if the app has one.
-fn spawn_with(
+pub(super) fn spawn_with(
     app: &mut App,
     key: u128,
     before: Vec<DirectiveKind>,

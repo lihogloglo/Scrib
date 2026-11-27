@@ -22,6 +22,10 @@
 //! - **Saves** (`MA22`, not wired yet): [`persist_actor_poses`] writes every resident moved actor
 //!   into a copy of the overlay as its deactivation would, without removing anything.
 //! - **Proof line**: `actors: N poses kept at unload`, at most once a second.
+//! - **Kept placements** (`AI10c3c2a`): deactivation (not a discard) also keeps the placement as
+//!   it now stands in the overlay (the pose just written, an earlier entry, else the listed one)
+//!   in [`ResidentActors`]' away map; activation drops it. [`crate::bodiless`] moves a bodiless
+//!   tier-0 actor's kept placement along its logical position.
 //!
 //! **Crossings (`AI10c3b2`):** a body that walks into a neighbouring loaded cell becomes that
 //! cell's ([`crate::crossing`]), with a pose write here ([`write_crossing`]), so its home cell's
@@ -56,6 +60,9 @@ const TURNED_RAD: f32 = 1e-3;
 #[derive(Resource, Debug, Default)]
 pub struct ResidentActors {
     placements: HashMap<PlacementId, (WorldspaceId, Placement)>,
+    /// `AI10c3c2a`: the placements of actors whose cell left Active, as the overlay now holds
+    /// them (kept at deactivation, dropped at activation, pruned by [`crate::bodiless`]).
+    away: HashMap<PlacementId, (WorldspaceId, Placement)>,
     kept: u32,
 }
 
@@ -79,6 +86,22 @@ impl ResidentActors {
     pub(crate) fn forget(&mut self, id: PlacementId) {
         self.placements.remove(&id);
     }
+
+    /// The placement kept for `id` when its cell left Active (`AI10c3c2a`), with its worldspace.
+    #[cfg(test)]
+    pub(crate) fn kept_placement(&self, id: PlacementId) -> Option<&(WorldspaceId, Placement)> {
+        self.away.get(&id)
+    }
+
+    /// Whether any placement is kept (`AI10c3c2a`).
+    pub(crate) fn has_away(&self) -> bool {
+        !self.away.is_empty()
+    }
+
+    /// The kept placements, to follow and prune (`AI10c3c2a`, [`crate::bodiless`]).
+    pub(crate) fn away_mut(&mut self) -> &mut HashMap<PlacementId, (WorldspaceId, Placement)> {
+        &mut self.away
+    }
 }
 
 /// Wraps the actor class spawner: deactivation (not a discard) writes a body that moved to the
@@ -99,6 +122,7 @@ impl PlacementSpawner for ActorPoseHook {
         self.0.activate(world, cx, placement);
         if let Some(mut resident) = world.get_resource_mut::<ResidentActors>() {
             let p = &placement.placement;
+            resident.away.remove(&p.id);
             resident.placements.insert(p.id, (cx.worldspace.clone(), p.clone()));
         }
     }
@@ -115,10 +139,24 @@ impl PlacementSpawner for ActorPoseHook {
                 resident.kept += 1;
             }
         }
+        let away = (!cx.discard).then(|| standing(world, cx.worldspace, p));
         if let Some(mut resident) = world.get_resource_mut::<ResidentActors>() {
             resident.placements.remove(&p.id);
+            match away {
+                Some(kept) => resident.away.insert(p.id, kept),
+                None => resident.away.remove(&p.id),
+            };
         }
     }
+}
+
+/// Placement `p` of worldspace `ws` as the overlay now holds it (its moved or spawned entry),
+/// else as listed (`AI10c3c2a`).
+fn standing(world: &World, ws: &WorldspaceId, p: &Placement) -> (WorldspaceId, Placement) {
+    world
+        .get_resource::<WorldOverlay>()
+        .and_then(|o| o.0.read().unwrap_or_else(PoisonError::into_inner).placed(p.id).map(|(w, p)| (w.clone(), p.clone())))
+        .unwrap_or_else(|| (ws.clone(), p.clone()))
 }
 
 /// Saving (`MA22`, save.md "One path for unload and save"): writes every resident actor that

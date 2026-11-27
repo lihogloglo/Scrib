@@ -241,6 +241,18 @@ alone); `sync_ai_runs` copies it into the RPG host; `impl MwAi for View`. Fixed:
 (`instances.rs`) didn't forward `ai()` (global/local scripts pushed nothing). `mw_rpg_bevy` now depends on
 `mw_walkers_bevy` directly (already reachable through `mw_scripts_bevy`). Gaps -> MA2c3, MA2d4.
 
+As built (MA2c3a, 2026-11-27): `clear_dead_runs` (FixedUpdate, after `drive_directives`) clears the last package of an
+actor whose root just got `Dead`, so `GetCurrentAIPackage` reads -1 (OpenMW `OpGetCurrentAIPackage` :403-422; ours from
+the death, OpenMW once the death animation finished); `GetAIPackageDone` keeps its value (:181-195, no death test). A push
+to a bodiless tier-0 actor (key in `AiLogical`, no entity) lands on its stored stack, home = the state's `pos`, origin =
+its record directives' origin, and wakes the state; its later body serves it (the stored stack wins over the seed). Gap:
+a bodiless push keeps no extras (a script wander's idles), as any script directive across a respawn.
+
+As built (MA2c3b, 2026-11-27): section `mw/ai_runs` v1 (`mw_saves_bevy` `AiRunsSave`, its own `SavedPackage` enum)
+saves `AiRuns` as OpenMW saves `mDone` / `mLastAiPackage`: placement-id keys only (entity bits dropped, as `mw/rpg`),
+default runs left out, no section written when empty; load replaces the runs (a save without it loads none). A done
+flag on an emptied stack now survives a load. `mw_saves_bevy` depends on `mw_walkers_bevy` (already in its closure).
+
 ## AI settings (stats + considerations)
 
 Hello, Fight, Flee, Alarm (`aisetting.hpp`) are magnitude stats on the sheet (`sf_stats`, stats-adapter naming),
@@ -343,6 +355,14 @@ cleared, `until` rebuilt by a `step` at the same instant). Divergences: no `mRem
 roll per span (OpenMW: per waited hour), no `z += 60` / ground snap (promotion snaps), water-only and unconscious /
 paralysed actors not moved (seam; caller, MA7b), travellers not teleported (tier 0 walked the `GoTo`). Gap:
 `WanderPlanner`'s allowed set differs (no connectivity, no closest removal, no single-node extension).
+
+As built (MA7b, `OpenMW` `Actors::fastForwardAi` 2413 at `b8285cc9`): `advance_sky` (`mw_rpg_bevy` services) records each
+clock skip in `sf_ai_bevy::AiTimeSkips` (merged spans; a resource, since a frame may run no fixed tick). Next tick
+(`mw_walkers_bevy/src/logical.rs`): Enter demotes every awake body with a stack, not dead, held (knocked down) or
+paralysed (`paralyze` > 0), at the span start; Step runs `AiTierZero::fast_forward` (whole store, not only due states)
+with `MorrowindFastForward` plus live occupancy (every state, other bodies, the player; each actor's entry moved as it
+is placed); Promote is `promote_dark` (no views, retries cleared, no per-tick cap). Gaps: water-only = a body moving as
+a pure swimmer (bodiless: never); tier 0 does not know paralysis (a dormant paralysed actor still crosses the span).
 
 ## Schedules for vanilla NPCs (owner 2026-11-08, modern addition)
 

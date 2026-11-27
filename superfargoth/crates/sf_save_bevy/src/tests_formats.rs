@@ -101,7 +101,14 @@ fn saved_shapes_match_their_goldens() {
         &v(sections::AI, sections::AI_VERSION),
         &shape::<sf_ai::AiSave>(
             None,
-            &[&traced::<sf_ai::DirectiveKind>, &traced::<sf_ai::DirectiveSource>, &traced::<sf_ai::Limit>, &traced::<sf_ai::Serving>],
+            &[
+                &traced::<sf_ai::DirectiveKind>,
+                &traced::<sf_ai::DirectiveSource>,
+                &traced::<sf_ai::Limit>,
+                &traced::<sf_ai::Serving>,
+                &traced::<sf_ai::ActivityRef>,
+                &traced::<sf_ai::Arrival>,
+            ],
         ),
     );
     check_golden(&v(sections::SERVICES, sections::SERVICES_VERSION), &shape::<sf_rpg::service::WorldServices>(None, &[]));
@@ -140,6 +147,13 @@ fn legacy_shapes_match_their_goldens() {
     check_golden(
         &format!("sf.{}.v1", sections::WEATHER),
         &shape::<sections::weather_legacy::v1::WeatherSave>(None, &[&traced::<sf_weather::Override>, &traced::<sf_wind::WindSourceKind>]),
+    );
+    check_golden(
+        &format!("sf.{}.v1", sections::AI),
+        &shape::<sf_ai::save::legacy::v1::AiSave>(
+            None,
+            &[&traced::<sf_ai::DirectiveKind>, &traced::<sf_ai::DirectiveSource>, &traced::<sf_ai::Limit>, &traced::<sf_ai::Serving>],
+        ),
     );
     check_golden(
         &format!("sf.{}.v1", sections::CHARACTER),

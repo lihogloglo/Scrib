@@ -14,8 +14,10 @@
 //! `greeting`: NPCs greet the player, `OpenMW`'s greeting machine from `mw_ai` acted on (`MA4c2`).
 //! `logical`: the tier-0 envs (`AI10c2`): routes over the worldspace graph, views and navmesh snap for promotion.
 //! `poses`: an actor's moved body keeps its pose across its cell's unload, through the placement overlay (`AI10c3a`);
-//! `crossing`: a body that walks into another loaded cell becomes that cell's (`AI10c3b2`).
+//! `crossing`: a body that walks into another loaded cell becomes that cell's (`AI10c3b2`);
+//! `bodiless`: a bodiless tier-0 actor's overlay entry follows its logical position (`AI10c3c2a`).
 
+pub mod bodiless;
 pub mod crossing;
 pub mod directive_drive;
 pub mod directives;
