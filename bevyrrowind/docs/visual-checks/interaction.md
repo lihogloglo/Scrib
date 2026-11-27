@@ -16,3 +16,10 @@ Open visual checks: smart objects, activation, furniture use, doors (IN). Index 
 - Known, not part of this check: NPCs do not use doors yet (AI14), locked inner doors are not gated yet (crime LW6), a door seen from far outside its cell's active ring is drawn at its rest state only.
 - Owner 2026-11-26 (dev exe at 1c699df9, Arrille's Tradehouse with sound, proof `1 swing doors indexed`): (1) yes ("Door opens and closes"). (2) yes ("the sound of door worked (just tried)"; cues `door heavy open` / `door heavy close` in the log), so AU-5 passes with it. (3)-(5) not answered.
 - Status: partly confirmed 2026-11-26 (q1, q2); q3-q5 awaiting owner.
+
+### IN-19: Snuff and relight candles and lanterns (`owner_launch.sh view "Seyda Neen, Arrille's Tradehouse"`; IN19c)
+- Kind: game location, player mode, default flags, any hour (interior). Proof in `last.log`: `interact: N LIGH records, M snuffable fire lights` (M > 0) and `interact: K lights indexed in` (K > 0).
+- Do: face a candle or a wall lantern (fixed flames have no name), press E, then E again.
+- Ask (yes/no): (1) Does the prompt read "Snuff" on a burning candle and "Relight" once it is out? (2) After Snuff: does the light it cast on the walls and table go out, and its flame/glow disappear, with nothing else of the candle or lantern missing? (3) Relight: does it come back exactly as before? (4) Snuff one, walk out to Seyda Neen and back in: is it still out?
+- Known, not part of this check: the fire's loop sound keeps playing; NPCs don't see the darkness yet (AI light copy); carryable lanterns keep "Take" (snuff on the hold list, no hold list UI yet).
+- Status: awaiting owner.

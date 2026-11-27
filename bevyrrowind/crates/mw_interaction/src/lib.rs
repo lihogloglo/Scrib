@@ -6,10 +6,12 @@
 //!   (seats, benches, beds, tables, counters); [`door_def`], a swing door's def.
 //! - [`measure`](mod@measure): [`measure()`], a census model's triangles and top to its [`Measured`]
 //!   shape (seat front from the backrest, bed head from the boards; the bake calls it, `IN32b2`).
+//! - [`light`]: [`light_interactable`], a fire `LIGH` record to its `Light` slot def (snuff,
+//!   relight; a carryable keeps "Take"), `IN19c`.
 //! - [`activation`]: the per-record-class activation table ([`ROWS`]): verb, default action and
 //!   Classic behaviour; today's prompts unchanged, unbuilt actions listed but never offered;
 //!   [`runs_default`], whether a default handler acts on an approved use's verb.
-//! - [`tunables`]: `mw.rules.interaction.sit`, the `mw.interact.*` furniture lengths
+//! - [`tunables`]: `mw.rules.interaction.sit` and `.snuff`, the `mw.interact.*` furniture lengths
 //!   ([`FurnitureParams`]) and the `mw.interact.measure.*` bake thresholds ([`MeasureParams`]).
 //!
 //! The bake fills [`Measured`] from the census through [`measure()`] and stores the defs as
@@ -19,6 +21,7 @@
 pub mod activation;
 pub mod defs;
 pub mod furniture;
+pub mod light;
 pub mod measure;
 pub mod tunables;
 
@@ -30,6 +33,7 @@ pub use defs::{
     Basis, CLASS_VERB_PRIORITY, Facing, Measured, POSE_VERB_PRIORITY, USER_NPC, bed_verb, class_verb, def_for, door_def,
 };
 pub use furniture::{Kind, classify};
+pub use light::{LIGHT_INTENSITY, LIGHT_SLOT, LightFacts, TAKE_PRIORITY, light_def, light_interactable};
 pub use measure::measure;
 /// The def types [`def_for`] fills (re-exported so the bake needs no `sf_interaction` dependency).
 pub use sf_interaction::{InteractableDef, Side, SlotDef, TagId};
@@ -39,5 +43,7 @@ pub use tunables::{FurnitureParams, MeasureParams, TUNABLES};
 mod tests_activation;
 #[cfg(test)]
 mod tests_defs;
+#[cfg(test)]
+mod tests_light;
 #[cfg(test)]
 mod tests_measure;

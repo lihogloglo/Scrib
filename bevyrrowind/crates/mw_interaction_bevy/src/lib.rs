@@ -36,6 +36,13 @@
 //! - **Activation**: each latched Use press (`mw_player_bevy::UsePresses`, written by
 //!   `mw_scripts_bevy`) becomes one `ActivateCommand` ([`FocusState::command`], best verb and slot;
 //!   a def-less target's primary use) between `InteractionSystems::Focus` and `::Activate`.
+//! - **Lights** ([`light`], `IN19c`): a hook on the Light class spawns a fire light's visuals under
+//!   a [`LightAnchor`] carrying its lit state (saved byte, else lit) and, in R0, indexes it with
+//!   `mw_interaction::light_interactable` (slot disabled when `mw.rules.interaction.snuff` is off)
+//!   and restores its saved state (`LightRest`); each `LightChanged` sets the anchor and writes
+//!   the overlay byte (owner `light`), and the anchor hides its point lights and darkens its glow
+//!   surfaces while unlit. A snuff / relight prompts verb-only ("Snuff", "Relight"); a carryable
+//!   light keeps "Take". The host inserts the records ([`light::insert_records`]).
 //! - **Rest** (`IN3a`): the shell's `RestRequested` (a static bed's approved `sleep`) is logged, the
 //!   host's only consumer until a rest UI exists.
 //!
@@ -48,6 +55,7 @@ pub mod door;
 pub mod door_body;
 pub mod index;
 pub mod input;
+pub mod light;
 mod report;
 #[cfg(test)]
 mod tests;
@@ -55,6 +63,8 @@ mod tests;
 mod tests_door;
 #[cfg(test)]
 mod tests_door_body;
+#[cfg(test)]
+mod tests_light;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -67,7 +77,7 @@ use mw_game_core::player::FocusUpdate;
 use mw_player_bevy::{Focus, UsePresses};
 use sf_bake::{Manifest, Store};
 use sf_interaction::InteractableDef;
-use sf_interaction_bevy::{DoorSystems, InteractionPlugin, InteractionSystems};
+use sf_interaction_bevy::{DoorSystems, InteractionPlugin, InteractionSystems, LightSystems};
 use sf_physics_bevy::PhysicsSystems;
 use sf_records::RecordId;
 use sf_tunables_bevy::{TunablesAppExt, tunable_changed};
@@ -75,6 +85,7 @@ use sf_tunables_bevy::{TunablesAppExt, tunable_changed};
 pub use door::{DoorHook, DoorPivot, DoorPivots, SwingDoor, SwingDoors};
 pub use index::{ResidentFurniture, SitSwitch};
 pub use input::furniture_prompt;
+pub use light::{LightAnchor, LightAnchors, LightFactsTable, LightHook, ResidentLights, SnuffSwitch};
 
 /// The baked furniture defs, by base record.
 #[derive(Resource, Clone, Debug, Default)]
@@ -124,8 +135,19 @@ pub fn add_with_defs(app: &mut App, defs: FurnitureDefs) {
     }
     app.register_tunables(mw_interaction::TUNABLES);
     let sit = app.add_tunable(&mw_interaction::tunables::SIT).id();
+    let snuff = app.add_tunable(&mw_interaction::tunables::SNUFF).id();
     app.insert_resource(defs)
         .insert_resource(SitSwitch(sit))
+        .insert_resource(SnuffSwitch(snuff))
+        .init_resource::<LightFactsTable>()
+        .init_resource::<LightAnchors>()
+        .init_resource::<ResidentLights>()
+        .init_resource::<light::LightLog>()
+        .init_resource::<light::DarkMaterials>()
+        .add_observer(light::forget_anchor)
+        .add_systems(PostStartup, light::hook_spawners)
+        .add_systems(Update, (light::sync_snuff.run_if(tunable_changed(snuff)), light::log_indexed))
+        .add_systems(Update, (light::follow_changes, light::apply_anchors).chain().after(LightSystems))
         .init_resource::<ResidentFurniture>()
         .init_resource::<index::IndexLog>()
         .init_resource::<DoorPivots>()

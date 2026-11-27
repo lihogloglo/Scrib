@@ -56,11 +56,17 @@ fn unbuilt_states_keep_todays_verb() {
     assert_eq!(prompt(R::Door, all), Some("Open"));
     assert_eq!(primary(R::Door, all, |_| true).map(|r| r.action), Some(DefaultAction::SwingDoor));
     assert_eq!(prompt(R::Container, all), Some("Open"));
-    // A carryable lit light: take only (no snuff until IN19).
+    // A carryable light (IN19c): take, then snuff and relight; the switch off keeps take only.
     let lit: Vec<_> = offered(R::Light, all, |_| true).map(|r| r.verb).collect();
-    assert_eq!(lit, [verb::TAKE]);
-    // Hold lists: one verb per class today, but a door (its swing rows: `swing_door_rows_hold_...`).
-    for &(class, _) in TODAY.iter().filter(|(c, _)| *c != R::Door) {
+    assert_eq!(lit, [verb::TAKE, verb::SNUFF, verb::RELIGHT]);
+    let classic: Vec<_> = offered(R::Light, all, |s| s != Switch::Snuff).map(|r| r.verb).collect();
+    assert_eq!(classic, [verb::TAKE]);
+    // A fixed lit flame prompts Snuff, an unlit one Relight.
+    assert_eq!(prompt(R::Light, |c| c == Condition::Lit), Some("Snuff"));
+    assert_eq!(prompt(R::Light, |c| c == Condition::Unlit), Some("Relight"));
+    // Hold lists: one verb per class today, but a door (its swing rows: `swing_door_rows_hold_...`)
+    // and a light.
+    for &(class, _) in TODAY.iter().filter(|(c, _)| !matches!(c, R::Door | R::Light)) {
         assert!(offered(class, all, |_| true).count() <= 1, "{class:?}");
     }
 }
@@ -113,6 +119,7 @@ fn unbuilt_actions_are_not_offered() {
         DefaultAction::Script,
         DefaultAction::Pose,
         DefaultAction::Rest,
+        DefaultAction::ToggleLit,
     ];
     for r in ROWS {
         match r.available {
@@ -123,15 +130,15 @@ fn unbuilt_actions_are_not_offered() {
     let not_yet = |class, v: &str| {
         rows(class).filter(|r| r.verb == v).all(|r| matches!(r.available, Availability::NotYet(_)))
     };
-    assert!(not_yet(R::Light, verb::SNUFF));
-    assert!(not_yet(R::Light, verb::RELIGHT));
+    assert!(!not_yet(R::Light, verb::SNUFF));
+    assert!(!not_yet(R::Light, verb::RELIGHT));
     assert!(not_yet(R::Door, verb::BASH));
     assert!(not_yet(R::Container, verb::BASH));
     assert!(not_yet(R::Npc, verb::SEARCH));
     assert!(not_yet(R::Npc, verb::PICKPOCKET));
     assert!(not_yet(R::Creature, verb::TALK));
     let slice = |class, v: &str| rows(class).find(|r| r.verb == v).map(|r| r.available);
-    assert_eq!(slice(R::Light, verb::SNUFF), Some(Availability::NotYet("IN19")));
+    assert_eq!(slice(R::Light, verb::SNUFF), Some(Availability::Offered));
     assert_eq!(slice(R::Furniture(Kind::Bed), verb::SLEEP), Some(Availability::Offered));
     assert_eq!(slice(R::Container, verb::BASH), Some(Availability::NotYet("IN37")));
 }
@@ -192,7 +199,9 @@ fn default_handlers_run_on_their_own_verbs_only() {
     assert_eq!(runs_on(DefaultAction::Pose), [verb::SIT, verb::LIE, verb::LEAN]);
     // The rest hook runs on `sleep` only (IN3a).
     assert_eq!(runs_on(DefaultAction::Rest), [verb::SLEEP]);
-    for action in [DefaultAction::Bash, DefaultAction::ToggleLit, DefaultAction::Loot] {
+    // The light default runs on snuff and relight (IN19c; the shell's `light_default`).
+    assert_eq!(runs_on(DefaultAction::ToggleLit), [verb::SNUFF, verb::RELIGHT]);
+    for action in [DefaultAction::Bash, DefaultAction::Loot] {
         assert!(runs_on(action).is_empty(), "{action:?}");
     }
 }

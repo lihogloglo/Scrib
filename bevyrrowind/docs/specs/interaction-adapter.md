@@ -334,13 +334,25 @@ named exterior cell (`CELL` name set; later worldgen settlements give theirs, Ma
 **Lights** (`Light` slot, IN19):
 
 - `LightDef` from `LIGH`: `radius_m` as `light_record` converts it (`mw_walkers_bevy/src/light_inputs.rs:164`;
-  `NEGATIVE` and radius 0 give none), `intensity` = `mw.ai.light.lamp_intensity`, `lit_default` = `OFF_BY_DEFAULT`
-  clear (OpenMW inserts such a light's model unlit and without its loop sound, `light.cpp:45, 56`).
+  `NEGATIVE` and radius 0 give none), `intensity` = 1 (a relative weight: the AI copy scales it by its own
+  `mw.ai.light.lamp_intensity`). An `OFF_BY_DEFAULT` light gets **no def** for now: OpenMW inserts its model unlit and
+  without its loop sound (`light.cpp:45, 56`) and our spawner gives it no render light (`mw_world::light_info`), so a
+  relight would light nothing; it joins once the host can spawn its render light. Every def'd light starts lit.
 - Snuff and relight only for `FIRE` lights; glow and magic lights get no verb. `LightChanged` also toggles the loop
   sound (`mw_audio_bevy`).
 - **AI light (MA16):** `write_light_inputs` (`light_inputs.rs:307`) today copies `PlacedLights` (`LightHook`, `on` =
   the record flag); after IN19 it copies the active space's `GameplayLights`, so a snuffed lamp darkens stealth sight.
   Equipped torches stay the host's; a dropped lit torch is a light-bearing placement.
+
+**As built (IN19c, 2026-11-27).** `mw_interaction/src/light.rs`: `LightFacts` (radius, `FIRE`, `CAN_CARRY`, `NEGATIVE`,
+`OFF_BY_DEFAULT`), `light_def`, `light_interactable` (slot 0 at the model bounds' centre, verb snuff `all: [Lit]`;
+slotless relight `none: [Lit]`; a carryable's slotless `take` above them; switch off: no relight), rows Offered,
+`mw.rules.interaction.snuff`. `mw_interaction_bevy/src/light.rs`: `LightHook` on the Light class (visuals under a
+`LightAnchor` holding the saved state; R0 index, slot disabled with the switch off, `LightRest`), `follow_changes`
+(anchor + overlay byte, owner `light`), `apply_anchors` (point lights `Visibility::Hidden`; glow surfaces = emissive or
+additive/premultiplied materials swap to one shared dark copy, a flame fully transparent), verb-only prompts.
+Host: `light::insert_records` (`mw_exterior_bevy`). Not yet: loop sound off (`mw_audio_bevy`), the AI copy
+(`mw_walkers_bevy`, NPC AI lane), moves of a knocked carryable (no `IndexChange::Move`). Tests: 3 core + 7 shell.
 
 **Noise** (IN18): the host emitter (`mw_walkers_bevy/src/noise_emitters.rs`) maps `InteractionNoise` one to one onto
 `NoiseEvent` (`maker` → `PerceptTarget`) and owns the `TagId` → `NoiseKindId` table, beside `KIND_NAMES` /

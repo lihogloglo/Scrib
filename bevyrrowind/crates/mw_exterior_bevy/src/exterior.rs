@@ -792,6 +792,10 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // IN32c1: the interaction shell: baked furniture defs into the slot index, the player's focus
     // and Use press through the activation contract, its seat default.
     mw_interaction_bevy::add(&mut app, &options.store, &manifest);
+    // IN19c: the fire lights' records (snuff / relight defs; none without loaded records).
+    if let Some(db) = options.actors.as_deref() {
+        mw_interaction_bevy::light::insert_records(&mut app, db);
+    }
     // `--use-door` and the `BEVYRROWIND_AUTO` dev hook (physics.rs) wait for it.
     app.add_systems(Update, mark_settled.run_if(in_state(WorldAlive)));
     mw_devtools_bevy::live_ab::add(&mut app, !bench && options.screenshot.is_none());

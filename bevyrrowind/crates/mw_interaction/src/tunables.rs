@@ -3,7 +3,7 @@
 //! [`FurnitureParams`] (defs) and [`MeasureParams`] (the bake's measuring, `IN32b1`), defaults straight
 //! from the declarations, so no value is written twice.
 //!
-//! Switches: only `mw.rules.interaction.sit` so far; the other `mw.rules.interaction.*` switches
+//! Switches: `mw.rules.interaction.sit` and `.snuff` so far; the other `mw.rules.interaction.*` switches
 //! (interaction-adapter.md "Morrowind has none of this") land with their slices.
 
 use sf_tunables::{AnyDef, Def, Lifetime, Net, Scope, Source, Unit, def};
@@ -18,6 +18,16 @@ const fn length(d: Def<f32>) -> Def<f32> {
 /// Off = no def, so the furniture is inert as in vanilla (the Classic preset turns it off).
 pub const SIT: Def<bool> = def!(bool "mw.rules.interaction.sit" = true)
     .help("Census furniture (seats, beds, tables, counters) can be sat, lain or leant on; off = inert as in vanilla (Classic)")
+    .source(Source::Owner("modern first, classic behind a seam (CONTRIBUTING \"Design constraints\")"))
+    .scope(Scope::Dev)
+    .net(Net::Gameplay)
+    .lifetime(Lifetime::Respawn);
+
+/// `mw.rules.interaction.snuff`: fire lights can be snuffed and relit (`crate::light`, `IN19c`). Off =
+/// no light verbs, inert as in vanilla (the Classic preset turns it off); the lights stay gameplay
+/// lights for the AI.
+pub const SNUFF: Def<bool> = def!(bool "mw.rules.interaction.snuff" = true)
+    .help("Candles, lanterns and other fire lights can be snuffed and relit; off = inert as in vanilla (Classic)")
     .source(Source::Owner("modern first, classic behind a seam (CONTRIBUTING \"Design constraints\")"))
     .scope(Scope::Dev)
     .net(Net::Gameplay)
@@ -110,6 +120,7 @@ pub const HEAD_SHARE: Def<f32> = measuring(def!(float "mw.interact.measure.head_
 /// The crate's tunables, for the shell to register.
 pub const TUNABLES: &[&dyn AnyDef] = &[
     &SIT,
+    &SNUFF,
     &BENCH_SEAT_M,
     &APPROACH_M,
     &EDGE_SEAT_INSET_M,

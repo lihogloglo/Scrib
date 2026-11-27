@@ -4,7 +4,7 @@
 use bevy_ecs::prelude::*;
 use bevy_log::debug;
 use mw_game_core::player::{HOST_KEY, PlayerBody};
-use mw_interaction::activation::{Availability, ROWS, RecordClass};
+use mw_interaction::activation::{Availability, DefaultAction, ROWS, RecordClass};
 use mw_player_bevy::{Focus, FocusTarget, UsePresses};
 use sf_interaction::{TagId, UserKey, VerbTarget};
 use sf_interaction_bevy::{ActivateCommand, FocusCandidates, InteractionDefs, InteractionSettings, InteractionUser, PlayerFocus};
@@ -21,6 +21,15 @@ pub const PLAYER_USER: UserKey = UserKey::Player(HOST_KEY);
 pub fn furniture_prompt(verb: TagId) -> Option<&'static str> {
     ROWS.iter()
         .find(|r| matches!(r.class, RecordClass::Furniture(_)) && r.available == Availability::Offered && TagId::of(r.verb) == verb)
+        .map(|r| r.prompt)
+}
+
+/// The prompt of light verb `verb` (`snuff`: "Snuff", `relight`: "Relight"; `IN19c`), `None` for any
+/// other verb: a light's is verb-only (a fixed flame has no name, `light.cpp:150`).
+#[must_use]
+pub fn light_prompt(verb: TagId) -> Option<&'static str> {
+    ROWS.iter()
+        .find(|r| r.class == RecordClass::Light && r.action == DefaultAction::ToggleLit && r.available == Availability::Offered && TagId::of(r.verb) == verb)
         .map(|r| r.prompt)
 }
 
@@ -70,7 +79,8 @@ pub(crate) fn player_user(
 /// class's own primary use (a census container's "Open", an activator's "Use"), keep
 /// `activatable`'s prompt (name + verb), unless that prompt is not one of the verb's
 /// [`class_prompts`]: then its verb becomes the first of them (an open swing door's "Close" over
-/// `activatable`'s "Open"), and only then is [`Focus`] written.
+/// `activatable`'s "Open"), and only then is [`Focus`] written. A light verb (snuff, relight) is
+/// always verb-only ([`light_prompt`]).
 #[allow(clippy::needless_pass_by_value)] // system parameters
 pub(crate) fn prompt(mut focus: ResMut<Focus>, defs: Res<InteractionDefs>, players: Res<PlayerFocus>, placements: Res<ScriptPlacements>) {
     let Some(hit) = focus.hit else { return };
@@ -79,7 +89,8 @@ pub(crate) fn prompt(mut focus: ResMut<Focus>, defs: Res<InteractionDefs>, playe
         return;
     }
     let best = players.get(PLAYER_USER).filter(|s| s.target() == Some(target)).and_then(|s| s.verbs().first());
-    if let Some(c) = best.filter(|c| matches!(c.target, VerbTarget::Slotless { .. }) && class_verb(c.verb)) {
+    let light = best.is_some_and(|c| light_prompt(c.verb).is_some());
+    if let Some(c) = best.filter(|c| !light && matches!(c.target, VerbTarget::Slotless { .. }) && class_verb(c.verb)) {
         let stale = focus.target.as_ref().is_some_and(|t| t.handle == hit.handle && !t.verb.is_some_and(|v| class_prompts(c.verb).any(|p| p == v)));
         if stale
             && let Some(first) = class_prompts(c.verb).next()
@@ -91,7 +102,7 @@ pub(crate) fn prompt(mut focus: ResMut<Focus>, defs: Res<InteractionDefs>, playe
     }
     let verb = best.map(|c| c.verb);
     let record = focus.target.as_ref().map(|t| t.record.clone()).or_else(|| placements.loaded.get(&hit.handle).map(|p| p.record.clone()));
-    focus.target = verb.and_then(furniture_prompt).zip(record).map(|(prompt, record)| FocusTarget {
+    focus.target = verb.and_then(|v| furniture_prompt(v).or_else(|| light_prompt(v))).zip(record).map(|(prompt, record)| FocusTarget {
         handle: hit.handle,
         record,
         name: String::new(),

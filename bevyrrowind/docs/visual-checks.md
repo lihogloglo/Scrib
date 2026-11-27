@@ -185,6 +185,7 @@ AU-3 | partial (2026-10-30: greets only very close; NPCs don't stop or turn) | [
 AU-5 | confirmed through IN-33 q2 (owner 2026-11-26: door sounds work; superseded by IN-33, was rejected 2026-10-30: no swing, no sound, prompt only) | [audio](visual-checks/audio.md) | Swinging-door sounds
 KM-1 (was IN-1) | awaiting owner | [player-ui](visual-checks/player-ui.md) | Keymap controls, rebind, gamepad, sneak hold vs toggle
 IN-32 | partly confirmed 2026-11-26 (q4 "Sit" prompt, q8 bed E breaks nothing); q1-q3, q5-q7 awaiting owner | [interaction](visual-checks/interaction.md) | Activation through the interaction contract: talk, container, take, door unchanged; chair prompts "Sit" (IN32c)
+IN-19 | awaiting owner | [interaction](visual-checks/interaction.md) | Snuff / relight candles and lanterns: prompt, light and flame out and back, stays out across a cell reload (IN19c)
 IN-33 | partly confirmed 2026-11-26 (q1 opens and closes, q2 door sound); q3-q5 awaiting owner | [interaction](visual-checks/interaction.md) | Swing doors: inner doors turn open and closed on E, stop for the player, sound, "Close" prompt, stay open across a cell reload (IN33a-c3; replaces AU-5)
 PM-1 | confirmed with follow-up (2026-10-30: mouse sliders, mute icon, Main menu button) | [player-ui](visual-checks/player-ui.md) | Escape menu and options (volume live and saved)
 SV-2 | confirmed with follow-up (2026-10-30: thumbnails missing) | [player-ui](visual-checks/player-ui.md) | Save/load screens from the pause menu (save, overwrite, load, delete)

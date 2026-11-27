@@ -5,8 +5,8 @@
 Furniture, doors, beds and the census classes are smart objects: each carries a def (slots, verbs, entrances),
 its slots go in a point index while resident, users claim slots through one host table, and every use (player
 input, NPC, script) takes one activation path. Built today: seats (approach then sit), swing doors, focus and
-prompts, the rest hook, light state (core + shell). Carry, destruction, the game's light hook and world rules are
-spec only.
+prompts, the rest hook, snuff / relight of fire lights (core, shell and the game's light hook). Carry, destruction
+and world rules are spec only.
 
 ## How it works
 
@@ -63,7 +63,11 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   (`:77`) registers objects with a `Light` slot from `IndexChange` (`register` `:191`, after the door registry, so
   validation sees `Lit` the same tick), keeps the `Lit` state tag and `GameplayLights` (`:117`, the AI's lights,
   never the GPU's); `light_default` (`:240`) runs an approved snuff / relight (no verb toggles) and writes
-  `LightChanged`; `LightRest` (`:149`) restores a saved state with no event. No game wiring yet (IN19c).
+  `LightChanged`; `LightRest` (`:149`) restores a saved state with no event. Game (`mw_interaction_bevy/src/light.rs`,
+  IN19c): `LightHook` spawns a fire light's visuals under a `LightAnchor` (lit from the overlay byte, else lit),
+  indexes `mw_interaction::light_interactable` in R0 (slot disabled when `mw.rules.interaction.snuff` is off),
+  `follow_changes` sets the anchor and saves the byte, `apply_anchors` hides the point light and swaps glow
+  materials to a shared dark copy. Prompts "Snuff" / "Relight" verb-only; a carryable keeps "Take".
 
 ## Bevy features used
 
@@ -85,7 +89,8 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
 
 - No rest UI: `RestRequested` is only logged. Lying down (IN3b) and lean (IN3c) wait for baked bed and lean clips.
 - `interact.cook` is a stub (`sf_interaction/src/cook.rs:16`); defs are cooked by the game's bake step only.
-- Carry, destruction, the game's light hook, world rules and `pick_spot` for NPC errands are spec only.
+- Carry, destruction, world rules and `pick_spot` for NPC errands are spec only.
+- Lights: off-by-default lights get no def; the loop sound and the AI's light copy don't follow `LightChanged` yet.
 - History of each slice: [ledger](../../ledger/interaction.md).
 
 ## Specs

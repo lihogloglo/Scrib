@@ -11,12 +11,20 @@ publish = false
 bevy_app = { workspace = true, features = ["std"] }
 # `AssetServer` / `UntypedHandle`: the wrapped spawner's `prepare`.
 bevy_asset.workspace = true
-# `Visibility` of a swing door's pivot.
+# `Visibility` of a swing door's pivot and of a snuffed light.
 bevy_camera.workspace = true
+# A snuffed light's dark glow material.
+bevy_color = { workspace = true, features = ["std"] }
 bevy_ecs = { workspace = true, features = ["std"] }
+# `PointLight`: the lights a snuffed light's anchor hides.
+bevy_light.workspace = true
 bevy_log.workspace = true
+# `AlphaMode`: a light's flame surfaces.
+bevy_material.workspace = true
 # `Vec3`: a swing door's doorway.
 bevy_math = { workspace = true, features = ["std"] }
+# `StandardMaterial` / `MeshMaterial3d`: a snuffed light's glow surfaces.
+bevy_pbr.workspace = true
 # `Time<Fixed>`: a door pivot follows its body's pose interpolated by the step's overstep.
 bevy_time = { workspace = true, features = ["std"] }
 # `Transform` of a swing door's pivot.
@@ -45,6 +53,8 @@ sf_tunables_bevy.workspace = true
 sf_world.workspace = true
 sf_world_bevy.workspace = true
 smallvec.workspace = true
+# `Light` / `LightFlags`: a `LIGH` record's facts (IN19c).
+tes3 = { workspace = true, features = ["esp"] }
 workspace-hack.workspace = true
 
 [dev-dependencies]

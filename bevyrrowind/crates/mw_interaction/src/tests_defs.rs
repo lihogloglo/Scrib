@@ -312,6 +312,7 @@ fn params_default_to_the_declarations() {
         names,
         [
             "mw.rules.interaction.sit",
+            "mw.rules.interaction.snuff",
             "mw.interact.bench_seat_m",
             "mw.interact.approach_m",
             "mw.interact.edge_seat_inset_m",
