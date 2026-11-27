@@ -115,6 +115,10 @@ pub trait CellScene: Send + Sync + 'static {
     /// cell's near group, this frame): stop drawing it. Called only after the
     /// spawn, so there is no frame without the object. The default does nothing.
     fn promoted(&self, _world: &mut World, _worldspace: &WorldspaceId, _cell: IVec3, _placement: PlacementId) {}
+    /// [`crate::Streaming::hide_covered`] removed `placement` from the world (nothing replaces
+    /// it): stop drawing it, every instance of it, now. One way while the cell is resident; the
+    /// overlay keeps it out of the next load. The default does nothing.
+    fn hidden(&self, _world: &mut World, _worldspace: &WorldspaceId, _cell: IVec3, _placement: PlacementId) {}
     /// Upload estimate of the cell's table, bytes, added to the near load's
     /// budget. The default, 0, lets a hook skip the estimate (its uploads then
     /// ride on the placements' own estimate).

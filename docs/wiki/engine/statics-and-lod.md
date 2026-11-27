@@ -52,7 +52,7 @@ pipeline and no ready prepass pipeline, which the equal test would leave undrawn
 hook's `acquire/ready/covered/upload/release`; `covered` placements get no model load and no
 entity. A committed cell plan writes instance slots into retained `GpuBatchedMesh3d` batches (`residency.rs:280`) via
 `publish_scene` (`upload.rs`), always in the space's own frame (`SpaceState::frame`); when the active worldspace's origin cell differs from its space's frame, `rewrite_on_origin_shift` rewrites every resident cell's slots and moves the frame (`shift.rs`, `OriginFrames`: a worldspace not drawn keeps its frame); a streamed-out cell writes every slot it held inactive (`queue_release_writes`, `CellRelease::freed_blocks`), because `batch_ranges` lends free slots to the neighbour range; batch entities are top-level and carry their worldspace's content `RenderLayers` (`sync_batch_layers` on a registry change, none while the worldspace is unregistered), so a worldspace's scene draws only in its own views; the world teardown calls `reset_scene` (`residency.rs`; `mw_exterior_bevy/src/teardown.rs`); a promoted placement writes
-inactive slots and spawns a real entity (`PromoteToEntity`, `stream.rs:1454`). Culling and LOD of batch ranges is done by the
+inactive slots and spawns a real entity (`PromoteToEntity`, `stream.rs` `accept_promotion`); a hidden one (`Streaming::hide_covered`, IN38c1) writes the same inactive slots with no entity. Culling and LOD of batch ranges is done by the
 vendored Bevy GPU preprocess, not by a scene compute pass: the scene-buffer upload
 is still `TODO(B4b)` (`residency.rs:228, 827`). Without GPU culling the scene turns itself off (`SceneSupport`, `lib.rs:111`).
 

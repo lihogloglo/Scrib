@@ -1131,4 +1131,10 @@ impl CellScene for SceneHook {
     fn promoted(&self, world: &mut World, worldspace: &WorldspaceId, cell: IVec3, placement: PlacementId) {
         world.write_message(PromotePlacement { worldspace: worldspace.clone(), cell, placement });
     }
+
+    /// Streaming hid the placement (`sf_world_bevy::Streaming::hide_covered`, `IN38c1`): the same
+    /// inactive slot writes as a promotion, with no entity to replace it.
+    fn hidden(&self, world: &mut World, worldspace: &WorldspaceId, cell: IVec3, placement: PlacementId) {
+        self.promoted(world, worldspace, cell, placement);
+    }
 }

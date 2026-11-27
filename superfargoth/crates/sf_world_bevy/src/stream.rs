@@ -389,7 +389,8 @@ struct Group {
     placements: Arc<Vec<IndexedPlacement>>,
     members: Arc<HashSet<PlacementId>>,
     covered: Arc<HashSet<PlacementId>>,
-    /// Covered placements a promotion accepted (one way: dies with the group).
+    /// Covered placements a promotion accepted or [`Streaming::hide_covered`] hid (one way:
+    /// dies with the group).
     promoted: HashSet<PlacementId>,
 }
 
@@ -891,6 +892,30 @@ impl Streaming {
     /// new placement's position falls in, for [`Self::spawn_when_ready`].
     pub fn partition(&self, ws: &WorldspaceId) -> Partition {
         self.rt.info(ws).partition
+    }
+
+    /// Stops drawing `id`, a placement the static scene draws in the resident `cell` of `ws`, for
+    /// good (`IN38c1`, interaction-destruction.md "Static removal": a broken decorative static).
+    /// True when the cell's revealed `Level::Near` group draws `id` through its scene and has not
+    /// promoted it: the id joins the group's promoted set (a later [`PromoteToEntity`] is dropped
+    /// as already promoted; one way, it dies with the group like a promotion) and
+    /// [`crate::CellScene::hidden`] runs. Needs no model and no entity, so it is immediate.
+    /// False, nothing changed, when the cell is not resident or not at Near, or `id` is a
+    /// precombine member, not drawn by the scene, already promoted or already hidden.
+    ///
+    /// Keeping it gone past the cell's residency is the caller's: the overlay removal, which the
+    /// next load reads. Call it with the resource out of the world (`resource_scope`).
+    pub fn hide_covered(&mut self, world: &mut World, ws: &WorldspaceId, cell: IVec3, id: PlacementId) -> bool {
+        let Some(group) = self.rt.cells.get_mut(&(ws.clone(), cell)).and_then(|c| c.groups.get_mut(&Level::Near)) else {
+            return false;
+        };
+        if !group.covered.contains(&id) || !group.promoted.insert(id) {
+            return false;
+        }
+        if let Some(scene) = self.rt.scene.0.clone() {
+            scene.hidden(world, ws, cell, id);
+        }
+        true
     }
 
     /// What the driver does with `p` this frame.

@@ -86,6 +86,14 @@ left, the cell's own load holds the id, or no spawner takes the resolved model (
 hook, warns). The queue is never saved: the caller writes the overlay, so the cell's next load spawns what was
 dropped. `prepare` assets are not waited on. Tests: `tests_pending.rs`.
 
+**Hiding a scene-drawn placement (IN38c1).** `Streaming::hide_covered(world, ws, cell, id) -> bool` (`stream.rs`) stops
+drawing a placement the static scene draws in a resident Near cell, with no entity replacing it (a broken urn): the id
+joins the near group's `promoted` set (a later `PromoteToEntity` is dropped as already promoted; dies with the group)
+and `CellScene::hidden` runs (the scene hook writes the same `PromotePlacement` as a promotion: every instance
+inactive at once). False and nothing changed for a cell not at Near, a precombine member, an uncovered or already
+promoted/hidden id. The overlay removal is the caller's (the next load reads it). Tests: `tests.rs`
+`hide_covered_*`, `sf_scene_bevy` `residency_tests.rs` `hidden_*`.
+
 **Worldspace left behind (CW-9, on by default (owner 2026-11-17)).** Indoors the exterior stays resident: the residency-cache ghost
 (`scheduler.rs` `linger`) keeps its full rings while the player stands within 32 m of the way back (a small interior:
 the whole visit), and far-field L2/L3 nodes never leave. Without parking it all keeps ticking (visibility, big_space,

@@ -1303,6 +1303,35 @@ fn promoted_queues_one_promote_placement() {
     assert_eq!(got, [&PromotePlacement { worldspace: ws(), cell, placement }]);
 }
 
+/// `IN38c1`: the hook's `hidden` (`Streaming::hide_covered`) queues one inactive write per
+/// instance of the placement, like a promotion, and a second one nothing; once the overlay removed
+/// it, releasing and streaming the cell back in leaves it undrawn.
+#[test]
+fn hidden_queues_one_inactive_write_per_instance_and_stays_gone_with_the_overlay() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut f = fixture(dir.path(), TableKind::Valid(chain_a_and_b), true, 4096);
+    let cell = f.cell;
+    let plan = stream_cell_in(&mut f, cell);
+    assert_eq!(f.parts[1].len(), 2, "placement 1 draws both chains");
+    assert!(plan.covered.contains(&1));
+
+    let hide = |f: &mut Fixture| {
+        let before = f.app.world().resource::<SceneUploads>().writes.len();
+        let id = f.indexed[1];
+        SceneHook.hidden(f.app.world_mut(), &ws(), cell, id);
+        f.app.update();
+        f.app.world().resource::<SceneUploads>().writes[before..].to_vec()
+    };
+    let got = hide(&mut f);
+    assert_eq!(got.len(), 2, "one write per instance");
+    assert!(got.iter().all(|w| !w.active()));
+    assert!(hide(&mut f).is_empty(), "already hidden");
+
+    SceneHook.release(f.app.world_mut(), &ws(), cell);
+    let (plan, covered) = stream_in_overlaid(&mut f, |f, o| o.remove(f.indexed[1]));
+    assert_left_the_scene(&f, &plan, &covered, 1);
+}
+
 // -- the world overlay (B5b) ----------------------------------------------------------
 
 /// Edits the fixture's `WorldOverlay` with `edit` before the cell streams in, then acquires,

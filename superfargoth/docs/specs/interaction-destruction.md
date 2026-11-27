@@ -437,3 +437,12 @@ its position (new accessor). The host passes the live params as `SpillSource(fn(
 before the removal forgets it. Tests: `mw_interaction` `tests_breakable.rs` (4 exact), `mw_rpg_bevy` `tests_breakable.rs`
 (4 headless exact); the "live once the model settles" half stays covered by `sf_world_bevy` `tests_pending.rs` (a
 `Streaming` with cooked models is not built in `mw_rpg_bevy` tests).
+
+## As built (IN38c1, 2026-11-27)
+
+`Streaming::hide_covered` (`sf_world_bevy` `stream.rs`, after `partition`) checks the cell's Near group's `covered`
+set, inserts the id into `promoted` (shared with promotions, so either one refuses the other) and calls
+`CellScene::hidden` (new default no-op, `scene.rs`); `SceneHook::hidden` (`sf_scene_bevy` `residency.rs`) forwards to
+`promoted` (one `PromotePlacement`). Tests: `sf_world_bevy` `tests.rs` `hide_covered_is_one_way_and_only_for_what_the_scene_draws`
+(recording `TestScene`: one `hidden`, second hide false, promotion after it dropped, uncovered / not resident / unknown
+false); `sf_scene_bevy` `residency_tests.rs` `hidden_queues_one_inactive_write_per_instance_and_stays_gone_with_the_overlay`.

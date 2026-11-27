@@ -720,6 +720,8 @@ struct SceneLog {
     upload_ids: HashMap<IVec3, Vec<PlacementId>>,
     /// Every `promoted` call, in order.
     promoted: Vec<(IVec3, PlacementId)>,
+    /// Every `hidden` call, in order.
+    hidden: Vec<(IVec3, PlacementId)>,
 }
 
 /// A test [`CellScene`]: logs every call and reports `covered` for the cells the
@@ -768,6 +770,9 @@ impl CellScene for TestScene {
     }
     fn promoted(&self, _world: &mut World, _ws: &WorldspaceId, cell: IVec3, placement: PlacementId) {
         self.log().promoted.push((cell, placement));
+    }
+    fn hidden(&self, _world: &mut World, _ws: &WorldspaceId, cell: IVec3, placement: PlacementId) {
+        self.log().hidden.push((cell, placement));
     }
     fn bytes(&self, _ws: &WorldspaceId, cell: IVec3) -> u64 {
         if self.covered.contains_key(&cell) { self.bytes } else { 0 }
@@ -1079,6 +1084,43 @@ fn promote_to_entity_ignores_what_the_scene_does_not_draw() {
     assert_eq!(log.lock().unwrap().spawns, 0);
     assert!(scene.log().promoted.is_empty());
     assert_eq!(app.world().resource::<Streaming>().stats().entities_spawned, spawned);
+}
+
+/// Runs `Streaming::hide_covered` with the resource out of the world.
+fn hide(app: &mut App, cell: IVec3, id: PlacementId) -> bool {
+    app.world_mut().resource_scope(|world, mut streaming: Mut<Streaming>| streaming.hide_covered(world, &ws(), cell, id))
+}
+
+/// `IN38c1`: hiding a scene-drawn placement tells the scene once and returns true; a second hide
+/// and a later promotion of it change nothing; what the scene does not draw, and a cell that is
+/// not resident, return false and tell the scene nothing.
+#[test]
+fn hide_covered_is_one_way_and_only_for_what_the_scene_draws() {
+    let dir = tempfile::tempdir().unwrap();
+    let cell = promo_cell();
+    let covered = covered_in(cell);
+    let item = PlacementId::from_key("test", b"item");
+    assert!(covered[&cell].contains(&item), "the dynamic placement is the scene's");
+    let uncovered = placements()
+        .into_iter()
+        .find(|p| Partition::STREAMING.cell_of(p.transform.pos) == cell && !covered[&cell].contains(&p.id))
+        .expect("the cell has an uncovered placement")
+        .id;
+    let scene = TestScene::new(covered);
+    let (_, _, log, mut app) = stream_in_logged(dir.path(), Some(scene.clone()), f32::MAX);
+
+    assert!(hide(&mut app, cell, item));
+    assert_eq!(scene.log().hidden, [(cell, item)]);
+    assert!(!hide(&mut app, cell, item), "hiding is one way");
+    promote(&mut app, cell, item);
+    run_promotions(&mut app, 10, &scene, |_| log.lock().unwrap().spawned.len());
+    assert_eq!(log.lock().unwrap().spawns, 0, "a hidden placement is never promoted");
+    assert!(scene.log().promoted.is_empty());
+
+    assert!(!hide(&mut app, cell, uncovered), "the entity path draws it");
+    assert!(!hide(&mut app, IVec3::new(1000, 0, 1000), item), "not resident");
+    assert!(!hide(&mut app, cell, PlacementId::from_key("test", b"nothing like it")));
+    assert_eq!(scene.log().hidden.len(), 1);
 }
 
 #[test]
