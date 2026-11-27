@@ -107,6 +107,9 @@ pub struct InteractParams {
     pub noise_bash_reach_m: f32,
     /// Reach of a lock pick attempt, before the material's ratio, m (range 0-20).
     pub noise_lockpick_reach_m: f32,
+    /// The impact reach of the reference material that the door, bash and lock pick reaches are
+    /// set for: a material's ratio is its `impact_reach_m` over this, m (range 1-60, `IN18b`).
+    pub noise_material_ref_m: f32,
     /// Fixed simulation rate leases count in, ticks per second.
     pub tick_hz: f32,
 }
@@ -214,6 +217,8 @@ impl Default for InteractParams {
             noise_bash_reach_m: 20.0,
             // tunables: const (bound from interact.noise.lockpick_reach_m in sf_interaction_bevy (IN18a); Guess)
             noise_lockpick_reach_m: 3.0,
+            // tunables: const (bound from interact.noise.material_ref_m in sf_interaction_bevy (IN18b); Guess, wood)
+            noise_material_ref_m: 10.0,
             // tunables: const (bound from the app's fixed timestep in sf_interaction_bevy; net.md 60 Hz tick)
             tick_hz: 60.0,
         }

@@ -199,6 +199,17 @@ then the `per_tick_max` loudest; a cut noise opens no window; a total order on e
 on `InteractParams`, bound in `bind_rules`. 5 exact tests (`tests_noise.rs`). The material reach ratio for doors,
 bashes and picks is the shell's (IN18b).
 
+**As built (IN18b, 2026-11-27).** `sf_interaction_bevy/src/noise.rs`: `InteractionMaterials` (host-filled
+`MaterialDef`s by id; a material's ratio = its `impact_reach_m` / `interact.noise.material_ref_m`, the reference
+material the door, bash and pick reaches are set for; none or unknown = 1), `NoiseInbox` (the tick's `Noise`s + the
+merge; later bash and pick rows `push`), `InteractionNoise` written in `NoiseSystems::Emit` (after `DoorSystems::Commit`,
+`DestroySystems::Release`, `ImpactSystems`). Door: at the doorway, door reach x ratio, kind `noise.door`, revealed. Break:
+at the object, material reach x `speed_mul_max`, kind `noise.break`, culprit as maker, not revealed (melee reveal waits for
+the damage kind on `Destroyed`). Impact (`physics`): one noise per contact, the louder side of indexed placements with a
+known material, kind its `noise`; a body in `Thrown` gives `ThrownLanding` naming the thrower; debris pieces,
+`PROJECTILE`, `HELD` silent; a changed active world clears the windows. `space` is `None` (the active worldspace). Not
+yet: the `Drop` case (dropper within `reveal_m`). 4 headless exact tests (`tests_noise.rs`).
+
 ## Reuse check (CONTRIBUTING rule 0)
 
 - **Bevy 0.20:** `FixedUpdate`, messages and observers, `Image` assets for the burn texture; no chemistry, fire or
@@ -263,6 +274,7 @@ Gaps go in [industry-audit.md](industry-audit.md) when built (none known).
 | `interact.noise.door_reach_m` | m | 8 | 0-40 | Guess | Gameplay |
 | `interact.noise.bash_reach_m` | m | 20 | 0-60 | Guess | Gameplay |
 | `interact.noise.lockpick_reach_m` | m | 3 | 0-20 | Guess | Gameplay |
+| `interact.noise.material_ref_m` | m | 10 | 1-60 | Guess (wood: the reach the door, bash, pick values are set for) | Gameplay |
 
 All `Scope::Dev`, `Lifetime::Live` except `interact.burn.cell_m` and `interact.burn.region_cells` (`Lifetime::Restart`:
 they size the grid). Material values, rule rows and `LightDef` are mod data, not tunables.

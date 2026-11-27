@@ -250,6 +250,7 @@ fn def_defaults_are_the_struct_defaults() {
         (&NOISE_DOOR_REACH_M, d.noise_door_reach_m),
         (&NOISE_BASH_REACH_M, d.noise_bash_reach_m),
         (&NOISE_LOCKPICK_REACH_M, d.noise_lockpick_reach_m),
+        (&NOISE_MATERIAL_REF_M, d.noise_material_ref_m),
     ];
     let counts = [
         (&PRIORITY_AMBIENT, d.priority_ambient),

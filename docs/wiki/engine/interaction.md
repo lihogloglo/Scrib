@@ -129,8 +129,14 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
 - **Noise (IN18a, core only).** `loudness_m(reach, v, params)` (`sf_interaction/src/noise.rs`): the material's
   `impact_reach_m` x `clamp(v / interact.noise.ref_speed_mps, 0, speed_mul_max)`, none under `min_speed_mps`.
   `NoiseMerge::step` thins one tick's `Noise`s: an object's loudest, inside its `interact.noise.merge_s` window only a
-  louder one, at most `per_tick_max` loudest first (a cut noise opens no window), any arrival order alike. No shell
-  system writes `InteractionNoise` yet (IN18b).
+  louder one, at most `per_tick_max` loudest first (a cut noise opens no window), any arrival order alike.
+- **Noise shell (IN18b, `sf_interaction_bevy/src/noise.rs`).** `NoiseSystems::Collect` (after door commit, break release,
+  impacts) gathers `DoorChanged` of registered doors (doorway, `door_reach_m` x material ratio = `impact_reach_m` /
+  `material_ref_m` from `InteractionMaterials`, revealed), `Destroyed` of registered destructibles (object, reach x
+  `speed_mul_max`, culprit, not revealed) and, with `physics`, this step's contacts (`NoiseCursor`; louder side of indexed
+  placements with a known material; `Thrown` body -> `ThrownLanding` + thrower; debris pieces, `PROJECTILE`, `HELD` silent)
+  into `NoiseInbox`; `NoiseSystems::Emit` writes the merged `InteractionNoise` (`space: None`). No host maps it to
+  `NoiseEvent` yet (IN18c); no `Drop` case yet.
 
 ## Bevy features used
 

@@ -74,6 +74,9 @@
 //! - Impacts (`IN4b`, `physics` feature, `impact` module docs): a gated physics contact
 //!   (`interact.impact.*`) is a [`PropDamage`] of kind `impact` on each registered side it touches.
 //!   Its culprit (`IN4c`) is the user who threw either body, while it flies (`impact::Thrown`).
+//! - Noise (`IN18b`, [`noise`] module docs): the tick's door toggles, breaks and (`physics`) contacts
+//!   thinned by the core's `NoiseMerge` into [`InteractionNoise`] in [`NoiseSystems::Emit`]; door
+//!   and break reaches scale by the material's ratio in [`InteractionMaterials`].
 //!
 //! Not here: game wiring (`IN32`).
 
@@ -102,6 +105,7 @@ pub mod focus;
 #[cfg(feature = "physics")]
 pub mod impact;
 pub mod light;
+pub mod noise;
 pub mod rest;
 pub mod seat;
 pub mod seat_clips;
@@ -122,6 +126,8 @@ mod tests_impact;
 #[cfg(test)]
 mod tests_light;
 #[cfg(test)]
+mod tests_noise;
+#[cfg(test)]
 mod tests_rest;
 #[cfg(test)]
 mod tests_seat;
@@ -141,6 +147,9 @@ pub use focus::{FocusCandidates, FocusState, PlayerFocus};
 #[cfg(feature = "physics")]
 pub use impact::{ImpactCursor, ImpactSystems, Thrown, ThrownBy};
 pub use light::{GameplayLight, GameplayLights, Light, LightChanged, LightRest, LightSystems, Lights};
+pub use noise::{InteractionMaterials, InteractionNoise, NOISE_BREAK, NOISE_DOOR, NoiseInbox, NoiseSystems, source_key};
+#[cfg(feature = "physics")]
+pub use noise::NoiseCursor;
 pub use rest::{RestRequested, RestSystems};
 pub use seat::{
     EndPoseFree, EndPoseTest, InteractionUser, SeatClips, SeatLoss, SeatPhase, SeatReport, SeatStep, SeatSystems, SeatUse, SeatUses,
@@ -357,6 +366,10 @@ pub const NOISE_LOCKPICK_REACH_M: Def<f32> = gp(def!(float "interact.noise.lockp
     .range(0.0, 20.0)
     .unit(Unit::Meters)
     .help("Reach of a lock pick attempt, before the material's ratio (IN18a)"));
+pub const NOISE_MATERIAL_REF_M: Def<f32> = gp(def!(float "interact.noise.material_ref_m" = 10.0)
+    .range(1.0, 60.0)
+    .unit(Unit::Meters)
+    .help("Impact reach of the reference material (wood) the door, bash and pick reaches are set for; a material's ratio is its reach over this (IN18b)"));
 
 /// The `interact.*` tunables [`InteractParams`] has, bound by [`InteractionPlugin`].
 pub const TUNABLES: &[&dyn AnyDef] = &[
@@ -410,6 +423,7 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &NOISE_DOOR_REACH_M,
     &NOISE_BASH_REACH_M,
     &NOISE_LOCKPICK_REACH_M,
+    &NOISE_MATERIAL_REF_M,
 ];
 
 // --- Resources ----------------------------------------------------------------------------------
@@ -655,6 +669,7 @@ impl Plugin for InteractionPlugin {
             .add_systems(FixedUpdate, bind_seat_clips.in_set(SeatClipSystems))
             .add_systems(FixedUpdate, seat::seat_events.in_set(SeatSystems::Events));
         destroy::build(app);
+        noise::build(app);
         bind!(app, PRIORITY_AMBIENT, |p, v| p.priority_ambient = to_u8(v));
         bind!(app, PRIORITY_SCHEDULE, |p, v| p.priority_schedule = to_u8(v));
         bind!(app, PRIORITY_QUEST, |p, v| p.priority_quest = to_u8(v));
@@ -710,6 +725,7 @@ fn bind_rules(app: &mut App) {
     bind!(app, NOISE_DOOR_REACH_M, |p, v| p.noise_door_reach_m = v);
     bind!(app, NOISE_BASH_REACH_M, |p, v| p.noise_bash_reach_m = v);
     bind!(app, NOISE_LOCKPICK_REACH_M, |p, v| p.noise_lockpick_reach_m = v);
+    bind!(app, NOISE_MATERIAL_REF_M, |p, v| p.noise_material_ref_m = v);
 }
 
 /// The `interact.debris.*` presentation tunables and, with the `physics` feature, the debris systems.
