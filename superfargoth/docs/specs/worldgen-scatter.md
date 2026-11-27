@@ -323,6 +323,13 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
   format tag: `guide`, `climate`, `seed`, `value`, `bytes`; the budget is not an input, the cut stays at load) and
   `write` / `read` / `cached` of `<guide>/scatter/` (`plants.bin` 64-byte and `rocks.bin` 72-byte f64 records in output
   order, `meta.json` with inputs hash, counts, per-file + product blake3; `cached` = None when absent or stale). 2 tests.
+- **WG-E2j.2** (2026-11-27, `mw_worldgen` `flora.rs`): `extra` (the `view world:` load) goes through `scatter_cached`:
+  `product_inputs` feeds `PRODUCT_VERSION`, the guide, the product `GridFields` (`InputsHash::fields`), seed, `tile_m`,
+  water margin, tile filter and settings, the learned file, slots and prior, the mosaic mask and region grid, clearing
+  values, `TownMask::digest` and the bytes of `PRODUCT_FILES`; a match reads, else the passes run (`winners`) and write.
+  Then `place` cuts the budget and poses. Written at load, not by a separate command (UE's derived-data-cache pattern):
+  the game's inputs (bake-store model bounds, the guide's towns) exist only there, so another command would hash
+  differently. `worldgen-flora` (census) runs without a product. 1 test (write, read, budget read, seed / file stale, damaged rebuilt).
 
 ## Tunables
 

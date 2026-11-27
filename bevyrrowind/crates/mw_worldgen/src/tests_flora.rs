@@ -10,6 +10,7 @@ use sf_worldgen::filter::FilterParams;
 use sf_worldgen::guide::Guide;
 use sf_worldgen::scatter::{Params, WaterMask};
 use sf_worldgen::scatter_fields::{FieldSample, GridFields};
+use sf_worldgen::scatter_product;
 use sf_worldgen::scatter_species::{Layer, SpeciesFile};
 use sf_worldgen::tiles::{GuideTiles, TileSettings};
 
@@ -250,6 +251,7 @@ fn scatter_v2_on_the_ten_times_guide_tile_alone_and_placements() {
         stamped: false,
         towns: flora::towns::TownCensus::default(),
         clearings: flora::ClearingCensus::default(),
+        product: flora::ProductUse::Off,
         seconds: [0.0; 4],
     };
     let placements = flora::placements(&run);
@@ -342,6 +344,60 @@ fn a_guide_without_the_climate_product_says_how_to_make_it() {
     let e = flora::product_fields(dir.path(), t.guide()).unwrap_err().to_string();
     assert!(e.contains("scrib-worldgen climate"), "{e}");
     assert_eq!(flora::species_file(dir.path()).unwrap(), shipped());
+}
+
+/// WG-E2j.2: the pass through the guide's `scatter/` product. The first load writes it and the next reads it, both
+/// with the passes' plants; the product read back is the computed kept set; the budget stays at load (no rebuild);
+/// another seed or a changed guide file is stale and rebuilds; a damaged product is rebuilt.
+#[test]
+fn the_scatter_product_is_written_once_read_at_load_and_rebuilt_when_stale() {
+    use flora::ProductUse;
+    let m = mosaic();
+    let regions = regions();
+    let l = learned(&m);
+    let t = tiles(&m);
+    let towns = TownMask::default();
+    let world = World::new(&m, &regions, &t, None, &towns);
+    let f = fields(&world);
+    let prm = Params::default();
+    let prior = flora::region_prior(&l.density, &[vec![0; 3], vec![1, 0, 0]]);
+    let water = WaterMask::sea(0.0, prm.water_margin_m);
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let run = |prm: &Params| flora::scatter_cached(d, &l, &world, &f, &water, &prior, prm).unwrap();
+    let computed = flora::scatter_tiles(&l, &world, &f, &water, &prior, &prm, None);
+    let (plants, full, used) = run(&prm);
+    assert_eq!(used, ProductUse::Wrote, "no product yet");
+    assert_eq!((plants.clone(), full), computed, "written: the passes' plants");
+    let (again, full2, used) = run(&prm);
+    assert_eq!(used, ProductUse::Read, "same inputs: read");
+    assert_eq!((again, full2), computed, "read == computed");
+    let inputs = flora::product_inputs(d, &world, &f, &l, &prior, &prm).unwrap();
+    let (stored, won) = scatter_product::read(d).unwrap();
+    assert_eq!(stored, inputs);
+    assert_eq!(won, flora::winners(&l, &world, &f, &water, &prior, &prm, None), "the product is the kept set");
+    // The budget cut stays at load.
+    let half = Params { budget: (plants.len() / 2) as f64, ..prm };
+    let (cut, _, used) = run(&half);
+    assert_eq!(used, ProductUse::Read, "a budget change reads the product");
+    assert!(!cut.is_empty() && cut.len() < plants.len(), "{} of {}", cut.len(), plants.len());
+    // Stale: another seed rebuilds, and the product follows it.
+    let seeded = Params { seed: prm.seed + 1, ..prm };
+    assert_eq!(run(&seeded).2, ProductUse::Wrote, "another seed: stale");
+    assert_ne!(scatter_product::read(d).unwrap().0, inputs);
+    assert_eq!(run(&prm).2, ProductUse::Wrote, "back to the first seed: stale again");
+    // Stale: a guide file the pass reads.
+    std::fs::write(d.join("roads.json"), b"{}").unwrap();
+    assert_ne!(flora::product_inputs(d, &world, &f, &l, &prior, &prm).unwrap(), inputs, "a guide file");
+    std::fs::remove_file(d.join("roads.json")).unwrap();
+    assert_eq!(flora::product_inputs(d, &world, &f, &l, &prior, &prm).unwrap(), inputs);
+    // A damaged product of these inputs is rebuilt.
+    let bin = d.join(scatter_product::DIR).join("plants.bin");
+    let mut bytes = std::fs::read(&bin).unwrap();
+    bytes[9] ^= 0x40;
+    std::fs::write(&bin, bytes).unwrap();
+    assert!(matches!(run(&prm).2, ProductUse::Rebuilt(_)), "damaged: rebuilt");
+    assert_eq!(run(&prm), (computed.0, computed.1, ProductUse::Read));
 }
 
 /// WG-E2i.2: the shipped species file parses, has its one canopy tree plus understorey and ground rows, and names

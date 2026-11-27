@@ -20,6 +20,7 @@ use std::path::Path;
 use crate::climate_map::ClimateMap;
 use crate::guide::Guide;
 use crate::scatter::{Candidate, CandidateKey, LayerWinners};
+use crate::scatter_fields::GridFields;
 use crate::scatter_rocks::{RockCandidate, RockKey};
 use crate::scatter_species::{Layer, RockContext};
 use crate::{Error, Result};
@@ -120,6 +121,34 @@ impl InputsHash {
         self.bytes("climate.head", &head);
         self.bytes("climate.classes", c.class_names.join("\n").as_bytes());
         self.bytes("climate.blake3", c.hash().as_bytes())
+    }
+
+    /// Feeds product [`GridFields`] (what the passes sample): dims, spacing, origin, class names and every raster.
+    /// Finer than [`InputsHash::climate`] (slope, aspect, curvature and the water distance too); an adapter feeds one.
+    pub fn fields(&mut self, f: &GridFields) -> &mut Self {
+        let mut head = Vec::with_capacity(40);
+        for v in [f.w as u64, f.h as u64, f.spacing_m.to_bits(), f.origin_m[0].to_bits(), f.origin_m[1].to_bits()] {
+            head.extend_from_slice(&v.to_le_bytes());
+        }
+        self.bytes("fields.head", &head);
+        self.bytes("fields.classes.names", f.class_names.join("
+").as_bytes());
+        self.bytes("fields.classes", &f.classes);
+        let rasters = [
+            ("fields.temperature_c", &f.temperature_c),
+            ("fields.precipitation_mm", &f.precipitation_mm),
+            ("fields.moisture", &f.moisture),
+            ("fields.slope_deg", &f.slope_deg),
+            ("fields.aspect_deg", &f.aspect_deg),
+            ("fields.altitude_m", &f.altitude_m),
+            ("fields.curvature", &f.curvature),
+            ("fields.water_distance_m", &f.water_distance_m),
+        ];
+        for (name, v) in rasters {
+            let bytes: Vec<u8> = v.iter().flat_map(|x| x.to_bits().to_le_bytes()).collect();
+            self.bytes(name, &bytes);
+        }
+        self
     }
 
     /// The hash, hex.

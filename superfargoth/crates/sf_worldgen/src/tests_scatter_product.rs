@@ -141,6 +141,12 @@ fn the_inputs_hash_is_stable_and_moves_with_every_input() {
     assert_ne!(base, hash(7, &g, &c2, SPECIES), "a climate raster");
     let tile = InputsHash::new().guide(&g).climate(&c).seed(7).bytes("species", SPECIES.as_bytes()).value("tile_m", 128.0).finish();
     assert_ne!(base, tile, "a named value");
+    let f = GridFields::from_products(&g, &c).unwrap();
+    let of = |f: &GridFields| InputsHash::new().fields(f).finish();
+    assert_eq!(of(&f), of(&f.clone()), "same fields, same hash");
+    let mut f2 = f.clone();
+    f2.slope_deg[4] += 0.25;
+    assert_ne!(of(&f), of(&f2), "a field raster");
     // Length prefixes: moving bytes from one part into the next is another input.
     assert_ne!(InputsHash::new().bytes("a", b"xy").bytes("b", b"z").finish(), InputsHash::new().bytes("a", b"x").bytes("b", b"yz").finish());
 }

@@ -187,6 +187,19 @@ impl TownMask {
         mask
     }
 
+    /// The mask as bytes (per raster: min, cell, dims, the bits packed), for a product's inputs hash (WG-E2j.2).
+    #[must_use]
+    pub fn digest(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        for r in &self.rasters {
+            for v in [r.min[0].to_bits(), r.min[1].to_bits(), r.cell.to_bits(), r.w as u64, r.h as u64] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            out.extend(r.bits.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |b, (i, &on)| b | (u8::from(on) << i))));
+        }
+        out
+    }
+
     /// Inside a town's area (apron included).
     #[must_use]
     pub fn contains(&self, x: f64, y: f64) -> bool {

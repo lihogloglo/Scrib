@@ -55,13 +55,14 @@ use sf_worldgen::climate_map::ClimateMap;
 use sf_worldgen::guide::Guide;
 use sf_worldgen::reach::VALID_FILE;
 use sf_worldgen::roads::RoadNetwork;
-use sf_worldgen::scatter::{CandidateKey, CandidateRules, Params, WaterMask, budget_cut_layers};
+use sf_worldgen::scatter::{CandidateKey, CandidateRules, LayerWinners, Params, WaterMask, budget_cut_layers};
+use sf_worldgen::scatter_product::{self, InputsHash};
 use sf_worldgen::scatter_fields::{Fields, GridFields, Suitability};
 use sf_worldgen::scatter_species::{Hat, Layer, SpeciesFile, species_declared};
 use sf_worldgen::scatter_stand::StandRules;
 use sf_worldgen::sites::SitesFile;
 use sf_worldgen::sites::clearings::{ClearingValues, Clearings};
-use sf_worldgen::tiles::GuideTiles;
+use sf_worldgen::tiles::{GuideTiles, WORLD_FILTER_FILE};
 use sf_worldgen::water::GuideWater;
 
 use crate::classify::{Class, RefInfo, classify};
@@ -723,8 +724,39 @@ pub struct FloraRun {
     pub towns: TownCensus,
     /// The guide's site and road clearings.
     pub clearings: ClearingCensus,
-    /// Seconds: source (mosaic, regions, references), learning, area census, scatter.
+    /// Where the kept set came from (WG-E2j.2).
+    pub product: ProductUse,
+    /// Seconds: source (mosaic, regions, references), learning, area census, scatter (the product read or the passes).
     pub seconds: [f64; 4],
+}
+
+/// Where a pass got its kept set (the `scatter/` guide product, WG-E2j.2).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProductUse {
+    /// No product folder (a census run): the passes ran.
+    Off,
+    /// Read from the guide's product.
+    Read,
+    /// No product, or a stale one: the passes ran and wrote it.
+    Wrote,
+    /// The product of these inputs failed its checks: the passes ran and rewrote it.
+    Rebuilt(String),
+    /// The passes ran; the product could not be written.
+    Unwritten(String),
+}
+
+impl ProductUse {
+    /// A short phrase for the summary line.
+    #[must_use]
+    pub fn label(&self) -> String {
+        match self {
+            Self::Off => "no product".into(),
+            Self::Read => "product read".into(),
+            Self::Wrote => "product written".into(),
+            Self::Rebuilt(e) => format!("product rebuilt ({e})"),
+            Self::Unwritten(e) => format!("product not written ({e})"),
+        }
+    }
 }
 
 /// The guide census of a pass: land samples per region and class (class `n` = none), and the samples only the
@@ -822,9 +854,9 @@ fn pose(run: &Learned, world: &World<'_>, seed: u64, c: &sf_worldgen::scatter::C
     })
 }
 
-/// The passes over `tiles` (every guide tile when `None`) on `world`: candidates, competition, layers, budget
-/// (four groups), pose. Returns (plants, full count per budget group).
-pub fn scatter_tiles(
+/// The passes over `tiles` (every guide tile when `None`) on `world`: candidates, competition, layers; the kept set
+/// before the budget (what the `scatter/` product holds).
+pub fn winners(
     learned: &Learned,
     world: &World<'_>,
     fields: &dyn Fields,
@@ -832,7 +864,7 @@ pub fn scatter_tiles(
     prior: &[Vec<Vec<f64>>],
     prm: &Params,
     tiles: Option<&[(i32, i32)]>,
-) -> (Vec<Plant>, [usize; 4]) {
+) -> LayerWinners {
     let file = &learned.file;
     let names = fields.class_names();
     let suit: Vec<Suitability> = file.species.iter().map(|s| Suitability::new(s, names)).collect();
@@ -864,30 +896,152 @@ pub fn scatter_tiles(
         all = rules.tiles(world.rect());
         &all
     };
-    let won = rules.run_tiles(fields, &stand, &excluded, tiles);
+    rules.run_tiles(fields, &stand, &excluded, tiles)
+}
+
+/// The load half of a pass on a kept set: the budget (four groups), then the pose. Returns (plants, full count per
+/// budget group).
+#[must_use]
+pub fn place(learned: &Learned, world: &World<'_>, prm: &Params, won: &LayerWinners) -> (Vec<Plant>, [usize; 4]) {
     let mut full = [won.rocks.len(), 0, 0, 0];
     for c in &won.plants {
         full[1 + c.key.layer as usize] += 1;
     }
-    let (_, keep) = budget_cut_layers(prm.seed, &won, prm.budget, prm.size_priority);
+    let (_, keep) = budget_cut_layers(prm.seed, won, prm.budget, prm.size_priority);
     let plants = won.plants.iter().zip(keep).filter(|(_, k)| *k).filter_map(|(c, _)| pose(learned, world, prm.seed, c)).collect();
     (plants, full)
 }
 
+/// The passes over `tiles` (every guide tile when `None`) on `world`: [`winners`], then [`place`].
+pub fn scatter_tiles(
+    learned: &Learned,
+    world: &World<'_>,
+    fields: &dyn Fields,
+    water: &WaterMask,
+    prior: &[Vec<Vec<f64>>],
+    prm: &Params,
+    tiles: Option<&[(i32, i32)]>,
+) -> (Vec<Plant>, [usize; 4]) {
+    place(learned, world, prm, &winners(learned, world, fields, water, prior, prm, tiles))
+}
+
+/// Version of the flora adapter's part of the product's inputs: bump it when the adapter feeds the passes
+/// differently (changes to the passes' own output bump `scatter_product::FORMAT`).
+// tunables: const (format)
+pub const PRODUCT_VERSION: u32 = 1;
+
+/// The guide files the pass reads besides the guide and its climate (stamps and layers: the ground height; the
+/// filter; water; the clearings' sites and roads), hashed as bytes (absent and empty differ).
+// tunables: const (file names)
+pub const PRODUCT_FILES: [&str; 10] = [
+    "stamps.json",
+    "stamps.f32",
+    "layers.json",
+    "layers.u16",
+    "layers.tint",
+    WORLD_FILTER_FILE,
+    "water.json",
+    VALID_FILE,
+    SITES_FILE,
+    "roads.json",
+];
+
+/// The inputs hash of a pass on `dir`'s guide (spec `worldgen-scatter.md` "Product"): the adapter version, the guide,
+/// the product fields, seed, tile size and water margin, the tile filter and settings, the learned rows and models,
+/// the region prior, the source mosaic's land mask and region grid, the clearing values, the towns' mask, and the
+/// [`PRODUCT_FILES`] of `dir` (so the clearings must be `dir`'s, [`guide_clearings`]).
+///
+/// # Errors
+/// A product file that exists but cannot be read.
+pub fn product_inputs(
+    dir: &Path,
+    world: &World<'_>,
+    fields: &GridFields,
+    learned: &Learned,
+    prior: &[Vec<Vec<f64>>],
+    prm: &Params,
+) -> Result<String, DumpError> {
+    let mut h = InputsHash::new();
+    h.value("flora.version", f64::from(PRODUCT_VERSION))
+        .guide(world.tiles.guide())
+        .fields(fields)
+        .seed(prm.seed)
+        .value("tile_m", prm.tile_m)
+        .value("water_margin_m", prm.water_margin_m)
+        .bytes("tiles.filter", format!("{:?}", world.tiles.params()).as_bytes())
+        .bytes("tiles.settings", format!("{:?}", world.tiles.settings()).as_bytes())
+        .bytes("learned.file", format!("{:?}", learned.file).as_bytes())
+        .bytes("learned.slots", format!("{:?}", learned.slots).as_bytes())
+        .bytes("prior", format!("{prior:?}").as_bytes())
+        .bytes("clearing.values", format!("{:?}", ClearingValues::default()).as_bytes())
+        .bytes("towns", &world.towns.digest());
+    let (m, r) = (world.source, world.regions);
+    let mut head = Vec::with_capacity(48);
+    for v in [m.cells_min.0, m.cells_min.1, r.cells_min.0, r.cells_min.1] {
+        head.extend_from_slice(&v.to_le_bytes());
+    }
+    for v in [m.width, m.height, r.width, r.height] {
+        head.extend_from_slice(&(v as u64).to_le_bytes());
+    }
+    h.bytes("source.head", &head).bytes("source.mask", &m.mask).bytes("source.regions", &r.index);
+    for name in PRODUCT_FILES {
+        match std::fs::read(dir.join(name)) {
+            Ok(b) => h.bytes(&format!("file {name}"), &b),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => h.bytes(&format!("absent {name}"), &[]),
+            Err(e) => return Err(DumpError::Invalid(format!("{}: {e}", dir.join(name).display()))),
+        };
+    }
+    Ok(h.finish())
+}
+
+/// A pass on `dir`'s guide through its `scatter/` product (WG-E2j.2): the kept set read when the product is of these
+/// inputs ([`product_inputs`]), else the passes over every tile and the product (re)written; then [`place`]. Returns
+/// (plants, full count per budget group, where the kept set came from).
+///
+/// # Errors
+/// A product file that exists but cannot be read.
+pub fn scatter_cached(
+    dir: &Path,
+    learned: &Learned,
+    world: &World<'_>,
+    fields: &GridFields,
+    water: &WaterMask,
+    prior: &[Vec<Vec<f64>>],
+    prm: &Params,
+) -> Result<(Vec<Plant>, [usize; 4], ProductUse), DumpError> {
+    let inputs = product_inputs(dir, world, fields, learned, prior, prm)?;
+    let (won, used) = match scatter_product::cached(dir, &inputs) {
+        Ok(Some(won)) => (won, ProductUse::Read),
+        cached => {
+            let won = winners(learned, world, fields, water, prior, prm, None);
+            let used = match (scatter_product::write(dir, &inputs, &won), cached) {
+                (Err(e), _) => ProductUse::Unwritten(e.to_string()),
+                (Ok(_), Err(e)) => ProductUse::Rebuilt(e.to_string()),
+                (Ok(_), Ok(_)) => ProductUse::Wrote,
+            };
+            (won, used)
+        }
+    };
+    let (plants, full) = place(learned, world, prm, &won);
+    Ok((plants, full, used))
+}
+
 /// Learns from `db`'s exterior and scatters on `tiles`' guide with `fields` and `water`, outside the stamps,
-/// `clearings` and `towns`.
+/// `clearings` and `towns`; through the guide folder `product`'s `scatter/` product when given ([`scatter_cached`];
+/// `clearings` must then be its [`guide_clearings`]).
 #[allow(clippy::too_many_arguments)] // the run's inputs, each its own product
 pub fn scatter_world(
     db: &RecordDb,
     source: &MwWorldSource,
     bounds: Bounds<'_>,
     tiles: &GuideTiles,
-    fields: &dyn Fields,
+    fields: &GridFields,
     water: &WaterMask,
     file: &SpeciesFile,
     clearings: Option<&Clearings>,
     towns: &TownMask,
     prm: Params,
+    product: Option<&Path>,
 ) -> Result<FloraRun, DumpError> {
     let t0 = Instant::now();
     let m = assemble(db)?;
@@ -903,7 +1057,12 @@ pub fn scatter_world(
     let (area, cleared, in_towns) = guide_census(&world, fields, g.sea_level_m);
     let prior = region_prior(&learned.density, &area);
     let t3 = Instant::now();
-    let (plants, full) = scatter_tiles(&learned, &world, fields, water, &prior, &prm, None);
+    let (plants, full, product) = if let Some(dir) = product {
+        scatter_cached(dir, &learned, &world, fields, water, &prior, &prm)?
+    } else {
+        let (plants, full) = scatter_tiles(&learned, &world, fields, water, &prior, &prm, None);
+        (plants, full, ProductUse::Off)
+    };
     let t4 = Instant::now();
     let region_names = regions
         .legend
@@ -928,6 +1087,7 @@ pub fn scatter_world(
             roads: clearings.map_or(0, |c| c.roads),
             excluded: cleared,
         },
+        product,
         seconds: [s(t0, t1), s(t1, t2), s(t2, t3), s(t3, t4)],
     })
 }
@@ -1000,7 +1160,7 @@ pub fn extra(
     }
     let towns = TownMask::new(towns, bounds, &TownParams::default());
     let run = guide_inputs(guide, tiles, &prm).and_then(|(file, fields, water, clearings)| {
-        scatter_world(db, source, bounds, tiles, &fields, &water, &file, clearings.as_ref(), &towns, prm)
+        scatter_world(db, source, bounds, tiles, &fields, &water, &file, clearings.as_ref(), &towns, prm, Some(guide))
     });
     match run {
         Ok(run) => {
@@ -1045,7 +1205,7 @@ pub fn summary_line(run: &FloraRun) -> String {
         format!("clearings ({} sites, {} road segments, {:.0} m² excluded)", c.sites, c.roads, c.excluded as f64 * run.sample_m2)
     };
     format!(
-        "{} placements ({}), {} rows / {} models, budget {:.0}, {}stamps, {clearings}, {towns}, {:.1} s (source {:.1}, \
+        "{} placements ({}), {} rows / {} models, budget {:.0}, {}stamps, {clearings}, {towns}, {}, {:.1} s (source {:.1}, \
          learn {:.1}, census {:.1}, scatter {:.1})",
         run.plants.len(),
         groups.join(", "),
@@ -1053,6 +1213,7 @@ pub fn summary_line(run: &FloraRun) -> String {
         run.learned.slots.iter().map(Vec::len).sum::<usize>(),
         run.prm.budget,
         if run.stamped { "" } else { "no " },
+        run.product.label(),
         run.seconds.iter().sum::<f64>(),
         run.seconds[0],
         run.seconds[1],
@@ -1144,7 +1305,7 @@ pub fn run_census(db: &RecordDb, bounds: Bounds<'_>, guide: &Path, budget: Optio
         prm.budget = b;
     }
     let (file, fields, water, clearings) = guide_inputs(guide, &tiles, &prm)?;
-    let run = scatter_world(db, &source, bounds, &tiles, &fields, &water, &file, clearings.as_ref(), &TownMask::default(), prm)?;
+    let run = scatter_world(db, &source, bounds, &tiles, &fields, &water, &file, clearings.as_ref(), &TownMask::default(), prm, None)?;
     let md = census_md(&run, guide, 8);
     std::fs::write(guide.join("flora-census.md"), &md)?;
     Ok(md)
