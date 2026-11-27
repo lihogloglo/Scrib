@@ -1501,5 +1501,105 @@ fn rock_layer_in_the_passes_tile_alone_share_zero_and_groups() {
     ids.sort_unstable();
     ids.dedup();
     assert_eq!(ids.len(), placed.len(), "rock ids are unique");
+    library_placements_on_the_run(&run);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// RG-P2 on a fixture run: no libraries drop every library rock; one variant per used class places each, ids in order.
+fn library_placements_on_the_run(run: &FloraRun) {
+    let lib_rocks = flora::rocks::library_rocks(run);
+    assert!(!lib_rocks.is_empty(), "the fixture run has library rocks");
+    let none = flora::rocks::library_placements(run, &sf_rockgen::Libraries::default());
+    assert_eq!((none.placements.len(), none.dropped), (0, lib_rocks.len()), "no library: all dropped");
+    let classes: std::collections::BTreeSet<_> = lib_rocks.iter().map(|r| r.class.clone()).collect();
+    let libs = sf_rockgen::Libraries::new(classes.into_iter().map(|c| (c, rock_library(1.0, &[[1.0, 0.8, 0.5]]))));
+    let all = flora::rocks::library_placements(run, &libs);
+    assert_eq!(all.dropped, 0);
+    assert_eq!(all.placements.iter().map(|p| p.id).collect::<Vec<_>>(), lib_rocks.iter().map(|r| r.id).collect::<Vec<_>>());
+}
+
+/// A rock library of size mark `size_m` whose variants have LOD0 boxes from the origin to each `max` shifted by -0.25
+/// on y (off-centre, so the axis conversion is visible in the bounds).
+fn rock_library(size_m: f32, maxes: &[[f32; 3]]) -> sf_rockgen::Library {
+    let variants = maxes
+        .iter()
+        .zip(1u64..)
+        .map(|(m, seed)| sf_rockgen::Variant {
+            seed,
+            lods: sf_rockgen::RockLods {
+                lods: Vec::new(),
+                bounds: sf_rockgen::Aabb { min: [-m[0] * 0.5, -0.25, -m[2] * 0.5], max: [m[0] * 0.5, m[1] - 0.25, m[2] * 0.5] },
+                hash: seed,
+            },
+            hull: None,
+        })
+        .collect();
+    sf_rockgen::Library { key: 7, size_m, variants }
+}
+
+/// RG-P2: library rocks become `ROCK_LIBRARY` placements with their own ids, the variant `hash mod n` as model id,
+/// scale mark / size and the lift along the rotated up, exactly; one model info per used variant with its LOD0 bounds
+/// in the engine frame; rocks of an unknown class or an empty library are dropped and counted; one base per class.
+#[test]
+#[allow(clippy::float_cmp)] // exact: the spec's formula, evaluated the same way
+fn library_rocks_become_placements_with_model_infos() {
+    use flora::rocks::{LIBRARY_BASE_KIND, RockPlacement, engine_bounds, resolve_library_rocks};
+    use mw_world::source::ROCK_LIBRARY;
+    use sf_coords::{WorldPos, WorldTransform};
+    use sf_rockgen::placed::parse_model_id;
+    use sf_world::PlacementId;
+    let maxes = [[2.0, 1.5, 0.8], [2.0, 1.2, 1.0], [1.6, 2.0, 0.5]];
+    let libs = sf_rockgen::Libraries::new([
+        ("talus".to_owned(), rock_library(2.0, &maxes)),
+        ("slab".to_owned(), sf_rockgen::Library { key: 8, size_m: 1.0, variants: Vec::new() }),
+    ]);
+    let rotation = glam::Quat::from_rotation_x(0.3) * glam::Quat::from_rotation_y(1.1);
+    let rock = |n: u8, class: &str, variant: u64, mark: f32, sink: f32| RockPlacement {
+        id: PlacementId::from_key("test.rocks", &[n]),
+        class: class.to_owned(),
+        variant,
+        transform: WorldTransform {
+            pos: WorldPos::from_f64(glam::DVec3::new(100.0 + f64::from(n), 5.0, -40.0)),
+            rotation,
+            scale: Vec3::splat(mark),
+        },
+        sink,
+        regime: None,
+    };
+    let rocks = [
+        rock(0, "talus", 0, 1.0, 0.2),
+        rock(1, "talus", 4, 3.0, 0.5),
+        rock(2, "slab", 1, 1.0, 0.1),
+        rock(3, "talus", 5, 0.5, 0.7),
+        rock(4, "nosuch", 2, 1.0, 0.1),
+        rock(5, "talus", 9, 2.0, 0.0),
+    ];
+    let out = resolve_library_rocks(&rocks, &libs);
+    assert_eq!(out.dropped, 2, "the empty library and the unknown class");
+    let kept: Vec<_> = rocks.iter().filter(|r| r.class == "talus").collect();
+    assert_eq!(out.placements.len(), kept.len());
+    for (p, r) in out.placements.iter().zip(&kept) {
+        let index = u32::try_from(r.variant % 3).unwrap();
+        assert_eq!(p.id, r.id);
+        assert_eq!(p.class, ROCK_LIBRARY);
+        assert_eq!(p.flags, PlacementFlags::default());
+        assert_eq!(p.base, RecordRef::new(LIBRARY_BASE_KIND, "talus"));
+        assert_eq!(parse_model_id(p.model.as_ref().unwrap().as_str()), Some(("talus", index)));
+        let scale = r.transform.scale.x / 2.0;
+        assert_eq!(p.transform.scale, Vec3::splat(scale));
+        assert_eq!(p.transform.rotation, r.transform.rotation);
+        let lift = (0.5 - r.sink) * maxes[index as usize][2] * scale;
+        assert_eq!(p.transform.pos, r.transform.pos.offset(rotation * Vec3::new(0.0, lift, 0.0)), "{r:?}");
+    }
+    assert!(std::sync::Arc::ptr_eq(&out.placements[0].base.kind, &out.placements[3].base.kind), "one base per class, cloned");
+    assert_eq!(out.models.len(), 3, "variants 0, 1, 2 used");
+    for (id, info) in &out.models {
+        let (_, index) = parse_model_id(id.as_str()).unwrap();
+        let b = libs.variant("talus", index).unwrap().lods.bounds;
+        assert_eq!((info.min, info.max), engine_bounds(b.min, b.max));
+        let m = maxes[index as usize];
+        assert_eq!(info.min, Vec3::new(-m[0] * 0.5, -m[2] * 0.5, -(m[1] - 0.25)), "z = -y: the far side is the max y");
+        assert_eq!(info.max, Vec3::new(m[0] * 0.5, m[2] * 0.5, 0.25));
+        assert_eq!((info.bytes, info.lod_distance), (0, 0.0));
+    }
 }

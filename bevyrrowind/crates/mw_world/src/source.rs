@@ -25,6 +25,9 @@ use crate::{EDITOR_MARKERS, ids, model_path};
 pub const CONTAINER: PlacementClass = PlacementClass::Custom(1);
 /// Activators: placed like statics, but the content pack spawns them (scripts, activation).
 pub const ACTIVATOR: PlacementClass = PlacementClass::Custom(2);
+/// Generated library rocks (`sf_rockgen` variants, model id `rockgen/<class>/<index>`): the rock spawner draws them
+/// (spec `rockgen.md` "(f) Placement in the game"). Not in [`MOVER_SOLID`] until their shape source lands (RG-P5b).
+pub const ROCK_LIBRARY: PlacementClass = PlacementClass::Custom(3);
 /// The classes the mover collides with: the physics hook gives them static bodies
 /// (`mw_walkers_bevy` `physics.rs` `hook`) and the navmesh bake takes their `collision.cook`
 /// shapes as geometry (`mw_bake::nav::is_solid`). One list, so the two never disagree.

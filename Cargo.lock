@@ -6141,6 +6141,7 @@ dependencies = [
  "serde_json",
  "sf_coords",
  "sf_records",
+ "sf_rockgen",
  "sf_vfs",
  "sf_world",
  "sf_worldgen",

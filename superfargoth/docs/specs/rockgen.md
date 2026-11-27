@@ -710,3 +710,9 @@ placement rules, V-HACD or per-piece hulls for collision, an SDF difference for 
 `parse_model_id` (prefix `MODEL_PREFIX`; ids with a sign, a leading zero or a separator in the class are refused, so the
 round trip is exact), `resolve` and `variant` as "(f)" 2-3; `read_libraries` + `ReadError` under `bake`. Ids are plain
 `String`s (the crate takes no `sf_vfs`): the content builder wraps them in a `VfsPath`, unchanged by its lowercasing.
+
+**RG-P2 (2026-11-27).** `mw_worldgen` `flora_rocks.rs`: `library_placements(run, libs)` = `resolve_library_rocks(
+library_rocks(run), libs)` -> `LibraryPlacements { placements, models, dropped }` (a struct, not the planned tuple);
+base `RecordRef("rockgen", <class>)` (`LIBRARY_BASE_KIND`), `engine_bounds` for the infos; an id `VfsPath::new` refuses
+is dropped too. `mw_world::source::ROCK_LIBRARY = Custom(3)`, not yet in `MOVER_SOLID`. `mw_worldgen` takes `sf_rockgen`
+without features (the app's reader needs `bake`, `mw_boot_bevy` already has it).

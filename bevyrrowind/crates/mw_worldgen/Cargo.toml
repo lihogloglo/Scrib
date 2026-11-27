@@ -18,6 +18,8 @@ serde.workspace = true
 serde_json.workspace = true
 sf_coords.workspace = true
 sf_records.workspace = true
+# RG-P2 library rocks as placements: the decoded variant libraries (`sf_rockgen::Libraries`); Bevy-free, no features.
+sf_rockgen.workspace = true
 sf_vfs.workspace = true
 sf_world.workspace = true
 sf_worldgen.workspace = true

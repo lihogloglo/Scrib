@@ -25,15 +25,26 @@
 //! mesh and pose at load (`scatter_rocks::pick`). A pack model becomes a [`Placement`] copying its learned reference
 //! (group `rocks` of the content's extra passes), seated by its learned origin offset (`offset_m x scale`, as the
 //! plants: a pack mesh's origin is its own, so a share of its short axis would not seat it); a library class stays a
-//! [`RockPlacement`] in the run (class, variant hash, size mark, transform, sink share), which the streamer reads
-//! once RG-P lands.
+//! [`RockPlacement`] in the run (class, variant hash, size mark, transform, sink share).
+//!
+//! **Library rocks as placements** (spec `rockgen.md` "(f) Placement in the game", RG-P2, [`library_placements`]):
+//! each library rock is resolved once against the decoded variant libraries ([`Libraries::resolve`]) into a streamed
+//! placement of class [`ROCK_LIBRARY`] whose model is the variant's id `rockgen/<class>/<index>` (never mounted), at
+//! scale mark / reference size, lifted along its rotated up so its `sink` share sits below the ground; beside them the
+//! index's [`ModelInfo`] per used id (the variant's LOD0 bounds in the engine frame), since the bake knows no such
+//! model. One [`RecordRef`] per class and one [`VfsPath`] per variant, cloned (a refcount, not an allocation per rock).
 
-use std::collections::BTreeMap;
+use std::collections::hash_map::Entry;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use glam::{DVec3, Quat, Vec3};
 use sf_coords::{WorldPos, WorldTransform};
-use sf_world::{Placement, PlacementId};
+use mw_world::source::ROCK_LIBRARY;
+use sf_rockgen::Libraries;
+use sf_rockgen::placed::model_id;
+use sf_vfs::VfsPath;
+use sf_world::{ModelInfo, Placement, PlacementFlags, PlacementId, RecordRef};
 use sf_worldgen::geology::{GeologyGrid, GeologyTable};
 use sf_worldgen::scatter::Params;
 use sf_worldgen::scatter_rocks::{RockCandidate, RockGround, RockKey, RockValues, pick};
@@ -388,7 +399,7 @@ pub struct RockPlacement {
     pub regime: Option<u8>,
 }
 
-/// The run's library rocks in the engine frame (no consumer until RG-P).
+/// The run's library rocks in the engine frame (the input of [`library_placements`]).
 #[must_use]
 pub fn library_rocks(run: &FloraRun) -> Vec<RockPlacement> {
     run.rocks
@@ -412,4 +423,76 @@ pub fn library_rocks(run: &FloraRun) -> Vec<RockPlacement> {
 pub fn rock_kinds(run: &FloraRun) -> [usize; 2] {
     let models = run.rocks.iter().filter(|r| matches!(r.mesh, RockMesh::Model(_))).count();
     [models, run.rocks.len() - models]
+}
+
+/// Record kind of a library rock's base (its id is the class name).
+// tunables: const (format: the record kind of library rock placements)
+pub const LIBRARY_BASE_KIND: &str = "rockgen";
+
+/// Library rocks as streamed placements, with the index's model info of every variant they use.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LibraryPlacements {
+    /// One per resolved library rock, in the input order.
+    pub placements: Vec<Placement>,
+    /// Per used model id: the variant's LOD0 bounds in the engine frame, `bytes` 0 (the meshes are shared and
+    /// resident), `lod_distance` 0 (no limit: the ring end and size culling decide).
+    pub models: HashMap<VfsPath, ModelInfo>,
+    /// Rocks of a class with no (or an empty) library, or whose id is not a valid path: left out.
+    pub dropped: usize,
+}
+
+/// The run's library rocks resolved against `libs` ([`resolve_library_rocks`] of [`library_rocks`]).
+#[must_use]
+pub fn library_placements(run: &FloraRun, libs: &Libraries) -> LibraryPlacements {
+    resolve_library_rocks(&library_rocks(run), libs)
+}
+
+/// Library rocks resolved against `libs`: per rock the variant `hash mod n`, scale `mark / size_m` (the mark is the
+/// rock's uniform scale) and the position moved by `lift_m` along the rotated up (+Y); class [`ROCK_LIBRARY`], base
+/// `rockgen:<class>`, model `rockgen/<class>/<index>`, default flags, the rock's id.
+#[must_use]
+pub fn resolve_library_rocks(rocks: &[RockPlacement], libs: &Libraries) -> LibraryPlacements {
+    let mut out = LibraryPlacements::default();
+    let mut bases: HashMap<&str, RecordRef> = HashMap::new();
+    let mut ids: HashMap<(&str, u32), Option<VfsPath>> = HashMap::new();
+    for r in rocks {
+        let Some(res) = libs.resolve(&r.class, r.variant, r.transform.scale.x, r.sink) else {
+            out.dropped += 1;
+            continue;
+        };
+        let model = match ids.entry((r.class.as_str(), res.index)) {
+            Entry::Occupied(e) => e.get().clone(),
+            Entry::Vacant(e) => {
+                let path = VfsPath::new(&model_id(&r.class, res.index)).ok();
+                if let (Some(path), Some(v)) = (&path, libs.variant(&r.class, res.index)) {
+                    let (min, max) = engine_bounds(v.lods.bounds.min, v.lods.bounds.max);
+                    out.models.insert(path.clone(), ModelInfo { min, max, bytes: 0, lod_distance: 0.0 });
+                }
+                e.insert(path).clone()
+            }
+        };
+        let Some(model) = model else {
+            out.dropped += 1;
+            continue;
+        };
+        let base = bases.entry(r.class.as_str()).or_insert_with(|| RecordRef::new(LIBRARY_BASE_KIND, r.class.as_str())).clone();
+        let mut transform = r.transform;
+        transform.pos = transform.pos.offset(transform.rotation * Vec3::new(0.0, res.lift_m, 0.0));
+        transform.scale = Vec3::splat(res.scale);
+        out.placements.push(Placement {
+            id: r.id,
+            base,
+            model: Some(model),
+            transform,
+            class: ROCK_LIBRARY,
+            flags: PlacementFlags::default(),
+        });
+    }
+    out
+}
+
+/// A rockgen box (x, y, z up) in the engine frame (`[x, y, z] -> [x, z, -y]`, as `sf_rockgen_bevy` `rock_mesh`).
+#[must_use]
+pub fn engine_bounds(min: [f32; 3], max: [f32; 3]) -> (Vec3, Vec3) {
+    (Vec3::new(min[0], min[2], -max[1]), Vec3::new(max[0], max[2], -min[1]))
 }
