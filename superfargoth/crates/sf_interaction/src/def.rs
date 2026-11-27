@@ -8,6 +8,8 @@ use sf_records::RecordId;
 use sf_world::PlacementId;
 use smallvec::SmallVec;
 
+use crate::light::LightDef;
+
 /// 32-bit FNV-1a, the same hash `sf_action` keys its tags with, so a tag hashed here and there
 /// is the same value on every peer.
 #[must_use]
@@ -145,7 +147,7 @@ pub enum SlotKind {
     Ladder(LadderDef),
     Workstation(WorkstationDef),
     /// Snuff/relight a light-bearing object ((d) World rules, IN28).
-    Light,
+    Light(LightDef),
 }
 
 /// A hinged leaf (IN33 builds the swing).

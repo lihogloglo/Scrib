@@ -282,7 +282,7 @@ fn def_finds_its_first_door_slot() {
     };
     let mut def = InteractableDef {
         id: RecordId::new("door"),
-        slots: vec![slot(SlotKind::Light), slot(SlotKind::Door(door_def(true, true)))],
+        slots: vec![slot(SlotKind::Light(LightDef::default())), slot(SlotKind::Door(door_def(true, true)))],
         verbs: smallvec![],
         destructible: None,
         carry: None,

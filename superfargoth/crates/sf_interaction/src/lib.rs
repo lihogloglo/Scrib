@@ -9,6 +9,8 @@
 //! - [`verbs`]: `rank_verbs` (the uses an object offers now) and the per-player `FocusStabilizer`.
 //! - [`door`]: the swing-door state machine (toggle, step, leaf pose, close-behind schedule).
 //! - [`rest`]: the rest hook's slotless verb `VERB_SLEEP`.
+//! - [`light`]: light as state: `LightDef`, the `Lit` toggle (snuff / relight, rule sets), `LightChanged`,
+//!   the one-byte rest state.
 //! - [`entrance`]: `pick_entrance` / `pick_exit` (side order, the shell's validity checks).
 //! - [`cook`]: `interact.cook`, the one-time def bake (stub).
 //! - [`params`]: the core's tunables as plain fields (`interact.*`, bound by `sf_interaction_bevy`).
@@ -21,6 +23,7 @@ pub mod def;
 pub mod door;
 pub mod entrance;
 pub mod index;
+pub mod light;
 pub mod params;
 pub mod rest;
 pub mod verbs;
@@ -38,6 +41,10 @@ pub use cook::cook;
 pub use door::{DOOR_OPEN, DOOR_REST_VERSION, DOOR_STATE_OWNER, DoorChanged, DoorState, VERB_CLOSE, VERB_OPEN, swing_sign};
 pub use entrance::{pick_entrance, pick_exit, to_local};
 pub use index::{IndexedSlot, KindTag, PointIndex, SlotUser, compose};
+pub use light::{
+    LIGHT_REST_LIT, LIGHT_REST_UNLIT, LIGHT_STATE_OWNER, LIT, LightChanged, LightDef, LightRefusal, LightState,
+    VERB_RELIGHT, VERB_SNUFF,
+};
 pub use params::InteractParams;
 pub use rest::VERB_SLEEP;
 pub use verbs::{FocusStabilizer, VerbChoice, VerbTarget, rank_verbs};
@@ -46,5 +53,7 @@ pub use verbs::{FocusStabilizer, VerbChoice, VerbTarget, rank_verbs};
 mod tests_claims;
 #[cfg(test)]
 mod tests_door;
+#[cfg(test)]
+mod tests_light;
 #[cfg(test)]
 mod tests_queries;

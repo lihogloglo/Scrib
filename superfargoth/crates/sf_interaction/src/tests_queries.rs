@@ -79,7 +79,7 @@ fn street() -> PointIndex<u32> {
     let mut ix = PointIndex::new();
     let chair = def(vec![seat("sit")], smallvec![], vec![]);
     let door = def(
-        vec![slot_def(SlotKind::Light, verb("open", 0, TagFilter::default()), at(0.0, 0.0, 0.0), smallvec![])],
+        vec![slot_def(SlotKind::Light(LightDef::default()), verb("open", 0, TagFilter::default()), at(0.0, 0.0, 0.0), smallvec![])],
         smallvec![],
         vec![],
     );
@@ -194,7 +194,7 @@ fn bed() -> InteractableDef {
     sit.verb.priority = 5;
     let mut sleep = seat("sleep");
     sleep.verb.priority = 10;
-    let snuff = slot_def(SlotKind::Light, verb("snuff", 10, any_of("lit")), at(0.0, 0.0, 0.0), smallvec![]);
+    let snuff = slot_def(SlotKind::Light(LightDef::default()), verb("snuff", 10, any_of("lit")), at(0.0, 0.0, 0.0), smallvec![]);
     def(
         vec![sit, sleep, snuff],
         smallvec![

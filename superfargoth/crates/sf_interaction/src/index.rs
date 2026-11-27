@@ -40,7 +40,7 @@ impl KindTag {
             SlotKind::Lever(_) => Self::Lever,
             SlotKind::Ladder(_) => Self::Ladder,
             SlotKind::Workstation(_) => Self::Workstation,
-            SlotKind::Light => Self::Light,
+            SlotKind::Light(_) => Self::Light,
         }
     }
 }

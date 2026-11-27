@@ -112,6 +112,12 @@ fetch, the surface-wetness pattern; no per-blade state). Saved as a sparse list 
   the active space's entries into `sources` in place of its own placed-light list and record "on" flag; equipped
   lights (equipment, not interaction props) stay the host's. `LightChanged` reaches the darkness concern the same way.
 
+**As built (IN19a, 2026-11-27).** `sf_interaction/src/light.rs`: `SlotKind::Light(LightDef)`, `LIT`, `VERB_SNUFF` /
+`VERB_RELIGHT`, `LightState::{initial, tag, use_verb, set}` (`use_verb` refuses `AlreadyUnlit` / `AlreadyLit` /
+`NotALightVerb` and changes nothing; `set` for rules emits only on a change), `LightChanged`, the one-byte rest state
+(`LIGHT_STATE_OWNER` = `light`, bytes 0/1, others rejected). `at` is the world-frame `Vec3` of the core. Tests:
+`tests_light.rs` (6 exact). Next: the shell (IN19b).
+
 ## Noise (IN18; impacts IN4, people IN36)
 
 | Case | Trigger (shell) | `at` | Reveals the maker |
