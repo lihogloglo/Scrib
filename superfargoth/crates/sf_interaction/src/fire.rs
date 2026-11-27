@@ -39,6 +39,12 @@
 //! - **Settlements.** A body whose material is a `structure` and that the host marks `in_settlement`
 //!   never takes heat or `Burning` from spread; it burns only through an authored stage or rule.
 //!
+//! - **Save (`IN39d`).** [`Fire::rest_bytes`] / [`Fire::restore`]: one placement's heat, burn progress
+//!   (elapsed burn ticks: `since` is restored that many ticks before the load tick, the part that does
+//!   not fit above tick 0 kept as a burn credit), whether it heats from the tick after `since`, and
+//!   whether it is queued. The heat-check tick restarts at the load tick and the round-robin cursor is
+//!   not saved, so a restored target misses no more than one tick of catch-up.
+//!
 //! Damage while burning is the rule's (`DestructionRules`, host).
 
 use std::collections::BTreeMap;
@@ -59,6 +65,22 @@ pub const BURNING: TagId = TagId::of("burning");
 pub const WET: TagId = TagId::of("wet");
 /// Charred: burnt out, never burns again.
 pub const CHARRED: TagId = TagId::of("charred");
+
+/// The format version of [`Fire::rest_bytes`].
+// tunables: const (format: save blob version)
+pub const FIRE_REST_VERSION: u8 = 1;
+/// The length of [`Fire::rest_bytes`]: version, flags, heat `f32` LE, elapsed burn ticks `u32` LE.
+// tunables: const (format: save blob layout)
+pub const FIRE_REST_LEN: usize = 10;
+/// Rest flag: burning, the elapsed burn ticks are set.
+// tunables: const (format: save blob flag bit)
+const REST_BURNING: u8 = 1;
+/// Rest flag: heats others from the tick after `since` (a heat ignition), else from `since`.
+// tunables: const (format: save blob flag bit)
+const REST_HEATS_LATE: u8 = 2;
+/// Rest flag: an ignition waiting for room in its region.
+// tunables: const (format: save blob flag bit)
+const REST_QUEUED: u8 = 4;
 
 /// One flammable body the host considers this tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -111,6 +133,8 @@ pub struct Fire {
     checked: BTreeMap<PlacementId, Tick>,
     /// Ignitions waiting for room in their region, with the tick they queued.
     queued: BTreeMap<PlacementId, Tick>,
+    /// Burn ticks a restored body burnt before `since` that did not fit above tick 0.
+    credit: BTreeMap<PlacementId, u64>,
     /// The last target the round-robin checked.
     cursor: Option<PlacementId>,
     /// Heat checks the last tick ran.
@@ -147,6 +171,78 @@ impl Fire {
     #[must_use]
     pub fn checks(&self) -> usize {
         self.checks
+    }
+
+    /// Ticks `placement` has burnt by `now` (credit included), while it burns.
+    fn burnt_ticks(&self, placement: PlacementId, now: Tick) -> Option<u64> {
+        let since = self.since.get(&placement)?;
+        Some(now.0.saturating_sub(since.0) + self.credit.get(&placement).copied().unwrap_or(0))
+    }
+
+    /// Stops tracking `placement`'s burn (out, burnt, or no longer burning).
+    fn end_burn(&mut self, placement: PlacementId) {
+        self.since.remove(&placement);
+        self.heats_from.remove(&placement);
+        self.credit.remove(&placement);
+    }
+
+    /// Drops everything the table holds on `placement` (an unload, or a restore's fresh start).
+    pub fn forget(&mut self, placement: PlacementId) {
+        self.heat.remove(&placement);
+        self.end_burn(placement);
+        self.checked.remove(&placement);
+        self.queued.remove(&placement);
+    }
+
+    /// `placement`'s fire state at rest at tick `now` (module docs): `[FIRE_REST_VERSION, flags,
+    /// heat f32 LE, elapsed burn ticks u32 LE (0 unless burning)]`.
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn rest_bytes(&self, placement: PlacementId, now: Tick) -> [u8; FIRE_REST_LEN] {
+        let mut flags = 0;
+        let mut elapsed = 0u32;
+        if let Some(t) = self.burnt_ticks(placement, now) {
+            flags |= REST_BURNING;
+            elapsed = t.min(u64::from(u32::MAX)) as u32;
+            if self.heats_from.get(&placement) > self.since.get(&placement) {
+                flags |= REST_HEATS_LATE;
+            }
+        }
+        if self.queued.contains_key(&placement) {
+            flags |= REST_QUEUED;
+        }
+        let h = self.heat(placement).to_le_bytes();
+        let e = elapsed.to_le_bytes();
+        [FIRE_REST_VERSION, flags, h[0], h[1], h[2], h[3], e[0], e[1], e[2], e[3]]
+    }
+
+    /// Replaces `placement`'s fire state with the one [`Self::rest_bytes`] wrote, loaded at tick `now`
+    /// (a queued ignition queues at `now`). Any other version or length, an unknown flag, or a
+    /// negative or non-finite heat leaves it fresh and returns false.
+    pub fn restore(&mut self, placement: PlacementId, bytes: &[u8], now: Tick) -> bool {
+        self.forget(placement);
+        let &[FIRE_REST_VERSION, flags, h0, h1, h2, h3, e0, e1, e2, e3] = bytes else { return false };
+        let heat = f32::from_le_bytes([h0, h1, h2, h3]);
+        if flags & !(REST_BURNING | REST_HEATS_LATE | REST_QUEUED) != 0 || !heat.is_finite() || heat < 0.0 {
+            return false;
+        }
+        if heat > 0.0 {
+            self.heat.insert(placement, heat);
+        }
+        if flags & REST_BURNING != 0 {
+            let elapsed = u64::from(u32::from_le_bytes([e0, e1, e2, e3]));
+            let since = Tick(now.0.saturating_sub(elapsed));
+            self.since.insert(placement, since);
+            self.heats_from.insert(placement, since.plus(u64::from(flags & REST_HEATS_LATE != 0)));
+            let credit = elapsed - (now.0 - since.0);
+            if credit > 0 {
+                self.credit.insert(placement, credit);
+            }
+        }
+        if flags & REST_QUEUED != 0 {
+            self.queued.insert(placement, now);
+        }
+        true
     }
 }
 
@@ -216,6 +312,7 @@ pub fn step_fire(
     fire.queued.retain(|p, _| find(*p).is_some());
     fire.since.retain(|p, _| states.has(*p, BURNING));
     fire.heats_from.retain(|p, _| states.has(*p, BURNING));
+    fire.credit.retain(|p, _| states.has(*p, BURNING));
 
     let mut out = Vec::new();
     let mut burning: Vec<&FireBody> = Vec::new();
@@ -225,15 +322,15 @@ pub fn step_fire(
         if !states.has(p, BURNING) {
             continue;
         }
-        let since = *fire.since.entry(p).or_insert(now);
+        fire.since.entry(p).or_insert(now);
         fire.heats_from.entry(p).or_insert(now);
+        let burnt_ticks = fire.burnt_ticks(p, now).unwrap_or(0);
         if b.wetness >= params.fire_rain_douse {
             states.remove(p, BURNING);
             states.add(p, WET, Ttl::Secs(params.rules_wet_ttl_s), now, params);
-            fire.since.remove(&p);
-            fire.heats_from.remove(&p);
+            fire.end_burn(p);
             out.push(FireEvent { placement: p, output: FireOutput::Doused });
-        } else if now.0.saturating_sub(since.0) >= params.ticks(b.flammable.fuel_s) {
+        } else if burnt_ticks >= params.ticks(b.flammable.fuel_s) {
             burnt.push(*b);
         } else {
             burning.push(b);
@@ -243,8 +340,7 @@ pub fn step_fire(
         let p = b.placement;
         states.remove(p, BURNING);
         states.add(p, CHARRED, Ttl::UntilRemoved, now, params);
-        fire.since.remove(&p);
-        fire.heats_from.remove(&p);
+        fire.end_burn(p);
         out.push(FireEvent { placement: p, output: FireOutput::Burnt { stage: b.flammable.burnt_stage } });
     }
 

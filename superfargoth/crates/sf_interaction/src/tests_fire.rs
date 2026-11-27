@@ -339,3 +339,139 @@ fn a_settlement_structure_never_catches_from_spread() {
     step_fire(&mut fire, &mut states, &bodies, &env, Tick(30 * 60 + 1), &p);
     assert_eq!(fire.burning_since(PlacementId(1)), Some(Tick(30 * 60 + 1)));
 }
+
+/// Steps `bodies` from `from` until `id` burns out (at most `limit` ticks); the tick it did.
+fn burnt_at(
+    fire: &mut Fire,
+    states: &mut ObjectStates,
+    bodies: &[FireBody],
+    from: u64,
+    limit: u64,
+    id: u128,
+) -> Option<u64> {
+    let p = params();
+    (from..from + limit).find(|&t| {
+        step_fire(fire, states, bodies, &FireEnv::default(), Tick(t), &p)
+            .iter()
+            .any(|e| e.placement == PlacementId(id) && matches!(e.output, FireOutput::Burnt { .. }))
+    })
+}
+
+#[test]
+fn a_restored_fire_keeps_heat_and_burn_progress_at_any_tick() {
+    let p = params();
+    // 0 burns; 1 is 1 m away, heating; saved at tick 100, 90 ticks after it was first seen burning (10).
+    let bodies = [body(0, 0.0, 0.0), body(1, 1.0, 0.0)];
+    let mut states = ObjectStates::default();
+    states.add(PlacementId(0), BURNING, Ttl::UntilRemoved, Tick(0), &p);
+    let mut fire = Fire::new();
+    for t in 10..=100 {
+        step_fire(
+            &mut fire,
+            &mut states,
+            &bodies,
+            &FireEnv::default(),
+            Tick(t),
+            &p,
+        );
+    }
+    assert_eq!(fire.burning_since(PlacementId(0)), Some(Tick(10)));
+    let heat = fire.heat(PlacementId(1));
+    assert!(heat > 0.0 && states.has(PlacementId(0), BURNING));
+    let saved: Vec<_> = [0u128, 1]
+        .iter()
+        .map(|&i| {
+            let id = PlacementId(i);
+            (
+                id,
+                states.rest_bytes(id, Tick(100)),
+                fire.rest_bytes(id, Tick(100)),
+            )
+        })
+        .collect();
+    assert_eq!(saved[0].2[0], FIRE_REST_VERSION);
+    assert_eq!(saved[0].2.len(), FIRE_REST_LEN);
+
+    // The unsaved run burns 0 out at tick 10 + fuel.
+    let fuel = p.ticks(WOOD.fuel_s);
+    let (mut f_ref, mut s_ref) = (fire.clone(), states.clone());
+    assert_eq!(
+        burnt_at(&mut f_ref, &mut s_ref, &bodies, 101, fuel, 0),
+        Some(10 + fuel)
+    );
+
+    // Loaded at tick 9000 (and at tick 5, below the elapsed 90: the rest is a burn credit).
+    for load in [9000u64, 5] {
+        let (mut f, mut s) = (Fire::new(), ObjectStates::new());
+        for (id, sb, fb) in &saved {
+            assert!(s.from_rest_bytes(*id, sb, Tick(load)));
+            assert!(f.restore(*id, fb, Tick(load)));
+        }
+        assert_eq!(
+            f.heat(PlacementId(1)).to_bits(),
+            heat.to_bits(),
+            "heat bits"
+        );
+        assert_eq!(
+            f.burning_since(PlacementId(0)),
+            Some(Tick(load.saturating_sub(90)))
+        );
+        assert_eq!(
+            f.rest_bytes(PlacementId(0), Tick(load)),
+            saved[0].2,
+            "re-saved at load: same bytes"
+        );
+        assert_eq!(f.rest_bytes(PlacementId(1), Tick(load)), saved[1].2);
+        // The same remaining ticks to burn-out as the unsaved run (10 + fuel - 100 after the save).
+        assert_eq!(
+            burnt_at(&mut f, &mut s, &bodies, load + 1, fuel, 0),
+            Some(load + 10 + fuel - 100),
+            "load {load}"
+        );
+    }
+}
+
+#[test]
+fn rest_bytes_keep_the_heat_ignition_delay_and_the_queue() {
+    let mut fire = Fire::new();
+    let a = body(0, 0.0, 0.0);
+    // Restore a body lit by heat on the save tick (heats from the next one) and a queued one.
+    let mut lit = [FIRE_REST_VERSION, 1 | 2, 0, 0, 0, 0, 0, 0, 0, 0];
+    assert!(fire.restore(a.placement, &lit, Tick(50)));
+    assert_eq!(fire.burning_since(a.placement), Some(Tick(50)));
+    assert_eq!(fire.rest_bytes(a.placement, Tick(50)), lit);
+    let queued = [FIRE_REST_VERSION, 4, 0, 0, 0, 0, 0, 0, 0, 0];
+    assert!(fire.restore(PlacementId(7), &queued, Tick(50)));
+    assert_eq!(fire.queued(), vec![PlacementId(7)]);
+    assert_eq!(fire.rest_bytes(PlacementId(7), Tick(60)), queued);
+    // A placement the table knows nothing of saves as all zeros past the version.
+    assert_eq!(
+        fire.rest_bytes(PlacementId(3), Tick(60)),
+        [FIRE_REST_VERSION, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    );
+    // Bad blobs load fresh: version, length, unknown flag, negative or NaN heat.
+    lit[0] = FIRE_REST_VERSION + 1;
+    assert!(!fire.restore(a.placement, &lit, Tick(50)));
+    assert_eq!(fire.burning_since(a.placement), None);
+    let nan = f32::NAN.to_le_bytes();
+    for bad in [
+        &[FIRE_REST_VERSION, 1][..],
+        &[FIRE_REST_VERSION, 8, 0, 0, 0, 0, 0, 0, 0, 0],
+        &[FIRE_REST_VERSION, 0, 0, 0, 128, 191, 0, 0, 0, 0], // -1.0
+        &[
+            FIRE_REST_VERSION,
+            0,
+            nan[0],
+            nan[1],
+            nan[2],
+            nan[3],
+            0,
+            0,
+            0,
+            0,
+        ],
+    ] {
+        assert!(!fire.restore(PlacementId(7), bad, Tick(50)), "{bad:?}");
+    }
+    assert!(fire.queued().is_empty());
+}

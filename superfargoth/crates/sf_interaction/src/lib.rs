@@ -72,8 +72,8 @@ pub use destroy::{
 };
 pub use door::{DOOR_OPEN, DOOR_REST_VERSION, DOOR_STATE_OWNER, DoorChanged, DoorState, VERB_CLOSE, VERB_OPEN, swing_sign};
 pub use fire::{
-    BURNING, CHARRED, Fire, FireBody, FireEnv, FireEvent, FireOutput, WET, fire_region, heat_jitter, step_fire,
-    wind_factor,
+    BURNING, CHARRED, FIRE_REST_LEN, FIRE_REST_VERSION, Fire, FireBody, FireEnv, FireEvent, FireOutput, WET,
+    fire_region, heat_jitter, step_fire, wind_factor,
 };
 pub use entrance::{pick_entrance, pick_exit, to_local};
 pub use impact::impact_damage;
@@ -89,7 +89,7 @@ pub use rules::{
     Cause, Flammable, InteractionRule, MaterialDef, RuleEvent, RuleOutput, RuleQueue, RuleResult, Rules, step_rules,
 };
 pub use spot::{Spot, SpotAnchor, SpotBlockers, SpotQuery, pick_spot, spiral_point, spot_candidates};
-pub use states::{ObjectStates, StateEntry, Ttl};
+pub use states::{ObjectStates, STATES_REST_VERSION, StateEntry, Ttl};
 pub use verbs::{FocusStabilizer, VerbChoice, VerbTarget, rank_verbs};
 pub use world_change::{
     CHANGE_BASHED, CHANGE_BURNT, CHANGE_CLOSED, CHANGE_DESTROYED, CHANGE_DISPLACED, CHANGE_DROPPED, CHANGE_IGNITED,

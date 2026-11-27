@@ -136,6 +136,10 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   placement is no `WorldChange` (the `Burnt` said it); `BurningObjects` (at, since, region, `light`: at most
   `interact.fire.lights_max` per region, lit keep their slot, free ones earliest-started first); a burning non-light
   placement is a `GameplayLights` entry (`interact.fire.light_radius_m`, intensity 1) until it stops burning or unloads.
+  Save codec (IN39d1, core): `ObjectStates::rest_bytes(placement, now)` / `from_rest_bytes` (per tag the remaining
+  ticks, `u32::MAX` = until removed) and `Fire::rest_bytes` / `restore` (10 bytes: flags, heat bits, elapsed burn
+  ticks; restored `since` is that many ticks before the load tick, a burn credit holds what does not fit above tick 0);
+  bad version or length loads fresh. The shell half (blob messages) is IN39d2.
 - **Impacts (IN4a core, IN4b shell).** `impact_damage(impulse_ns, speed_mps, params)` (`sf_interaction/src/impact.rs`):
   0 under `interact.impact.speed_min_mps` or within the `interact.impact.impulse_min_ns` dead zone, else
   `interact.impact.damage_per_ns x (impulse - dead zone)`; non-finite in -> 0, overflow saturates. Kind `DAMAGE_IMPACT`

@@ -3,6 +3,7 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-27 (interaction loop, IN39d1): the interaction core can now save and reload an object's wet, burning and charred states and a fire's progress as remaining time, so a fire saved half-burnt burns out after the same time once loaded, whenever in the session the save is loaded. Nothing writes these into saves yet (IN39d2).
 - 2026-11-27 (interaction loop, IN39c): burning things now hurt and light the world: a burning breakable object loses
   health every second and ends on its charred look (reported once as burnt, not destroyed), every fire lights its
   surroundings for the AI, and at most a few fires per area get a real light, the oldest first, so lights never

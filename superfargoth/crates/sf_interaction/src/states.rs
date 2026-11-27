@@ -9,7 +9,12 @@
 //! - [`ObjectStates::expire`] drops every state whose expiry tick has come (`expires <= now`), in
 //!   (tick, placement, tag) order. The host runs it before the tick's rules, so `has` is current.
 //!
-//! Rules evaluation (`step_rules`), the save codec and replication are later slices.
+//! - [`ObjectStates::rest_bytes`] / [`ObjectStates::from_rest_bytes`] (IN39d): one placement's states
+//!   at rest as `[STATES_REST_VERSION]` then per state `tag u32 LE, remaining ticks u32 LE`
+//!   (`u32::MAX`: until removed). Remaining time, never absolute ticks, so a save loads exact at any
+//!   tick count.
+//!
+//! Rules evaluation is `rules::step_rules`; replication is a later slice.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -19,6 +24,13 @@ use smallvec::SmallVec;
 use crate::claims::Tick;
 use crate::def::TagId;
 use crate::params::InteractParams;
+
+/// The format version of [`ObjectStates::rest_bytes`].
+// tunables: const (format: save blob version)
+pub const STATES_REST_VERSION: u8 = 1;
+/// The remaining-ticks value of a state that lasts until removed.
+// tunables: const (format: save blob sentinel)
+const UNTIL_REMOVED: u32 = u32::MAX;
 
 /// How long a state lasts once added.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -58,6 +70,11 @@ impl ObjectStates {
             Ttl::Secs(s) => Some(now.plus(params.ticks(s))),
             Ttl::UntilRemoved => None,
         };
+        self.add_until(placement, tag, expires)
+    }
+
+    /// [`Self::add`] with the expiry tick given (`None`: until removed).
+    fn add_until(&mut self, placement: PlacementId, tag: TagId, expires: Option<Tick>) -> bool {
         let list = self.by_placement.entry(placement).or_default();
         match list.binary_search_by_key(&tag, |e| e.tag) {
             Ok(i) => {
@@ -152,5 +169,53 @@ impl ObjectStates {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.by_placement.is_empty()
+    }
+
+    /// Drops every state of `placement` (an unload, or a restore's fresh start). Returns true when it
+    /// had any.
+    pub fn forget(&mut self, placement: PlacementId) -> bool {
+        let Some(list) = self.by_placement.remove(&placement) else { return false };
+        for e in list {
+            if let Some(t) = e.expires {
+                self.deadlines.remove(&(t, placement, e.tag));
+            }
+        }
+        true
+    }
+
+    /// `placement`'s states at rest at tick `now` (module docs): the remaining ticks of each timed
+    /// state (0 for one due this tick, at most `u32::MAX - 1`), `u32::MAX` for one until removed.
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn rest_bytes(&self, placement: PlacementId, now: Tick) -> Vec<u8> {
+        let list = self.states(placement);
+        let mut out = Vec::with_capacity(1 + 8 * list.len());
+        out.push(STATES_REST_VERSION);
+        for e in list {
+            let remaining = e
+                .expires
+                .map_or(UNTIL_REMOVED, |t| t.0.saturating_sub(now.0).min(u64::from(UNTIL_REMOVED - 1)) as u32);
+            out.extend_from_slice(&e.tag.0.to_le_bytes());
+            out.extend_from_slice(&remaining.to_le_bytes());
+        }
+        out
+    }
+
+    /// Replaces `placement`'s states with the ones [`Self::rest_bytes`] wrote, each timed one
+    /// expiring its remaining ticks after `now`. Any other version or length leaves the placement
+    /// fresh (no states) and returns false.
+    pub fn from_rest_bytes(&mut self, placement: PlacementId, bytes: &[u8], now: Tick) -> bool {
+        self.forget(placement);
+        let Some((&STATES_REST_VERSION, rest)) = bytes.split_first() else { return false };
+        if rest.len() % 8 != 0 {
+            return false;
+        }
+        for e in rest.as_chunks::<8>().0 {
+            let tag = TagId(u32::from_le_bytes([e[0], e[1], e[2], e[3]]));
+            let remaining = u32::from_le_bytes([e[4], e[5], e[6], e[7]]);
+            let expires = (remaining != UNTIL_REMOVED).then(|| now.plus(u64::from(remaining)));
+            self.add_until(placement, tag, expires);
+        }
+        true
     }
 }

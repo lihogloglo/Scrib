@@ -163,3 +163,88 @@ fn material_lives_on_the_def_and_round_trips() {
     assert_eq!(back, InteractableDef { material: None, ..def });
     assert_eq!(ron::from_str::<Ttl>(&ron::to_string(&Ttl::Secs(2.5)).unwrap()).unwrap(), Ttl::Secs(2.5));
 }
+
+#[test]
+fn rest_bytes_round_trip_keeps_remaining_ttls_at_any_tick() {
+    let p = params();
+    let mut s = ObjectStates::new();
+    s.add(P1, WET, Ttl::Secs(10.0), Tick(40), &p); // expires 640
+    s.add(P1, CHARRED, Ttl::UntilRemoved, Tick(40), &p);
+    s.add(P1, BURNING, Ttl::Secs(1.0), Tick(50), &p); // expires 110
+    s.add(P2, WET, Ttl::Secs(1.0), Tick(0), &p);
+    let bytes = s.rest_bytes(P1, Tick(100));
+    assert_eq!(bytes.len(), 1 + 3 * 8);
+    assert_eq!(bytes[0], STATES_REST_VERSION);
+
+    // Loaded at tick 9000 in a table that already holds other states for P1 (replaced) and P2 (kept).
+    let mut l = ObjectStates::new();
+    l.add(P1, TagId::of("stale"), Ttl::Secs(1.0), Tick(8990), &p);
+    l.add(P2, WET, Ttl::UntilRemoved, Tick(8990), &p);
+    assert!(l.from_rest_bytes(P1, &bytes, Tick(9000)));
+    let mut want = vec![
+        StateEntry {
+            tag: WET,
+            expires: Some(Tick(9540)),
+        },
+        StateEntry {
+            tag: CHARRED,
+            expires: None,
+        },
+        StateEntry {
+            tag: BURNING,
+            expires: Some(Tick(9010)),
+        },
+    ];
+    want.sort_by_key(|e| e.tag);
+    assert_eq!(l.states(P1), want.as_slice());
+    assert_eq!(
+        l.states(P2),
+        &[StateEntry {
+            tag: WET,
+            expires: None
+        }]
+    );
+    // The stale state's deadline went with it; the restored ones expire on their remaining ticks.
+    assert_eq!(l.expire(Tick(9009)), vec![]);
+    assert_eq!(l.expire(Tick(9010)), vec![(P1, BURNING)]);
+    assert_eq!(l.expire(Tick(9540)), vec![(P1, WET)]);
+    assert_eq!(l.tags(P1).as_slice(), &[CHARRED]);
+    // Saved again, it round-trips to the same bytes at the same remaining time.
+    let mut again = ObjectStates::new();
+    assert!(again.from_rest_bytes(P1, &s.rest_bytes(P1, Tick(100)), Tick(100)));
+    assert_eq!(again.rest_bytes(P1, Tick(100)), bytes);
+    // A placement with no states saves only the version and loads fresh.
+    assert_eq!(
+        s.rest_bytes(PlacementId(9), Tick(100)),
+        vec![STATES_REST_VERSION]
+    );
+}
+
+#[test]
+fn unknown_version_or_length_loads_fresh() {
+    let p = params();
+    let mut s = ObjectStates::new();
+    s.add(P1, WET, Ttl::Secs(10.0), Tick(0), &p);
+    let mut bytes = s.rest_bytes(P1, Tick(0));
+    let mut l = ObjectStates::new();
+    l.add(P1, BURNING, Ttl::Secs(1.0), Tick(0), &p);
+    bytes[0] = STATES_REST_VERSION + 1;
+    assert!(!l.from_rest_bytes(P1, &bytes, Tick(5)));
+    assert!(l.states(P1).is_empty() && l.is_empty());
+    assert!(l.expire(Tick(1000)).is_empty(), "no deadline left behind");
+    bytes[0] = STATES_REST_VERSION;
+    assert!(
+        !l.from_rest_bytes(P1, &bytes[..bytes.len() - 1], Tick(5)),
+        "truncated"
+    );
+    assert!(!l.from_rest_bytes(P1, &[], Tick(5)), "empty");
+    assert!(l.is_empty());
+    assert!(l.from_rest_bytes(P1, &bytes, Tick(5)));
+    assert_eq!(
+        l.states(P1),
+        &[StateEntry {
+            tag: WET,
+            expires: Some(Tick(605))
+        }]
+    );
+}

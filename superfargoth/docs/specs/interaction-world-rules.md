@@ -216,6 +216,11 @@ load tick and the round-robin cursor is not saved: a restored target misses no m
 `ObjectStatesChanged { placement, bytes }` on change (the host's overlay blob, (b) "Save"), `ObjectStatesRest` applies
 one; an unloaded placement drops its states and fire after its last write. No blob = fresh. Fire runs on ticks while
 resident; a clock jump (rest, travel) advances nothing (Far Cry 2 burns only near the player too).
+**As built (IN39d1, 2026-11-27).** `states.rs` `rest_bytes` / `from_rest_bytes` (`STATES_REST_VERSION` 1, then `tag u32,
+remaining u32` LE per state; replaces the placement's states, `forget` drops them) and `fire.rs` `rest_bytes` / `restore`
+(`FIRE_REST_LEN` 10: version, flags burning / heats-late / queued, heat f32, elapsed u32). The shell tick restarts at 0
+each session, so `since` = load tick - elapsed saturates at 0 and the rest is a per-body burn credit the fuel test adds:
+burn-out stays exact at any load tick. 4 exact tests (`tests_states.rs`, `tests_fire.rs`).
 
 **Later rows (game, `mw_interaction_bevy`).** IN39e: the host fills `FireWeather`, `FireWetness`, `FireShelter`,
 `FireZones` (sf_weather, sf_surface, its probe, IN41's zones). IN39f: the presenter (flame model + smoke per
