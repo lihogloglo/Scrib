@@ -334,6 +334,13 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
   (2.5 s), no towns or clearings. Release: passes + write 57.8 s (18.47 M kept before the budget: 0.93 M canopy, 6.36 M
   understorey, 11.19 M ground; the product ~1.2 GB at 64 B a plant), product read + budget + pose 4.4 s. Canopy stems/ha
   4.8-10.8 in every wooded class against declared 60-250 (taiga 4.8 / 250, rainforest 8.5 / 250), crown cover 3-7 %.
+- **WG-E2n** (2026-11-27, diagnosis, `tests_flora::canopy_density_trace_on_x10s`, ignored; 1/7 of the x10s tiles): the
+  candidates match Design 4 within 1-4 % (mean field `parent_per_ha x offspring_mean x E[su^2 D prior]`), so the loss is
+  the formula: `class.<name>.stems_per_ha` and `canopy_stems_per_ha_max` are parsed but never read; the intensity is
+  per species (48/ha ceiling) x `su` three times (`D` = noise x best canopy `su`, Design 3; thinning; offspring mean) x
+  noise (mean 0.5) x the clearing cut (35-68 % of land), so shrubland (target 10) gets 11.4/ha and taiga (250) 4.3.
+  Competition then keeps 63-73 %; the learned canopy size range is 1-40 m (the column's max), crowns up to 8.75 m.
+  The targets ask 8.89 M canopy on x10s (81/ha); the world-total budget (200 k) cuts it evenly to 0.2 %. Fix: WG-E2o.
 
 ## Tunables
 

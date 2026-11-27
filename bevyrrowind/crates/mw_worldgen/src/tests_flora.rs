@@ -562,3 +562,218 @@ fn class_table(first: &FloraRun, f: &GridFields) {
         );
     }
 }
+
+/// WG-E2n diagnosis: the canopy intensity of every class on x10s, stage by stage, against the spec's formula
+/// (`worldgen-scatter.md` "Design" 3-6). On every 7th guide tile (16 m point grid on dry land): the parent thinning's
+/// terms at the point (canopy suitability `su`, stand `D` (0 in a clearing), region prior), the mean-field candidate
+/// intensity `parent_per_ha x offspring_mean x E[su^2 D prior]` (thinning `su D prior` at the parent, offspring mean
+/// `x su`), then the canopy candidates the code emits in the tile and the winners of its competition (grown by the
+/// canopy reach, kept inside the tile), each per hectare of the class's dry land, beside the declared
+/// `class.<name>.stems_per_ha`. Last, the canopy count the class targets ask on the whole guide.
+#[test]
+#[ignore = "measurement: canopy density trace on x10s"]
+#[allow(clippy::too_many_lines, clippy::cast_precision_loss)]
+fn canopy_density_trace_on_x10s() {
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+
+    use sf_worldgen::scatter::{CandidateRules, Cover, compete};
+    use sf_worldgen::scatter_fields::{Fields, Suitability};
+    use sf_worldgen::scatter_stand::{StandClass, StandMap, StandRules};
+
+    let Ok((install, _)) = mw_install::MorrowindInstall::detect(None) else {
+        eprintln!("no Morrowind install detected; skipping");
+        return;
+    };
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let src = std::env::var_os("SCRIB_X10S").map_or_else(|| root.join("target/worldgen/x10s"), PathBuf::from);
+    if !src.join("heights.f32").exists() {
+        eprintln!("no guide at {}; skipping", src.display());
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    x10s_copy(&src, dir);
+    let vfs = mw_vfs::mount_install(&install, sf_vfs::Vfs::builder()).unwrap().vfs;
+    let content = mw_records::load(&vfs, &install.game_files()).unwrap();
+    let cache = std::cell::RefCell::new(HashMap::<String, Option<([f32; 3], [f32; 3])>>::new());
+    let bounds = |model: &str| {
+        if let Some(b) = cache.borrow().get(model) {
+            return *b;
+        }
+        let b = sf_vfs::VfsPath::new(model)
+            .ok()
+            .and_then(|path| vfs.read(&path).ok())
+            .and_then(|bytes| mw_nif::load(&bytes).ok())
+            .and_then(|m| mw_nif::visible_bounds(&m));
+        cache.borrow_mut().insert(model.to_owned(), b);
+        b
+    };
+    let tiles = GuideTiles::open(dir, mw_world::ids::exterior()).unwrap();
+    let source = mw_world::MwWorldSource::build(&content.db, &mw_world::SourceOptions::default());
+    let prm = Params::default();
+    let (file, f, water, clearings) = flora::guide_inputs(dir, &tiles, &prm).unwrap();
+    let towns = TownMask::default();
+    // The learned rows and region prior of the run (the passes as the game runs them; the budget does not matter).
+    let run = flora::scatter_world(&content.db, &source, &bounds, &tiles, &f, &water, &file, clearings.as_ref(), &towns, prm, None)
+        .unwrap();
+    let m = crate::assemble(&content.db).unwrap();
+    let regions = crate::region_map(&content.db, m.cells_min, m.cells_max).unwrap();
+    let world = World::new(&m, &regions, &tiles, clearings.as_ref(), &towns);
+    let lf = &run.learned.file;
+    let names = f.class_names().to_vec();
+    let n = names.len();
+    let suit: Vec<Suitability> = lf.species.iter().map(|s| Suitability::new(s, &names)).collect();
+    let canopy: Vec<Suitability> =
+        lf.species.iter().filter(|s| s.layer == Layer::Canopy).map(|s| Suitability::new(s, &names)).collect();
+    let cs = lf.species.iter().position(|s| s.layer == Layer::Canopy).expect("a canopy row");
+    assert_eq!(canopy.len(), 1, "the trace follows the one canopy row");
+    let sp = &lf.species[cs];
+    let pmax = lf.values.region_prior_max;
+    let class_of = |x: f64, y: f64| f.sample(x, y).class.map_or(n, |k| usize::from(k).min(n));
+    let prior_at = |s: usize, x: f64, y: f64| {
+        let Some(r) = world.region(x, y) else { return 0.0 };
+        let c = class_of(x, y);
+        run.prior.get(s).and_then(|p| p.get(usize::from(r))).and_then(|p| p.get(c)).copied().unwrap_or(0.0)
+    };
+    let height = |x: f64, y: f64| world.height(x, y);
+    let rules = CandidateRules {
+        file: lf,
+        suitability: &suit,
+        seed: run.prm.seed,
+        tile_m: run.prm.tile_m,
+        prior: &prior_at,
+        water: &water,
+        height: &height,
+        rocks: None,
+    };
+    let excluded = |x: f64, y: f64| world.excluded(x, y);
+    let grow = rules.layer_grows().into_iter().find(|(l, _)| *l == Layer::Canopy).map(|(_, g)| g).unwrap();
+    let sea = run.prm.sea_level_m;
+    let t = run.prm.tile_m;
+    // Per class: [points, su, D, prior, su^2 D prior, prior clamped, clearing, D/su where su > 0, su > 0 points,
+    // candidates, winners, winner crown m2].
+    let mut acc = vec![[0.0f64; 12]; n + 1];
+    let step = 16.0;
+    let per_side = (t / step) as usize;
+    let all = rules.tiles(world.rect());
+    let stride = 7;
+    for &(tx, ty) in all.iter().step_by(stride) {
+        let map = StandMap::build(
+            StandRules { values: &lf.values, seed: run.prm.seed, canopy: &canopy },
+            &f,
+            &excluded,
+            rules.tile_rect((tx, ty)),
+        );
+        let sq = [f64::from(tx) * t, f64::from(ty) * t, f64::from(tx + 1) * t, f64::from(ty + 1) * t];
+        for j in 0..per_side {
+            for i in 0..per_side {
+                let (x, y) = (sq[0] + (i as f64 + 0.5) * step, sq[1] + (j as f64 + 0.5) * step);
+                let h = world.height(x, y);
+                if h <= sea || world.region(x, y).is_none() || water.wet(x, y, h) || world.excluded(x, y) {
+                    continue;
+                }
+                let a = &mut acc[class_of(x, y)];
+                let su = suit[cs].at(&f.sample(x, y));
+                let p = map.at(x, y);
+                let d = if p.class == StandClass::Clearing { 0.0 } else { p.d };
+                let pr = prior_at(cs, x, y);
+                a[0] += 1.0;
+                a[1] += su;
+                a[2] += d;
+                a[3] += pr.clamp(0.0, pmax);
+                a[4] += su * su * d * pr.clamp(0.0, pmax);
+                a[5] += f64::from(u8::from(pr > pmax));
+                a[6] += f64::from(u8::from(p.class == StandClass::Clearing));
+                if su > 0.0 {
+                    a[7] += p.d / su;
+                    a[8] += 1.0;
+                }
+            }
+        }
+        let g = [sq[0] - grow, sq[1] - grow, sq[2] + grow, sq[3] + grow];
+        let cands = rules.layer_candidates(&f, &map, g, Layer::Canopy, &Cover::new(lf.values.shade_per_crown));
+        let won = compete(lf, &cands, lf.values.competition_rounds);
+        for (c, w) in cands.iter().zip(won) {
+            let [x, y] = c.pos;
+            if x < sq[0] || x >= sq[2] || y < sq[1] || y >= sq[3] {
+                continue;
+            }
+            let a = &mut acc[class_of(x, y)];
+            a[9] += 1.0;
+            if w {
+                a[10] += 1.0;
+                a[11] += std::f64::consts::PI * c.crown_m.powi(2);
+            }
+        }
+    }
+    let ceiling = sp.parent_per_ha * sp.offspring_mean;
+    println!(
+        "WG-E2n canopy trace on {} ({} of {} tiles, {step} m points on dry land; row {:?}: parent_per_ha {}, \
+         offspring_mean {}, background {}, cluster_sigma {} m, crown {} + {} h, crown_k {}, size {}-{} m, \
+         region_prior_max {pmax}; ceiling parent_per_ha x offspring_mean = {ceiling}/ha)",
+        src.display(),
+        all.len().div_ceil(stride),
+        all.len(),
+        sp.name,
+        sp.parent_per_ha,
+        sp.offspring_mean,
+        sp.background_fraction,
+        sp.cluster_sigma_m,
+        sp.crown_a_m,
+        sp.crown_b,
+        sp.crown_k,
+        sp.size_min_m,
+        sp.size_max_m,
+    );
+    println!(
+        "| class | dry km2 sampled | target /ha | E[su] | E[D] | E[noise] = E[D/su] | clearing % | E[prior] | prior > max % \
+         | expected cands /ha | candidates /ha | winners /ha | crown cover |"
+    );
+    println!("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+    for (c, a) in acc.iter().enumerate() {
+        if a[0] == 0.0 {
+            continue;
+        }
+        let ha = a[0] * step * step / 1e4;
+        let name = names.get(c).map_or("none", String::as_str);
+        let target = lf.classes.get(name).map_or(f64::NAN, |e| e.v);
+        let mean = |k: usize| a[k] / a[0];
+        println!(
+            "| {name} | {:.1} | {target:.0} | {:.2} | {:.2} | {:.2} | {:.0} % | {:.2} | {:.0} % | {:.1} | {:.1} | {:.1} | {:.1} % |",
+            ha / 100.0,
+            mean(1),
+            mean(2),
+            if a[8] > 0.0 { a[7] / a[8] } else { f64::NAN },
+            100.0 * mean(6),
+            mean(3),
+            100.0 * mean(5),
+            ceiling * mean(4),
+            a[9] / ha,
+            a[10] / ha,
+            100.0 * a[11] / (ha * 1e4),
+        );
+    }
+    // The canopy the class targets ask on the whole guide (land samples of the run's census).
+    let mut land = vec![0u64; n + 1];
+    for a in &run.area {
+        for (c, v) in a.iter().enumerate() {
+            land[c] += v;
+        }
+    }
+    let mut target_total = 0.0;
+    for (c, &l) in land.iter().enumerate() {
+        let name = names.get(c).map_or("none", String::as_str);
+        target_total += lf.classes.get(name).map_or(0.0, |e| e.v) * l as f64 * run.sample_m2 / 1e4;
+    }
+    let land_ha = land.iter().sum::<u64>() as f64 * run.sample_m2 / 1e4;
+    println!(
+        "whole guide: land {:.0} km2; canopy at the class targets {:.2} M ({:.0}/ha); kept before the budget: {}; \
+         scatter.budget {} over the world",
+        land_ha / 100.0,
+        target_total / 1e6,
+        target_total / land_ha,
+        (0..4).map(|g| format!("{} {}", flora::BUDGET_GROUPS[g], run.full[g])).collect::<Vec<_>>().join(", "),
+        run.prm.budget
+    );
+}
