@@ -319,6 +319,10 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
   tests; its tile-alone, threads, slope and sea tests live on in E2h's halo tests). `Params` keeps the seven run values
   the adapter reads (`tile_m`, `seed`, `align_min_tilt_deg`, `slope_margin_deg`, `water_margin_m`, `budget`,
   `size_priority`) plus `sea_level_m`; ten v1 values left `declared()`. scatter.rs 1898 -> 1358 lines.
+- **WG-E2j.1** (2026-11-27, `scatter_product.rs`): `InputsHash` (blake3 of named, length-prefixed parts under a
+  format tag: `guide`, `climate`, `seed`, `value`, `bytes`; the budget is not an input, the cut stays at load) and
+  `write` / `read` / `cached` of `<guide>/scatter/` (`plants.bin` 64-byte and `rocks.bin` 72-byte f64 records in output
+  order, `meta.json` with inputs hash, counts, per-file + product blake3; `cached` = None when absent or stale). 2 tests.
 
 ## Tunables
 
