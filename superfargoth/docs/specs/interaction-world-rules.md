@@ -98,6 +98,14 @@ incl. all 120 orders of 5 causes). No system gathers causes yet; save codec and 
 - **Static vegetation** (trees, shrubs) is ground-cell fuel, not a fire carrier: a burnt cell tints, and swaps its
   instances to a charred variant through the static-scene overlay when the adapter gives one.
 
+**As built (IN17c1, 2026-11-27).** `sf_interaction/src/fire.rs`: `step_fire(&mut Fire, &mut ObjectStates, &[FireBody
+{ placement, pos, flammable, wetness }], &FireEnv { wind }, now, params)`: douses (wetness >= `rain_douse`: `Burning` off,
+`Wet` for `wet_ttl_s`), burn-outs (`fuel_s` from the tick first seen `Burning`, then `Charred`, `Burnt { stage }`), then
+heat from the start-of-tick burning set: `falloff(d) = 1 - d / spread_radius_m` (linear; our choice), jitter `j` from
+`splitmix64` over `(placement, second)`, cooling with no source in reach; ignitions apply last. Wet, burning and charred
+bodies take no heat. Bodies sorted by placement, so arrival order is irrelevant. 7 `interact.fire.*` tunables bound.
+5 exact tests (`tests_fire.rs`). Budgets IN17c2; damage per second and wetness -> `Wet` are the host's (IN39).
+
 ### Ground burn grid (IN40)
 
 Per region a coarse grid (`interact.burn.cell_m` cells, `interact.burn.region_cells` a side; one byte of burn, one of

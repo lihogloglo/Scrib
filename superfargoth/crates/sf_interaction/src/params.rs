@@ -63,6 +63,20 @@ pub struct InteractParams {
     pub rules_wet_threshold: f32,
     /// How long `Wet` lasts once a target is dry again, s (range 5-900).
     pub rules_wet_ttl_s: f32,
+    /// Reach of a burning body's heat, m (range 0.5-10).
+    pub fire_spread_radius_m: f32,
+    /// Heat a target gains per second next to one source, before falloff and wind, ratio/s (range 0.05-5).
+    pub fire_heat_per_s: f32,
+    /// Heat a target loses per second with no source in reach, ratio/s (range 0-5).
+    pub fire_cool_per_s: f32,
+    /// Seeded per-target, per-second spread of the heat gain, ratio (range 0-1).
+    pub fire_jitter: f32,
+    /// How much wind speeds heat downwind and slows it upwind, ratio (range 0-1).
+    pub fire_wind_bias: f32,
+    /// Wind speed at which the wind bias is full, m/s (range 1-30).
+    pub fire_wind_ref_mps: f32,
+    /// Surface wetness at which rain puts a burning body out, ratio (range 0-1).
+    pub fire_rain_douse: f32,
     /// Fixed simulation rate leases count in, ticks per second.
     pub tick_hz: f32,
 }
@@ -126,6 +140,20 @@ impl Default for InteractParams {
             rules_wet_threshold: 0.3,
             // tunables: const (bound from interact.rules.wet_ttl_s in sf_interaction_bevy (IN17b); Guess)
             rules_wet_ttl_s: 120.0,
+            // tunables: const (bound from interact.fire.spread_radius_m in sf_interaction_bevy (IN17c1); Guess)
+            fire_spread_radius_m: 2.5,
+            // tunables: const (bound from interact.fire.heat_per_s in sf_interaction_bevy (IN17c1); Guess)
+            fire_heat_per_s: 0.5,
+            // tunables: const (bound from interact.fire.cool_per_s in sf_interaction_bevy (IN17c1); Guess)
+            fire_cool_per_s: 0.2,
+            // tunables: const (bound from interact.fire.jitter in sf_interaction_bevy (IN17c1); Guess)
+            fire_jitter: 0.25,
+            // tunables: const (bound from interact.fire.wind_bias in sf_interaction_bevy (IN17c1); Guess, Far Cry 2 wind-driven fire)
+            fire_wind_bias: 0.6,
+            // tunables: const (bound from interact.fire.wind_ref_mps in sf_interaction_bevy (IN17c1); Guess)
+            fire_wind_ref_mps: 8.0,
+            // tunables: const (bound from interact.fire.rain_douse in sf_interaction_bevy (IN17c1); Guess)
+            fire_rain_douse: 0.6,
             // tunables: const (bound from the app's fixed timestep in sf_interaction_bevy; net.md 60 Hz tick)
             tick_hz: 60.0,
         }

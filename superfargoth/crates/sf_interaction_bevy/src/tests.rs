@@ -231,6 +231,13 @@ fn def_defaults_are_the_struct_defaults() {
         (&DEBRIS_SPREAD, d.debris_spread),
         (&RULES_WET_THRESHOLD, d.rules_wet_threshold),
         (&RULES_WET_TTL_S, d.rules_wet_ttl_s),
+        (&FIRE_SPREAD_RADIUS_M, d.fire_spread_radius_m),
+        (&FIRE_HEAT_PER_S, d.fire_heat_per_s),
+        (&FIRE_COOL_PER_S, d.fire_cool_per_s),
+        (&FIRE_JITTER, d.fire_jitter),
+        (&FIRE_WIND_BIAS, d.fire_wind_bias),
+        (&FIRE_WIND_REF_MPS, d.fire_wind_ref_mps),
+        (&FIRE_RAIN_DOUSE, d.fire_rain_douse),
     ];
     let counts = [
         (&PRIORITY_AMBIENT, d.priority_ambient),

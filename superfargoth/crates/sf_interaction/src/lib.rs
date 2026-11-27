@@ -21,6 +21,8 @@
 //!   `has`, sorted expiry), the table world rules read and write.
 //! - [`rules`]: the rules layer: `InteractionRule` records, the `RuleQueue` of causes and `step_rules`
 //!   (first match in record order, budgeted, oldest first, the same result whatever the arrival order).
+//! - [`fire`]: the fire heat core: `step_fire` (heat from burning neighbours with falloff, wind and seeded
+//!   jitter, ignition at the material's `ignite_heat`, fuel then `Charred`, `Wet` takes no heat, rain douses).
 //! - [`cook`]: `interact.cook`, the one-time def bake (stub).
 //! - [`params`]: the core's tunables as plain fields (`interact.*`, bound by `sf_interaction_bevy`).
 //!
@@ -32,6 +34,7 @@ pub mod def;
 pub mod destroy;
 pub mod door;
 pub mod entrance;
+pub mod fire;
 pub mod index;
 pub mod light;
 pub mod params;
@@ -56,6 +59,9 @@ pub use destroy::{
     apply_damage, break_seed, debris_lod, splitmix64,
 };
 pub use door::{DOOR_OPEN, DOOR_REST_VERSION, DOOR_STATE_OWNER, DoorChanged, DoorState, VERB_CLOSE, VERB_OPEN, swing_sign};
+pub use fire::{
+    BURNING, CHARRED, Fire, FireBody, FireEnv, FireEvent, FireOutput, WET, heat_jitter, step_fire, wind_factor,
+};
 pub use entrance::{pick_entrance, pick_exit, to_local};
 pub use index::{IndexedSlot, KindTag, PointIndex, SlotUser, compose};
 pub use light::{
@@ -77,6 +83,8 @@ mod tests_claims;
 mod tests_destroy;
 #[cfg(test)]
 mod tests_door;
+#[cfg(test)]
+mod tests_fire;
 #[cfg(test)]
 mod tests_light;
 #[cfg(test)]

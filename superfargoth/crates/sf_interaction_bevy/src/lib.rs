@@ -270,6 +270,32 @@ pub const RULES_WET_TTL_S: Def<f32> = gp(def!(float "interact.rules.wet_ttl_s" =
     .unit(Unit::Seconds)
     .help("How long Wet lasts once a target is dry again (IN17b)"));
 
+pub const FIRE_SPREAD_RADIUS_M: Def<f32> = gp(def!(float "interact.fire.spread_radius_m" = 2.5)
+    .range(0.5, 10.0)
+    .unit(Unit::Meters)
+    .help("Reach of a burning body's heat; linear falloff to 0 at it (IN17c1)"));
+pub const FIRE_HEAT_PER_S: Def<f32> = gp(def!(float "interact.fire.heat_per_s" = 0.5)
+    .range(0.05, 5.0)
+    .help("Heat per second a target gains next to one source, before falloff and wind, ratio/s (IN17c1)"));
+pub const FIRE_COOL_PER_S: Def<f32> = gp(def!(float "interact.fire.cool_per_s" = 0.2)
+    .range(0.0, 5.0)
+    .help("Heat per second a target loses with no source in reach, ratio/s (IN17c1)"));
+pub const FIRE_JITTER: Def<f32> = gp(def!(float "interact.fire.jitter" = 0.25)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Seeded per-target, per-second spread of the heat gain (IN17c1)"));
+pub const FIRE_WIND_BIAS: Def<f32> = gp(def!(float "interact.fire.wind_bias" = 0.6)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("How much wind speeds fire downwind and slows it upwind (Far Cry 2 wind-driven fire; IN17c1)"));
+pub const FIRE_WIND_REF_MPS: Def<f32> = gp(def!(float "interact.fire.wind_ref_mps" = 8.0)
+    .range(1.0, 30.0)
+    .help("Wind speed at which the fire wind bias is full, m/s (IN17c1)"));
+pub const FIRE_RAIN_DOUSE: Def<f32> = gp(def!(float "interact.fire.rain_douse" = 0.6)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Surface wetness at which rain puts a burning body out (sf_surface wetness scale; IN17c1)"));
+
 /// The `interact.*` tunables [`InteractParams`] has, bound by [`InteractionPlugin`].
 pub const TUNABLES: &[&dyn AnyDef] = &[
     &PRIORITY_AMBIENT,
@@ -300,6 +326,13 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &RULES_EVALS_PER_TICK,
     &RULES_WET_THRESHOLD,
     &RULES_WET_TTL_S,
+    &FIRE_SPREAD_RADIUS_M,
+    &FIRE_HEAT_PER_S,
+    &FIRE_COOL_PER_S,
+    &FIRE_JITTER,
+    &FIRE_WIND_BIAS,
+    &FIRE_WIND_REF_MPS,
+    &FIRE_RAIN_DOUSE,
 ];
 
 // --- Resources ----------------------------------------------------------------------------------
@@ -570,11 +603,18 @@ impl Plugin for InteractionPlugin {
     }
 }
 
-/// The `interact.rules.*` gameplay tunables (`IN17b`).
+/// The `interact.rules.*` (`IN17b`) and `interact.fire.*` (`IN17c1`) gameplay tunables.
 fn bind_rules(app: &mut App) {
     bind!(app, RULES_EVALS_PER_TICK, |p, v| p.rules_evals_per_tick = u16::try_from(v).unwrap_or(u16::MAX));
     bind!(app, RULES_WET_THRESHOLD, |p, v| p.rules_wet_threshold = v);
     bind!(app, RULES_WET_TTL_S, |p, v| p.rules_wet_ttl_s = v);
+    bind!(app, FIRE_SPREAD_RADIUS_M, |p, v| p.fire_spread_radius_m = v);
+    bind!(app, FIRE_HEAT_PER_S, |p, v| p.fire_heat_per_s = v);
+    bind!(app, FIRE_COOL_PER_S, |p, v| p.fire_cool_per_s = v);
+    bind!(app, FIRE_JITTER, |p, v| p.fire_jitter = v);
+    bind!(app, FIRE_WIND_BIAS, |p, v| p.fire_wind_bias = v);
+    bind!(app, FIRE_WIND_REF_MPS, |p, v| p.fire_wind_ref_mps = v);
+    bind!(app, FIRE_RAIN_DOUSE, |p, v| p.fire_rain_douse = v);
 }
 
 /// The `interact.debris.*` presentation tunables and, with the `physics` feature, the debris systems.
