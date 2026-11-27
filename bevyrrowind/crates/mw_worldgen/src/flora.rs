@@ -55,7 +55,7 @@ use sf_worldgen::climate_map::ClimateMap;
 use sf_worldgen::guide::Guide;
 use sf_worldgen::reach::VALID_FILE;
 use sf_worldgen::roads::RoadNetwork;
-use sf_worldgen::scatter::{CandidateKey, CandidateRules, CanopyTargets, LayerWinners, Params, WaterMask, budget_cut_layers};
+use sf_worldgen::scatter::{CandidateKey, CandidateRules, CanopyTargets, Focus, LayerWinners, Params, WaterMask, budget_cut_focus};
 use sf_worldgen::scatter_calib::{self, Calibration};
 use sf_worldgen::scatter_product::{self, InputsHash};
 use sf_worldgen::scatter_fields::{Fields, GridFields, Suitability};
@@ -944,15 +944,17 @@ pub fn winners(
     })
 }
 
-/// The load half of a pass on a kept set: the budget (four groups), then the pose. Returns (plants, full count per
-/// budget group).
+/// The load half of a pass on a kept set: the budget (four groups; with `prm.focus`, every instance within
+/// `prm.full_radius_m` of it placed and one remainder outside, [`budget_cut_focus`], WG-E2p), then the pose. Returns
+/// (plants, full count per budget group).
 #[must_use]
 pub fn place(learned: &Learned, world: &World<'_>, prm: &Params, won: &LayerWinners) -> (Vec<Plant>, [usize; 4]) {
     let mut full = [won.rocks.len(), 0, 0, 0];
     for c in &won.plants {
         full[1 + c.key.layer as usize] += 1;
     }
-    let (_, keep) = budget_cut_layers(prm.seed, won, prm.budget, prm.size_priority);
+    let focus = prm.focus.map(|at| Focus { at, radius_m: prm.full_radius_m });
+    let keep = budget_cut_focus(prm.seed, won, prm.budget, prm.size_priority, focus).plants;
     let plants = won.plants.iter().zip(keep).filter(|(_, k)| *k).filter_map(|(c, _)| pose(learned, world, prm.seed, c)).collect();
     (plants, full)
 }
@@ -1198,8 +1200,9 @@ pub(crate) fn guide_inputs(guide: &Path, tiles: &GuideTiles, prm: &Params) -> Re
     Ok((file, fields, water, guide_clearings(guide)?))
 }
 
-/// The hook of `view world:<dir>` (`mw_exterior_bevy::worldgen::WorldgenContent::extra`): the flora pass at the
-/// declared defaults (`budget` overrides `scatter.budget`, from `--set`) on the `guide` folder's products
+/// The hook of `view world:<dir>` (`mw_exterior_bevy::worldgen::WorldgenContent::extra`): the flora pass at `prm`'s
+/// load values (the declared defaults with the app's `--set scatter.budget` / `scatter.full_radius_m` and its start
+/// position as the focus, WG-E2p) on the `guide` folder's products
 /// ([`species_file`], [`product_fields`], `water.json`, [`guide_clearings`]) outside the guide's `towns` (one
 /// placement list per town, `bounds` covering their models), logged; an error is logged and gives nothing.
 pub fn extra(
@@ -1209,12 +1212,8 @@ pub fn extra(
     guide: &Path,
     tiles: &GuideTiles,
     towns: &[&[Placement]],
-    budget: Option<f64>,
+    prm: Params,
 ) -> Vec<(String, Vec<Placement>)> {
-    let mut prm = Params::default();
-    if let Some(b) = budget {
-        prm.budget = b;
-    }
     let towns = TownMask::new(towns, bounds, &TownParams::default());
     let run = guide_inputs(guide, tiles, &prm).and_then(|(file, fields, water, clearings)| {
         scatter_world(db, source, bounds, tiles, &fields, &water, &file, clearings.as_ref(), &towns, prm, Some(guide))
@@ -1222,6 +1221,9 @@ pub fn extra(
     match run {
         Ok(run) => {
             println!("worldgen flora: {}", summary_line(&run));
+            if let Some(line) = full_radius_line(&run) {
+                println!("worldgen flora: {line}");
+            }
             for w in calibration_warnings(&run) {
                 println!("worldgen flora: calibration: {w}");
             }
@@ -1241,6 +1243,30 @@ fn placed_per_group(run: &FloraRun) -> [usize; 4] {
         n[1 + p.key.layer as usize] += 1;
     }
     n
+}
+
+/// The full radius's log line (WG-E2p): the placed plants within `full_radius_m` of the focus per budget group, and
+/// the remainder they leave the outside set; `None` without a focus or with the radius off.
+#[must_use]
+pub fn full_radius_line(run: &FloraRun) -> Option<String> {
+    let at = run.prm.focus.filter(|_| run.prm.full_radius_m > 0.0)?;
+    let r2 = run.prm.full_radius_m * run.prm.full_radius_m;
+    let mut n = [0usize; 4];
+    for p in run.plants.iter().filter(|p| (p.pos[0] - at[0]).powi(2) + (p.pos[1] - at[1]).powi(2) <= r2) {
+        n[1 + p.key.layer as usize] += 1;
+    }
+    let groups: Vec<String> = (1..4).map(|g| format!("{} {}", BUDGET_GROUPS[g], n[g])).collect();
+    // Counts of instances: far under 2^52.
+    #[allow(clippy::cast_precision_loss)]
+    let remainder = (run.prm.budget - n.iter().sum::<usize>() as f64).max(0.0);
+    Some(format!(
+        "full radius {:.0} m round ({:.0}, {:.0}): inside {} ({}), remainder {remainder:.0} for the rest",
+        run.prm.full_radius_m,
+        at[0],
+        at[1],
+        n.iter().sum::<usize>(),
+        groups.join(", "),
+    ))
 }
 
 /// The run's calibration warnings (none when the kept set and its calibration were read).

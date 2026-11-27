@@ -548,6 +548,10 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
   truncates the row's law (the same law conditioned on `size <= cap`, by inversion; a cap at or above `size_max_m` is
   bitwise today), read at the drawing point's class (a cluster's parent, a background point itself). x10s (adapter
   13 / 18 / 13 m): taiga 154 / 250 (flagged), temperate forest 143 / 150, temperate rainforest 199 / 250 (E2o.m 47-64).
+- **WG-E2p** (2026-11-27, `scatter.rs` `Focus`, `FocusCut`, `budget_cut_focus` (`budget_cut_layers` is its no-focus
+  case), `Params::full_radius_m` (declared `scatter.full_radius_m` 1000 m) + `Params::focus`; `flora::place` reads both;
+  `flora::extra` takes the load `Params`; app `world.rs` `flora_load_params`: focus `(eye.x, -eye.z)`, both `--set` values
+  range-checked; log `worldgen flora: full radius ...` with placed inside per group): as Design 10, one global remainder.
 
 ## Tunables
 

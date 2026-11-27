@@ -421,6 +421,57 @@ fn the_scatter_product_is_written_once_read_at_load_and_rebuilt_when_stale() {
     assert_eq!(run(&prm), (computed.0, computed.1, ProductUse::Read));
 }
 
+/// WG-E2p: the full radius at load. On the fixture's kept set, with a focus at the land's centre and a small budget:
+/// the plants placed within the radius are the unbudgeted pass's there, the rest stays under the budget's remainder,
+/// the radius is not in the product hash (a change reads it), and no focus places what the whole-world cut places.
+#[test]
+fn the_full_radius_places_everything_round_the_focus_at_load() {
+    use flora::ProductUse;
+    let m = mosaic();
+    let regions = regions();
+    let l = learned(&m);
+    let t = tiles(&m);
+    let towns = TownMask::default();
+    let world = World::new(&m, &regions, &t, None, &towns);
+    let f = fields(&world);
+    let prm = Params::default();
+    let prior = flora::region_prior(&l.density, &[vec![0; 3], vec![1, 0, 0]]);
+    let water = WaterMask::sea(0.0, prm.water_margin_m);
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let run = |prm: &Params| {
+        let (plants, _, used, _) = flora::scatter_cached(d, &l, &world, &f, &water, &prior, prm).unwrap();
+        (plants, used)
+    };
+    let unbudgeted = Params { budget: f64::from(u32::MAX), ..prm };
+    let (all, used) = run(&unbudgeted);
+    assert_eq!(used, ProductUse::Wrote);
+    let r = world.rect();
+    let at = [f64::midpoint(r[0], r[2]), f64::midpoint(r[1], r[3])];
+    let radius = (r[2] - r[0]).min(r[3] - r[1]) / 4.0;
+    let near = |p: &flora::Plant| (p.pos[0] - at[0]).powi(2) + (p.pos[1] - at[1]).powi(2) <= radius * radius;
+    let inside: Vec<_> = all.iter().filter(|p| near(p)).copied().collect();
+    assert!(!inside.is_empty() && inside.len() < all.len() / 2, "the radius holds a part: {} of {}", inside.len(), all.len());
+    let budget = (inside.len() / 2) as f64;
+    let focused = Params { budget, full_radius_m: radius, focus: Some(at), ..prm };
+    let (cut, used) = run(&focused);
+    assert_eq!(used, ProductUse::Read, "the focus and radius are load values: the product is read");
+    let cut_inside: Vec<_> = cut.iter().filter(|p| near(p)).copied().collect();
+    assert_eq!(cut_inside, inside, "inside the radius == the unbudgeted pass");
+    assert_eq!(cut.len(), inside.len(), "a budget under the inside set leaves the outside nothing");
+    // A budget over the inside set: the total is the budget, the outside nests in the unbudgeted pass.
+    let wide = Params { budget: (inside.len() + (all.len() - inside.len()) / 2) as f64, ..focused };
+    let (more, _) = run(&wide);
+    assert!((more.len() as f64 - wide.budget).abs() <= 4.0, "total {} at budget {}", more.len(), wide.budget);
+    let keys = |v: &[flora::Plant]| v.iter().map(|p| p.key).collect::<std::collections::BTreeSet<_>>();
+    assert!(keys(&more).is_subset(&keys(&all)) && keys(&cut).is_subset(&keys(&more)), "budgets nest");
+    // No focus, or radius 0: the whole-world cut.
+    let plain = Params { budget, ..prm };
+    let (whole, _) = run(&plain);
+    assert_eq!(run(&Params { focus: Some(at), full_radius_m: 0.0, ..plain }).0, whole);
+    assert!(whole.iter().filter(|p| near(p)).count() < inside.len(), "the whole-world cut thins the focus too");
+}
+
 /// WG-E2o.3: the adapter's calibration is the class census of the guide's land rect (one row per class id in the
 /// fields' order; area exact and mean equal to a brute pass over the same cells), it is written beside the product
 /// and read back with it, and a class target change makes the product stale.

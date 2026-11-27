@@ -331,3 +331,81 @@ fn the_rock_group_keeps_its_share_beside_the_plant_layers() {
     let only = LayerWinners { rocks: Vec::new(), plants: w.plants.clone() };
     assert_eq!(budget_cut_layers(SEED, &only, b, 1.0).1, budget_cut(SEED, &w.plants, b, 1.0));
 }
+
+/// WG-E2p: the full radius (spec "Design" 10). With a focus at the fixture square's centre and a radius over about a
+/// quarter of it: every instance inside is kept at every budget (inside == the unbudgeted set there); the total is
+/// `max(budget, inside)` capped by the set (up to the per-group rounding); the outside set nests with the budget and
+/// keeps its groups' shares of the global remainder; no focus, or a radius 0, is [`budget_cut_layers`]' cut.
+#[test]
+fn the_full_radius_keeps_everything_inside_and_one_remainder_outside() {
+    use crate::scatter_rocks::{RockCandidate, RockKey};
+    use crate::scatter_species::RockContext;
+    let fx = Fixture::new();
+    let plants = fx.whole();
+    let rocks: Vec<RockCandidate> = (0..2000u32)
+        .map(|i| RockCandidate {
+            key: RockKey { context: RockContext::Field, tile: ((i % 2) as i32, 0), parent: i / 10, offspring: i % 10 },
+            pos: [f64::from(i % 40) * 12.8, f64::from(i / 40) * 10.24],
+            size_m: 0.3 + f64::from(i % 13),
+            tiebreak: u64::from(i),
+            source: [0.0, 0.0],
+        })
+        .collect();
+    let w = LayerWinners { rocks, plants };
+    let n = w.rocks.len() + w.plants.len();
+    let focus = Focus { at: [SIDE / 2.0, SIDE / 2.0], radius_m: SIDE / 3.5 };
+    let near = |p: [f64; 2]| (p[0] - focus.at[0]).powi(2) + (p[1] - focus.at[1]).powi(2) <= focus.radius_m.powi(2);
+    let group = |c: &Candidate| layer_group(c.key.layer) as usize;
+    let mut inside = [w.rocks.iter().filter(|c| near(c.pos)).count(), 0, 0, 0];
+    for c in w.plants.iter().filter(|c| near(c.pos)) {
+        inside[group(c)] += 1;
+    }
+    let n_in: usize = inside.iter().sum();
+    assert!(n_in > 0 && n_in < n / 2, "the fixture's radius holds a part of the set: {n_in} of {n}");
+    let mut outside = [w.rocks.len() - inside[0], 0, 0, 0];
+    for c in &w.plants {
+        outside[group(c)] += 1;
+    }
+    for g in 1..4 {
+        outside[g] -= inside[g];
+    }
+    let n_out = n - n_in;
+    let budgets = [0.0, 10.0, (n_in / 2) as f64, n_in as f64, (n_in + n_out / 3) as f64, (n - 1) as f64, n as f64, 2.0 * n as f64];
+    let mut previous: Option<FocusCut> = None;
+    for b in budgets {
+        let cut = budget_cut_focus(SEED, &w, b, 1.0, Some(focus));
+        assert_eq!(cut, budget_cut_focus(SEED, &w, b, 1.0, Some(focus)), "pure");
+        assert_eq!(cut.inside, inside, "inside per group at budget {b}");
+        let rocks_in = w.rocks.iter().zip(&cut.rocks).filter(|(c, _)| near(c.pos));
+        let plants_in = w.plants.iter().zip(&cut.plants).filter(|(c, _)| near(c.pos));
+        assert!(rocks_in.map(|x| *x.1).chain(plants_in.map(|x| *x.1)).all(|k| k), "everything inside kept at budget {b}");
+        // Outside: each group keeps its share of the one remainder.
+        let remainder = (b - n_in as f64).max(0.0);
+        let want = |g: usize| {
+            if remainder >= n_out as f64 { outside[g] } else { ((remainder * outside[g] as f64 / n_out as f64).round() as usize).min(outside[g]) }
+        };
+        let mut got = [w.rocks.iter().zip(&cut.rocks).filter(|(c, k)| **k && !near(c.pos)).count(), 0, 0, 0];
+        for (c, _) in w.plants.iter().zip(&cut.plants).filter(|(c, k)| **k && !near(c.pos)) {
+            got[group(c)] += 1;
+        }
+        for (g, &n_g) in got.iter().enumerate() {
+            assert_eq!(n_g, want(g), "outside group {g} at budget {b}");
+        }
+        let kept = cut.rocks.iter().chain(&cut.plants).filter(|&&k| k).count();
+        let total = b.max(n_in as f64).min(n as f64);
+        assert!((kept as f64 - total).abs() <= 2.0, "total {kept} at budget {b}, want {total}");
+        if let Some(p) = &previous {
+            let nests = p.rocks.iter().zip(&cut.rocks).chain(p.plants.iter().zip(&cut.plants)).all(|(a, b)| !a || *b);
+            assert!(nests, "budget {b} keeps a superset of the one below");
+        }
+        previous = Some(cut);
+    }
+    // No focus, or radius 0: today's cut, nothing inside.
+    for b in [0.0, (n / 3) as f64, n as f64] {
+        let (rk, pk) = budget_cut_layers(SEED, &w, b, 1.0);
+        for f in [None, Some(Focus { radius_m: 0.0, ..focus })] {
+            let cut = budget_cut_focus(SEED, &w, b, 1.0, f);
+            assert_eq!((&cut.rocks, &cut.plants, cut.inside), (&rk, &pk, [0; 4]), "no full radius at budget {b}");
+        }
+    }
+}

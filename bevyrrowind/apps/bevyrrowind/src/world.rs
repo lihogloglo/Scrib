@@ -93,11 +93,7 @@ pub(crate) fn view(install: &MorrowindInstall, dir: &str, mut flags: crate::View
         let eye = glam::DVec3::new(ex, ground(ex, ez).max(0.0) + EYE_HEIGHT_M, ez);
         (eye, glam::DVec3::new(sx, sh * 0.8, sz))
     };
-    // `--set scatter.budget=<count>`: the flora pass's budget (WG-X5), read here because the pass runs before the app.
-    let flora_budget = flags.perf.set.iter().find_map(|s| s.strip_prefix("scatter.budget=")).map(str::parse::<f64>).transpose()
-        .map_err(|e| format!("--set scatter.budget: {e}"))?;
-    // A load-time value, not an app tunable: the app's `--set` check would reject the name.
-    flags.perf.set.retain(|s| !s.starts_with("scatter.budget="));
+    let flora = flora_load_params(&mut flags.perf.set, eye)?;
     let (vfs, mut content) = mw_boot_bevy::load(install, false)?;
     let vfs = with_guide_mods(flags.delight(install, vfs)?, path).map_err(|e| format!("world:{dir}: {e}"))?;
     println!("content loaded in {:.2} s", started.elapsed().as_secs_f32());
@@ -122,7 +118,7 @@ pub(crate) fn view(install: &MorrowindInstall, dir: &str, mut flags: crate::View
     }
     let anchors = AnchorTransform::read(path).map_err(|e| format!("world:{dir}: {e}"))?;
     let mut world_content =
-        anchors.map(|a| moved_content(&content.db, &a, path, &tiles, &towns, &options.store, &options.manifest, flora_budget));
+        anchors.map(|a| moved_content(&content.db, &a, path, &tiles, &towns, &options.store, &options.manifest, flora));
     if !towns.is_empty() {
         let c = world_content.get_or_insert_with(Default::default);
         c.extra.extend(towns.into_iter().map(|t| (t.name, t.placements)));
@@ -238,6 +234,27 @@ fn with_exterior_layers(
     Ok(Arc::new(t))
 }
 
+/// The flora pass's load values, read before the app because the pass runs before it: `--set scatter.budget=<count>`
+/// (WG-X5) and `--set scatter.full_radius_m=<m>` (WG-E2p), each checked against its declared range and taken out of
+/// `set` (load-time values, not app tunables: the app's `--set` check would reject the names); the focus is the start
+/// position `eye` in the scatter plane (x east, y north: `(eye.x, -eye.z)`, the inverse of `flora::placements`).
+fn flora_load_params(set: &mut Vec<String>, eye: glam::DVec3) -> Result<sf_worldgen::scatter::Params, String> {
+    let mut flora = sf_worldgen::scatter::Params { focus: Some([eye.x, -eye.z]), ..Default::default() };
+    for (name, slot) in [("scatter.budget", &mut flora.budget), ("scatter.full_radius_m", &mut flora.full_radius_m)] {
+        let prefix = format!("{name}=");
+        if let Some(raw) = set.iter().find_map(|s| s.strip_prefix(prefix.as_str())) {
+            let d = sf_worldgen::scatter::declared().into_iter().find(|d| d.name == name).ok_or(format!("--set {name}: undeclared"))?;
+            let v = raw.parse::<f64>().map_err(|e| format!("--set {name}: {e}"))?;
+            if !(d.min..=d.max).contains(&v) {
+                return Err(format!("--set {name}={v}: outside {}..{} {}", d.min, d.max, d.unit));
+            }
+            *slot = v;
+        }
+        set.retain(|s| !s.starts_with(prefix.as_str()));
+    }
+    Ok(flora)
+}
+
 /// The content's exterior references moved through `anchors` (`world_content`), with their log lines; the flora pass
 /// keeps out of the guide's `towns` and of the clearings of its folder (`guide`) too.
 #[allow(clippy::too_many_arguments)] // the `view world:` load's pieces, each borrowed from a different owner
@@ -249,7 +266,7 @@ fn moved_content(
     towns: &[GuideTown],
     store: &Store,
     manifest: &Manifest,
-    flora_budget: Option<f64>,
+    flora: sf_worldgen::scatter::Params,
 ) -> mw_exterior_bevy::worldgen::WorldgenContent {
     let started = Instant::now();
     let source = mw_world::MwWorldSource::build(db, &mw_world::SourceOptions::default());
@@ -288,7 +305,7 @@ fn moved_content(
     );
     println!("worldgen anchors: {}", census.line());
     let town_sets: Vec<&[Placement]> = towns.iter().map(|t| t.placements.as_slice()).collect();
-    let extra = mw_worldgen::flora::extra(db, &source, &bounds, guide, tiles, &town_sets, flora_budget);
+    let extra = mw_worldgen::flora::extra(db, &source, &bounds, guide, tiles, &town_sets, flora);
     mw_exterior_bevy::worldgen::WorldgenContent { placements, extra }
 }
 
