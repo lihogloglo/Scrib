@@ -47,6 +47,16 @@ pub struct InteractParams {
     pub debris_lod_m: f32,
     /// Breaks applied per tick; the rest wait for the next tick, count (range 1-32).
     pub debris_breaks_per_tick: u8,
+    /// Debris pieces alive in a client's active space; past it the oldest start fading, count (range 0-256).
+    pub debris_awake_max: u16,
+    /// A debris piece starts fading this long after spawning if it has not slept, s (range 1-60).
+    pub debris_fade_s: f32,
+    /// A fading debris piece scales to zero over this, then despawns, s (range 0.1-3).
+    pub debris_shrink_s: f32,
+    /// Launch speed of a debris piece away from the hit, m/s (range 0-10).
+    pub debris_speed_mps: f32,
+    /// Seeded jitter of a piece's launch direction and speed, ratio (range 0-1).
+    pub debris_spread: f32,
     /// Fixed simulation rate leases count in, ticks per second.
     pub tick_hz: f32,
 }
@@ -94,6 +104,16 @@ impl Default for InteractParams {
             debris_lod_m: 25.0,
             // tunables: const (bound from interact.debris.breaks_per_tick in sf_interaction_bevy (IN1a); Guess)
             debris_breaks_per_tick: 6,
+            // tunables: const (bound from interact.debris.awake_max in sf_interaction_bevy (IN1c); Guess, spec 2026-11-11)
+            debris_awake_max: 48,
+            // tunables: const (bound from interact.debris.fade_s in sf_interaction_bevy (IN1c); Guess, Chaos sleep removal)
+            debris_fade_s: 8.0,
+            // tunables: const (bound from interact.debris.shrink_s in sf_interaction_bevy (IN1c); Guess, Chaos scale on removal)
+            debris_shrink_s: 0.5,
+            // tunables: const (bound from interact.debris.speed_mps in sf_interaction_bevy (IN1c); Guess)
+            debris_speed_mps: 2.5,
+            // tunables: const (bound from interact.debris.spread in sf_interaction_bevy (IN1c); Guess)
+            debris_spread: 0.35,
             // tunables: const (bound from the app's fixed timestep in sf_interaction_bevy; net.md 60 Hz tick)
             tick_hz: 60.0,
         }

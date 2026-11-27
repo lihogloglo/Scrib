@@ -382,6 +382,17 @@ Core: `Destroyed` (stage = index into `stages`), `DAMAGE_SCRIPT`, `splitmix64`, 
 no `DestructChanged`. `awake_max` / `fade_s` stay with IN1c. Tests: core 7 (+ splitmix64 reference value and fixed
 seeds), shell `tests_destroy.rs` (8).
 
+## As built (IN1c, 2026-11-27)
+
+`sf_interaction_bevy` `debris.rs` behind `physics` (optional `sf_physics_bevy`, `sf_world_bevy`, `sf_records`,
+`bevy_transform`; on at the root entry, all plain selections in Bevy group [1]): `DebrisSets` (record -> `DebrisPieceDef
+{ shape, local, mass }`), `DebrisPiece` + `DebrisFading`, `DebrisSystems::{Fade, Spawn}` after `Release` and
+`PhysicsSystems::Step`, run only with `Physics` + `PhysicsFocus`. Launch = `set_velocity` (exact speed whatever the mass
+clamp) away from the hit along `dir`, `interact.debris.{speed_mps, spread}` (new, Guess) jitter from
+`splitmix64(seed ^ rank)`. Cap counts pieces not fading (a shrinking piece keeps its body for `shrink_s`); a tick past
+the cap keeps its newest pieces. Pieces carry `CellCoord` + `Transform` (physics write-back); the game's sets and mesh
+hook are not built yet, so the game shows no debris. Tests `tests_debris.rs` (4 headless).
+
 ## As built (IN38b1, 2026-11-27)
 
 `mw_interaction_bevy/src/breakable.rs`: `BreakablesTable::build(db)` classifies every `CONT` / `MISC` / `STAT` record

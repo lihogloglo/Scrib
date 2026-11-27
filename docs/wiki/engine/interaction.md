@@ -58,8 +58,8 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   weapon/armour wear from the overkill (`mw_interaction` `breakable.rs` `spill_draw`/`kept_count`/`health_loss`,
   `break_spill_*` tunables, gold whole), scattered in the footprint, `physics` blob awake (falls, settles), `mw.loose`
   blob (count, owned, condition) the take reads; live via `Streaming::spawn_when_ready`, unloaded via the overlay.
-  An unmoved container whose cell left R0 before the release keeps its store (no transform known). No loot or debris
-  yet (IN1c).
+  An unmoved container whose cell left R0 before the release keeps its store (no transform known). No loot yet; debris
+  bodies are framework-only (IN1c, below), the game fills no `DebrisSets` yet.
 - **Claims.** `Claims` (`sf_interaction/src/claims.rs:225`): priority with preemption of Reserved claims only,
   queue tickets, leases, exclusion groups, one body hold per user plus hand claims, typed `Refusal`
   (`claims.rs:114`), invalidation reasons. Requests are applied as one sorted batch per tick
@@ -126,7 +126,7 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
 
 - No rest UI: `RestRequested` is only logged. Lying down (IN3b) and lean (IN3c) wait for baked bed and lean clips.
 - `interact.cook` is a stub (`sf_interaction/src/cook.rs:16`); defs are cooked by the game's bake step only.
-- Carry and world rules are spec only; breaking removes the object and spills a container's contents, no debris (IN1c); breakable `STAT` urns stay out of the near precombine (`--off scene` arm, `mw_bake` `far.rs` `precombine_exclude`, IN38c3), so they break there too after a re-bake.
+- Carry and world rules are spec only; breaking removes the object and spills a container's contents; debris is framework-only (`sf_interaction_bevy` `debris.rs`, `physics` feature: seeded pieces within `interact.debris.lod_m` of `PhysicsFocus`, `awake_max` cap fading the oldest, fade on sleep or `fade_s`, shrink, despawn; IN1c) and the game has no sets or mesh hook yet; breakable `STAT` urns stay out of the near precombine (`--off scene` arm, `mw_bake` `far.rs` `precombine_exclude`, IN38c3), so they break there too after a re-bake.
 - Lights: off-by-default lights get no def; the loop sound and the AI's light copy don't follow `LightChanged` yet.
 - History of each slice: [ledger](../../ledger/interaction.md).
 

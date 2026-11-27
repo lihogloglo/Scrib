@@ -3,6 +3,7 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-27 (interaction loop, IN1c): the framework can now throw seeded debris pieces when something breaks near the camera (capped, they settle, fade and shrink away); the game does not give them meshes yet, so nothing shows in play.
 - 2026-11-27 (interaction loop, IN38c3): breakable urns and pots stay out of the merged near meshes, so they break in the precombine view (`--off scene`) too; the next bake re-merges cells once.
 - 2026-11-27 (interaction loop, IN38c2): decorative urns and pots (Morrowind `STAT`s) now break like crates: the collider, the drawn object and its saved place go at once (the precombine view, `--off scene`, still draws them until IN38c3).
 - 2026-11-27 (interaction loop, IN38c1): the streaming layer can now remove one object the static scene draws in batches (all its pieces vanish at once, nothing replaces it); groundwork for breaking decorative urns and pots (IN38c2).

@@ -221,7 +221,7 @@ sf_coords = { path = "superfargoth/crates/sf_coords", version = "0.1.0" }
 sf_crime = { path = "superfargoth/crates/sf_crime", version = "0.1.0" }
 sf_crime_bevy = { path = "superfargoth/crates/sf_crime_bevy", version = "0.1.0" }
 sf_interaction = { path = "superfargoth/crates/sf_interaction", version = "0.1.0" }
-sf_interaction_bevy = { path = "superfargoth/crates/sf_interaction_bevy", version = "0.1.0" }
+sf_interaction_bevy = { path = "superfargoth/crates/sf_interaction_bevy", version = "0.1.0", features = ["physics"] }
 sf_diag = { path = "superfargoth/crates/sf_diag", version = "0.1.0" }
 # Every counter plugin compiled in; each still runs only when the app adds it.
 sf_diag_bevy = { path = "superfargoth/crates/sf_diag_bevy", version = "0.1.0", features = ["assets", "pipelines", "render", "texview", "textures", "views"] }

@@ -340,6 +340,8 @@ breaks: see [(d) World rules](interaction-world-rules.md) (IN28).
 | `interact.debris.breaks_per_tick` | count | 6 | 1-32 | Guess | Gameplay |
 | `interact.debris.fade_s` | s | 8 | 1-60 | Guess | Presentation |
 | `interact.debris.shrink_s` | s | 0.5 | 0.1-3 | Guess (Industry: UE Chaos scale on removal [M]; IN1-S) | Presentation |
+| `interact.debris.speed_mps` | m/s | 2.5 | 0-10 | Guess (IN1c: launch away from the hit) | Presentation |
+| `interact.debris.spread` | ratio | 0.35 | 0-1 | Guess (IN1c: seeded direction, speed and spin jitter) | Presentation |
 | `interact.place.clearance_m` | m | 0.35 | 0.1-1.5 | Guess (a crate's half width; IN46) | Gameplay |
 | `interact.place.spread_m` | m | 0.4 | 0.1-2 | Guess (spiral spacing; reach √15 × 0.4 ≈ 1.5 m at 16 tries) | Gameplay |
 | `interact.place.floor_tries` | count | 16 | 1-64 | Guess (16 points ≈ 1.5 m reach at 0.4 m) | Gameplay |

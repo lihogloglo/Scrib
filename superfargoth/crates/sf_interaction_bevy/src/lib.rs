@@ -67,6 +67,10 @@
 //!   [`DestructChanged`], queues each crossed stage and releases at most
 //!   `interact.debris.breaks_per_tick` [`Destroyed`] per tick; a removing break writes
 //!   `IndexChange::Remove` with `OwnerDestroyed`. A [`DestructRest`] restores a saved state.
+//! - Debris (`IN1c`, `physics` feature, `debris` module docs): every client spawns a break's
+//!   cosmetic pieces from its seed within `interact.debris.lod_m` of `PhysicsFocus`, capped at
+//!   `interact.debris.awake_max` (oldest fade first), faded on sleep or after `fade_s`, shrunk over
+//!   `shrink_s`, despawned. Never saved, never gameplay.
 //!
 //! Not here: game wiring (`IN32`).
 
@@ -87,6 +91,8 @@ use sf_world::PlacementId;
 use smallvec::SmallVec;
 
 pub mod activate;
+#[cfg(feature = "physics")]
+pub mod debris;
 pub mod destroy;
 pub mod door;
 pub mod focus;
@@ -98,6 +104,8 @@ pub mod seat_clips;
 mod tests;
 #[cfg(test)]
 mod tests_activate;
+#[cfg(all(test, feature = "physics"))]
+mod tests_debris;
 #[cfg(test)]
 mod tests_destroy;
 #[cfg(test)]
@@ -115,6 +123,8 @@ pub use activate::{
     ActivateCommand, ActivationSystems, InteractionDefs, InteractionStateTags, PendingUse, PendingUses, ScriptActivate,
     UseApproved, UseRefused,
 };
+#[cfg(feature = "physics")]
+pub use debris::{DebrisFading, DebrisPiece, DebrisPieceDef, DebrisSets, DebrisSystems};
 pub use destroy::{
     DestroySystems, Destroyed, DestructChanged, DestructRest, Destructible, Destructibles, DestructionRules,
     PendingBreaks, PropDamage,
@@ -147,6 +157,11 @@ const fn gp_count(d: Def<u32>) -> Def<u32> {
 /// A presentation tunable (net `Presentation`, scope `Dev`, source `Guess`, live).
 const fn pres(d: Def<f32>) -> Def<f32> {
     d.source(Source::Guess).scope(Scope::Dev).net(Net::Presentation).lifetime(Lifetime::Live)
+}
+
+/// A presentation count (as [`pres`], unit `Count`).
+const fn pres_count(d: Def<u32>) -> Def<u32> {
+    d.source(Source::Guess).scope(Scope::Dev).net(Net::Presentation).lifetime(Lifetime::Live).unit(Unit::Count)
 }
 
 pub const PRIORITY_AMBIENT: Def<u32> = gp_count(def!(count "interact.claim.priority_ambient" = 10)
@@ -225,6 +240,24 @@ pub const DEBRIS_LOD_M: Def<f32> = pres(def!(float "interact.debris.lod_m" = 25.
 pub const DEBRIS_BREAKS_PER_TICK: Def<u32> = gp_count(def!(count "interact.debris.breaks_per_tick" = 6)
     .range(1, 32)
     .help("Breaks applied per tick; the rest wait for the next tick (IN1)"));
+pub const DEBRIS_AWAKE_MAX: Def<u32> = pres_count(def!(count "interact.debris.awake_max" = 48)
+    .range(0, 256)
+    .help("Debris pieces alive in the active space; past it the oldest start fading (IN1c)"));
+pub const DEBRIS_FADE_S: Def<f32> = pres(def!(float "interact.debris.fade_s" = 8.0)
+    .range(1.0, 60.0)
+    .unit(Unit::Seconds)
+    .help("A debris piece fades on sleep or this long after spawning (Chaos sleep removal; IN1c)"));
+pub const DEBRIS_SHRINK_S: Def<f32> = pres(def!(float "interact.debris.shrink_s" = 0.5)
+    .range(0.1, 3.0)
+    .unit(Unit::Seconds)
+    .help("A fading debris piece scales to zero over this, then despawns (Chaos scale on removal; IN1c)"));
+pub const DEBRIS_SPEED_MPS: Def<f32> = pres(def!(float "interact.debris.speed_mps" = 2.5)
+    .range(0.0, 10.0)
+    .help("Launch speed of a debris piece away from the hit, m/s (IN1c)"));
+pub const DEBRIS_SPREAD: Def<f32> = pres(def!(float "interact.debris.spread" = 0.35)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Seeded jitter of a debris piece's launch direction and speed (IN1c)"));
 
 /// The `interact.*` tunables [`InteractParams`] has, bound by [`InteractionPlugin`].
 pub const TUNABLES: &[&dyn AnyDef] = &[
@@ -248,6 +281,11 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &PLACE_FLOOR_TRIES,
     &DEBRIS_LOD_M,
     &DEBRIS_BREAKS_PER_TICK,
+    &DEBRIS_AWAKE_MAX,
+    &DEBRIS_FADE_S,
+    &DEBRIS_SHRINK_S,
+    &DEBRIS_SPEED_MPS,
+    &DEBRIS_SPREAD,
 ];
 
 // --- Resources ----------------------------------------------------------------------------------
@@ -513,7 +551,19 @@ impl Plugin for InteractionPlugin {
         bind!(app, PLACE_FLOOR_TRIES, |p, v| p.place_floor_tries = to_u8(v));
         bind!(app, DEBRIS_LOD_M, |p, v| p.debris_lod_m = v);
         bind!(app, DEBRIS_BREAKS_PER_TICK, |p, v| p.debris_breaks_per_tick = to_u8(v));
+        bind_debris(app);
     }
+}
+
+/// The `interact.debris.*` presentation tunables and, with the `physics` feature, the debris systems.
+fn bind_debris(app: &mut App) {
+    bind!(app, DEBRIS_AWAKE_MAX, |p, v| p.debris_awake_max = u16::try_from(v).unwrap_or(u16::MAX));
+    bind!(app, DEBRIS_FADE_S, |p, v| p.debris_fade_s = v);
+    bind!(app, DEBRIS_SHRINK_S, |p, v| p.debris_shrink_s = v);
+    bind!(app, DEBRIS_SPEED_MPS, |p, v| p.debris_speed_mps = v);
+    bind!(app, DEBRIS_SPREAD, |p, v| p.debris_spread = v);
+    #[cfg(feature = "physics")]
+    debris::build(app);
 }
 
 /// The settings with `tick_hz` from the fixed timestep (the settings' own without one).

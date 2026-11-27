@@ -31,7 +31,17 @@ sf_tunables_bevy.workspace = true
 # `PlacementId`: what index changes name.
 sf_world.workspace = true
 smallvec.workspace = true
+# The debris bridge (`physics` feature, module `debris`, IN1c): cosmetic break pieces as bodies.
+# Off by default: sf_physics_bevy brings rapier and the streaming stack the claims, doors and
+# lights don't need (the sf_audio_bevy `physics` pattern; the app turns it on at the root entry).
+bevy_transform = { workspace = true, features = ["std", "bevy-support"], optional = true }
+sf_physics_bevy = { workspace = true, optional = true }
+sf_records = { workspace = true, optional = true }
+sf_world_bevy = { workspace = true, optional = true }
 workspace-hack.workspace = true
+
+[features]
+physics = ["dep:bevy_transform", "dep:sf_physics_bevy", "dep:sf_records", "dep:sf_world_bevy"]
 
 [dev-dependencies]
 # Flat ground, the test bodies' mover state (seat tests).
