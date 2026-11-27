@@ -728,7 +728,7 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
         // The spawners at startup (the `PostStartup` hooks of audio, scripts and physics wrap
         // them); the world itself (camera, player anchor, worldspace roots) once a world is
         // wanted (`phase.rs`: at once on dev runs, after New game on the release start).
-        .add_systems(Startup, setup_spawners)
+        .add_systems(Startup, setup_spawners.in_set(SpawnersSetup))
         .add_systems(OnEnter(WorldAlive), setup.in_set(WorldSetup))
         .add_systems(Update, (follow_pose, follow_player).chain().before(StreamingSystems::Drive).run_if(in_state(WorldAlive)))
         .add_systems(Update, (light_layers, status).run_if(in_state(WorldAlive)))
@@ -941,6 +941,11 @@ const LEVEL_TINTS: [Color; 5] = [
 /// World content that needs the roots (a test level's props) orders after it.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct WorldSetup;
+
+/// `Startup`: [`setup_spawners`]. A spawner registered later in `Startup` (the generated world's library rocks)
+/// orders after it, before the `PostStartup` hooks that wrap them.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct SpawnersSetup;
 
 /// Startup: the placement spawners only, no world entity (the front end has none). The
 /// worldspace roots are `setup`'s.

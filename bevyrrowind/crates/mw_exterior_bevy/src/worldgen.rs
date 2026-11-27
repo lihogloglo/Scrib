@@ -16,6 +16,10 @@
 //! to CPU tiles), and the erosion filter is live: the console's `worldgen.filter false` / `worldgen.octaves <n>`
 //! (or `--set`) rebuild the provider with the new filter and the terrain refills ([`WORLDGEN_FILTER`],
 //! [`WORLDGEN_OCTAVES`]).
+//!
+//! RG-P5a (rockgen.md "(f)"): library rocks (`ROCK_LIBRARY`, model `rockgen/<class>/<index>`) index with the
+//! variant bounds of [`WorldgenContent::models`] and draw through a [`RockSpawner`] registered at startup when the
+//! content carries [`WorldgenContent::rock_libraries`] (`--off rocklibrary`: the app reads none).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -34,7 +38,15 @@ use sf_vfs::VfsPath;
 use sf_world::{
     IndexParams, IndexReader, MemoryIndex, ModelInfo, Placement, WorldIndex, WorldspaceId, build_directory, build_pages,
 };
-use sf_world_bevy::WorldIndexSource;
+use sf_world_bevy::{PlacementSpawners, WorldIndexSource};
+use mw_assets::SharedVfs;
+use mw_assets::cooked::TextureCompanions;
+use mw_world::source::ROCK_LIBRARY;
+use sf_rockgen::Libraries;
+use sf_rockgen_bevy::{RockDebug, RockLodSettings, RockMaterial, RockMaterialSettings, RockSpawner, RockgenPlugin};
+use sf_tunables_bevy::Tunables;
+
+use crate::rock_materials::{RockTextureTable, material_set};
 
 /// `worldgen.cloud_base_lift_m`: what a generated world adds to every cloud base (the weather's heights are
 /// halved, `CLOUD_WORLD_SCALE`, so the layer sits at ~0.6-1.2 km; a 5.5 km summit needs it near 3 km).
@@ -105,6 +117,47 @@ pub struct WorldgenContent {
     /// Extra placements from later passes, each with a name for the log (WG-X5: flora scatter). Indexed with
     /// `placements`; their ids must not collide with them.
     pub extra: Vec<(String, Vec<Placement>)>,
+    /// Model infos the bake lacks (RG-P5a: library rocks' `rockgen/<class>/<index>`, the variant's engine-frame
+    /// bounds); looked up before the bake's `model.info` ([`content_models`]).
+    pub models: HashMap<VfsPath, ModelInfo>,
+    /// The rock variant libraries the library rocks name (RG-P5a); with a [`ROCK_LIBRARY`] placement, `add`
+    /// registers their [`RockSpawner`].
+    pub rock_libraries: Option<Arc<Libraries>>,
+}
+
+impl WorldgenContent {
+    /// Every placement: the content's, then the extra lists'.
+    pub fn all(&self) -> impl Iterator<Item = &Placement> {
+        self.placements.iter().chain(self.extra.iter().flat_map(|(_, e)| e))
+    }
+}
+
+/// The index's model lookup: `content`'s own [`WorldgenContent::models`] first, then the bake's `infos`.
+pub fn content_models<'a, S: std::hash::BuildHasher>(
+    content: Option<&'a WorldgenContent>,
+    infos: &'a HashMap<VfsPath, ModelInfo, S>,
+) -> impl Fn(&VfsPath) -> Option<ModelInfo> + 'a {
+    move |m| content.and_then(|c| c.models.get(m)).or_else(|| infos.get(m)).copied()
+}
+
+/// The content index's log line (`+ <name> <count>` per extra list).
+pub fn index_line(c: &WorldgenContent, index: &WorldIndex, with_info: usize, seconds: f32) -> String {
+    use std::fmt::Write as _;
+    let mut extra = String::new();
+    for (name, e) in &c.extra {
+        let _ = write!(extra, " + {name} {}", e.len());
+    }
+    format!(
+        "worldgen content index: {} placements ({} content{extra}), {} cells, {} pages, {} models with model.info, \
+         {} without (points), in {seconds:.2} s; static scene, precombine and far field off (source-cell products): \
+         statics spawn per placement",
+        index.stats.placements,
+        c.placements.len(),
+        index.stats.cells,
+        index.stats.pages,
+        with_info,
+        index.stats.missing_models.len(),
+    )
 }
 
 /// `p` moved to engine position `pos` (metres, absolute): rotation, scale, class and flags kept.
@@ -145,10 +198,7 @@ pub fn content_index(
     models: &dyn Fn(&VfsPath) -> Option<ModelInfo>,
 ) -> WorldIndex {
     let params = IndexParams::default();
-    let placements = content
-        .into_iter()
-        .flat_map(|c| c.placements.iter().chain(c.extra.iter().flat_map(|(_, e)| e)))
-        .cloned();
+    let placements = content.into_iter().flat_map(WorldgenContent::all).cloned();
     let (pages, stats) = build_pages(&params, placements, models);
     let directory = build_directory(ext.clone(), &params, &pages);
     WorldIndex { directory, pages, stats }
@@ -209,27 +259,21 @@ pub(crate) fn add(app: &mut App, ext: &WorldspaceId, setup: &WorldgenSetup, stor
     let content = setup.content.as_ref();
     let models = content
         .into_iter()
-        .flat_map(|c| c.placements.iter().chain(c.extra.iter().flat_map(|(_, e)| e)))
-        .filter_map(|p| p.model.as_ref());
+        .flat_map(|c| c.all().filter_map(|p| p.model.as_ref()).filter(|m| !c.models.contains_key(*m)));
     let infos = model_infos(store, manifest, models);
-    let index = content_index(ext, content, &|m| infos.get(m).copied());
+    let index = content_index(ext, content, &content_models(content, &infos));
     if let Some(c) = content {
-        let extra: Vec<String> = c.extra.iter().map(|(name, e)| format!(" + {name} {}", e.len())).collect();
-        let extra = extra.concat();
-        info!(
-            "worldgen content index: {} placements ({} content{extra}), {} cells, {} pages, {} models with model.info, \
-             {} without (points), in {:.2} s; static scene, precombine and far field off (source-cell products): \
-             statics spawn per placement",
-            index.stats.placements,
-            c.placements.len(),
-            index.stats.cells,
-            index.stats.pages,
-            infos.len(),
-            index.stats.missing_models.len(),
-            started.elapsed().as_secs_f32(),
-        );
+        let with_info = infos.len() + c.models.len();
+        info!("{}", index_line(c, &index, with_info, started.elapsed().as_secs_f32()));
         if !index.stats.duplicate_ids.is_empty() {
             warn!("worldgen content index: {} duplicate placement ids", index.stats.duplicate_ids.len());
+        }
+        if let Some(libs) = c.rock_libraries.clone().filter(|_| c.all().any(|p| p.class == ROCK_LIBRARY)) {
+            if !app.is_plugin_added::<RockgenPlugin>() {
+                app.add_plugins(RockgenPlugin);
+            }
+            app.insert_resource(RockLibrarySource(libs))
+                .add_systems(Startup, register_rock_spawner.after(crate::exterior::SpawnersSetup));
         }
     }
     let mut own = MemoryIndex::new();
@@ -245,6 +289,48 @@ pub(crate) fn add(app: &mut App, ext: &WorldspaceId, setup: &WorldgenSetup, stor
     let _octaves = app.add_tunable(&WORLDGEN_OCTAVES).bind_resource(|f: &mut LiveFilter, v| f.octaves = v);
     let _sharp = app.add_tunable(&WORLDGEN_SHARP).bind_resource(|f: &mut LiveFilter, v| f.sharp = v);
     crate::worldgen_roads::add(app, ext, setup.roads.as_ref());
+}
+
+/// The libraries [`register_rock_spawner`] builds the library rocks' spawner from.
+#[derive(Resource)]
+struct RockLibrarySource(Arc<Libraries>);
+
+/// Startup, after the exterior's spawners and before the `PostStartup` hooks that wrap them: the library rocks'
+/// [`RockSpawner`] for [`ROCK_LIBRARY`] (RG-P5a): every variant's LOD meshes once, the materials of
+/// `rock_textures.toml` ([`crate::rock_materials`]) at the live `rockgen.material.*` / `rockgen.lod.*` values.
+#[allow(clippy::too_many_arguments)] // a system's parameters
+fn register_rock_spawner(
+    source: Res<RockLibrarySource>,
+    spawners: Option<ResMut<PlacementSpawners>>,
+    vfs: Option<Res<SharedVfs>>,
+    server: Res<AssetServer>,
+    tunables: Option<Res<Tunables>>,
+    debug: Res<RockDebug>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<RockMaterial>>,
+) {
+    let (Some(mut spawners), Some(vfs)) = (spawners, vfs) else {
+        warn!("worldgen rocks library: no placement spawners or VFS; library rocks not drawn");
+        return;
+    };
+    let libs = &source.0;
+    let (settings, lod) = tunables.map_or_else(
+        || (RockMaterialSettings::default(), RockLodSettings::default()),
+        |t| (RockMaterialSettings::from_tunables(&t.0), RockLodSettings::from_tunables(&t.0)),
+    );
+    let levels = libs.classes().filter_map(|c| libs.get(c)).flat_map(|l| &l.variants).map(|v| v.lods.lods.len()).max();
+    let levels = u32::try_from(levels.unwrap_or(1)).unwrap_or(u32::MAX);
+    let companions = TextureCompanions::read(&vfs.0);
+    let table = RockTextureTable::shipped();
+    let set = material_set(&table, &vfs.0, &companions, &server, &settings, levels, debug.lod_tint, &mut materials);
+    let spawner = RockSpawner::new(libs, &mut meshes, &set, lod);
+    info!(
+        "worldgen rocks library: {} classes, {} meshes ({levels} LOD levels), default texture {}",
+        libs.len(),
+        spawner.mesh_count(),
+        table.default
+    );
+    spawners.set(ROCK_LIBRARY, Arc::new(spawner));
 }
 
 /// A live filter change rebuilds the provider (the guide is shared) and swaps the terrain world: the clipmaps

@@ -728,3 +728,10 @@ texture suits which class is the owner's WG-E3 call) read by `mw_exterior_bevy::
 (unknown keys, non built-in classes, empty textures rejected; paths normalized as `--rock-textures`), `material_set(..)`
 -> `RockMaterialSet` with every built-in class (its texture x its `tint`; equal pairs share handles, one batch) and an
 untinted `default`. `rock_textures` + `lod_materials` are the rock lab's path, which now calls them. Gains `serde`, `toml`.
+
+**RG-P5a (2026-11-27).** App `world.rs` `rock_libraries` reads every built-in class's product (none baked or one
+unreadable: logged, left out; `--off rocklibrary` = new `Part::RockLibrary`: not read) and passes them to
+`mw_worldgen::flora::extra`, which now returns `Extra { lists, models }` (list `"rocks library"` = `LIBRARY_ROCKS`).
+`WorldgenContent` gains `models` (looked up before the bake's by `content_models`) and `rock_libraries`; with a
+`ROCK_LIBRARY` placement, `worldgen::add` registers the `RockSpawner` in `Startup` after `exterior::setup_spawners`
+(before the `PostStartup` hooks, so RG-P5b's physics hook will wrap it), materials at the max variant LOD count.

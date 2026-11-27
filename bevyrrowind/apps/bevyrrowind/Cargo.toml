@@ -88,6 +88,9 @@ sf_diag_bevy = { workspace = true, features = ["assets", "render"] }
 sf_level.workspace = true
 sf_mods.workspace = true
 sf_records.workspace = true
+# `view world:` library rocks (RG-P5a): `placed::read_libraries` of the baked `rockgen.library` products; `bake` and
+# `collision` are already on through mw_boot_bevy, so no new feature set.
+sf_rockgen = { workspace = true, features = ["bake", "collision"] }
 # `pcss`, `solari`: on for every member at the root workspace entry (feature unification).
 sf_sky_bevy.workspace = true
 # `view world:` ground layers (WG-X3): the exterior bake's layer table and arrays (`bake::BakedTerrain`); `bake` is

@@ -1288,7 +1288,11 @@ pub(crate) fn guide_inputs(guide: &Path, tiles: &GuideTiles, prm: &Params) -> Re
 /// `scatter.canopy_stems_per_ha_max` and its start
 /// position as the focus, WG-E2p) on the `guide` folder's products
 /// ([`species_file`], [`product_fields`], `water.json`, [`guide_clearings`]) outside the guide's `towns` (one
-/// placement list per town, `bounds` covering their models), logged; an error is logged and gives nothing.
+/// placement list per town, `bounds` covering their models), logged; an error is logged and gives nothing. With
+/// `libs` (RG-P5a, rockgen.md "(f)") the run's library rocks join as [`LIBRARY_ROCKS`]
+/// ([`rocks::library_placements`]) and their variants' bounds as [`Extra::models`]; without (`--off rocklibrary`,
+/// or no library baked) they are left out.
+#[allow(clippy::too_many_arguments)] // the `view world:` load's pieces, each borrowed from a different owner
 pub fn extra(
     db: &RecordDb,
     source: &MwWorldSource,
@@ -1297,7 +1301,8 @@ pub fn extra(
     tiles: &GuideTiles,
     towns: &[&[Placement]],
     prm: Params,
-) -> Vec<(String, Vec<Placement>)> {
+    libs: Option<&sf_rockgen::Libraries>,
+) -> Extra {
     let towns = TownMask::new(towns, bounds, &TownParams::default());
     let run = guide_inputs(guide, tiles, &prm).and_then(|(file, fields, water, clearings)| {
         let rs = rocks::RockSource::read(guide)?;
@@ -1312,13 +1317,42 @@ pub fn extra(
             for w in calibration_warnings(&run) {
                 println!("worldgen flora: calibration: {w}");
             }
-            vec![("flora".into(), placements(&run)), ("rocks".into(), rocks::rock_placements(&run))]
+            let mut out = Extra {
+                lists: vec![("flora".into(), placements(&run)), ("rocks".into(), rocks::rock_placements(&run))],
+                models: std::collections::HashMap::new(),
+            };
+            if let Some(libs) = libs {
+                let lib = rocks::library_placements(&run, libs);
+                println!(
+                    "worldgen flora: rocks library: {} placements of {} variants from {} classes, {} dropped (no library)",
+                    lib.placements.len(),
+                    lib.models.len(),
+                    libs.len(),
+                    lib.dropped
+                );
+                out.lists.push((LIBRARY_ROCKS.into(), lib.placements));
+                out.models = lib.models;
+            }
+            out
         }
         Err(e) => {
             eprintln!("worldgen flora: {e}");
-            Vec::new()
+            Extra::default()
         }
     }
+}
+
+/// The log name of the library rocks' list in [`Extra::lists`].
+pub const LIBRARY_ROCKS: &str = "rocks library";
+
+/// What [`extra`] adds to a generated world.
+#[derive(Default)]
+pub struct Extra {
+    /// Named placement lists (flora, rocks, library rocks), for `WorldgenContent::extra`.
+    pub lists: Vec<(String, Vec<Placement>)>,
+    /// The library rocks' model infos (`rockgen/<class>/<index>`: the variant's engine-frame bounds), for
+    /// `WorldgenContent::models`.
+    pub models: std::collections::HashMap<VfsPath, sf_world::ModelInfo>,
 }
 
 /// Placed instances per budget group ([`BUDGET_GROUPS`]: the rocks, then the plants by layer).

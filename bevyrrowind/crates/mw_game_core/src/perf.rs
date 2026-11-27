@@ -250,10 +250,13 @@ pub enum Part {
     /// Road ribbons of a generated world (`mw_exterior_bevy::worldgen_roads`, GR-1b): the guide's `roads.json` draped on
     /// the terrain; off, none is built (an A/B).
     Roads,
+    /// Library rocks of a generated world (RG-P5a, `sf_rockgen_bevy::RockSpawner`): the scatter's rocks of a rock class
+    /// drawn from the baked variant libraries; off, the libraries are not read and those rocks are left out (an A/B).
+    RockLibrary,
 }
 
 impl Part {
-    const ALL: [(&'static str, Part); 91] = [
+    const ALL: [(&'static str, Part); 92] = [
         ("terrain", Part::Terrain),
         ("near", Part::Near),
         ("statics", Part::Near),
@@ -346,6 +349,7 @@ impl Part {
         ("gputerrain", Part::GpuTerrain),
         ("groundcover", Part::Groundcover),
         ("roads", Part::Roads),
+        ("rocklibrary", Part::RockLibrary),
     ];
 
     pub fn name(self) -> &'static str {

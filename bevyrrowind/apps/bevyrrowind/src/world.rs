@@ -117,8 +117,10 @@ pub(crate) fn view(install: &MorrowindInstall, dir: &str, mut flags: crate::View
         println!("worldgen town: {}: {} placements, {} unresolved bases", t.name, t.placements.len(), t.unresolved);
     }
     let anchors = AnchorTransform::read(path).map_err(|e| format!("world:{dir}: {e}"))?;
-    let mut world_content =
-        anchors.map(|a| moved_content(&content.db, &a, path, &tiles, &towns, &options.store, &options.manifest, flora));
+    // RG-P5a: the scatter's library rocks draw from the bake's rock variant libraries, unless `--off rocklibrary`.
+    let store = (&options.store, &options.manifest);
+    let libs = rock_libraries(&options.perf.off, &options.store, &options.manifest);
+    let mut world_content = anchors.map(|a| moved_content(&content.db, &a, path, &tiles, &towns, store, flora, libs.clone()));
     if !towns.is_empty() {
         let c = world_content.get_or_insert_with(Default::default);
         c.extra.extend(towns.into_iter().map(|t| (t.name, t.placements)));
@@ -270,9 +272,9 @@ fn moved_content(
     guide: &Path,
     tiles: &GuideTiles,
     towns: &[GuideTown],
-    store: &Store,
-    manifest: &Manifest,
+    (store, manifest): (&Store, &Manifest),
     flora: sf_worldgen::scatter::Params,
+    libs: Option<Arc<sf_rockgen::Libraries>>,
 ) -> mw_exterior_bevy::worldgen::WorldgenContent {
     let started = Instant::now();
     let source = mw_world::MwWorldSource::build(db, &mw_world::SourceOptions::default());
@@ -311,8 +313,32 @@ fn moved_content(
     );
     println!("worldgen anchors: {}", census.line());
     let town_sets: Vec<&[Placement]> = towns.iter().map(|t| t.placements.as_slice()).collect();
-    let extra = mw_worldgen::flora::extra(db, &source, &bounds, guide, tiles, &town_sets, flora);
-    mw_exterior_bevy::worldgen::WorldgenContent { placements, extra }
+    let extra = mw_worldgen::flora::extra(db, &source, &bounds, guide, tiles, &town_sets, flora, libs.as_deref());
+    mw_exterior_bevy::worldgen::WorldgenContent { placements, extra: extra.lists, models: extra.models, rock_libraries: libs }
+}
+
+/// The bake's rock variant libraries of every built-in class (`rockgen.library`, product subject = class name), logged;
+/// `None` (logged) when none is baked or one does not read, and without reading under `--off rocklibrary`.
+fn rock_libraries(off: &Off, store: &Store, manifest: &Manifest) -> Option<Arc<sf_rockgen::Libraries>> {
+    if off.has(Part::RockLibrary) {
+        println!("worldgen rocks library: off (--off rocklibrary)");
+        return None;
+    }
+    let classes = sf_rockgen::CLASSES.iter().map(|c| c.name);
+    match sf_rockgen::placed::read_libraries(store, manifest, classes) {
+        Ok(libs) if libs.is_empty() => {
+            println!("worldgen rocks library: none baked (run `bevyrrowind bake`); library rocks left out");
+            None
+        }
+        Ok(libs) => {
+            println!("worldgen rocks library: {} classes baked", libs.len());
+            Some(Arc::new(libs))
+        }
+        Err(e) => {
+            eprintln!("warning: worldgen rocks library: {e}; library rocks left out");
+            None
+        }
+    }
 }
 
 /// A guide's own mods: `<guide>/mods/<name>/mod.toml` (S3b).

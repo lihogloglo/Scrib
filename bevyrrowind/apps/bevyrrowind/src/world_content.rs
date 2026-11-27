@@ -262,7 +262,7 @@ mod tests {
             .iter()
             .map(|p| sf_world::Partition::page_of(sf_world::Partition::STREAMING.cell_of(p.transform.pos)).to_array())
             .collect();
-        let content = mw_exterior_bevy::worldgen::WorldgenContent { placements: out, extra: Vec::new() };
+        let content = mw_exterior_bevy::worldgen::WorldgenContent { placements: out, extra: Vec::new(), ..Default::default() };
         let index = mw_exterior_bevy::worldgen::content_index(&mw_world::ids::exterior(), Some(&content), &|_| None);
         // The town and the lamp are 19 km apart at 10×: two pages.
         assert_eq!(pages.len(), 2);
@@ -275,5 +275,47 @@ mod tests {
                 assert!(moved > 100.0, "{:?} still at its source position", ip.placement.id);
             }
         }
+    }
+
+    /// RG-P5a: a library rock's model id is in no bake; the content's own `models` give it its variant's extent.
+    #[test]
+    fn library_rock_indexes_with_its_variant_bounds() {
+        use mw_exterior_bevy::worldgen::{WorldgenContent, content_index, content_models, index_line};
+        let model = sf_vfs::VfsPath::new("rockgen/boulder/0").unwrap();
+        let rock = Placement {
+            id: PlacementId(7),
+            base: RecordRef::new("rockgen", "boulder"),
+            model: Some(model.clone()),
+            transform: mw_world::convert::world_transform([0.0; 3], [0.0; 3], 2.0),
+            class: mw_world::source::ROCK_LIBRARY,
+            flags: PlacementFlags::empty(),
+        };
+        let rock = mw_exterior_bevy::worldgen::placed_at(rock, DVec3::new(500.0, 20.0, -300.0));
+        let info = sf_world::ModelInfo {
+            min: glam::Vec3::new(-1.0, -0.5, -2.0),
+            max: glam::Vec3::new(1.0, 0.5, 2.0),
+            bytes: 0,
+            lod_distance: 0.0,
+        };
+        let ext = mw_world::ids::exterior();
+        let bake = HashMap::new();
+        let mut content = WorldgenContent {
+            extra: vec![(mw_worldgen::flora::LIBRARY_ROCKS.into(), vec![rock])],
+            models: [(model.clone(), info)].into(),
+            ..Default::default()
+        };
+        let index = content_index(&ext, Some(&content), &content_models(Some(&content), &bake));
+        let indexed: Vec<_> = index.pages.iter().flat_map(|p| &p.cells).flat_map(|c| &c.placements).collect();
+        assert_eq!(indexed.len(), 1);
+        assert!(index.stats.missing_models.is_empty(), "{:?}", index.stats.missing_models);
+        // Half-diagonal of the bounds (sqrt(1 + 0.25 + 4)) times the scale.
+        assert!((indexed[0].radius - 2.0 * 5.25_f32.sqrt()).abs() < 1e-5, "{}", indexed[0].radius);
+        let line = index_line(&content, &index, 1, 0.0);
+        assert!(line.contains("(0 content + rocks library 1)"), "{line}");
+        assert!(line.contains("1 models with model.info, 0 without (points)"), "{line}");
+        // Without the content's own infos the rock indexes as a point.
+        content.models.clear();
+        let index = content_index(&ext, Some(&content), &content_models(Some(&content), &bake));
+        assert_eq!(index.stats.missing_models, vec![model]);
     }
 }
