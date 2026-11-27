@@ -3,6 +3,7 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-27 (interaction loop, IN38b3c): breaking a crate, barrel, sack or urn now spills what it held on the floor around it: an ordinary smash keeps everything, a crushing blow destroys part of each stack and wears weapons and armour (gold always survives); the items fall, settle, can be picked up with their count and condition, and stay where they landed across reloads and saves.
 - 2026-11-27 (interaction loop, IN38b3b): an item that left a loaded area while still moving (thrown, falling) now comes back moving with the speed it had, instead of frozen in the air; a spilled item can be placed so it drops and settles (IN38b3c).
 - 2026-11-27 (interaction loop, IN38b3a): the streaming runtime can now place an item into a loaded area even when its model was never loaded: it starts the load and spawns the item a frame after the model arrives (a few a frame), or drops it if the area unloads first (the save keeps it, so it appears on the next visit). First user: a broken crate's spilled contents (IN38b3c).
 - 2026-11-27 (interaction loop, IN38b2): a broken crate, barrel, sack or pot now leaves the world at once (model, collision, script handle) and stays gone across reloads and saves, also when it broke just as its area unloaded; its contents are kept for the spill that follows (IN38b3).

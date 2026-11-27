@@ -20,13 +20,19 @@
 //! - **Damage** ([`damage_rules`]): `(kind, material) -> factor` rows: blunt full, blades x0.5,
 //!   arrows x0.25 (a barrel takes a few arrows), hand to hand x0.25 on every breakable material;
 //!   fire on wood x1.5. Absent pairs are 1 in the shell.
+//! - **Spill** (`IN38b3c`, interaction-destruction.md "Spill"): a broken container's stacks land on the
+//!   floor. Per stack, [`spill_draw`]s off the break's seed: [`lost_fraction`] of the overkill,
+//!   [`kept_count`] (stochastic rounding; gold never loses count), [`health_loss`] for items with a
+//!   condition, [`scatter`] inside the former footprint; [`LooseItem`] is the `mw.loose` blob the take
+//!   reads. The `mw.rules.interaction.break_spill_*` tunables ([`SpillParams`]).
 //! - **Switch off** (`mw.rules.interaction.break`, Classic): no def and no rows, nothing breaks.
 
-use sf_interaction::{BreakAction, DestructibleDef, Stage, TagId};
+use glam::{Quat, Vec3};
+use sf_interaction::{BreakAction, DestructibleDef, Stage, TagId, splitmix64};
 use sf_records::RecordId;
 use smallvec::{SmallVec, smallvec};
 
-use crate::tunables::BreakParams;
+use crate::tunables::{BreakParams, SpillParams};
 
 /// Material tags (the IN41 material rows' names).
 pub mod material {
@@ -238,4 +244,121 @@ pub fn damage_rules(p: &BreakParams) -> Vec<(TagId, TagId, f32)> {
     }
     rows.push((kind::FIRE, material::WOOD, p.fire_wood));
     rows
+}
+
+/// The draws of one spilled stack, by `k` (module docs, "Spill").
+pub mod draw {
+    /// The count's stochastic rounding.
+    pub const COUNT: u64 = 0; // tunables: const (draw stream index)
+    /// The scatter radius.
+    pub const RADIUS: u64 = 1; // tunables: const (draw stream index)
+    /// The scatter angle.
+    pub const ANGLE: u64 = 2; // tunables: const (draw stream index)
+    /// The landing yaw.
+    pub const YAW: u64 = 3; // tunables: const (draw stream index)
+}
+
+/// Draw `k` of stack `index` of a break with `seed`, in `[0, 1)`: `splitmix64(splitmix64(seed ^
+/// index) ^ k)`, its top 24 bits (exact in an `f32`). Pure, so every client spills the same.
+#[must_use]
+#[allow(clippy::cast_precision_loss, reason = "24 bits are exact in an f32")]
+pub const fn spill_draw(seed: u64, index: u64, k: u64) -> f32 {
+    (splitmix64(splitmix64(seed ^ index) ^ k) >> 40) as f32 / (1u64 << 24) as f32
+}
+
+/// The share of each stack a break with `overkill` (damage past zero / the def's health) destroys:
+/// `loss_max * clamp((overkill - loss_knee) / loss_span, 0, 1)`.
+#[must_use]
+pub fn lost_fraction(overkill: f32, p: &SpillParams) -> f32 {
+    let ramp = if p.loss_span > 0.0 { (overkill - p.loss_knee) / p.loss_span } else { 0.0 };
+    p.loss_max * ramp.clamp(0.0, 1.0)
+}
+
+/// Pieces of a `count` stack left after losing share `lost` with draw `u`: `count - floor(count *
+/// lost + u)`, so a single piece is lost with probability `lost` (iff `u >= 1 - lost`); a gold stack
+/// keeps its count.
+#[must_use]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "the share in f32; clamped to 0..=count first"
+)]
+pub fn kept_count(count: u32, lost: f32, u: f32, gold: bool) -> u32 {
+    if gold {
+        return count;
+    }
+    // The share in f32 (10 x 0.9 is 9), the draw added in f64 (9 + u never rounds up to 10).
+    let gone = (f64::from(count as f32 * lost.clamp(0.0, 1.0)) + f64::from(u)).floor();
+    count - gone.clamp(0.0, f64::from(count)) as u32
+}
+
+/// Condition points a break with `overkill` takes from an item of full condition `max`:
+/// `ceil(min(overkill * health_per_overkill, health_max) * max)`; 0 at no overkill.
+#[must_use]
+#[allow(clippy::cast_possible_truncation, reason = "at most max")]
+pub fn health_loss(overkill: f32, max: i32, p: &SpillParams) -> i32 {
+    let share = (overkill.max(0.0) * p.health_per_overkill).min(p.health_max).max(0.0);
+    (f64::from(share) * f64::from(max.max(0))).ceil() as i32
+}
+
+/// Where spilled stack `index` (its order among the spilled ones) starts, relative to the container.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Scatter {
+    /// From the container's origin, metres, +Y up.
+    pub offset: Vec3,
+    /// Its yaw about +Y.
+    pub rotation: Quat,
+}
+
+/// The start of spilled stack `index` of a break with `seed`: `radius_m * sqrt(u)` at angle `2π u'`
+/// (uniform over the disc), lifted `lift_m + index * layer_m`, a random yaw.
+#[must_use]
+#[allow(clippy::cast_precision_loss, reason = "a stack index")]
+pub fn scatter(seed: u64, index: u64, p: &SpillParams) -> Scatter {
+    let r = p.radius_m * spill_draw(seed, index, draw::RADIUS).sqrt();
+    let a = std::f32::consts::TAU * spill_draw(seed, index, draw::ANGLE);
+    let lift = p.lift_m + index as f32 * p.layer_m;
+    let yaw = std::f32::consts::TAU * spill_draw(seed, index, draw::YAW);
+    Scatter { offset: Vec3::new(r * a.cos(), lift, r * a.sin()), rotation: Quat::from_rotation_y(yaw) }
+}
+
+/// The overlay owner of a spilled item's blob ([`LooseItem`]).
+pub const LOOSE_STATE_OWNER: &str = "mw.loose";
+/// [`LooseItem`]'s blob version.
+pub const LOOSE_VERSION: u8 = 1;
+const LOOSE_LEN: usize = 10;
+
+/// What a spilled stack carries in its placement's overlay blob (`mw.loose` v1 = `[1, count u32 LE,
+/// owned u8, health i32 LE (-1 = full)]`): the take gives this instead of the reference's count.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LooseItem {
+    pub count: u32,
+    /// The container had an owner (theft comes with crime, `IN28`).
+    pub owned: bool,
+    /// Condition left; `None` = full.
+    pub health: Option<i32>,
+}
+
+impl LooseItem {
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        let mut blob = Vec::with_capacity(LOOSE_LEN);
+        blob.push(LOOSE_VERSION);
+        blob.extend_from_slice(&self.count.to_le_bytes());
+        blob.push(u8::from(self.owned));
+        blob.extend_from_slice(&self.health.map_or(-1, |h| h.max(0)).to_le_bytes());
+        blob
+    }
+
+    /// Reads a v1 blob; `None` for another version or length.
+    #[must_use]
+    pub fn decode(blob: &[u8]) -> Option<Self> {
+        if blob.len() != LOOSE_LEN || blob[0] != LOOSE_VERSION {
+            return None;
+        }
+        let count = u32::from_le_bytes([blob[1], blob[2], blob[3], blob[4]]);
+        let health = i32::from_le_bytes([blob[6], blob[7], blob[8], blob[9]]);
+        Some(Self { count, owned: blob[5] != 0, health: (health >= 0).then_some(health) })
+    }
 }

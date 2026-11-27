@@ -150,7 +150,7 @@ pub(crate) fn bind_settings(app: &mut bevy_app::App) {
     use sf_tunables_bevy::TunablesAppExt;
     app.init_resource::<BreakSettings>();
     let _ = app.add_tunable(&t::BREAK).bind_resource(|s: &mut BreakSettings, v| s.0.enabled = v);
-    let floats: [(&FloatDef, FieldOf); 11] = [
+    let floats: [(&FloatDef, FieldOf); 19] = [
         (&t::BREAK_CRATE_HP, |p| &mut p.crate_hp),
         (&t::BREAK_BARREL_HP, |p| &mut p.barrel_hp),
         (&t::BREAK_URN_HP, |p| &mut p.urn_hp),
@@ -162,10 +162,25 @@ pub(crate) fn bind_settings(app: &mut bevy_app::App) {
         (&t::BREAK_ARROW, |p| &mut p.arrow),
         (&t::BREAK_HAND, |p| &mut p.hand),
         (&t::BREAK_FIRE_WOOD, |p| &mut p.fire_wood),
+        (&t::BREAK_SPILL_LOSS_KNEE, |p| &mut p.spill.loss_knee),
+        (&t::BREAK_SPILL_LOSS_SPAN, |p| &mut p.spill.loss_span),
+        (&t::BREAK_SPILL_LOSS_MAX, |p| &mut p.spill.loss_max),
+        (&t::BREAK_SPILL_HEALTH_PER_OVERKILL, |p| &mut p.spill.health_per_overkill),
+        (&t::BREAK_SPILL_HEALTH_MAX, |p| &mut p.spill.health_max),
+        (&t::BREAK_SPILL_RADIUS_M, |p| &mut p.spill.radius_m),
+        (&t::BREAK_SPILL_LIFT_M, |p| &mut p.spill.lift_m),
+        (&t::BREAK_SPILL_LAYER_M, |p| &mut p.spill.layer_m),
     ];
     for (def, field) in floats {
         let _ = app.add_tunable(def).bind_resource(move |s: &mut BreakSettings, v| *field(&mut s.0) = v);
     }
+}
+
+/// The live spill tunables (defaults before the binding): the host hands this to the spill
+/// (`mw_rpg_bevy` `breakable::add`, `IN38b3c`).
+#[must_use]
+pub fn spill_params(world: &World) -> mw_interaction::SpillParams {
+    world.get_resource::<BreakSettings>().map_or_else(mw_interaction::SpillParams::default, |s| s.0.spill)
 }
 
 /// `base`'s def with its destructible attached when it is a breakable and the switch is on:

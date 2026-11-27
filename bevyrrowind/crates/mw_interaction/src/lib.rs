@@ -34,7 +34,10 @@ pub use activation::{
     Availability, Classic, Condition, DefaultAction, ROWS, RecordClass, Row, Switch, offered, primary, rows,
     runs_default,
 };
-pub use breakable::{BreakClass, BreakFacts, Breakable, Eligibility, Refusal, damage_rules, destructible_def};
+pub use breakable::{
+    BreakClass, BreakFacts, Breakable, Eligibility, LOOSE_STATE_OWNER, LooseItem, Refusal, Scatter, damage_rules, destructible_def,
+    health_loss, kept_count, lost_fraction, scatter, spill_draw,
+};
 pub use defs::{
     Basis, CLASS_VERB_PRIORITY, Facing, Measured, POSE_VERB_PRIORITY, USER_NPC, bed_verb, class_verb, def_for, door_def,
 };
@@ -43,7 +46,7 @@ pub use light::{LIGHT_INTENSITY, LIGHT_SLOT, LightFacts, TAKE_PRIORITY, light_de
 pub use measure::measure;
 /// The def types [`def_for`] fills (re-exported so the bake needs no `sf_interaction` dependency).
 pub use sf_interaction::{InteractableDef, Side, SlotDef, TagId};
-pub use tunables::{BreakParams, FurnitureParams, MeasureParams, TUNABLES};
+pub use tunables::{BreakParams, FurnitureParams, MeasureParams, SpillParams, TUNABLES};
 
 #[cfg(test)]
 mod tests_activation;

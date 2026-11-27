@@ -84,6 +84,46 @@ pub const BREAK_HAND: Def<f32> = break_factor(def!(float "mw.rules.interaction.b
 pub const BREAK_FIRE_WOOD: Def<f32> = break_factor(def!(float "mw.rules.interaction.break_fire_wood" = 1.5)
     .help("Fire damage factor on wooden breakables (crates, barrels)"));
 
+/// A spilled container's contents (`crate::breakable` "Spill", `IN38b3c`; interaction-destruction.md
+/// "Spill"): read when a break releases, so a change applies to the next break.
+const fn spilling(d: Def<f32>) -> Def<f32> {
+    d.source(Source::Guess).scope(Scope::Dev).net(Net::Gameplay).lifetime(Lifetime::Live)
+}
+
+pub const BREAK_SPILL_LOSS_KNEE: Def<f32> = spilling(def!(float "mw.rules.interaction.break_spill_loss_knee" = 0.5)
+    .range(0.0, 4.0)
+    .unit(Unit::Ratio)
+    .help("Overkill (damage past zero / the breakable's health) below which a spill loses nothing: an ordinary smash"));
+pub const BREAK_SPILL_LOSS_SPAN: Def<f32> = spilling(def!(float "mw.rules.interaction.break_spill_loss_span" = 2.0)
+    .range(0.1, 8.0)
+    .unit(Unit::Ratio)
+    .help("Overkill past the knee over which a spill's loss ramps up to its maximum"));
+pub const BREAK_SPILL_LOSS_MAX: Def<f32> = spilling(def!(float "mw.rules.interaction.break_spill_loss_max" = 0.9)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Largest share of each spilled stack destroyed by a vaporising hit (gold never breaks)"));
+pub const BREAK_SPILL_HEALTH_PER_OVERKILL: Def<f32> =
+    spilling(def!(float "mw.rules.interaction.break_spill_health_per_overkill" = 0.5)
+        .range(0.0, 2.0)
+        .unit(Unit::Ratio)
+        .help("Share of a spilled weapon's or armour's full condition lost per unit of overkill"));
+pub const BREAK_SPILL_HEALTH_MAX: Def<f32> = spilling(def!(float "mw.rules.interaction.break_spill_health_max" = 0.75)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Largest share of a spilled weapon's or armour's full condition one break takes"));
+pub const BREAK_SPILL_RADIUS_M: Def<f32> = spilling(def!(float "mw.rules.interaction.break_spill_radius_m" = 0.25)
+    .range(0.0, 1.0)
+    .unit(Unit::Meters)
+    .help("Radius around the broken container's origin its contents land in"));
+pub const BREAK_SPILL_LIFT_M: Def<f32> = spilling(def!(float "mw.rules.interaction.break_spill_lift_m" = 0.3)
+    .range(0.0, 1.0)
+    .unit(Unit::Meters)
+    .help("Height above the container's origin the first spilled stack starts falling from"));
+pub const BREAK_SPILL_LAYER_M: Def<f32> = spilling(def!(float "mw.rules.interaction.break_spill_layer_m" = 0.05)
+    .range(0.0, 0.3)
+    .unit(Unit::Meters)
+    .help("Extra height per spilled stack, so stacks do not start inside each other"));
+
 /// `mw.interact.bench_seat_m`: the width one sitter takes on a bench.
 pub const BENCH_SEAT_M: Def<f32> = length(def!(float "mw.interact.bench_seat_m" = 0.55)
     .range(0.4, 1.0)
@@ -184,6 +224,14 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &BREAK_ARROW,
     &BREAK_HAND,
     &BREAK_FIRE_WOOD,
+    &BREAK_SPILL_LOSS_KNEE,
+    &BREAK_SPILL_LOSS_SPAN,
+    &BREAK_SPILL_LOSS_MAX,
+    &BREAK_SPILL_HEALTH_PER_OVERKILL,
+    &BREAK_SPILL_HEALTH_MAX,
+    &BREAK_SPILL_RADIUS_M,
+    &BREAK_SPILL_LIFT_M,
+    &BREAK_SPILL_LAYER_M,
     &BENCH_SEAT_M,
     &APPROACH_M,
     &EDGE_SEAT_INSET_M,
@@ -294,6 +342,44 @@ pub struct BreakParams {
     pub hand: f32,
     /// [`BREAK_FIRE_WOOD`].
     pub fire_wood: f32,
+    /// The spill's loss, condition and scatter.
+    pub spill: SpillParams,
+}
+
+/// The spill's values (`crate::breakable` "Spill"), part of [`BreakParams`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpillParams {
+    /// [`BREAK_SPILL_LOSS_KNEE`].
+    pub loss_knee: f32,
+    /// [`BREAK_SPILL_LOSS_SPAN`].
+    pub loss_span: f32,
+    /// [`BREAK_SPILL_LOSS_MAX`].
+    pub loss_max: f32,
+    /// [`BREAK_SPILL_HEALTH_PER_OVERKILL`].
+    pub health_per_overkill: f32,
+    /// [`BREAK_SPILL_HEALTH_MAX`].
+    pub health_max: f32,
+    /// [`BREAK_SPILL_RADIUS_M`].
+    pub radius_m: f32,
+    /// [`BREAK_SPILL_LIFT_M`].
+    pub lift_m: f32,
+    /// [`BREAK_SPILL_LAYER_M`].
+    pub layer_m: f32,
+}
+
+impl Default for SpillParams {
+    fn default() -> Self {
+        Self {
+            loss_knee: BREAK_SPILL_LOSS_KNEE.default_value(),
+            loss_span: BREAK_SPILL_LOSS_SPAN.default_value(),
+            loss_max: BREAK_SPILL_LOSS_MAX.default_value(),
+            health_per_overkill: BREAK_SPILL_HEALTH_PER_OVERKILL.default_value(),
+            health_max: BREAK_SPILL_HEALTH_MAX.default_value(),
+            radius_m: BREAK_SPILL_RADIUS_M.default_value(),
+            lift_m: BREAK_SPILL_LIFT_M.default_value(),
+            layer_m: BREAK_SPILL_LAYER_M.default_value(),
+        }
+    }
 }
 
 impl BreakParams {
@@ -327,6 +413,7 @@ impl Default for BreakParams {
             arrow: BREAK_ARROW.default_value(),
             hand: BREAK_HAND.default_value(),
             fire_wood: BREAK_FIRE_WOOD.default_value(),
+            spill: SpillParams::default(),
         }
     }
 }

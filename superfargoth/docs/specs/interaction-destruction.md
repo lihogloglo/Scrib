@@ -266,8 +266,8 @@ velocity -> an awake body with that velocity; no blob -> asleep (unchanged); the
    the overlay only (its next load spawns the items); no transform found -> the store stays keyed by the dead id
    (nothing lost, one warn).
 2. Per stack, in store order, draws in [0, 1) from `splitmix64(seed, stack index, k)` (seed = the event's): `r =
-   overkill / def.health`; lost fraction `f = loss_max * clamp((r - loss_knee) / loss_span, 0, 1)`; kept `= count -
-   floor(count * f + u)` (stochastic rounding: a single item is lost iff `u < f`); gold never loses count (coins
+   overkill` (the event's, already damage past zero over `def.health`); lost fraction `f = loss_max * clamp((r - loss_knee) / loss_span, 0, 1)`; kept `= count -
+   floor(count * f + u)` (stochastic rounding: a single item is lost with probability `f`, iff `u >= 1 - f`); gold never loses count (coins
    scatter, they do not break). Items with a health (`WEAP` with `weapon_has_health`, `ARMO`: the `mw_rpg` `barter.rs`
    rule) lose `ceil(min(r * health_per_overkill, health_max) * max)` from `item_health`, down to 0 (broken, still
    repairable, as in Morrowind), written as `ATTR_HEALTH`. A restocking stack spills its magnitude once and drops
@@ -359,3 +359,18 @@ live in `mw_exterior_bevy` `restream.rs`). Tests: `tests_pending.rs` (6 headless
 spill's blob); the deactivation writer uses `encode`. Item activation decodes the overlay blob into `Pending`; an awake
 one inserts `Dynamic { asleep: false }` with CCD (never `Held`, whatever `ItemBody::hold`) and `set_velocity` right
 after the insert. Tests: `motion_tests.rs` (4 headless exact).
+
+## As built (IN38b3c, 2026-11-27)
+
+`mw_interaction` `breakable.rs`: `spill_draw` (`splitmix64(splitmix64(seed ^ index) ^ k)`, top 24 bits), `lost_fraction`,
+`kept_count` (share in f32, draw added in f64), `health_loss`, `scatter` (+Y up), `LooseItem` (`mw.loose` v1, 10 bytes);
+`SpillParams` (8 `break_spill_*` tunables, `Live`) inside `BreakParams`, bound by `mw_interaction_bevy`. `mw_rpg_bevy`
+`breakable.rs`: `apply_breaks` spills when the registry's stage says `SpillContents` (a CONT record once the registry let
+go); the container is captured from `remove_live` (Live) or `overlay.placed` (Unloaded: moved or spawned containers only;
+an unmoved index reference has no transform there, so its store stays keyed by the dead id, warn); `spill_stacks` is the
+pure per-stack rule; Live queues each item through `Streaming::spawn_when_ready` into `Streaming::partition(ws).cell_of`
+its position (new accessor). The host passes the live params as `SpillSource(fn(&World) -> SpillParams)`
+(`mw_interaction_bevy::breakable::spill_params`): `mw_rpg_bevy` takes no dependency on that shell. Take reads `mw.loose`
+before the removal forgets it. Tests: `mw_interaction` `tests_breakable.rs` (4 exact), `mw_rpg_bevy` `tests_breakable.rs`
+(4 headless exact); the "live once the model settles" half stays covered by `sf_world_bevy` `tests_pending.rs` (a
+`Streaming` with cooked models is not built in `mw_rpg_bevy` tests).

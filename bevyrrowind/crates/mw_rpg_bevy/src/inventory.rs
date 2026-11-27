@@ -22,7 +22,8 @@
 //!   inventories, not of references, so the take uses its magnitude ([`ref_count`], as the
 //!   container seeding below does). The counts are a game-side lookup by placement id, built
 //!   once from the cells (`sf_world` placements don't carry them); script-spawned placements
-//!   count 1.
+//!   count 1. A spilled stack (a broken container's, `breakable.rs`, `IN38b3c`) carries its own
+//!   count and condition in its `mw.loose` overlay blob instead, read before the removal forgets it.
 //! - **Gold piles** ([`is_gold`], [`take_count`]): `Gold_001`, `_005`, `_010`, `_025`, `_100`
 //!   (`OpenMW` `Miscellaneous::isGold`, apps/openmw/mwclass/misc.cpp). A take multiplies the
 //!   reference's count by the pile's value (`ActionTake::executeImp`), and that value is the MISC
@@ -65,11 +66,11 @@ use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemState;
 use bevy_log::prelude::*;
-use mw_interaction::{DefaultAction, runs_default};
+use mw_interaction::{DefaultAction, LOOSE_STATE_OWNER, LooseItem, runs_default};
 use sf_interaction_bevy::{ActivationSystems, UseApproved};
 use sf_physics_bevy::ItemPivot;
 use sf_records::{RecordDb, RecordId};
-use sf_rpg::{ActorKey, Attrs, CharacterRpg, Holder, PlayerId, RpgCommand, StackId};
+use sf_rpg::{ActorKey, AttrValue, Attrs, CharacterRpg, Holder, PlayerId, RpgCommand, StackId};
 use sf_script_bevy::{PLAYER, ScriptPlacements, ScriptSlot};
 use sf_world::PlacementId;
 use sf_world_bevy::WorldOverlay;
@@ -79,7 +80,7 @@ use tes3::esp::{
 };
 
 use crate::dialogue::{Rpg, RpgState, WorldSheets};
-use mw_rpg::{LevelledRoll, MwSheets, initial_items};
+use mw_rpg::{ATTR_HEALTH, LevelledRoll, MwSheets, initial_items};
 use mw_scripts_bevy::ActivePlacements;
 
 /// What activating a record does.
@@ -278,15 +279,22 @@ pub fn apply_takes(world: &mut World, reader: &mut SystemState<MessageReader<'st
         }
         match request.kind {
             TakeKind::Item => {
-                let removed = world.get_resource::<WorldOverlay>().is_some_and(|o| o.0.read().unwrap_or_else(PoisonError::into_inner).is_removed(request.target));
+                let (removed, loose) = world.get_resource::<WorldOverlay>().map_or((false, None), |o| {
+                    let o = o.0.read().unwrap_or_else(PoisonError::into_inner);
+                    (o.is_removed(request.target), o.state(request.target, LOOSE_STATE_OWNER).and_then(LooseItem::decode))
+                });
+                // The blob goes with the spawned placement (`PlacementOverlay::remove`): read it first.
                 if removed || take_placement(world, request.target).is_none() {
                     warn!("take {}: placement {:032x} is not in the world", request.record, request.target.0);
                     continue;
                 }
-                let count = world.get_resource::<RefCounts>().map_or(1, |c| c.get(request.target));
+                let (count, attrs) = match loose {
+                    Some(l) => (l.count, l.health.map_or_else(Attrs::new, |h| Attrs::new().with(ATTR_HEALTH, AttrValue::Int(h.into())))),
+                    None => (world.get_resource::<RefCounts>().map_or(1, |c| c.get(request.target)), Attrs::new()),
+                };
                 let count = take_count(&world.resource::<ItemRecords>().0, &request.record, count);
                 let mut rpg = world.resource_mut::<Rpg>();
-                let item = give(&mut rpg.state, request.player, &request.record, count);
+                let item = give(&mut rpg.state, request.player, &request.record, count, attrs);
                 info!("take: {count} {item} from {} (now {})", request.record, rpg.state.pc.loadout.count(&item));
             }
             TakeKind::Container => {
@@ -322,10 +330,11 @@ pub fn take_placement(world: &mut World, id: PlacementId) -> Option<()> {
 }
 
 /// Adds `count` of `item` to `player`'s loadout (one player character until co-op N slices); a
-/// gold pile goes in as [`GOLD`] (module docs). Returns the id it added.
-fn give(state: &mut RpgState, player: PlayerId, item: &RecordId, count: u32) -> RecordId {
+/// gold pile goes in as [`GOLD`] (module docs), with `attrs` (a spilled item's condition). Returns
+/// the id it added.
+fn give(state: &mut RpgState, player: PlayerId, item: &RecordId, count: u32, attrs: Attrs) -> RecordId {
     let item = gold_as_001(item);
-    let command = RpgCommand::AddItem { holder: Holder::Player(player), item: item.clone(), count, attrs: Attrs::new() };
+    let command = RpgCommand::AddItem { holder: Holder::Player(player), item: item.clone(), count, attrs };
     if let Err(e) = state.pc.apply(command) {
         warn!("take {item}: {e:?}");
     }
@@ -561,9 +570,9 @@ mod tests {
 
         let item = RecordId::new(arrow);
         let mut state = RpgState::default();
-        give(&mut state, PlayerId::HOST, &item, counts.get(id(1)));
+        give(&mut state, PlayerId::HOST, &item, counts.get(id(1)), Attrs::new());
         assert_eq!(state.pc.loadout.count(&item), 5);
-        give(&mut state, PlayerId::HOST, &item, counts.get(id(2)));
+        give(&mut state, PlayerId::HOST, &item, counts.get(id(2)), Attrs::new());
         assert_eq!(state.pc.loadout.count(&item), 6, "a reference without a count gives 1");
     }
 
@@ -604,14 +613,14 @@ mod tests {
         assert!(is_gold(&gold_25) && !is_gold(&RecordId::new("iron arrow")));
 
         let mut state = RpgState::default();
-        let take = |state: &mut RpgState, i, item: &RecordId| give(state, PlayerId::HOST, item, take_count(&db, item, counts.get(id(i))));
+        let take = |state: &mut RpgState, i, item: &RecordId| give(state, PlayerId::HOST, item, take_count(&db, item, counts.get(id(i))), Attrs::new());
         assert_eq!(take(&mut state, 1, &gold_25), gold);
         assert_eq!(state.pc.loadout.count(&gold), 25, "a single pile is worth its value");
         take(&mut state, 2, &gold_25);
         assert_eq!(state.pc.loadout.count(&gold), 27, "a counted pile is worth 1 a coin (OpenMW getValue)");
         take(&mut state, 3, &gold);
         assert_eq!(state.pc.loadout.count(&gold), 34);
-        give(&mut state, PlayerId::HOST, &RecordId::new("Gold_100"), 1);
+        give(&mut state, PlayerId::HOST, &RecordId::new("Gold_100"), 1, Attrs::new());
         assert_eq!(state.pc.loadout.count(&gold), 35, "container gold converts by id only (OpenMW addImp)");
         assert_eq!(state.pc.loadout.count(&gold_25), 0);
         assert_eq!(state.pc.loadout.count(&RecordId::new("gold_100")), 0);

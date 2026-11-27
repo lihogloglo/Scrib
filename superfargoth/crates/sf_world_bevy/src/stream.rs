@@ -887,6 +887,12 @@ impl Streaming {
         self.pending.len()
     }
 
+    /// How `ws` is cut into streaming cells (the default grid until it is registered): the cell a
+    /// new placement's position falls in, for [`Self::spawn_when_ready`].
+    pub fn partition(&self, ws: &WorldspaceId) -> Partition {
+        self.rt.info(ws).partition
+    }
+
     /// What the driver does with `p` this frame.
     fn pending_step(&self, p: &PendingSpawn, spawners: &PlacementSpawners) -> PendingStep {
         let resident = self.rt.cells.get(&(p.worldspace.clone(), p.cell));
