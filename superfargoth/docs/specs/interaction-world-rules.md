@@ -122,41 +122,62 @@ actors' magic-effect step (`sf_effects/src/lib.rs:1`), not flames; `sf_surface_b
 them (render stacks; the `DeformGround` closure pattern, `sf_surface_bevy/src/deform.rs:178`, instead). Crates:
 `bevy_hanabi` (MIT/Apache GPU particles) shows no Bevy 0.20 release (README table ends at 0.18, read 2026-11-27, U),
 so the flame presenter starts from the pack's flame meshes and is its own row's reuse check. Industry: Far Cry 2's
-fire ([dev write-up](https://symmetricaldatasecurity.blogspot.com/2020/12/far-cry-how-fire-burns-and-spreads.html),
-[Levesque interview](https://gamedeveloper.com/game-platforms/interview-how-i-far-cry-2-i-s-fire-fuels-spreads)):
-cells with hit points that burning neighbours drain, extra drain downwind, faster uphill (hot gases), fire as a fear
-area for AI, emitters moved to stay in front of the camera. Ours: heat = their hit points, the same wind bias, AI
-reads burning objects as lights and `Ignited` changes, the presenter picks lights near the camera. Uphill bias is not
-modelled (gap, industry-audit.md when IN39b lands).
+fire ([Lévesque interview](https://gamedeveloper.com/game-platforms/interview-how-i-far-cry-2-i-s-fire-fuels-spreads):
+a year and a half on it, fire as an area "fear spell" AI flees; wind-driven spread through bushes,
+[PC Gamer](https://www.pcgamer.com/great-moments-in-pc-gaming-watching-fire-spread-in-far-cry-2)), plus an
+unattributed [write-up mirror](https://symmetricaldatasecurity.blogspot.com/2020/12/far-cry-how-fire-burns-and-spreads.html)
+(original not found, U): cells with hit points that burning neighbours drain, more downwind, faster uphill, emitters
+kept in front of the camera. Ours: heat = their hit points, the same wind bias, AI reads burning objects as lights and
+`Ignited` changes, the presenter picks lights near the camera. Uphill bias is not modelled (gap from the U source,
+industry-audit.md when IN39b lands).
 
 **Host inputs** (resources the game fills; the shell never names weather, surface or physics):
 `InteractionRules(Rules)`; `FireWeather { wind: Vec2, indoors: bool }` (mean wind at the player, the active space's
 interior flag); `FireWetness`, `FireShelter`, `FireZones`: `Option<Arc<dyn Fn(Vec3) -> f32 | bool + Send + Sync>>`
 (`sf_surface::sample`'s wet channel; one upward ray on the host's physics probe; the adapter's settlement zones).
-Shelter and zone answers are cached per placement and dropped on its `Insert`/`Move` ("cached while it rests"). Unset
-closures = dry, open sky, wild. Materials: `InteractionMaterials` (IN18b, shared). The registry `Interactables`
-(placement -> def, frame) follows `IndexChange` like the light registry, for every def with a `material`.
+Unset closures = dry, open sky, wild. Materials: `InteractionMaterials` (IN18b, shared). **No new registry** (review):
+a placement's def and frame are already `InteractionDefs` (`activate.rs:57`) and `InteractionFrames::current`
+(`lib.rs:458`), both kept by `step` in `Apply` from every `IndexChange`. The fire shell keeps only `FireCandidates`
+(placements whose def material is `flammable` in `InteractionMaterials`, from `IndexChange`, rebuilt when the materials
+change) with their shelter and zone answers, dropped on `Insert`/`Move` ("cached while it rests").
 
 **IN39a rules shell.** `InteractionObjectStates(ObjectStates)` + `RuleCause { placement, source, culprit:
-Option<UserKey> }` (hits, spell areas, water contact, a torch; any writer, sorted by a total key as `PropDamage`),
-material from `Interactables` (unregistered: dropped), into the core `RuleQueue`; `step_rules` in `RuleSystems`
-(`FixedUpdate`, after `InteractionSystems::Apply`, before `DestroySystems::Damage`). Every event is one `RuleApplied {
-tick, event, culprit, source }`; routes: Added/Removed/Expired mirror into `InteractionStateTags` (verbs gate on
-`Burning`, `Wet`); `LIT` on a registered light sets its `LightState` (+ `LightChanged`, cause the source's first tag);
-`Damage` -> one `PropDamage` (per evaluation; a held source re-sends its cause each tick); `Stage(i)` -> `PropStage`;
-`Change(k)` -> `WorldChanged` (culprit, cause = first source tag); `Noise(k)` -> `NoiseInbox` (material reach, maker
-the culprit, not revealed); `Effect(e)` -> `RuleEffect { tick, placement, effect, at }` for the host's presentation.
-**`PropStage { placement, stage, kind, culprit, point }`** (destroy shell, after the tick's damage): health := min(health,
-def.health x stages[stage].at), so stages up to `stage` cross and queue breaks as a hit; past, gone, unknown or (but
-`DAMAGE_SCRIPT`) `ignore_external`: nothing.
+Option<UserKey> }` (hits, spell areas, water contact, a torch; any writer), material from `InteractionDefs`
+(unindexed: dropped), into the core `RuleQueue`; `step_rules` in `RuleSystems`. **Core changes (review):** (1) the
+core `Cause` carries `culprit: Option<UserKey>` (part of its sort key) and `RuleEvent` gains `culprit` and `source` (the
+cause's sorted tags): the queue sorts and defers causes past `evals_per_tick`, so the shell cannot map an event back to
+its cause today (`rules.rs:181` has only placement + rule). (2) **Host-owned tags:** `LIT` (and later door tags) live
+in `Lights` / the door registry, not in `ObjectStates`, so a rule needing `Lit` never matched and `remove: [Lit]`
+emitted nothing (`states.remove` false). `Cause::host` = the placement's host-owned tags now set (the shell copies them
+from `InteractionStateTags`), `step_rules(.., host_owned: &[TagId])`: the target filter sees states + material + host;
+a host-owned tag is never stored: `Removed(t)` iff it is in `host`, `Added(t)` iff not. Every event is one `RuleApplied
+{ tick, event }` (culprit, source inside); routes: Added/Removed/Expired of rule tags mirror into
+`InteractionStateTags` (verbs gate on `Burning`, `Wet`); `LIT` on a registered light -> `LightState::set` (`light.rs:128`)
++ the light registry's `sync` (tag, `GameplayLights`) + `LightChanged` (cause: the source's first tag in id order, a
+stable but arbitrary pick: rules wanting a named cause set `change`); `Damage` -> one `PropDamage` (per evaluation; a
+held source re-sends its cause each tick); `Stage(i)` -> `PropStage`; `Change(k)` -> the change inbox (below); `Noise(k)`
+-> `NoiseInbox` (material reach, maker the culprit, not revealed); `Effect(e)` -> `RuleEffect { tick, placement,
+effect, at }` for the host's presentation.
+**`PropStage { placement, stage, kind, culprit, point }`** (`stage` = index into the def's `stages`, as `Destroyed::stage`
+and `Flammable::burnt_stage`): a new core `force_stage(def, state, index) -> Hit`: `stage := max(state.stage, index + 1)`,
+`health := min(health, def.health x stages[index].at)`, `crossed = from..to`, overkill 0; the shell queues the crossed
+stages as a hit's. Not `apply_damage` with `health - def.health x at`: `fraction <= at` after that float subtraction can
+miss the stage by one ulp (review). Already reached, gone, unknown, or `ignore_external` (but `DAMAGE_SCRIPT`): nothing.
 
-**IN39b fire step.** Bodies = registered placements whose material is `flammable`, at the frame's translation, in
-`FireSystems` after `RuleSystems`, on the same `ObjectStates`. Wetness 0 indoors or sheltered, else `FireWetness(pos)`;
-at `>= interact.rules.wet_threshold` the shell refreshes `Wet` (`wet_ttl_s`) before `step_fire` (`FireEnv { wind }`).
-Culprits (`FireCulprits`, placement -> (user, cause tag)): a rule-lit body takes its `RuleApplied` culprit and source tag;
-a heat ignition inherits the nearest body burning at the tick's start (distance, then placement); Doused/Charred forget.
-`Ignited` (heat, or `RuleApplied` Added(`BURNING`)) and `Burnt` -> `WorldChanged` via `from_fire` (site from
-`ChangeOwners`, at the body).
+**Order (review)**, one chain in `FixedUpdate`: `InteractionSystems::Apply` -> `RuleSystems` -> `FireSystems` ->
+`DestroySystems::Damage` (reads the tick's rule and fire `PropDamage` / `PropStage`) -> `Release` ->
+`WorldChangeSystems`. Rule and fire changes go into a `ChangeInbox` the world-change system drains with the door,
+light and destroy ones, so one stream per tick is sorted and folded (`fold_tick`), not two.
+
+**IN39b fire step.** Bodies = `FireCandidates` at `InteractionFrames::current`'s translation, in `FireSystems`, on the
+same `ObjectStates`. Wetness 0 indoors or sheltered, else `FireWetness(pos)`; at `>= interact.rules.wet_threshold` the
+shell refreshes `Wet` (`wet_ttl_s`) before `step_fire` (`FireEnv { wind }`). `step_fire` changes states without state
+events, so the shell diffs `ObjectStates::tags` before/after for each placement with a refresh or a `FireEvent` and
+mirrors the diff into `InteractionStateTags`. Culprits (`FireCulprits`, placement -> (user, cause tag)): a rule-lit body
+takes its `RuleApplied` culprit and source tag; a heat ignition inherits the nearest `spread` body burning at the tick's
+start within `interact.fire.spread_radius_m` (the ones that could heat it; distance, then placement; none in reach: no
+culprit). `Ignited` (heat, or `RuleApplied` Added(`BURNING`), built as a `FireEvent`) and `Burnt` -> `from_fire` (site from
+`ChangeOwners`, at the body) into the change inbox; Doused and Burnt forget the entry after their event.
 
 **IN39c fire outputs.** Each burning destructible takes `PropDamage { kind: DAMAGE_FIRE ("fire", new core const),
 amount: interact.fire.damage_per_s / tick_hz, point: pos, dir: +Y, culprit }` (the adapter's `DestructionRules (fire,
@@ -164,11 +185,13 @@ material)` scales it). `Burnt` -> `PropStage` (`burnt_stage`, else the def's las
 a `Charred` placement maps to no `WorldChange` (its `Burnt` said it). `BurningObjects` (placement -> at, since, region,
 `light`): `light` on the `interact.fire.lights_max` earliest-started per region (then placement; a light keeps its slot
 until it goes out, no flicker); `FireChanged { tick, placement, output, at }` for the presenter; a burning placement
-that is not a registered light joins `GameplayLights` (`interact.fire.light_radius_m`, intensity 1) while it burns.
+that is not a registered light joins `GameplayLights` (`interact.fire.light_radius_m`, intensity 1) while it burns
+and leaves it on Doused, Burnt or its `Remove` (the light registry's `drop_light` covers only registered lights).
 
 **IN39d save.** Core `ObjectStates::rest_bytes(placement, now)` / `from_rest_bytes(.., now)` (version, then per state
 tag id + remaining ticks, `u32::MAX` = until removed) and `Fire::rest_bytes` / `restore` (version, heat bits, elapsed
-burn ticks or none, queued flag): remaining time, never absolute ticks, so a save loads exact at any tick count. Shell:
+burn ticks or none (restores `since` and `heats_from`, equal outside a restore), queued flag; `checked` restarts at the
+load tick and the round-robin cursor is not saved: a restored target misses no more than one tick of catch-up): remaining time, never absolute ticks, so a save loads exact at any tick count. Shell:
 `ObjectStatesChanged { placement, bytes }` on change (the host's overlay blob, (b) "Save"), `ObjectStatesRest` applies
 one; an unloaded placement drops its states and fire after its last write. No blob = fresh. Fire runs on ticks while
 resident; a clock jump (rest, travel) advances nothing (Far Cry 2 burns only near the player too).
