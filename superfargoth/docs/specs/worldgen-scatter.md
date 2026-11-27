@@ -432,6 +432,10 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
   `unit_shares`, `rock_entries`, `rock_prior`): RG-9b names stood in by the nearest built class (TOML comments); model
   entry name = base record id (two records may share a mesh); weight by unit share as "Adapter data". Not called by
   the passes yet (E3f.4); the shipped file's rock rows change the product hash, so a product rebuilds once.
+- **WG-E3f.2** (2026-11-27, `scatter_rocks.rs` `RockRules::prior: Option<&dyn Fn(x, y) -> f64 + Sync>`): with a prior
+  the field-stone parent bound is `fs_max x region_prior_max / field_child_mean` and each parent is also kept with
+  `prior.max(0).min(pmax) / pmax` at its point (NaN or negative: none); without one both factors are exactly 1, so the
+  stones are today's bit for bit (digest pinned in the test). Talus and outcrops take no prior. Not set by the game yet (E3f.4).
 
 ## Tunables
 

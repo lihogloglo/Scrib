@@ -77,7 +77,7 @@ fn values(size_dim: f64, sort_beta: f64) -> RockValues {
 const ALL: [f64; 4] = [-200.0, -200.0, 400.0, LENGTH_M + 200.0];
 
 fn talus(file: &SpeciesFile, values: RockValues, rect: [f64; 4]) -> Vec<RockCandidate> {
-    RockRules { file, values, seed: 7, tile_m: 256.0 }.talus_candidates(&Scarp::new(), &no_fields(), rect)
+    RockRules { file, values, seed: 7, tile_m: 256.0, prior: None }.talus_candidates(&Scarp::new(), &no_fields(), rect)
 }
 
 /// Least-squares slope of ln N(>s) on ln s at nine log-spaced sizes from `s_min` to `8 s_min`.
@@ -271,7 +271,7 @@ fn plain_values() -> RockValues {
 const PLAIN: [f64; 4] = [-100.0, -100.0, 1100.0, 1300.0];
 
 fn plain_rules(file: &SpeciesFile) -> RockRules<'_> {
-    RockRules { file, values: plain_values(), seed: 11, tile_m: 256.0 }
+    RockRules { file, values: plain_values(), seed: 11, tile_m: 256.0, prior: None }
 }
 
 /// g(r) over `[r0, r1)` of the points in `[0, side)^2`, centres kept `r1` from the border (edge correction).
@@ -346,7 +346,7 @@ fn outcrops_and_field_stones_clump_at_sigma() {
     assert!((n as f64 - want).abs() < 0.1 * want, "{n} vs {want}");
     // No row, no rocks.
     let none = SpeciesFile::parse_toml("[rock_units.basalt]\n").unwrap();
-    let rn = RockRules { file: &none, values: v, seed: 11, tile_m: 256.0 };
+    let rn = RockRules { file: &none, values: v, seed: 11, tile_m: 256.0, prior: None };
     assert!(rn.outcrop_candidates(&Plain, &no_fields(), PLAIN).is_empty() && rn.field_candidates(&Plain, &no_fields(), PLAIN).is_empty());
 }
 
@@ -721,5 +721,81 @@ fn regime_rocks_tile_alone() {
             v
         };
         assert_eq!(key(&alone), key(&inside), "rect {rect:?}");
+    }
+}
+
+// WG-E3f.2: the field-stone region prior on the parent intensity.
+
+/// FNV-1a over every field of the candidates (keys, position, size, tiebreak, source, regime bits).
+fn digest(v: &[RockCandidate]) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325_u64;
+    let mut eat = |w: u64| {
+        for b in w.to_le_bytes() {
+            h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    for c in v {
+        eat(u64::from(c.key.parent) << 32 | u64::from(c.key.offspring));
+        eat(c.key.tile.0 as u64 ^ (c.key.tile.1 as u64) << 32);
+        for f in [c.pos[0], c.pos[1], c.size_m, c.source[0], c.source[1]] {
+            eat(f.to_bits());
+        }
+        eat(c.tiebreak);
+        eat(c.regime.map_or(0, |r| u64::from(r) + 1));
+    }
+    h
+}
+
+#[test]
+fn field_stones_without_a_prior_are_todays() {
+    let f = plain_file();
+    let got = digest(&plain_rules(&f).field_candidates(&Plain, &no_fields(), PLAIN));
+    // Captured on the code before the prior existed (2026-11-27).
+    assert_eq!(got, 0x3a24_ed5c_19d4_3d6b, "field digest {got:#018x}");
+}
+
+/// Prior 0.5 west of `x = 400`, 1 east (the flat basalt plain is x < 800, 100 <= y < 900 kept off the edges).
+fn half_prior(x: f64, _y: f64) -> f64 {
+    if x < 400.0 { 0.5 } else { 1.0 }
+}
+
+fn count_in(v: &[RockCandidate], x0: f64, x1: f64) -> usize {
+    v.iter().filter(|c| (x0..x1).contains(&c.pos[0]) && (100.0..900.0).contains(&c.pos[1])).count()
+}
+
+#[test]
+fn a_prior_of_half_halves_the_field_stones_within_three_sigma() {
+    let f = plain_file();
+    let r = RockRules { prior: Some(&half_prior), ..plain_rules(&f) };
+    let got = r.field_candidates(&Plain, &no_fields(), PLAIN);
+    // 100 stones/ha on 400 x 800 m: 3200 at prior 1, 1600 at 0.5. A Thomas count varies as n (1 + child mean).
+    let full = 100.0 * 400.0 * 800.0 / M2_PER_HA;
+    let m = r.values.field_child_mean;
+    for (n, want) in [(count_in(&got, 0.0, 400.0), 0.5 * full), (count_in(&got, 400.0, STEEP_X), full)] {
+        let sigma = (want * (1.0 + m)).sqrt();
+        println!("{n} field stones on {want} expected (sigma {sigma:.0})");
+        assert!((n as f64 - want).abs() <= 3.0 * sigma, "{n} vs {want}");
+    }
+    // Clamped: a prior above `region_prior_max` places what the max places, a negative or NaN one nothing.
+    let pmax = f.values.region_prior_max;
+    let at = |p: &(dyn Fn(f64, f64) -> f64 + Sync)| RockRules { prior: Some(p), ..plain_rules(&f) }.field_candidates(&Plain, &no_fields(), PLAIN);
+    assert_eq!(at(&|_, _| 4.0 * pmax), at(&move |_, _| pmax));
+    assert!(at(&|_, _| -1.0).is_empty() && at(&|_, _| f64::NAN).is_empty());
+}
+
+#[test]
+fn field_stones_with_a_prior_tile_alone() {
+    let f = plain_file();
+    let r = RockRules { prior: Some(&half_prior), ..plain_rules(&f) };
+    let all = r.field_candidates(&Plain, &no_fields(), PLAIN);
+    for rect in [[300.0, 0.0, 556.0, 256.0], [-37.5, 700.0, 640.0, 1100.25], [390.0, 100.0, 410.0, 900.0]] {
+        let alone = r.field_candidates(&Plain, &no_fields(), rect);
+        let inside: Vec<RockCandidate> = all
+            .iter()
+            .filter(|c| c.pos[0] >= rect[0] && c.pos[0] < rect[2] && c.pos[1] >= rect[1] && c.pos[1] < rect[3])
+            .copied()
+            .collect();
+        assert!(!alone.is_empty(), "rect {rect:?}");
+        assert_eq!(alone, inside, "rect {rect:?}");
     }
 }

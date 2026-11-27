@@ -211,7 +211,7 @@ impl Fixture {
         rocks: bool,
         square: [f64; 4],
     ) -> LayerWinners {
-        let rules = RockRules { file: &self.file, values: values(), seed: SEED, tile_m: 256.0 };
+        let rules = RockRules { file: &self.file, values: values(), seed: SEED, tile_m: 256.0, prior: None };
         let layer = RockLayer { rules: &rules, ground: &Ground };
         let cand = CandidateRules {
             file: &self.file,

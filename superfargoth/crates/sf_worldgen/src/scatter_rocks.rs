@@ -23,6 +23,9 @@
 //! `scatter.rock.field_cluster_sigma_m`, parents at the largest unit `field_stone_per_ha / field_child_mean`
 //! thinned to the unit's own density at the parent; each stone is thinned by the slope hat (1 up to
 //! `scatter.rock.field_slope_full_deg`, 0 at `loose_slope_max_deg`), sizes from the `[rocks.field]` row's law.
+//! With a region prior ([`RockRules::prior`], WG-E3f.2) the parent bound is raised by `scatter.region_prior_max`
+//! and each parent also thinned by its prior clamped to `[0, region_prior_max]` over that max; without one the
+//! factors are 1 (today's stones bit for bit).
 //!
 //! **Regime** (RG-9j, `rockgen.md` "(e) Typology"). With a `[rock_regimes]` table each parent reads the climate
 //! class at its point ([`crate::scatter_fields::FieldSample::class`]) and its regime (one clump, one regime, read
@@ -271,6 +274,9 @@ pub struct RockRules<'a> {
     pub seed: u64,
     /// Parent tile edge, m (`scatter.tile_m`).
     pub tile_m: f64,
+    /// The field-stone region prior at (x, y) (the adapter's learned density over its land mean), clamped to
+    /// `[0, scatter.region_prior_max]`; `None`: 1 everywhere.
+    pub prior: Option<&'a (dyn Fn(f64, f64) -> f64 + Sync)>,
 }
 
 impl RockRules<'_> {
@@ -452,7 +458,10 @@ impl RockRules<'_> {
         let Some(row) = self.file.rocks.get(&RockContext::Field) else { return out };
         let v = &self.values;
         let fs_max = self.file.rock_units.values().map(crate::scatter_species::RockUnit::field_stone_max).fold(0.0, f64::max);
-        let kappa = fs_max / M2_PER_HA / v.field_child_mean;
+        // The prior's bound raises the parents; each is thinned by `prior / pmax` (both exactly 1 without one).
+        let pmax = if self.prior.is_some() { self.file.values.region_prior_max } else { 1.0 };
+        let prior = |x: f64, y: f64| self.prior.map_or(1.0, |p| p(x, y).max(0.0).min(pmax) / pmax);
+        let kappa = fs_max * pmax / M2_PER_HA / v.field_child_mean;
         if kappa <= 0.0 {
             return out;
         }
@@ -468,7 +477,7 @@ impl RockRules<'_> {
         let reach = THOMAS_REACH_SIGMAS * sigma;
         for_parents(self.seed ^ FIELD_SALT, self.tile_m, kappa, rect, reach, |tile, j, base, px, py| {
             let regime = regime_at(px, py);
-            if draw(base, j, 2) >= density(px, py, regime) / fs_max {
+            if draw(base, j, 2) >= density(px, py, regime) / fs_max * prior(px, py) {
                 return;
             }
             let m = poisson(v.field_child_mean, draw(base, j, 3));
