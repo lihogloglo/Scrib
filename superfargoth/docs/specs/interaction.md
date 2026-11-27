@@ -147,6 +147,7 @@ pub enum SlotKind {
     Ladder(LadderDef),               // bottom and top points (an edge chain), rung spacing, Bottom/Top entrances
     Workstation(WorkstationDef),     // jobs: TagFilter over job records; player_verb (the pack's menu)
     Light,                           // snuff/relight a light-bearing object: see [(d) World rules](interaction-world-rules.md) (IN28)
+    Surface { family: TagId },       // a put-down point for carried props, a claim target never used (IN46 "Errand spots")
 }
 ```
 
@@ -696,24 +697,30 @@ by tier 2 and tier 0 alike so an errand run off-screen leaves the prop where an 
 ```rust
 // Illustrative, not compiled.
 pub struct SpotAnchor { pub at: Vec3 /* world */, pub placement: Option<PlacementId> /* this shelf only */ }
-pub struct Occupancy<'a> { pub claims: &'a Claims, pub props: &'a [Vec3] /* resting props near `at` */ }
+pub struct SpotBlockers<'a> { pub claims: &'a Claims, pub props: &'a [Vec3] /* resting props near `at` */,
+                             pub moving: &'a [PlacementId] /* carried or dragged props (`HeldProp`s) */ }
 pub struct SpotQuery<'a> { pub anchor: SpotAnchor, pub filter: &'a TagFilter /* the errand's `spot` */,
                            pub user: UserKey /* ai.md's ActorKey as UserKey::Actor */, pub tags: &'a [TagId],
                            pub radius_m: f32 /* the caller's `ai.errand.spot_radius_m` */ }
 pub enum Spot { Slot { slot: SlotRef, frame: Frame /* world */ }, Floor(Vec3) }
-pub fn spot_candidates<O: Clone>(index: &PointIndex<O>, q: &SpotQuery, occ: &Occupancy, p: &InteractParams)
+pub fn spot_candidates<O: Clone>(index: &PointIndex<O>, q: &SpotQuery, occ: &SpotBlockers, p: &InteractParams)
     -> Vec<(SlotRef, Frame)>;
-pub fn pick_spot<O: Clone>(index: &PointIndex<O>, q: &SpotQuery, occ: &Occupancy, p: &InteractParams,
+pub fn pick_spot<O: Clone>(index: &PointIndex<O>, q: &SpotQuery, occ: &SpotBlockers, p: &InteractParams,
                            floor: impl Fn(Vec3) -> Option<Vec3>) -> Spot;
 ```
 
-- **Place spots are ordinary slots.** No new `SlotKind`: a put-down point (a shelf board, a table top, a crate lid) is
-  an indexed slot whose tags pass the errand's `spot` filter (its verb tag, e.g. `place`, plus a pose family such as
-  `place.shelf`; `IndexedSlot::tags`, `index.rs:67-69`). Which bake step cooks them is a later slice (the adapter's,
-  like the IN3 lean spots); IN46 needs only slots in the index.
+- **Place spots are indexed slots of a new data-less kind, `SlotKind::Surface { family }`** (`KindTag::Surface`): a
+  put-down point (a shelf board, a table top, a crate lid) whose tags pass the errand's `spot` filter (its verb tag,
+  e.g. `place`, plus its family such as `place.shelf`, pushed like a pose family; `IndexedSlot::tags`,
+  `index.rs:68-69`). Not a `Pose` (review 2026-11-27): `rank_verbs` offers every slot's verb that `would_claim`
+  grants (`verbs.rs:38-44`), so a Pose spot would show players a prompt on every shelf, and an approved use of a Pose
+  slot runs the seat path (`sf_interaction_bevy/src/seat.rs:330,345`). `rank_verbs` skips Surface slots: a surface
+  is a claim target, never a use (no prompt, no activation; putting down is the carry's `Place`,
+  interaction-carry.md). Which bake step cooks them is a later slice (the adapter's, like the IN3 lean spots).
 - **Candidates** (`spot_candidates`): the slots within `radius_m` (3D) of `anchor.at` whose tags pass `filter` and whose
-  `users` pass `tags` (the `find_slots` tests, `index.rs:233-264`, with need `None`); with `anchor.placement` set, only
-  that placement's slots. Dropped: a slot another user holds (`Claims::claim_on(slot)` with `user != q.user`, either
+  `users` pass `tags` (the `find_slots` tests, `index.rs:233-264`, without its advert score); with `anchor.placement`
+  set, only that placement's slots. Dropped: a slot on a moving prop (`occ.moving`, the carried prop's own lid
+  included, and any `Claims::hand_holder(placement)`), a slot another user holds (`Claims::claim_on(slot)` with `user != q.user`, either
   phase; the user's own claim stays, so a re-pick after reserving is stable), and a slot with a resting prop within
   `interact.place.clearance_m` of its frame (`occ.props`; the carried prop is not resting, so it is never listed).
   Sorted by distance to `anchor.at` (ascending, `f32::total_cmp`), then `SlotRef`: geometric, not the advert score
@@ -722,9 +729,13 @@ pub fn pick_spot<O: Clone>(index: &PointIndex<O>, q: &SpotQuery, occ: &Occupancy
   `interact.place.floor_tries` points on a golden-angle spiral around `anchor.at` (point k at radius
   `interact.place.spread_m` × √k, angle k × 2.399963 rad, k from 0) that `floor` projects (`Some(q)`) and that lies
   `interact.place.clearance_m` clear of every `occ.props` point, as `Spot::Floor(q)`; none passes: `Spot::Floor(anchor.at)`
-  (ai.md: "placed at `to`"). Points are tried in k order, so the first valid one wins, never a score.
+  (the last resort; ai.md's "placed at `to`" is the Give refusal, not this). The spiral lies in the horizontal plane
+  (x, z; y up, as the index buckets) at `anchor.at.y`; radius grows with k, so the first valid point is the nearest
+  valid floor of the tried ones (ai.md: "nearest valid floor"), never a score.
 - **Claim after pick.** The caller (AI32) reserves the slot with an ordinary `Claims::claim` at its reason's priority
-  (the carrier holds no body claim: `HeldProp` is not one) and releases it on `Place`. A refusal the index cannot see
+  and releases it on `Place`. The carrier must hold no other body claim (`HeldProp` is not one; `Pick` releases any
+  slot it used), or `claim` refuses `UserBusy` (`claims.rs:377`). The reservation leases like any approach
+  (`interact.claim.lease_s`): the carrier `renew`s it while it makes progress, as a seat approach does. A refusal the index cannot see
   (`GroupTaken`, `Disabled`: `IndexedSlot` carries no group nor enabled bit) takes the next of `spot_candidates`, then
   the floor (UE's flow: claim a result, on an invalid handle try the next one).
 - **Determinism and both tiers.** No float sums over unordered sets, no `HashMap` iteration: the index is `BTreeMap`
@@ -736,6 +747,9 @@ pub fn pick_spot<O: Clone>(index: &PointIndex<O>, q: &SpotQuery, occ: &Occupancy
 - **Out of scope:** choosing which prop to fetch (`item: Tagged(TagFilter)`, an AI query), facing (the carrier's
   approach or the def's `pairs_with`, interaction-carry.md), the drop at the feet under pre-emption (ai.md: no spot
   search). `PointIndex::placement_slots` (`index.rs:224`) becomes `pub(crate)` for the placement-only candidates.
+- **Build split (review 2026-11-27):** IN46a adds `SlotKind::Surface` + `KindTag::Surface` and the `rank_verbs` skip
+  (test: a Surface slot is indexed with its family tag and never offered); IN46b adds `spot.rs` and the three
+  `interact.place.*` fields on `InteractParams` with their `sf_interaction_bevy` bindings.
 
 Reuse check (rule 0): Bevy has no spatial or smart-object query (the index is ours, IN0b). Crates: none for
 smart-object slot search (searched for IN0, see "Reuse check" above). Industry: UE Smart Objects
