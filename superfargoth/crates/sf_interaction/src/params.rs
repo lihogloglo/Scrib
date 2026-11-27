@@ -83,6 +83,12 @@ pub struct InteractParams {
     pub fire_burning_max: u16,
     /// Heat checks (source -> target distance tests) per tick, round-robin, count (range 4-512).
     pub fire_spread_checks_per_tick: u16,
+    /// Normal speed change below which a contact deals no impact damage, m/s (range 0.5-10).
+    pub impact_speed_min_mps: f32,
+    /// Impact impulse dead zone: up to it a contact deals nothing, N·s (range 0-50).
+    pub impact_impulse_min_ns: f32,
+    /// Impact damage per N·s of impulse past the dead zone, ratio (range 0-10).
+    pub impact_damage_per_ns: f32,
     /// Fixed simulation rate leases count in, ticks per second.
     pub tick_hz: f32,
 }
@@ -166,6 +172,12 @@ impl Default for InteractParams {
             fire_burning_max: 24,
             // tunables: const (bound from interact.fire.spread_checks_per_tick in sf_interaction_bevy (IN17c2); Guess)
             fire_spread_checks_per_tick: 48,
+            // tunables: const (bound from interact.impact.speed_min_mps in sf_interaction_bevy (IN4a); Guess, Source min impact speed)
+            impact_speed_min_mps: 3.0,
+            // tunables: const (bound from interact.impact.impulse_min_ns in sf_interaction_bevy (IN4a); Guess, Source minhealthdmg)
+            impact_impulse_min_ns: 0.5,
+            // tunables: const (bound from interact.impact.damage_per_ns in sf_interaction_bevy (IN4a); Guess, Source physdamagescale)
+            impact_damage_per_ns: 0.5,
             // tunables: const (bound from the app's fixed timestep in sf_interaction_bevy; net.md 60 Hz tick)
             tick_hz: 60.0,
         }

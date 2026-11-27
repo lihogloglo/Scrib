@@ -36,6 +36,10 @@ pub const DESTRUCT_REST_VERSION: u8 = 1;
 /// "ignore external damage": only a quest breaks it).
 pub const DAMAGE_SCRIPT: TagId = TagId::of("script");
 
+/// The damage kind of a physics impact (interaction-destruction.md "Impacts (IN4)"): the adapter's
+/// `(impact, material)` factor scales it (stone 0, glass high).
+pub const DAMAGE_IMPACT: TagId = TagId::of("impact");
+
 /// One break the host released (interaction-destruction.md "Shell and game"): the stage swap, the
 /// spill, the debris and the effect all start from it. "Net" sends its first six fields.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

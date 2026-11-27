@@ -576,3 +576,10 @@ rooted. `mw_rpg_bevy` `take_out`: a `Static` from `remove_live` then `hide_stati
 false: a named one is already vetoed by its token); `precombine_exclude` = script token or breakable static. The set is
 hashed into the fingerprint and `RULES_VERSION` 3 -> 4, so `lod.near` re-bakes once. Tests (`far.rs` `breakable_tests`):
 `build_near` over a wall and an urn keeps only the wall; adding an urn changes the fingerprint, a plain static does not.
+
+## As built (IN4a, 2026-11-27)
+
+`sf_interaction` `impact.rs` `impact_damage(impulse_ns, speed_mps, &InteractParams)` as "Impacts (IN4)" Core; a finite
+impulse whose damage overflows f32 saturates at `f32::MAX` (it still breaks), a NaN tunable gives 0. `DAMAGE_IMPACT` in
+`destroy.rs`; `impact_{speed_min_mps, impulse_min_ns, damage_per_ns}` on `InteractParams`, bound in `sf_interaction_bevy`
+(`bind_rules`). Tests `tests_impact.rs` (4 exact): speed gate, dead zone + two linear points, non-finite, same bits.

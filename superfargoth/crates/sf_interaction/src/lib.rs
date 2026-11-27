@@ -35,6 +35,7 @@ pub mod destroy;
 pub mod door;
 pub mod entrance;
 pub mod fire;
+pub mod impact;
 pub mod index;
 pub mod light;
 pub mod params;
@@ -55,7 +56,7 @@ pub use def::{
 };
 pub use cook::cook;
 pub use destroy::{
-    BreakQueue, DAMAGE_SCRIPT, DESTRUCT_REST_VERSION, DESTRUCT_STATE_OWNER, DestructState, Destroyed, Hit,
+    BreakQueue, DAMAGE_IMPACT, DAMAGE_SCRIPT, DESTRUCT_REST_VERSION, DESTRUCT_STATE_OWNER, DestructState, Destroyed, Hit,
     apply_damage, break_seed, debris_lod, splitmix64,
 };
 pub use door::{DOOR_OPEN, DOOR_REST_VERSION, DOOR_STATE_OWNER, DoorChanged, DoorState, VERB_CLOSE, VERB_OPEN, swing_sign};
@@ -64,6 +65,7 @@ pub use fire::{
     wind_factor,
 };
 pub use entrance::{pick_entrance, pick_exit, to_local};
+pub use impact::impact_damage;
 pub use index::{IndexedSlot, KindTag, PointIndex, SlotUser, compose};
 pub use light::{
     LIGHT_REST_LIT, LIGHT_REST_UNLIT, LIGHT_STATE_OWNER, LIT, LightChanged, LightDef, LightRefusal, LightState,
@@ -86,6 +88,8 @@ mod tests_destroy;
 mod tests_door;
 #[cfg(test)]
 mod tests_fire;
+#[cfg(test)]
+mod tests_impact;
 #[cfg(test)]
 mod tests_light;
 #[cfg(test)]

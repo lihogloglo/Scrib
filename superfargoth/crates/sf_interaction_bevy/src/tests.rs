@@ -239,6 +239,9 @@ fn def_defaults_are_the_struct_defaults() {
         (&FIRE_WIND_REF_MPS, d.fire_wind_ref_mps),
         (&FIRE_RAIN_DOUSE, d.fire_rain_douse),
         (&FIRE_REGION_M, d.fire_region_m),
+        (&IMPACT_SPEED_MIN_MPS, d.impact_speed_min_mps),
+        (&IMPACT_IMPULSE_MIN_NS, d.impact_impulse_min_ns),
+        (&IMPACT_DAMAGE_PER_NS, d.impact_damage_per_ns),
     ];
     let counts = [
         (&PRIORITY_AMBIENT, d.priority_ambient),

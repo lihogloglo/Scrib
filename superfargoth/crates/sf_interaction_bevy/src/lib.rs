@@ -305,6 +305,16 @@ pub const FIRE_BURNING_MAX: Def<u32> = gp_count(def!(count "interact.fire.burnin
 pub const FIRE_SPREAD_CHECKS_PER_TICK: Def<u32> = gp_count(def!(count "interact.fire.spread_checks_per_tick" = 48)
     .range(4, 512)
     .help("Fire heat checks per tick, round-robin with the elapsed time: slows fire, never redirects it (IN17c2)"));
+pub const IMPACT_SPEED_MIN_MPS: Def<f32> = gp(def!(float "interact.impact.speed_min_mps" = 3.0)
+    .range(0.5, 10.0)
+    .help("Normal speed change under which a contact deals no impact damage, m/s (Source min speed; IN4a)"));
+pub const IMPACT_IMPULSE_MIN_NS: Def<f32> = gp(def!(float "interact.impact.impulse_min_ns" = 0.5)
+    .range(0.0, 50.0)
+    .help("Impact impulse dead zone: up to it a contact deals nothing, N·s (Source minhealthdmg; IN4a)"));
+pub const IMPACT_DAMAGE_PER_NS: Def<f32> = gp(def!(float "interact.impact.damage_per_ns" = 0.5)
+    .range(0.0, 10.0)
+    .unit(Unit::Ratio)
+    .help("Impact damage per N·s of impulse past the dead zone (Source physdamagescale; IN4a)"));
 
 /// The `interact.*` tunables [`InteractParams`] has, bound by [`InteractionPlugin`].
 pub const TUNABLES: &[&dyn AnyDef] = &[
@@ -346,6 +356,9 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &FIRE_REGION_M,
     &FIRE_BURNING_MAX,
     &FIRE_SPREAD_CHECKS_PER_TICK,
+    &IMPACT_SPEED_MIN_MPS,
+    &IMPACT_IMPULSE_MIN_NS,
+    &IMPACT_DAMAGE_PER_NS,
 ];
 
 // --- Resources ----------------------------------------------------------------------------------
@@ -616,7 +629,8 @@ impl Plugin for InteractionPlugin {
     }
 }
 
-/// The `interact.rules.*` (`IN17b`) and `interact.fire.*` (`IN17c1`, `IN17c2`) gameplay tunables.
+/// The `interact.rules.*` (`IN17b`), `interact.fire.*` (`IN17c1`, `IN17c2`) and `interact.impact.*`
+/// (`IN4a`) gameplay tunables.
 fn bind_rules(app: &mut App) {
     bind!(app, RULES_EVALS_PER_TICK, |p, v| p.rules_evals_per_tick = u16::try_from(v).unwrap_or(u16::MAX));
     bind!(app, RULES_WET_THRESHOLD, |p, v| p.rules_wet_threshold = v);
@@ -633,6 +647,9 @@ fn bind_rules(app: &mut App) {
     bind!(app, FIRE_SPREAD_CHECKS_PER_TICK, |p, v| {
         p.fire_spread_checks_per_tick = u16::try_from(v).unwrap_or(u16::MAX);
     });
+    bind!(app, IMPACT_SPEED_MIN_MPS, |p, v| p.impact_speed_min_mps = v);
+    bind!(app, IMPACT_IMPULSE_MIN_NS, |p, v| p.impact_impulse_min_ns = v);
+    bind!(app, IMPACT_DAMAGE_PER_NS, |p, v| p.impact_damage_per_ns = v);
 }
 
 /// The `interact.debris.*` presentation tunables and, with the `physics` feature, the debris systems.
