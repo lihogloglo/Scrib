@@ -8,6 +8,8 @@ use sf_records::RecordId;
 use sf_world::PlacementId;
 use smallvec::SmallVec;
 
+use crate::light::LightDef;
+
 /// 32-bit FNV-1a, the same hash `sf_action` keys its tags with, so a tag hashed here and there
 /// is the same value on every peer.
 #[must_use]
@@ -71,6 +73,11 @@ pub struct InteractableDef {
     pub slots: Vec<SlotDef>,
     /// Slotless uses: carry, take, break, read, the pack's defaults.
     pub verbs: SmallVec<[VerbDef; 2]>,
+    /// What it is made of (wood, cloth, glass, stone): the target tag world rules match
+    /// (interaction-world-rules.md "Rules layer"), also for objects that never break (a banner burns).
+    /// `None`: no rule targets it by material. Older data without the field loads as `None`.
+    #[serde(default)]
+    pub material: Option<TagId>,
     /// (b) destruction, interaction-destruction.md.
     pub destructible: Option<DestructibleDef>,
     /// (a) carrying, interaction-carry.md.
@@ -145,7 +152,10 @@ pub enum SlotKind {
     Ladder(LadderDef),
     Workstation(WorkstationDef),
     /// Snuff/relight a light-bearing object ((d) World rules, IN28).
-    Light,
+    Light(LightDef),
+    /// A put-down point for carried props (a shelf board, a table top): a claim target, never a use
+    /// (`rank_verbs` skips it; interaction.md "Errand spots").
+    Surface { family: TagId },
 }
 
 /// A hinged leaf (IN33 builds the swing).
@@ -281,8 +291,6 @@ pub struct CarryClass {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DestructibleDef {
     pub health: f32,
-    /// Wood, clay, glass, stone.
-    pub material: TagId,
     pub stages: SmallVec<[Stage; 4]>,
     pub ignore_external: bool,
     /// Rolled on break: the pack's levelled list (adapter).

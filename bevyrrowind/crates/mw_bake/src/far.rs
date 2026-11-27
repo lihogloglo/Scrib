@@ -17,7 +17,10 @@
 //!   any script or dialogue result text can be the target of `"id"->Disable`,
 //!   `SetPos`, `Position`…, so it stays its own entity. A token match, so a
 //!   false positive (an id that is also a variable name) only keeps an object
-//!   out of the merge.
+//!   out of the merge. Decorative breakable statics (urns and pots,
+//!   `mw_interaction::breakable::classify`, interaction-destruction.md
+//!   "Static removal", `IN38c3`) stay out too, whatever the runtime rule
+//!   switch: a break removes one placement, which a merged mesh cannot drop.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -30,7 +33,9 @@ use sf_lod::bake::FarBake;
 use sf_lod::{FarBakeSettings, FarLight, FarPolicy, FarSource, ModelSummary, TextureDecoder, TextureImage};
 use sf_records::RecordDb;
 use sf_world::{Placement, WorldspaceId};
-use tes3::esp::{Light, LightFlags};
+use mw_interaction::breakable::Source;
+use mw_interaction::{BreakFacts, Eligibility};
+use tes3::esp::{Light, LightFlags, Static};
 
 use crate::textures::decode_rgba;
 
@@ -38,7 +43,7 @@ use crate::textures::decode_rgba;
 pub const IMPOSTOR_MIN_HEIGHT: f32 = 3.0;
 
 /// Bumped when the rules below change (part of every far bake key).
-const RULES_VERSION: u32 = 3;
+const RULES_VERSION: u32 = 4;
 
 /// [`FarSource`] for Morrowind content.
 pub struct MwFarSource {
@@ -46,6 +51,8 @@ pub struct MwFarSource {
     lights: BTreeMap<String, FarLight>,
     /// Every identifier-like token of every script and dialogue result (lowercase).
     script_tokens: BTreeSet<String>,
+    /// Every breakable `STAT` record id (lowercase, [`breakable_statics`]).
+    breakable_statics: BTreeSet<String>,
     fingerprint: [u8; 32],
 }
 
@@ -56,9 +63,15 @@ impl MwFarSource {
             lights.insert(id.as_str().to_ascii_lowercase(), far_light(light));
         }
         let script_tokens_set = collect_script_tokens(db);
+        let breakable_statics = breakable_statics(db);
         let mut bytes = RULES_VERSION.to_le_bytes().to_vec();
         for t in &script_tokens_set {
             bytes.extend(t.as_bytes());
+            bytes.push(0);
+        }
+        bytes.push(0xff);
+        for id in &breakable_statics {
+            bytes.extend(id.as_bytes());
             bytes.push(0);
         }
         for (id, l) in &lights {
@@ -67,12 +80,25 @@ impl MwFarSource {
                 bytes.extend(f.to_le_bytes());
             }
         }
-        Self { lights, script_tokens: script_tokens_set, fingerprint: Digest::of(&bytes).0 }
+        Self { lights, script_tokens: script_tokens_set, breakable_statics, fingerprint: Digest::of(&bytes).0 }
     }
 
     pub fn light_count(&self) -> usize {
         self.lights.len()
     }
+}
+
+/// The `STAT` records of `db` the breakables adapter lists (lowercase ids): the same facts as the
+/// game's `BreakablesTable` (a `STAT` has no script; one a script names is already vetoed by its
+/// token, so `named_by_script` stays false here).
+fn breakable_statics(db: &RecordDb) -> BTreeSet<String> {
+    db.iter::<Static>()
+        .filter(|(id, _)| {
+            let facts = BreakFacts { source: Source::Static, id: id.as_str(), organic: false, activate_script: false, named_by_script: false };
+            matches!(mw_interaction::breakable::classify(&facts), Eligibility::Breakable(_))
+        })
+        .map(|(id, _)| id.as_str().to_ascii_lowercase())
+        .collect()
 }
 
 /// A `LIGH` record seen from afar.
@@ -114,7 +140,8 @@ impl FarSource for MwFarSource {
     }
 
     fn precombine_exclude(&self, placement: &Placement) -> bool {
-        self.script_tokens.contains(&placement.base.id.as_str().to_ascii_lowercase())
+        let id = placement.base.id.as_str().to_ascii_lowercase();
+        self.script_tokens.contains(&id) || self.breakable_statics.contains(&id)
     }
 }
 
@@ -232,5 +259,90 @@ mod precombine_tests {
         for id in ["chargen boat", "ex_rock_01", "getjournalindex", "a1"] {
             assert!(t.contains(id), "{id}");
         }
+    }
+}
+
+/// `IN38c3` (interaction-destruction.md "Static removal"): a breakable urn stays out of the near
+/// precombine, a wall merges; the breakable set is part of the bake key.
+#[cfg(test)]
+mod breakable_tests {
+    use std::sync::Arc;
+
+    use glam::{DVec3, IVec3, Quat, Vec3};
+    use sf_coords::{WorldPos, WorldTransform};
+    use sf_lod::{FarSource, build_near};
+    use sf_model::{CookSettings, Cooked, CookedModel, Material, MeshData, Model, Node};
+    use sf_records::{RecordDb, RecordId};
+    use sf_vfs::VfsPath;
+    use sf_world::{IndexedPlacement, Partition, Placement, PlacementClass, PlacementFlags, PlacementId, RecordRef};
+    use tes3::esp::Static;
+
+    use super::MwFarSource;
+
+    const URN: &str = "furn_com_urn_01";
+    const WALL: &str = "in_hlaalu_wall_01";
+
+    fn db(statics: &[&str]) -> RecordDb {
+        let mut db = RecordDb::new();
+        mw_records::register_kinds(&mut db).unwrap();
+        let source = db.add_source("test", &[]);
+        for id in statics {
+            db.define(source, RecordId::new(id), Static { id: (*id).into(), mesh: format!("x/{id}.nif"), ..Default::default() }).unwrap();
+        }
+        db
+    }
+
+    fn triangle() -> Arc<CookedModel> {
+        let mut node = Node::new("tri");
+        node.mesh = Some(0);
+        let mesh = MeshData {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            normals: Some(vec![[0.0, 0.0, 1.0]; 3]),
+            uvs: Some(vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
+            indices: vec![0, 1, 2],
+            ..MeshData::default()
+        };
+        let model = Model { nodes: vec![node], meshes: vec![mesh], materials: vec![Material::default()] };
+        match sf_model::cook_with(&model, &CookSettings::default(), &[false]).expect("cooks") {
+            Cooked::Static(m) => Arc::new(m),
+            Cooked::Skipped { .. } | Cooked::Skinned(_) => panic!("static"),
+        }
+    }
+
+    fn placement(i: u8, id: &str, pos: DVec3) -> IndexedPlacement {
+        IndexedPlacement {
+            placement: Placement {
+                id: PlacementId::from_key("test", &[i]),
+                base: RecordRef::new("STAT", id),
+                model: Some(VfsPath::new(&format!("meshes/x/{id}.nif")).expect("path")),
+                transform: WorldTransform { pos: WorldPos::from_f64(pos), rotation: Quat::IDENTITY, scale: Vec3::ONE },
+                class: PlacementClass::Static,
+                flags: PlacementFlags::empty(),
+            },
+            radius: 1.0,
+        }
+    }
+
+    #[test]
+    fn breakable_static_stays_out_of_the_precombine() {
+        let source = MwFarSource::build(&db(&[URN, WALL]));
+        let cell = IVec3::new(1, 0, 2);
+        let origin = Partition::STREAMING.cell_origin(cell).to_f64();
+        let placements = [placement(0, WALL, origin + DVec3::new(10.0, 0.0, 10.0)), placement(1, URN, origin + DVec3::new(20.0, 0.0, 20.0))];
+        assert!(!source.precombine_exclude(&placements[0].placement));
+        assert!(source.precombine_exclude(&placements[1].placement));
+        let model = triangle();
+        let near = build_near(Partition::STREAMING, cell, &placements, &|_: &VfsPath| Some(model.clone()), &|p| source.precombine_exclude(p))
+            .expect("builds")
+            .expect("the wall merges");
+        let members: Vec<PlacementId> = near.buckets.iter().flat_map(|b| b.members.iter().copied()).collect();
+        assert_eq!(members, [placements[0].placement.id], "wall in, urn out");
+    }
+
+    #[test]
+    fn breakable_statics_are_in_the_bake_key() {
+        let wall = MwFarSource::build(&db(&[WALL])).fingerprint();
+        assert_ne!(MwFarSource::build(&db(&[WALL, URN])).fingerprint(), wall, "a breakable static re-bakes");
+        assert_eq!(MwFarSource::build(&db(&[WALL, "in_hlaalu_wall_02"])).fingerprint(), wall, "a plain static does not");
     }
 }

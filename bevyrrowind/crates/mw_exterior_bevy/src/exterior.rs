@@ -764,6 +764,9 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     mw_devtools_bevy::pipeline_watch::add(&mut app);
     mw_scripts_bevy::add(&mut app, vfs.clone(), options.activate);
     mw_rpg_bevy::inventory::add(&mut app, options.actors.clone());
+    // IN38b2/IN38b3c: a removing break takes its placement out of the world (live or overlay only)
+    // and spills a container's contents (the adapter's live spill tunables).
+    mw_rpg_bevy::breakable::add(&mut app, mw_interaction_bevy::breakable::spill_params);
     mw_rpg_bevy::inventory_ui::add(&mut app, options.open_ui.as_deref() == Some(mw_rpg_bevy::inventory_ui::SCREEN));
     // The pause (escape) menu and the options screen (`pause_menu.rs`; after the UI plugins).
     crate::pause_menu::add(&mut app);
@@ -792,6 +795,14 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // IN32c1: the interaction shell: baked furniture defs into the slot index, the player's focus
     // and Use press through the activation contract, its seat default.
     mw_interaction_bevy::add(&mut app, &options.store, &manifest);
+    // IN19c: the fire lights' records (snuff / relight defs; none without loaded records).
+    if let Some(db) = options.actors.as_deref() {
+        mw_interaction_bevy::light::insert_records(&mut app, db);
+        // IN38b1: the breakable CONT / MISC / STAT records (none without loaded records: nothing breaks);
+        // IN38c2: their decorative statics are live, so a break can take one out of the static scene.
+        let statics = mw_interaction_bevy::breakable::insert_records(&mut app, db);
+        app.insert_resource(mw_scripts_bevy::LiveStatics(Arc::new(statics)));
+    }
     // `--use-door` and the `BEVYRROWIND_AUTO` dev hook (physics.rs) wait for it.
     app.add_systems(Update, mark_settled.run_if(in_state(WorldAlive)));
     mw_devtools_bevy::live_ab::add(&mut app, !bench && options.screenshot.is_none());

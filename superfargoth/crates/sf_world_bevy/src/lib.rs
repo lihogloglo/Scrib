@@ -66,7 +66,7 @@ pub use spawn::{
     visibility_range,
 };
 pub use stream::{
-    ActiveWorldspace, CellLoaded, CellUnloaded, DoorLinks, PromoteToEntity, RayTracingVariants, Rehomed, SpawnedInto, StreamCell, StreamStats, Streaming,
+    ActiveWorldspace, CellLoaded, CellUnloaded, DoorLinks, PromoteToEntity, RayTracingVariants, Rehomed, SpawnWhenReady, SpawnedInto, StreamCell, StreamStats, Streaming,
     StreamingAnchor, StreamingConfig, WorldIndexSource, WorldOverlay, WorldspaceActivated, WorldspaceRecords,
 };
 pub use worldspace::{OriginProxy, WorldspaceEntry, WorldspaceLayers, WorldspaceRegistry, WorldspaceRoot, dynamic_layer};
@@ -280,3 +280,6 @@ mod lod_live_tests;
 // Parked worldspaces (CW-9): the street the player left leaves every query and comes back whole.
 #[cfg(test)]
 mod park_tests;
+// Queued spawns (IN38b3a): a placement waits for its model, then spawns into its loaded cell.
+#[cfg(test)]
+mod tests_pending;

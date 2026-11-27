@@ -13,7 +13,8 @@
 //! Shelves and unmeasured records (no model, no usable top) get no def. **Class verb** (`IN32c0`): a def'd
 //! `CONT` or `ACTI` keeps its class's primary use ([`mw_interaction::class_verb`]: open, use) as a slotless
 //! verb ranked above its pose verbs; the report counts them ([`InteractDefs::container_defs`],
-//! [`InteractDefs::activator_defs`]).
+//! [`InteractDefs::activator_defs`]). **Sleep** (`IN3a`): a static (`STAT`) bed gets the slotless `sleep`
+//! ([`mw_interaction::bed_verb`]) at the same rank; an `ACTI` bed keeps `use` (its script owns the sleep).
 //!
 //! The record list (id, kind, model) and both parameter sets are the step's plan parameters, every model a
 //! tracked file read, so a mod editing a furniture record or replacing its mesh re-bakes the defs. Nothing is
@@ -25,7 +26,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use mw_interaction::{
-    Basis, FurnitureParams, InteractableDef, Kind, MeasureParams, Measured, RecordClass, class_verb, def_for, measure,
+    Basis, FurnitureParams, InteractableDef, Kind, MeasureParams, Measured, RecordClass, bed_verb, class_verb, def_for,
+    measure,
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -152,13 +154,15 @@ pub fn interact_defs(
         // Centimetres: the report's precision.
         counts.floor_offset += u32::from((m.floor * 100.0).round().abs() >= 1.0);
         if let Some(mut def) = def_for(&RecordId::new(&r.id), r.kind, &m, furniture) {
-            if let Some(verb) = record_class(r.record).and_then(class_verb) {
+            let class = record_class(r.record);
+            if let Some(verb) = class.and_then(class_verb) {
                 def.verbs.push(verb);
                 match r.record {
                     "CONT" => out.container_defs += 1,
                     _ => out.activator_defs += 1,
                 }
             }
+            def.verbs.extend(bed_verb(r.kind, class));
             counts.defs += 1;
             counts.slots += u32::try_from(def.slots.len()).unwrap_or(u32::MAX);
             out.defs.push(def);
@@ -181,7 +185,7 @@ pub struct InteractDefsStep {
 
 impl InteractDefsStep {
     /// Bump when the product's bytes change for the same inputs.
-    pub const VERSION: u32 = 2;
+    pub const VERSION: u32 = 3;
 
     pub fn new(records: Vec<FurnitureRecord>, furniture: FurnitureParams, measuring: MeasureParams) -> Self {
         Self { records, furniture, measuring }

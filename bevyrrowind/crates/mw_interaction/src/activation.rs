@@ -113,7 +113,7 @@ pub enum DefaultAction {
     SwingDoor,
     /// `TakeRequest`, theft by owner (a book's until the reader exists).
     Take,
-    /// Set `Lit` (IN19).
+    /// Set `Lit` (IN19: `sf_interaction_bevy`'s light default).
     ToggleLit,
     /// The record's script, if any (DQ-6); else nothing.
     Script,
@@ -143,7 +143,7 @@ pub enum Classic {
 pub enum Switch {
     /// `mw.rules.interaction.sit` ([`crate::tunables::SIT`]).
     Sit,
-    /// `mw.rules.interaction.snuff` (lands with IN19).
+    /// `mw.rules.interaction.snuff` ([`crate::tunables::SNUFF`], `IN19c`).
     Snuff,
     /// `mw.rules.interaction.bash` (lands with IN37).
     Bash,
@@ -252,22 +252,20 @@ pub const ROWS: &[Row] = {
         take(R::Lockpick),
         take(R::Probe),
         take(R::RepairItem),
-        // LIGH (light.cpp:93-150): take when carryable; snuff and relight later (a fixed flame is
-        // then a verb-only prompt).
+        // LIGH (light.cpp:93-150): take when carryable; a fire light snuffs and relights (IN19c,
+        // `crate::light`; a fixed flame's is a verb-only prompt, the default is the shell's).
         row(R::Light, C::Carryable, verb::TAKE, "Take", A::Take),
-        row(R::Light, C::Lit, verb::SNUFF, "Snuff", A::ToggleLit).modern(Switch::Snuff, Classic::Off).not_yet("IN19"),
-        row(R::Light, C::Unlit, verb::RELIGHT, "Relight", A::ToggleLit)
-            .modern(Switch::Snuff, Classic::Off)
-            .not_yet("IN19"),
+        row(R::Light, C::Lit, verb::SNUFF, "Snuff", A::ToggleLit).modern(Switch::Snuff, Classic::Off),
+        row(R::Light, C::Unlit, verb::RELIGHT, "Relight", A::ToggleLit).modern(Switch::Snuff, Classic::Off),
         // ACTI (activator.cpp:116-123): use; an `OnActivate` script decides (scripting-adapter.md).
         row(R::Activator, C::Always, verb::USE, "Use", A::Script),
         // Census furniture: pose slots (defs.rs); Classic inert.
         furniture(Kind::Seat, verb::SIT, "Sit"),
+        // A static bed's press is Sleep (the rest hook, IN3a; `defs::bed_verb`), lie and sit on hold.
+        // Classic: no def (inert); vanilla rests by the rest key and scripted beds' `ShowRestMenu`.
+        row(R::Furniture(Kind::Bed), C::Always, verb::SLEEP, "Sleep", A::Rest).modern(Switch::Sit, Classic::RestMenu),
         furniture(Kind::Bed, verb::LIE, "Lie down"),
         furniture(Kind::Bed, verb::SIT, "Sit"),
-        row(R::Furniture(Kind::Bed), C::Always, verb::SLEEP, "Sleep", A::Rest)
-            .modern(Switch::Sit, Classic::RestMenu)
-            .not_yet("IN3"),
         furniture(Kind::Table, verb::LEAN, "Lean"),
         furniture(Kind::Counter, verb::LEAN, "Lean"),
         furniture(Kind::Shelf, verb::BROWSE, "Browse").not_yet("later (browse)"),

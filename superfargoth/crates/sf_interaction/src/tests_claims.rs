@@ -572,12 +572,12 @@ fn defs_serde_round_trip_every_slot_kind() {
                 }),
                 "work",
             ),
-            pose_slot(SlotKind::Light, "snuff"),
+            pose_slot(SlotKind::Light(LightDef::default()), "snuff"),
         ],
         verbs: smallvec![verb("carry"), verb("break")],
+        material: Some(TagId::of("wood")),
         destructible: Some(DestructibleDef {
             health: 40.0,
-            material: TagId::of("wood"),
             stages: smallvec![
                 Stage {
                     at: 0.5,
@@ -651,6 +651,6 @@ fn terms_fill_the_kind_default_queue() {
     def.queue = Some(0);
     assert_eq!(SlotTerms::of(&def, &p).queue, Some(0), "the def overrides");
     def.queue = None;
-    def.kind = SlotKind::Light;
+    def.kind = SlotKind::Light(LightDef::default());
     assert_eq!(SlotTerms::of(&def, &p).queue, None, "lights don't queue");
 }

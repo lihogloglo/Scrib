@@ -37,6 +37,93 @@ pub struct InteractParams {
     pub door_swing_s: f32,
     /// Delay before a close-behind door closes once its opener has left the doorway, s (range 0-10).
     pub door_close_behind_s: f32,
+    /// A put-down spot within this of a resting prop is taken (slot frames and floor points), m (range 0.1-1.5).
+    pub place_clearance_m: f32,
+    /// Spacing of the floor fallback's golden-angle spiral (point k at this × √k), m (range 0.1-2).
+    pub place_spread_m: f32,
+    /// Spiral points the floor fallback tries before the anchor itself, count (range 1-64).
+    pub place_floor_tries: u8,
+    /// Beyond this from a client's camera a break spawns no debris bodies, m (range 5-100).
+    pub debris_lod_m: f32,
+    /// Breaks applied per tick; the rest wait for the next tick, count (range 1-32).
+    pub debris_breaks_per_tick: u8,
+    /// Debris pieces alive in a client's active space; past it the oldest start fading, count (range 0-256).
+    pub debris_awake_max: u16,
+    /// A debris piece starts fading this long after spawning if it has not slept, s (range 1-60).
+    pub debris_fade_s: f32,
+    /// A fading debris piece scales to zero over this, then despawns, s (range 0.1-3).
+    pub debris_shrink_s: f32,
+    /// Launch speed of a debris piece away from the hit, m/s (range 0-10).
+    pub debris_speed_mps: f32,
+    /// Seeded jitter of a piece's launch direction and speed, ratio (range 0-1).
+    pub debris_spread: f32,
+    /// Rule causes evaluated per tick; the rest wait, oldest first, count (range 8-1024).
+    pub rules_evals_per_tick: u16,
+    /// Surface wetness from which a target counts as wet (`sf_surface` scale), ratio (range 0-1).
+    pub rules_wet_threshold: f32,
+    /// How long `Wet` lasts once a target is dry again, s (range 5-900).
+    pub rules_wet_ttl_s: f32,
+    /// Reach of a burning body's heat, m (range 0.5-10).
+    pub fire_spread_radius_m: f32,
+    /// Heat a target gains per second next to one source, before falloff and wind, ratio/s (range 0.05-5).
+    pub fire_heat_per_s: f32,
+    /// Heat a target loses per second with no source in reach, ratio/s (range 0-5).
+    pub fire_cool_per_s: f32,
+    /// Seeded per-target, per-second spread of the heat gain, ratio (range 0-1).
+    pub fire_jitter: f32,
+    /// How much wind speeds heat downwind and slows it upwind, ratio (range 0-1).
+    pub fire_wind_bias: f32,
+    /// Wind speed at which the wind bias is full, m/s (range 1-30).
+    pub fire_wind_ref_mps: f32,
+    /// Surface wetness at which rain puts a burning body out, ratio (range 0-1).
+    pub fire_rain_douse: f32,
+    /// Side of the square fire budget regions on the ground plane, m (range 16-256).
+    pub fire_region_m: f32,
+    /// Burning bodies per region; more ignitions queue, oldest first, count (range 2-128).
+    pub fire_burning_max: u16,
+    /// Heat checks (source -> target distance tests) per tick, round-robin, count (range 4-512).
+    pub fire_spread_checks_per_tick: u16,
+    /// Raw damage a burning destructible takes per second (the host's `(fire, material)` factor
+    /// scales it), 1/s (range 0-100, `IN39c`).
+    pub fire_damage_per_s: f32,
+    /// Fire lights per region, earliest-started first; the rest are flames without a light, count
+    /// (range 0-16, `IN39c`).
+    pub fire_lights_max: u16,
+    /// Reach of a burning object's gameplay light (the AI's light exposure), m (range 1-20, `IN39c`).
+    pub fire_light_radius_m: f32,
+    /// Normal speed change below which a contact deals no impact damage, m/s (range 0.5-10).
+    pub impact_speed_min_mps: f32,
+    /// Impact impulse dead zone: up to it a contact deals nothing, N·s (range 0-50).
+    pub impact_impulse_min_ns: f32,
+    /// Impact damage per N·s of impulse past the dead zone, ratio (range 0-10).
+    pub impact_damage_per_ns: f32,
+    /// Impact speed under which a contact makes no noise, m/s (range 0-5).
+    pub noise_min_speed_mps: f32,
+    /// Impact speed at which a material is heard at its `impact_reach_m`, m/s (range 1-20).
+    pub noise_ref_speed_mps: f32,
+    /// Most an impact's speed multiplies its material's reach, ratio (range 1-4).
+    pub noise_speed_mul_max: f32,
+    /// One object's noise window: inside it only a louder noise is heard, s (range 0-2).
+    pub noise_merge_s: f32,
+    /// Noises heard per tick, loudest kept, count (range 1-128).
+    pub noise_per_tick_max: u16,
+    /// A dropped prop's landing reveals a dropper within this distance, m (range 0-5).
+    pub noise_reveal_m: f32,
+    /// Reach of a door opening or closing, before the material's ratio, m (range 0-40).
+    pub noise_door_reach_m: f32,
+    /// Reach of a blow on a lock or door, before the material's ratio, m (range 0-60).
+    pub noise_bash_reach_m: f32,
+    /// Reach of a lock pick attempt, before the material's ratio, m (range 0-20).
+    pub noise_lockpick_reach_m: f32,
+    /// The impact reach of the reference material that the door, bash and lock pick reaches are
+    /// set for: a material's ratio is its `impact_reach_m` over this, m (range 1-60, `IN18b`).
+    pub noise_material_ref_m: f32,
+    /// A bash's swing from the press to contact, s (range 0.1-1.5, `IN37b`).
+    pub bash_windup_s: f32,
+    /// After a landed blow, a user's next bash press is dropped for this long, s (range 0.3-3).
+    pub bash_recover_s: f32,
+    /// A pending blow lands only when the user's feet are within this of the target point, m (range 0.5-4).
+    pub bash_reach_m: f32,
     /// Fixed simulation rate leases count in, ticks per second.
     pub tick_hz: f32,
 }
@@ -74,6 +161,90 @@ impl Default for InteractParams {
             door_swing_s: 0.8,
             // tunables: const (bound from interact.door.close_behind_s in sf_interaction_bevy (IN33b2); Guess)
             door_close_behind_s: 1.0,
+            // tunables: const (bound from interact.place.clearance_m in sf_interaction_bevy (IN46b); Guess, a crate's half width)
+            place_clearance_m: 0.35,
+            // tunables: const (bound from interact.place.spread_m in sf_interaction_bevy (IN46b); Guess, reach √15 × 0.4 ≈ 1.5 m)
+            place_spread_m: 0.4,
+            // tunables: const (bound from interact.place.floor_tries in sf_interaction_bevy (IN46b); Guess)
+            place_floor_tries: 16,
+            // tunables: const (bound from interact.debris.lod_m in sf_interaction_bevy (IN1a); Guess, Chaos debris removal by distance)
+            debris_lod_m: 25.0,
+            // tunables: const (bound from interact.debris.breaks_per_tick in sf_interaction_bevy (IN1a); Guess)
+            debris_breaks_per_tick: 6,
+            // tunables: const (bound from interact.debris.awake_max in sf_interaction_bevy (IN1c); Guess, spec 2026-11-11)
+            debris_awake_max: 48,
+            // tunables: const (bound from interact.debris.fade_s in sf_interaction_bevy (IN1c); Guess, Chaos sleep removal)
+            debris_fade_s: 8.0,
+            // tunables: const (bound from interact.debris.shrink_s in sf_interaction_bevy (IN1c); Guess, Chaos scale on removal)
+            debris_shrink_s: 0.5,
+            // tunables: const (bound from interact.debris.speed_mps in sf_interaction_bevy (IN1c); Guess)
+            debris_speed_mps: 2.5,
+            // tunables: const (bound from interact.debris.spread in sf_interaction_bevy (IN1c); Guess)
+            debris_spread: 0.35,
+            // tunables: const (bound from interact.rules.evals_per_tick in sf_interaction_bevy (IN17b); Guess)
+            rules_evals_per_tick: 64,
+            // tunables: const (bound from interact.rules.wet_threshold in sf_interaction_bevy (IN17b); Guess, sf_surface wetness scale)
+            rules_wet_threshold: 0.3,
+            // tunables: const (bound from interact.rules.wet_ttl_s in sf_interaction_bevy (IN17b); Guess)
+            rules_wet_ttl_s: 120.0,
+            // tunables: const (bound from interact.fire.spread_radius_m in sf_interaction_bevy (IN17c1); Guess)
+            fire_spread_radius_m: 2.5,
+            // tunables: const (bound from interact.fire.heat_per_s in sf_interaction_bevy (IN17c1); Guess)
+            fire_heat_per_s: 0.5,
+            // tunables: const (bound from interact.fire.cool_per_s in sf_interaction_bevy (IN17c1); Guess)
+            fire_cool_per_s: 0.2,
+            // tunables: const (bound from interact.fire.jitter in sf_interaction_bevy (IN17c1); Guess)
+            fire_jitter: 0.25,
+            // tunables: const (bound from interact.fire.wind_bias in sf_interaction_bevy (IN17c1); Guess, Far Cry 2 wind-driven fire)
+            fire_wind_bias: 0.6,
+            // tunables: const (bound from interact.fire.wind_ref_mps in sf_interaction_bevy (IN17c1); Guess)
+            fire_wind_ref_mps: 8.0,
+            // tunables: const (bound from interact.fire.rain_douse in sf_interaction_bevy (IN17c1); Guess)
+            fire_rain_douse: 0.6,
+            // tunables: const (bound from interact.fire.region_m in sf_interaction_bevy (IN17c2); Guess)
+            fire_region_m: 64.0,
+            // tunables: const (bound from interact.fire.burning_max in sf_interaction_bevy (IN17c2); Guess, Far Cry 2 capped fires)
+            fire_burning_max: 24,
+            // tunables: const (bound from interact.fire.spread_checks_per_tick in sf_interaction_bevy (IN17c2); Guess)
+            fire_spread_checks_per_tick: 48,
+            // tunables: const (bound from interact.fire.damage_per_s in sf_interaction_bevy (IN39c); Guess)
+            fire_damage_per_s: 5.0,
+            // tunables: const (bound from interact.fire.lights_max in sf_interaction_bevy (IN39c); Guess, shadowless lights)
+            fire_lights_max: 4,
+            // tunables: const (bound from interact.fire.light_radius_m in sf_interaction_bevy (IN39c); Guess)
+            fire_light_radius_m: 6.0,
+            // tunables: const (bound from interact.impact.speed_min_mps in sf_interaction_bevy (IN4a); Guess, Source min impact speed)
+            impact_speed_min_mps: 3.0,
+            // tunables: const (bound from interact.impact.impulse_min_ns in sf_interaction_bevy (IN4a); Guess, Source minhealthdmg)
+            impact_impulse_min_ns: 0.5,
+            // tunables: const (bound from interact.impact.damage_per_ns in sf_interaction_bevy (IN4a); Guess, Source physdamagescale)
+            impact_damage_per_ns: 0.5,
+            // tunables: const (bound from interact.noise.min_speed_mps in sf_interaction_bevy (IN18a); Guess)
+            noise_min_speed_mps: 1.0,
+            // tunables: const (bound from interact.noise.ref_speed_mps in sf_interaction_bevy (IN18a); Guess)
+            noise_ref_speed_mps: 5.0,
+            // tunables: const (bound from interact.noise.speed_mul_max in sf_interaction_bevy (IN18a); Guess)
+            noise_speed_mul_max: 2.0,
+            // tunables: const (bound from interact.noise.merge_s in sf_interaction_bevy (IN18a); Guess, one rattle one noise)
+            noise_merge_s: 0.25,
+            // tunables: const (bound from interact.noise.per_tick_max in sf_interaction_bevy (IN18a); Guess)
+            noise_per_tick_max: 16,
+            // tunables: const (bound from interact.noise.reveal_m in sf_interaction_bevy (IN18a); Guess)
+            noise_reveal_m: 1.5,
+            // tunables: const (bound from interact.noise.door_reach_m in sf_interaction_bevy (IN18a); Guess)
+            noise_door_reach_m: 8.0,
+            // tunables: const (bound from interact.noise.bash_reach_m in sf_interaction_bevy (IN18a); Guess)
+            noise_bash_reach_m: 20.0,
+            // tunables: const (bound from interact.noise.lockpick_reach_m in sf_interaction_bevy (IN18a); Guess)
+            noise_lockpick_reach_m: 3.0,
+            // tunables: const (bound from interact.noise.material_ref_m in sf_interaction_bevy (IN18b); Guess, wood)
+            noise_material_ref_m: 10.0,
+            // tunables: const (bound from interact.bash.windup_s in sf_interaction_bevy (IN37b); Guess, a heavy swing to contact)
+            bash_windup_s: 0.45,
+            // tunables: const (bound from interact.bash.recover_s in sf_interaction_bevy (IN37b); Guess)
+            bash_recover_s: 1.0,
+            // tunables: const (bound from interact.bash.reach_m in sf_interaction_bevy (IN37b); Guess)
+            bash_reach_m: 2.0,
             // tunables: const (bound from the app's fixed timestep in sf_interaction_bevy; net.md 60 Hz tick)
             tick_hz: 60.0,
         }
@@ -111,5 +282,28 @@ impl InteractParams {
     #[must_use]
     pub fn door_close_behind_ticks(&self) -> u64 {
         self.ticks(self.door_close_behind_s)
+    }
+
+    /// Seconds to whole ticks at `tick_hz`, rounded up (a blow never lands early), at least one. A
+    /// product within a thousandth of a tick of a whole one is that one: `0.1 s` at 60 Hz is 6 ticks,
+    /// not 7 from `0.1f32`'s representation error.
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    pub fn ticks_ceil(&self, secs: f32) -> u64 {
+        // tunables: const (maths: float slack of an f32 seconds value times the rate)
+        const SLACK: f64 = 1e-3;
+        ((f64::from(secs.max(0.0)) * f64::from(self.tick_hz) - SLACK).ceil() as u64).max(1)
+    }
+
+    /// Press to contact of a bash, ticks (`ceil(windup_s x tick_hz)`).
+    #[must_use]
+    pub fn bash_windup_ticks(&self) -> u64 {
+        self.ticks_ceil(self.bash_windup_s)
+    }
+
+    /// A user's recovery after a landed blow, ticks (rounded up).
+    #[must_use]
+    pub fn bash_recover_ticks(&self) -> u64 {
+        self.ticks_ceil(self.bash_recover_s)
     }
 }

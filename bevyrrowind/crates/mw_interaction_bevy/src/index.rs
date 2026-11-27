@@ -1,4 +1,5 @@
-//! Census furniture into the slot index as cells enter and leave R0 (crate docs, "Index").
+//! Census furniture and breakables into the slot index as cells enter and leave R0 (crate docs,
+//! "Index" and "Breakables").
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -23,14 +24,26 @@ pub struct SitSwitch(pub Id<bool>);
 /// One resident placement with a def.
 #[derive(Clone, Debug)]
 struct Resident {
-    def: Arc<InteractableDef>,
+    /// Its furniture def (with its destructible when it breaks too).
+    furniture: Option<Arc<InteractableDef>>,
+    /// A breakable's def without its furniture (indexed while sitting is off).
+    bare: Option<Arc<InteractableDef>>,
     object: Frame,
     owner: Entity,
-    /// Inserted into the index (the sit switch was on).
-    indexed: bool,
+    /// The sit switch when it was last (re-)inserted.
+    sit: bool,
 }
 
-/// Every R0 placement whose base has a def, indexed or not (the sit switch re-inserts them).
+impl Resident {
+    /// The def indexed while the sit switch is `sit`: the furniture def with sitting on, else a
+    /// breakable's own (none: not indexed).
+    fn def(&self, sit: bool) -> Option<&Arc<InteractableDef>> {
+        if sit { self.furniture.as_ref().or(self.bare.as_ref()) } else { self.bare.as_ref() }
+    }
+}
+
+/// Every R0 placement whose base has a def or breaks, indexed or not (the sit switch re-inserts
+/// them).
 #[derive(Resource, Clone, Debug, Default)]
 pub struct ResidentFurniture(BTreeMap<PlacementId, Resident>);
 
@@ -49,7 +62,7 @@ impl ResidentFurniture {
     /// Whether `placement` is in the index.
     #[must_use]
     pub fn indexed(&self, placement: PlacementId) -> bool {
-        self.0.get(&placement).is_some_and(|r| r.indexed)
+        self.0.get(&placement).is_some_and(|r| r.def(r.sit).is_some())
     }
 }
 
@@ -64,8 +77,8 @@ pub(crate) fn frame_of(t: &WorldTransform) -> Frame {
     Frame { translation: t.pos.to_f64().as_vec3(), rotation: t.rotation }
 }
 
-fn insert(placement: PlacementId, r: &Resident) -> IndexChange {
-    IndexChange::Insert { placement, def: Arc::clone(&r.def), object: r.object, owner: r.owner, disabled: SmallVec::new() }
+fn insert(placement: PlacementId, r: &Resident, def: &Arc<InteractableDef>) -> IndexChange {
+    IndexChange::Insert { placement, def: Arc::clone(def), object: r.object, owner: r.owner, disabled: SmallVec::new() }
 }
 
 fn sit_on(world: &World) -> bool {
@@ -73,14 +86,32 @@ fn sit_on(world: &World) -> bool {
     read.unwrap_or(mw_interaction::tunables::SIT.default_value())
 }
 
-/// `placement` entered R0: registered when its base has a def, indexed when sitting is on.
+/// `placement` entered R0: registered when its base has a def or breaks
+/// ([`crate::breakable::attach`]), indexed when sitting is on or it breaks; a breakable's saved
+/// state follows its `Insert`.
 pub(crate) fn activated(world: &mut World, cx: &ActivateCx<'_>, placement: &IndexedPlacement) {
     let p = &placement.placement;
-    let Some(def) = world.get_resource::<FurnitureDefs>().and_then(|d| d.get(&p.base.id)).cloned() else { return };
-    let indexed = sit_on(world);
-    let resident = Resident { def, object: frame_of(&p.transform), owner: cx.cell_entity, indexed };
-    if indexed {
-        world.write_message(insert(p.id, &resident));
+    let furniture = world.get_resource::<FurnitureDefs>().and_then(|d| d.get(&p.base.id)).cloned();
+    let breakable = crate::breakable::attach(world, &p.base.id, furniture.as_ref());
+    if furniture.is_none() && breakable.is_none() {
+        return;
+    }
+    // A breakable without furniture is its own def; one with furniture keeps a slotless copy
+    // for while sitting is off.
+    let bare = match (&furniture, &breakable) {
+        (None, Some(def)) => Some(Arc::clone(def)),
+        (Some(_), Some(def)) => Some(Arc::new(crate::breakable::bare_of(def))),
+        _ => None,
+    };
+    let furniture = breakable.or(furniture);
+    let sit = sit_on(world);
+    let resident = Resident { furniture, bare, object: frame_of(&p.transform), owner: cx.cell_entity, sit };
+    if let Some(def) = resident.def(sit) {
+        let breaks = def.destructible.is_some();
+        world.write_message(insert(p.id, &resident, def));
+        if breaks {
+            crate::breakable::restore(world, p.id);
+        }
         let key = (cx.worldspace.as_str().to_owned(), cx.cell.to_array());
         *world.get_resource_or_init::<IndexLog>().0.entry(key).or_default() += 1;
     }
@@ -91,22 +122,23 @@ pub(crate) fn activated(world: &mut World, cx: &ActivateCx<'_>, placement: &Inde
 pub(crate) fn deactivated(world: &mut World, placement: &IndexedPlacement) {
     let id = placement.placement.id;
     let gone = world.get_resource_mut::<ResidentFurniture>().and_then(|mut r| r.0.remove(&id));
-    if gone.is_some_and(|r| r.indexed) {
+    if gone.is_some_and(|r| r.def(r.sit).is_some()) {
         world.write_message(IndexChange::unload(id));
     }
 }
 
-/// Wraps the census classes' spawners (statics, activators, containers) with [`FurnitureHook`].
+/// Wraps the census classes' spawners (statics, activators, containers) and the items' (breakable
+/// `MISC` pottery and glass) with [`FurnitureHook`].
 pub(crate) fn hook_spawners(spawners: Option<ResMut<PlacementSpawners>>) {
     let Some(mut spawners) = spawners else { return };
-    for class in [PlacementClass::Static, mw_world::source::ACTIVATOR, mw_world::source::CONTAINER] {
+    for class in [PlacementClass::Static, mw_world::source::ACTIVATOR, mw_world::source::CONTAINER, PlacementClass::Dynamic] {
         if let Some(inner) = spawners.for_class(class).cloned() {
             spawners.set(class, Arc::new(FurnitureHook(inner)));
         }
     }
 }
 
-/// Indexes furniture placements on R0 activation, removes them on deactivation.
+/// Indexes furniture and breakable placements on R0 activation, removes them on deactivation.
 pub struct FurnitureHook(pub Arc<dyn PlacementSpawner>);
 
 impl PlacementSpawner for FurnitureHook {
@@ -129,7 +161,8 @@ impl PlacementSpawner for FurnitureHook {
     }
 }
 
-/// The sit switch changed: resident furniture leaves the index (off, `SlotDisabled`) or comes back.
+/// The sit switch changed: resident furniture leaves the index (off, `SlotDisabled`) or comes
+/// back; a breakable stays indexed with its own def (the shell keeps its state).
 #[allow(clippy::needless_pass_by_value)] // system parameters
 pub(crate) fn sync_sit(
     switch: Res<SitSwitch>,
@@ -139,10 +172,20 @@ pub(crate) fn sync_sit(
 ) {
     let on = tunables.read(switch.0);
     let mut changed = 0_u32;
-    for (placement, r) in resident.0.iter_mut().filter(|(_, r)| r.indexed != on) {
-        r.indexed = on;
+    for (placement, r) in resident.0.iter_mut().filter(|(_, r)| r.sit != on) {
+        let before = r.def(r.sit).cloned();
+        r.sit = on;
+        match (before, r.def(on)) {
+            (Some(b), Some(a)) if Arc::ptr_eq(&b, a) => continue,
+            (_, Some(a)) => {
+                out.write(insert(*placement, r, a));
+            }
+            (Some(_), None) => {
+                out.write(IndexChange::Remove { placement: *placement, reason: InvalidReason::SlotDisabled });
+            }
+            (None, None) => continue,
+        }
         changed += 1;
-        out.write(if on { insert(*placement, r) } else { IndexChange::Remove { placement: *placement, reason: InvalidReason::SlotDisabled } });
     }
     if changed > 0 {
         info!("interact: mw.rules.interaction.sit {}: {changed} resident furniture placements {}", if on { "on" } else { "off" }, if on { "indexed" } else { "removed" });

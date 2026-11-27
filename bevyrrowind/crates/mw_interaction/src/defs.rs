@@ -43,6 +43,11 @@
 //! the class's and the pose verbs follow (the hold list). The bake adds it ([`def_for`] knows only
 //! the census kind).
 //!
+//! **Sleep** ([`bed_verb`], `IN3a`): a static bed (`Kind::Bed` with no class verb, a `STAT`) gets the
+//! slotless [`VERB_SLEEP`] at [`CLASS_VERB_PRIORITY`], so its press is Sleep (the rest hook) and its
+//! `lie` / edge `sit` are on the hold list; a scripted `ACTI` bed keeps `use` only (its script owns
+//! the sleep, interaction-adapter.md "Beds and resting"). The bake adds it beside the class verb.
+//!
 //! **Swing door** ([`door_def`]): one `pass` doorway slot for NPC users ([`USER_NPC`]) plus the
 //! slotless `open` / `close` the player toggles it with (`IN33c1`).
 
@@ -50,7 +55,7 @@ use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use sf_interaction::{
     ClipFamily, DOOR_OPEN, DoorDef, Entrance, Frame, IkTargets, InteractableDef, Occupancy, Side, SlotDef, SlotKind,
-    TagFilter, TagId, VERB_CLOSE, VERB_OPEN, VerbDef,
+    TagFilter, TagId, VERB_CLOSE, VERB_OPEN, VERB_SLEEP, VerbDef,
 };
 use sf_records::RecordId;
 use smallvec::{SmallVec, smallvec};
@@ -246,6 +251,7 @@ pub fn def_for(base: &RecordId, kind: Kind, m: &Measured, p: &FurnitureParams) -
         id: base.clone(),
         slots,
         verbs: SmallVec::new(),
+        material: None,
         destructible: None,
         carry: None,
         adverts: Vec::new(),
@@ -262,6 +268,18 @@ pub fn class_verb(class: RecordClass) -> Option<VerbDef> {
     }
     activation::primary(class, |_| false, |_| true).map(|row| VerbDef {
         verb: TagId::of(row.verb),
+        priority: CLASS_VERB_PRIORITY,
+        requires: TagFilter::default(),
+    })
+}
+
+/// The slotless `sleep` a def'd bed of record `class` gets (module docs, "Sleep"): `Some` for a
+/// [`Kind::Bed`] whose class has no class verb (`None`: a `STAT`; or a class [`class_verb`] gives
+/// nothing), `None` for other kinds and for an `ACTI` / `CONT` bed (its class verb stays its press).
+#[must_use]
+pub fn bed_verb(kind: Kind, class: Option<RecordClass>) -> Option<VerbDef> {
+    (kind == Kind::Bed && class.and_then(class_verb).is_none()).then(|| VerbDef {
+        verb: VERB_SLEEP,
         priority: CLASS_VERB_PRIORITY,
         requires: TagFilter::default(),
     })
@@ -314,6 +332,7 @@ pub fn door_def(base: &RecordId, doorway: Vec3) -> InteractableDef {
                 requires: TagFilter { all: smallvec![DOOR_OPEN], ..TagFilter::default() },
             },
         ],
+        material: None,
         destructible: None,
         carry: None,
         adverts: Vec::new(),

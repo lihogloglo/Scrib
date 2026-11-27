@@ -54,7 +54,7 @@ fn seat(v: &str) -> SlotDef {
 }
 
 fn def(slots: Vec<SlotDef>, verbs: SmallVec<[VerbDef; 2]>, adverts: Vec<(TagId, f32)>) -> InteractableDef {
-    InteractableDef { id: RecordId::new("chair"), slots, verbs, destructible: None, carry: None, adverts }
+    InteractableDef { id: RecordId::new("chair"), slots, verbs, material: None, destructible: None, carry: None, adverts }
 }
 
 fn p(n: u128) -> PlacementId {
@@ -79,7 +79,7 @@ fn street() -> PointIndex<u32> {
     let mut ix = PointIndex::new();
     let chair = def(vec![seat("sit")], smallvec![], vec![]);
     let door = def(
-        vec![slot_def(SlotKind::Light, verb("open", 0, TagFilter::default()), at(0.0, 0.0, 0.0), smallvec![])],
+        vec![slot_def(SlotKind::Light(LightDef::default()), verb("open", 0, TagFilter::default()), at(0.0, 0.0, 0.0), smallvec![])],
         smallvec![],
         vec![],
     );
@@ -194,7 +194,7 @@ fn bed() -> InteractableDef {
     sit.verb.priority = 5;
     let mut sleep = seat("sleep");
     sleep.verb.priority = 10;
-    let snuff = slot_def(SlotKind::Light, verb("snuff", 10, any_of("lit")), at(0.0, 0.0, 0.0), smallvec![]);
+    let snuff = slot_def(SlotKind::Light(LightDef::default()), verb("snuff", 10, any_of("lit")), at(0.0, 0.0, 0.0), smallvec![]);
     def(
         vec![sit, sleep, snuff],
         smallvec![
@@ -238,6 +238,33 @@ fn rank_verbs_hides_slot_verbs_whose_claim_would_be_refused() {
     assert_eq!(c.claim(s(1, 1), &terms[1], me, &[], 10, Tick(2)), Err(Refusal::Taken));
     assert_eq!(c.would_claim(s(1, 0), &terms[0], me, &[], 10), Ok(()));
     assert!(c.claim_on(s(1, 0)).is_none());
+}
+
+/// A shelf with one put-down point (slot 0) and a seat beside it (slot 1).
+fn shelf() -> InteractableDef {
+    let surface = slot_def(
+        SlotKind::Surface { family: tag("place.shelf") },
+        verb("place", 5, TagFilter::default()),
+        at(0.0, 1.2, 0.0),
+        smallvec![],
+    );
+    def(vec![surface, seat("sit")], smallvec![], vec![])
+}
+
+#[test]
+fn surface_slot_is_indexed_with_its_family_and_never_offered() {
+    let d = shelf();
+    let mut ix: PointIndex<u32> = PointIndex::new();
+    ix.insert_placement(p(1), &d, &at(2.0, 0.0, 0.0), &1, |_| true);
+    let entry = ix.get(s(1, 0)).expect("surface indexed");
+    assert_eq!(entry.kind, KindTag::Surface { family: tag("place.shelf") });
+    assert_eq!(entry.tags.as_slice(), &[tag("place"), tag("place.shelf")]);
+    for f in [any_of("place"), any_of("place.shelf")] {
+        assert_eq!(refs(ix.find_slots(Vec3::ZERO, 5.0, &f, SlotUser::default(), linear)), vec![s(1, 0)]);
+    }
+    let choices = rank_verbs(&d, p(1), &[], |_| true);
+    assert_eq!(verbs_of(&choices), vec![tag("sit")], "the surface is a claim target, the seat a use");
+    assert_eq!(choices[0].target, VerbTarget::Slot(s(1, 1)));
 }
 
 /// 10 Hz: switch 0.15 s = 2 ticks, hold 0.35 s = 3 ticks (0.35 as f32 is just under, 3.4999 rounds down).

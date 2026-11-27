@@ -56,11 +56,17 @@ fn unbuilt_states_keep_todays_verb() {
     assert_eq!(prompt(R::Door, all), Some("Open"));
     assert_eq!(primary(R::Door, all, |_| true).map(|r| r.action), Some(DefaultAction::SwingDoor));
     assert_eq!(prompt(R::Container, all), Some("Open"));
-    // A carryable lit light: take only (no snuff until IN19).
+    // A carryable light (IN19c): take, then snuff and relight; the switch off keeps take only.
     let lit: Vec<_> = offered(R::Light, all, |_| true).map(|r| r.verb).collect();
-    assert_eq!(lit, [verb::TAKE]);
-    // Hold lists: one verb per class today, but a door (its swing rows: `swing_door_rows_hold_...`).
-    for &(class, _) in TODAY.iter().filter(|(c, _)| *c != R::Door) {
+    assert_eq!(lit, [verb::TAKE, verb::SNUFF, verb::RELIGHT]);
+    let classic: Vec<_> = offered(R::Light, all, |s| s != Switch::Snuff).map(|r| r.verb).collect();
+    assert_eq!(classic, [verb::TAKE]);
+    // A fixed lit flame prompts Snuff, an unlit one Relight.
+    assert_eq!(prompt(R::Light, |c| c == Condition::Lit), Some("Snuff"));
+    assert_eq!(prompt(R::Light, |c| c == Condition::Unlit), Some("Relight"));
+    // Hold lists: one verb per class today, but a door (its swing rows: `swing_door_rows_hold_...`)
+    // and a light.
+    for &(class, _) in TODAY.iter().filter(|(c, _)| !matches!(c, R::Door | R::Light)) {
         assert!(offered(class, all, |_| true).count() <= 1, "{class:?}");
     }
 }
@@ -83,7 +89,7 @@ fn furniture_verbs_follow_the_sit_switch() {
         offered(R::Furniture(kind), |_| false, sw).map(|r| r.verb).collect()
     };
     assert_eq!(verbs(Kind::Seat, &on), [verb::SIT]);
-    assert_eq!(verbs(Kind::Bed, &on), [verb::LIE, verb::SIT]);
+    assert_eq!(verbs(Kind::Bed, &on), [verb::SLEEP, verb::LIE, verb::SIT]);
     assert_eq!(verbs(Kind::Table, &on), [verb::LEAN]);
     assert_eq!(verbs(Kind::Counter, &on), [verb::LEAN]);
     assert!(verbs(Kind::Shelf, &on).is_empty());
@@ -94,6 +100,11 @@ fn furniture_verbs_follow_the_sit_switch() {
     for r in rows(R::Furniture(Kind::Seat)) {
         assert_eq!((r.classic, r.switch), (Classic::Off, Some(Switch::Sit)));
     }
+    // IN3a: a bed's press is Sleep (the rest hook); Classic records the vanilla rest menu.
+    assert_eq!(prompt(R::Furniture(Kind::Bed), |_| false), Some("Sleep"));
+    let sleep = rows(R::Furniture(Kind::Bed)).find(|r| r.verb == verb::SLEEP).expect("the sleep row");
+    assert_eq!((sleep.action, sleep.classic, sleep.switch), (DefaultAction::Rest, Classic::RestMenu, Some(Switch::Sit)));
+    assert_eq!(sleep.available, Availability::Offered);
 }
 
 /// No verb without a handler: actions not built yet are never offered, with their slice named.
@@ -107,6 +118,8 @@ fn unbuilt_actions_are_not_offered() {
         DefaultAction::Take,
         DefaultAction::Script,
         DefaultAction::Pose,
+        DefaultAction::Rest,
+        DefaultAction::ToggleLit,
     ];
     for r in ROWS {
         match r.available {
@@ -117,17 +130,16 @@ fn unbuilt_actions_are_not_offered() {
     let not_yet = |class, v: &str| {
         rows(class).filter(|r| r.verb == v).all(|r| matches!(r.available, Availability::NotYet(_)))
     };
-    assert!(not_yet(R::Light, verb::SNUFF));
-    assert!(not_yet(R::Light, verb::RELIGHT));
+    assert!(!not_yet(R::Light, verb::SNUFF));
+    assert!(!not_yet(R::Light, verb::RELIGHT));
     assert!(not_yet(R::Door, verb::BASH));
     assert!(not_yet(R::Container, verb::BASH));
-    assert!(not_yet(R::Furniture(Kind::Bed), verb::SLEEP));
     assert!(not_yet(R::Npc, verb::SEARCH));
     assert!(not_yet(R::Npc, verb::PICKPOCKET));
     assert!(not_yet(R::Creature, verb::TALK));
     let slice = |class, v: &str| rows(class).find(|r| r.verb == v).map(|r| r.available);
-    assert_eq!(slice(R::Light, verb::SNUFF), Some(Availability::NotYet("IN19")));
-    assert_eq!(slice(R::Furniture(Kind::Bed), verb::SLEEP), Some(Availability::NotYet("IN3")));
+    assert_eq!(slice(R::Light, verb::SNUFF), Some(Availability::Offered));
+    assert_eq!(slice(R::Furniture(Kind::Bed), verb::SLEEP), Some(Availability::Offered));
     assert_eq!(slice(R::Container, verb::BASH), Some(Availability::NotYet("IN37")));
 }
 
@@ -185,7 +197,11 @@ fn default_handlers_run_on_their_own_verbs_only() {
     }
     // The pose verbs are the seat default's; unbuilt actions run on nothing.
     assert_eq!(runs_on(DefaultAction::Pose), [verb::SIT, verb::LIE, verb::LEAN]);
-    for action in [DefaultAction::Bash, DefaultAction::ToggleLit, DefaultAction::Rest, DefaultAction::Loot] {
+    // The rest hook runs on `sleep` only (IN3a).
+    assert_eq!(runs_on(DefaultAction::Rest), [verb::SLEEP]);
+    // The light default runs on snuff and relight (IN19c; the shell's `light_default`).
+    assert_eq!(runs_on(DefaultAction::ToggleLit), [verb::SNUFF, verb::RELIGHT]);
+    for action in [DefaultAction::Bash, DefaultAction::Loot] {
         assert!(runs_on(action).is_empty(), "{action:?}");
     }
 }

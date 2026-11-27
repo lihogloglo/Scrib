@@ -88,6 +88,7 @@ fn chair_def() -> Arc<InteractableDef> {
         id: RecordId::new("furn_chair_01"),
         slots: vec![seat],
         verbs: SmallVec::new(),
+        material: None,
         destructible: None,
         carry: None,
         adverts: Vec::new(),

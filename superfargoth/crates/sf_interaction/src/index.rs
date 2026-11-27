@@ -29,6 +29,7 @@ pub enum KindTag {
     Ladder,
     Workstation,
     Light,
+    Surface { family: TagId },
 }
 
 impl KindTag {
@@ -40,7 +41,8 @@ impl KindTag {
             SlotKind::Lever(_) => Self::Lever,
             SlotKind::Ladder(_) => Self::Ladder,
             SlotKind::Workstation(_) => Self::Workstation,
-            SlotKind::Light => Self::Light,
+            SlotKind::Light(_) => Self::Light,
+            SlotKind::Surface { family } => Self::Surface { family: *family },
         }
     }
 }
@@ -65,7 +67,7 @@ pub struct IndexedSlot<O> {
     /// Seat/bed/top height, m.
     pub band: f32,
     pub owner: O,
-    /// What [`PointIndex::find_slots`]' filter tests: the slot's verb, and its pose family.
+    /// What [`PointIndex::find_slots`]' filter tests: the slot's verb, and its pose or surface family.
     pub tags: SmallVec<[TagId; 4]>,
     /// Who may use it (the def's `users`).
     pub users: TagFilter,
@@ -80,7 +82,7 @@ impl<O> IndexedSlot<O> {
         let kind = KindTag::of(&slot.kind);
         let mut tags: SmallVec<[TagId; 4]> = SmallVec::new();
         tags.push(slot.verb.verb);
-        if let KindTag::Pose { family } = kind {
+        if let KindTag::Pose { family } | KindTag::Surface { family } = kind {
             tags.push(family);
         }
         Self {
@@ -221,7 +223,7 @@ impl<O: Clone> PointIndex<O> {
         refs.len()
     }
 
-    fn placement_slots(&self, placement: PlacementId) -> impl Iterator<Item = SlotRef> + '_ {
+    pub(crate) fn placement_slots(&self, placement: PlacementId) -> impl Iterator<Item = SlotRef> + '_ {
         let lo = SlotRef { placement, slot: 0 };
         let hi = SlotRef { placement, slot: u8::MAX };
         self.slots.range(lo..=hi).map(|(s, _)| *s)

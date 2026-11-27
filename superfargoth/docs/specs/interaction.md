@@ -147,6 +147,7 @@ pub enum SlotKind {
     Ladder(LadderDef),               // bottom and top points (an edge chain), rung spacing, Bottom/Top entrances
     Workstation(WorkstationDef),     // jobs: TagFilter over job records; player_verb (the pack's menu)
     Light,                           // snuff/relight a light-bearing object: see [(d) World rules](interaction-world-rules.md) (IN28)
+    Surface { family: TagId },       // a put-down point for carried props, a claim target never used (IN46 "Errand spots")
 }
 ```
 
@@ -161,7 +162,8 @@ pub enum SlotKind {
 
 ### Slot kinds
 
-- **Pose** (seat, bed, lean, counter, idle): "Using a slot" below; beds also fire the adapter's rest hook (IN3).
+- **Pose** (seat, bed, lean, counter, idle): "Using a slot" below; beds also offer `sleep`, the host's rest hook
+  ("Beds, lean spots and rest (IN3)").
 - **Door** (IN33): a **kinematic hinged leaf**, no physics joint (UE: a movable mesh on a timeline; Bethesda and
   OpenMW `worldimp.cpp` rotateDoor turn the reference and undo the step when an actor is hit [M]; a rapier revolute
   joint with a motor was not taken: a dynamic leaf pushes characters into geometry and needs per-door tuning; Bevy
@@ -337,6 +339,15 @@ breaks: see [(d) World rules](interaction-world-rules.md) (IN28).
 | `interact.debris.awake_max` | count | 48 | 0-256 | Guess (spec 2026-11-11) | Presentation |
 | `interact.debris.breaks_per_tick` | count | 6 | 1-32 | Guess | Gameplay |
 | `interact.debris.fade_s` | s | 8 | 1-60 | Guess | Presentation |
+| `interact.debris.shrink_s` | s | 0.5 | 0.1-3 | Guess (Industry: UE Chaos scale on removal [M]; IN1-S) | Presentation |
+| `interact.debris.speed_mps` | m/s | 2.5 | 0-10 | Guess (IN1c: launch away from the hit) | Presentation |
+| `interact.debris.spread` | ratio | 0.35 | 0-1 | Guess (IN1c: seeded direction, speed and spin jitter) | Presentation |
+| `interact.impact.speed_min_mps` | m/s | 3.0 | 0.5-10 | Guess (IN4-S: a 0.46 m fall; Source min speed) | Gameplay |
+| `interact.impact.impulse_min_ns` | N·s | 0.5 | 0-50 | Guess (IN4-S: Source `minhealthdmg` dead zone) | Gameplay |
+| `interact.impact.damage_per_ns` | ratio | 0.5 | 0-10 | Guess (IN4-S: Source `physdamagescale`, Chaos threshold) | Gameplay |
+| `interact.place.clearance_m` | m | 0.35 | 0.1-1.5 | Guess (a crate's half width; IN46) | Gameplay |
+| `interact.place.spread_m` | m | 0.4 | 0.1-2 | Guess (spiral spacing; reach √15 × 0.4 ≈ 1.5 m at 16 tries) | Gameplay |
+| `interact.place.floor_tries` | count | 16 | 1-64 | Guess (16 points ≈ 1.5 m reach at 0.4 m) | Gameplay |
 
 All `Scope::Dev`, `Lifetime::Live` except `interact.focus.hold_s` (`Scope::Player`, a menu row). Record data (carry
 class multipliers, verb priorities, queue capacities per def, job durations) is mod data with its own source, not a
@@ -396,13 +407,13 @@ IN27-IN30 and TV0b are stage 0). IN5 is folded into IN9 (owner 2026-11-11). The 
 | IN31 | Shell: index on cell load, claims on `FixedUpdate`, focus best verb + hold list with stable focus (switch margin + dwell, frozen while held), `Activate` → `Activated` (+ verb) → gates → default | `sf_interaction_bevy` | IN0 | headless: handled suppresses the default; gate refusal; script `Activate` runs gates + default once |
 | IN32 | Adapter defs (MG4 census) + each existing class's activation as a default verb, Classic switches | `mw_interaction` | IN31, IN29 | exact per class, behaviour unchanged; def counts |
 | IN2 | Player sits and stands: Interaction move, `Seated` owner, side entrances, Kimodo sit clips | `sf_interaction`, `sf_action` | IN31 | exact: claim/occupy/release via `step`; sanity: pelvis on the seat, no capsule through it; owner IN-2 |
-| IN3 | Beds and lean spots (lie down, the adapter's rest hook), hand IK on armrests/tables | `sf_interaction_bevy`, `mw_interaction` | IN2 | exact: rest hook fires once; owner IN-3 |
+| IN3 (IN3a-d) | Beds and lean spots (lie down, the host's rest hook), hand IK on armrests/tables: "Beds, lean spots and rest (IN3)" | `sf_interaction(_bevy)`, `mw_interaction(_bevy)` | IN2 | exact: rest hook fires once; owner IN-3 |
 | IN33 | Swing doors (doors, containers): Open/Closed, kinematic hinge, doorway claim + queue, close behind, "Locked" from crime's `LockState`, `WorldChange` | `sf_interaction(_bevy)`, `mw_interaction` | IN31 | exact transitions; blocked swing pauses; owner IN-33 |
 | IN35 | Player third-person `HeldProp`: attach, grip IK, carry class gates (speed, sprint, roll), one thing held; first-person spring kept | `sf_interaction_bevy`, `sf_physics` | IN0, MG7b | exact gates; link survives a camera switch; owner IN-35 |
 | IN6 | Player moves furniture: promotion + carry/drag, slots follow, persistence | `sf_interaction_bevy` | IN2, IN35, static-scene B5a-2 | exact: overlay round trip moves slots; sanity: comes to rest; owner IN-6 |
 | IN1 | Crates and barrels break, tier 1: prop targets, health, stages, spill with damage, loot/salvage, debris + LOD, `Destroyed`, overlay blob | `sf_interaction(_bevy)` | IN0, combat C2c/C3 | exact: stage math, LOD gate, save round trip, event; sanity: debris rests, no NaN; owner IN-1 |
 | IN38 | Adapter breakables (crates, barrels, urns, sacks, pottery), materials, `NoiseKind` | `mw_interaction` | IN1, IN29 | exact rows on game data |
-| IN4 | Impact damage (thrown items, falls) from `ContactForceEvent` thresholds | `sf_interaction_bevy` | IN1 | exact: threshold maps to damage; sanity; owner IN-4 |
+| IN4 | Impact damage (thrown items, falls) from `PhysicsEvent::Contact` impulse thresholds (destruction spec "Impacts (IN4)") | `sf_interaction_bevy` | IN1 | exact: threshold maps to damage; sanity; owner IN-4 |
 | IN18 | `NoiseEvent` emitters: impacts, breaks, doors, throws, drops, bashes, lock picks (crime LW13); see [(d)](interaction-world-rules.md) | `sf_interaction_bevy` | IN4, IN33, AI8a | exact loudness per case |
 | IN37 | Bash locks/doors: strength-scaled lock damage, contents risk, `Bashed`, `LockRequest::Force` + offence hook | `sf_interaction`, `mw_interaction` | IN1, IN33 | exact thresholds |
 | IN14 | `WorldChange` vocabulary + placement diff ([world-reactions.md](world-reactions.md)) | `sf_interaction` | IN1, IN6, IN33 | one event per transition |
@@ -410,7 +421,7 @@ IN27-IN30 and TV0b are stage 0). IN5 is folded into IN9 (owner 2026-11-11). The 
 | IN36 | Thrown props hit people: damage/stagger by mass × speed (capped), assault when seen, Classic off | `sf_interaction_bevy`, `sf_combat` | IN4, Q2 | exact curve; owner IN-36 |
 | IN19 | `Lit`, snuff/relight verb, light follows, `LightChanged`; see [(d)](interaction-world-rules.md) | `sf_interaction(_bevy)`, `mw_interaction` | IN31 | exact events; owner IN-19 |
 | IN17 | Rules core: `InteractionRules`, states + TTL, `Wet`, budgeted wind spread; see [(d)](interaction-world-rules.md) | `sf_interaction` | IN28, IN1 | exact on a synthetic grid; rain stops it |
-| IN39 | Fire in game: effects (capped lights), charred stage, damage, extinguish | `sf_interaction_bevy`, `sf_effects` | IN17 | sanity; owner IN-39 |
+| IN39 | Fire in game: effects (capped lights), charred stage, damage, extinguish (world-rules "Rules and fire shell (IN39)", rows IN39a-f) | `sf_interaction_bevy`, `mw_interaction_bevy` | IN17 | sanity; owner IN-39 |
 | IN40 | Ground burn grid: groundcover/terrain tint, fast regrow | `sf_interaction_bevy` | IN17 | exact regrow; owner IN-40 |
 | IN41 | Adapter: ignition sources, flammables, town rule (Q1), Classic off | `mw_interaction` | IN39, IN40 | exact rows; Classic ignites nothing |
 | IN44 | Measurement: claims, spread, debris, burn grid ms, High, 4060 laptop | tests | IN39, IN40 | `#[ignore = "measurement: ..."]`; perf ledger |
@@ -612,6 +623,175 @@ the enter starting 69 / 114 / 116 ticks after the press, feet error 0; rule numb
 21 end `Entered`, with an approach from every stance but the one already on the clip's start pose. Open (ledger
 IN2c4b): the turn starts where the latch fires (a look question), the timeout margin near `max_m` and for the sneak
 gait is not measured, the enter gate's ratio counts position only.
+
+## Beds, lean spots and rest (IN3, designed 2026-11-27)
+
+Research: `docs/research/interaction-in3-beds-lean.md` (OpenMW `ca5e2576` bed path, Skyrim, KCD2, RDR2, GTA V,
+Cyberpunk workspots, UE Smart Objects). A bed is a set of pose slots (`lie`, edge `sit`) plus a slotless `sleep` verb;
+a lean spot is a pose slot. Neither needs a new slot kind or a second use path.
+
+**The rest hook (IN3a).** `sleep` is an ordinary verb through the activation contract (scripts, gates, default):
+- The verb tag is the framework's `VERB_SLEEP = TagId::of("sleep")` in `sf_interaction` (beside `VERB_OPEN` /
+  `VERB_CLOSE`, `door.rs:24-27`, so the Bevy-free adapter shares it). A def offers it as a slotless `VerbDef`
+  (`requires` empty) at the def's top priority, so the press is Sleep and `lie` / `sit` are on the hold list (Skyrim,
+  KCD2, RDR2: activating a bed opens the sleep menu; the adapter uses `CLASS_VERB_PRIORITY`).
+- Its default handler (`sf_interaction_bevy` `rest.rs`, `Update`, `.after(ActivationSystems::Default)`) writes one
+  `RestRequested { tick, user, actor, placement, slot }` per `UseApproved` whose verb is `VERB_SLEEP` (`tick` =
+  `InteractionTick` at the write, `user` from the `InteractionUser` whose `actor` is the approval's, as the seat
+  handler finds it (`seat.rs:400`; none found: nothing written), `slot` = the approval's, `None` for the slotless
+  verb). It matches `verb == Some(VERB_SLEEP)` only: a validated use always names its verb (`validate`,
+  `activate.rs:241-266`); a script `Activate` with no verb is the primary use of no default here. A handled (script)
+  use or a gate refusal writes none (contract steps 4-5); no other verb writes one. The seat handler already skips
+  it: `resolve_slot` finds no pose slot with verb `sleep` (`seat.rs:320-348`).
+- **No `owned` field** (planned in 2026-11-25, dropped): ownership is crime's (game) data on the placement; the host's
+  gates read it. The framework knows nothing of werewolves, enemies or owners.
+- **The host gates and opens the UI.** Refusals are gates in `ActivationSystems::Gates` with a reason tag for the prompt
+  (no rest UI opens); the request means "open the rest UI for this user at this bed". The UI, its own refusals
+  (underwater, in the air) and the time skip are the host's (ai.md `fast_forward`). Every engine read splits it so
+  (Skyrim, OpenMW `OpShowRestMenu` -> `GM_Rest`, Cyberpunk, UE: the slot is the object, the menu is the game's).
+- **Lie first, then the menu** (Skyrim, KCD2, RDR2) is the host's sequencing, not a second hook (IN3b): on
+  `RestRequested`, when the bed has a free `lie` slot with clips, the host writes an `ActivateCommand { verb: lie,
+  slot }` for the same user and opens the menu on that use's `SeatReport` `Entered` (any other end: at once);
+  without lie clips it opens at once. Leaving the menu exits the slot like any exit input.
+- **Players only.** NPCs sleep through AI activities on the `lie` slot (AI14 / IN8): the AI never commands `sleep`.
+  The handler does not filter users (it knows no players); the host's consumer acts on player users only.
+- **Co-op (rule, nothing built):** the request carries its `user`; the host decides the skip (all players or a share
+  in bed, Valheim / Minecraft pattern). Single player: the request is the skip.
+
+**Lie and lean use (IN3b, IN3c).** Through "Using a slot" unchanged: `bed.lie` (the cooked `lie` slot, entrances Left
+and Right) and the `counter.*` stations (`counter.table`, `counter.bar`, entered from Back). IN3b needs anim AN30c (bed
+bake slots + the lift / yaw fix of AN30a's bodies), IN3c needs AN30d/e (lean clips). Wall leans (RDR2 "lean with hand
+on post", GTA `WORLD_HUMAN_LEANING`, Cyberpunk rail workspots) need spots on walls that no data authors: a later cook
+row (vertical faces beside the navmesh), not IN3.
+
+**Hand IK (IN3d).** Contact points are cooked into the slot's `IkTargets.hands` (object frame, `[left, right]`, empty
+= none): armrest tops (seat collision above the seat band within the seat's width, per side) and, for stations, the
+top edge in front of the user at shoulder width. At run time no new IK: the humanoid graph already has two-bone
+hand ops (`HandIk` -> `LimbIk`, `sf_anim_graph/src/asset.rs:943-1013`; `mw_humanoid.animgraph.ron:455-456`, targets
+`hand_l` / `hand_r`, weights `hand_ik_l` / `hand_ik_r`; not `FullBodyIk`: the body pose is the clip's, two arms cost
+less). Their feed (`mw_player_bevy/src/grip.rs`, today ledge grip and wall brace) gets a third source: the held
+slot's cooked points, winning while the user is in a seat use (the brace runs only in plain locomotion anyway), the
+weight ramping in over the enter clip's last part and out over the exit's first part (tunables
+`interact.ik.hand_in_s`, `interact.ik.hand_out_s`, `Guess`). NPC users get the same feed with their animator (later
+row). Armrests need no grip table; held props do (MG7b, IN35), so IN3d does not wait on MG7b.
+
+| Slice | Deliverable | Crates | Depends on | Verify |
+|---|---|---|---|---|
+| IN3a | `VERB_SLEEP`, `RestRequested` + its default handler; adapter: bed defs carry slotless `sleep` (static beds, added in the bake), the row Offered; game logs it | `sf_interaction(_bevy)`, `mw_interaction(_bevy)`, `mw_bake` | IN31, IN32 | exact: one press -> one request; handled or refused -> none; Classic row `RestMenu` |
+| IN3b | Lie use + lie-then-menu sequencing in the host | `mw_interaction_bevy` | IN3a, AN30c | exact sequencing; owner IN-3 |
+| IN3c | Lean use at stations | `mw_interaction` | AN30d/e | owner IN-3 |
+| IN3d | Hand contact points in the cook + the `grip.rs` seat source | `mw_interaction`, `mw_bake`, `mw_player_bevy` | IN2 | exact cooked points; sanity: hands on the armrest; owner IN-3 |
+
+Reuse check: Bevy 0.20 has nothing for slots, beds, rest or lean; crates.io (2026-11-27, "bevy smart object", "bevy
+interaction", "bevy furniture") has no maintained crate; IK is ours (`sf_anim`). Industry comparison: bed = slot +
+verb with the menu outside it (all engines read); owned bed = the game's crime rule (OpenMW kept, below); lean = an
+authored marker / scenario / workspot per spot (Bethesda, GTA, Cyberpunk), ours cooked from collision; hand contact
+= UE Control Rig / Motion Warping style IK onto object points [M], ours the graph's `HandIk` onto cooked points.
+
+Review (IN3-REV, 2026-11-27): every type, set and line above checked against `sf_interaction_bevy` (`activate.rs`,
+`seat.rs`, `lib.rs:395-422`), `sf_interaction` (`door.rs`, `def.rs`), `mw_interaction` (`activation.rs`, `defs.rs`),
+`mw_bake/src/interact.rs` and the anim graph. Fixed: the handler's verb match and user lookup, sleep's priority, where
+static beds get `sleep` (the bake, which alone knows the record class), hand IK through the existing `HandIk` ops and
+`grip.rs` (no `LimbIk` in `sf_anim`), IN3a/IN3d crates. OpenMW line cites are the research doc's, not re-read.
+
+## Errand spots: `pick_spot` (IN46, designed 2026-11-27)
+
+ai.md "Errands, operators and links" (AI0f, AI32) needs one pure answer to "where does this carried prop go", called
+by tier 2 and tier 0 alike so an errand run off-screen leaves the prop where an on-screen one would. It lives in
+`sf_interaction` (`spot.rs`), over the same `PointIndex` the AI already queries; the AI lane calls it.
+
+```rust
+// Illustrative, not compiled.
+pub struct SpotAnchor { pub at: Vec3 /* world */, pub placement: Option<PlacementId> /* this shelf only */ }
+pub struct SpotBlockers<'a> { pub claims: &'a Claims, pub props: &'a [Vec3] /* resting props near `at` */,
+                             pub moving: &'a [PlacementId] /* carried or dragged props (`HeldProp`s) */ }
+pub struct SpotQuery<'a> { pub anchor: SpotAnchor, pub filter: &'a TagFilter /* the errand's `spot` */,
+                           pub user: UserKey /* ai.md's ActorKey as UserKey::Actor */, pub tags: &'a [TagId],
+                           pub radius_m: f32 /* the caller's `ai.errand.spot_radius_m` */ }
+pub enum Spot { Slot { slot: SlotRef, frame: Frame /* world */ }, Floor(Vec3) }
+pub fn spot_candidates<O: Clone>(index: &PointIndex<O>, q: &SpotQuery, occ: &SpotBlockers, p: &InteractParams)
+    -> Vec<(SlotRef, Frame)>;
+pub fn pick_spot<O: Clone>(index: &PointIndex<O>, q: &SpotQuery, occ: &SpotBlockers, p: &InteractParams,
+                           floor: impl Fn(Vec3) -> Option<Vec3>) -> Spot;
+```
+
+- **Place spots are indexed slots of a new data-less kind, `SlotKind::Surface { family }`** (`KindTag::Surface`): a
+  put-down point (a shelf board, a table top, a crate lid) whose tags pass the errand's `spot` filter (its verb tag,
+  e.g. `place`, plus its family such as `place.shelf`, pushed like a pose family; `IndexedSlot::tags`,
+  `index.rs:68-69`). Not a `Pose` (review 2026-11-27): `rank_verbs` offers every slot's verb that `would_claim`
+  grants (`verbs.rs:38-44`), so a Pose spot would show players a prompt on every shelf, and an approved use of a Pose
+  slot runs the seat path (`sf_interaction_bevy/src/seat.rs:330,345`). `rank_verbs` skips Surface slots: a surface
+  is a claim target, never a use (no prompt, no activation; putting down is the carry's `Place`,
+  interaction-carry.md). Which bake step cooks them is a later slice (the adapter's, like the IN3 lean spots).
+- **Candidates** (`spot_candidates`): the slots within `radius_m` (3D) of `anchor.at` whose tags pass `filter` and whose
+  `users` pass `tags` (the `find_slots` tests, `index.rs:233-264`, without its advert score); with `anchor.placement`
+  set, only that placement's slots. Dropped: a slot on a moving prop (`occ.moving`, the carried prop's own lid
+  included, and any `Claims::hand_holder(placement)`), a slot another user holds (`Claims::claim_on(slot)` with `user != q.user`, either
+  phase; the user's own claim stays, so a re-pick after reserving is stable), and a slot with a resting prop within
+  `interact.place.clearance_m` of its frame (`occ.props`; the carried prop is not resting, so it is never listed).
+  Sorted by distance to `anchor.at` (ascending, `f32::total_cmp`), then `SlotRef`: geometric, not the advert score
+  (a spot is where to put a thing, not a need to satisfy).
+- **Result** (`pick_spot`): the first candidate as `Spot::Slot`. None: the floor fallback, the first of
+  `interact.place.floor_tries` points on a golden-angle spiral around `anchor.at` (point k at radius
+  `interact.place.spread_m` × √k, angle k × 2.399963 rad, k from 0) that `floor` projects (`Some(q)`) and that lies
+  `interact.place.clearance_m` clear of every `occ.props` point, as `Spot::Floor(q)`; none passes: `Spot::Floor(anchor.at)`
+  (the last resort; ai.md's "placed at `to`" is the Give refusal, not this). The spiral lies in the horizontal plane
+  (x, z; y up, as the index buckets) at `anchor.at.y`; radius grows with k, so the first valid point is the nearest
+  valid floor of the tried ones (ai.md: "nearest valid floor"), never a score.
+- **Claim after pick.** The caller (AI32) reserves the slot with an ordinary `Claims::claim` at its reason's priority
+  and releases it on `Place`. The carrier must hold no other body claim (`HeldProp` is not one; `Pick` releases any
+  slot it used), or `claim` refuses `UserBusy` (`claims.rs:377`). The reservation leases like any approach
+  (`interact.claim.lease_s`): the carrier `renew`s it while it makes progress, as a seat approach does. A refusal the index cannot see
+  (`GroupTaken`, `Disabled`: `IndexedSlot` carries no group nor enabled bit) takes the next of `spot_candidates`, then
+  the floor (UE's flow: claim a result, on an invalid handle try the next one).
+- **Determinism and both tiers.** No float sums over unordered sets, no `HashMap` iteration: the index is `BTreeMap`
+  ordered and ties break on `SlotRef`, so an index built in another insertion order gives the same `Spot`. Tier 2 passes
+  the resident `PointIndex`; tier 0, whose cell may not be resident, passes an index built from that cell's placements
+  (`PointIndex::insert_placement`, the same defs and frames) and the same `occ.props` (from the overlay's resting
+  placements). `floor` is the caller's: the same projection in both tiers (nav's nearest-poly query on the cell's cached
+  tile), else the tiers differ on the fallback only; tests pass a flat-floor closure.
+- **Out of scope:** choosing which prop to fetch (`item: Tagged(TagFilter)`, an AI query), facing (the carrier's
+  approach or the def's `pairs_with`, interaction-carry.md), the drop at the feet under pre-emption (ai.md: no spot
+  search). `PointIndex::placement_slots` (`index.rs:224`) becomes `pub(crate)` for the placement-only candidates.
+- **Build split (review 2026-11-27):** IN46a adds `SlotKind::Surface` + `KindTag::Surface` and the `rank_verbs` skip
+  (test: a Surface slot is indexed with its family tag and never offered); IN46b adds `spot.rs` and the three
+  `interact.place.*` fields on `InteractParams` with their `sf_interaction_bevy` bindings.
+
+Reuse check (rule 0): Bevy has no spatial or smart-object query (the index is ours, IN0b). Crates: none for
+smart-object slot search (searched for IN0, see "Reuse check" above). Industry: UE Smart Objects
+`USmartObjectSubsystem::FindSmartObjects(FSmartObjectRequest)`: a box query with a tag/activity filter
+(`FSmartObjectRequestFilter`, which can include or skip claimed and disabled slots), then `MarkSlotAsClaimed`, the
+next result on failure [M: API reference and overview read in part, U for the source]; UE EQS for the floor fallback:
+a points generator (`Points: Circle` / `Grid`), filter tests (pathfinding, distance), `Single Best Item` [M]; The
+Sims' surface "slots" on tables and shelves where a carried object goes (community docs, U). Ours matches UE's
+find-then-claim split; it departs from EQS by trying points in fixed order with one validity test instead of scoring,
+so tier 0 needs no physics or trace, only `floor`.
+
+## As built (IN46b, 2026-11-27)
+
+`sf_interaction::spot` (`spot.rs`): `SpotAnchor`, `SpotBlockers`, `SpotQuery`, `Spot`, `spot_candidates`, `pick_spot`,
+and `spiral_point` (public so callers and tests share the spiral). Unanchored searches reuse `find_slots` (falloff 1,
+need `None`); an anchored one walks `placement_slots` (now `pub(crate)`). "Within clearance" is strictly closer than
+`place_clearance_m`, for slot frames and floor points alike. `InteractParams::{place_clearance_m, place_spread_m,
+place_floor_tries}` bound from `interact.place.*` in `sf_interaction_bevy`. Tests: `tests_spot.rs` (6).
+
+## As built (IN46a, 2026-11-27)
+
+`SlotKind::Surface { family }` (`def.rs`) and `KindTag::Surface { family }` (`index.rs`): the family is pushed into
+`IndexedSlot::tags` after the verb, like a pose family, so `find_slots` finds a surface by `place` or `place.shelf`.
+`rank_verbs` skips Surface slots (`verbs.rs`), so the prompt and activation never see them. Test:
+`surface_slot_is_indexed_with_its_family_and_never_offered` (`tests_queries.rs`). `spot.rs` is IN46b.
+
+## As built (IN3a, 2026-11-27)
+
+`sf_interaction::VERB_SLEEP` (`rest.rs`); `sf_interaction_bevy::rest`: `RestRequested { tick, user, actor, placement,
+slot }`, `rest_default` in `RestSystems` (`Update`, after `ActivationSystems::Default`), matching `verb == Some(VERB_SLEEP)`
+and the approval's `InteractionUser` by actor. Adapter: the bed `sleep` row is Offered and first in the bed's focus order
+(Classic `RestMenu`, `Switch::Sit`); `mw_interaction::bed_verb(kind, class)` pushed by the bake on static beds
+(`InteractDefsStep::VERSION` 3, so the next bake rebuilds `mw.interact.defs`); the game logs `interact: rest requested
+<placement> by <user>`, and a static bed's prompt is "Sleep" through the existing furniture-prompt path. Tests:
+`tests_rest.rs` (whole pipeline: one press -> one request, handled / gated / `lie` / no user -> none),
+`static_beds_get_sleep_above_their_pose_verbs`, `static_beds_sleep_and_scripted_beds_keep_use`, `tests_activation` rows.
 
 ## As built (IN33a, 2026-11-26)
 

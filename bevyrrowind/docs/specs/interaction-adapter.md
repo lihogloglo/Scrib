@@ -47,7 +47,7 @@ to `pick` (`probe`), IN33. Rows in focus order (files in `mwclass/` unless named
 | `ACTI` with `OnActivate` | use | none | the script (DQ-6) | scripting-adapter.md | same |
 | `ACTI` without | use (as today) | none | none | `activator.cpp:116-123` | same |
 | Census furniture | sit / lie / lean | `Pose` | "Using a slot" | none | off |
-| Beds | sleep; sit on the edge | `Pose` | lie-down clip, rest hook (IN3) | crime-adapter.md "Sleeping in a bed" | rest menu |
+| Beds | lie; sit on the edge; sleep (static beds; scripted beds: the script) | `Pose` + slotless `sleep` | `RestRequested` -> rest UI (IN3a), lie first (IN3b) | `guiextensions.cpp:50-59`, crime-adapter.md A3, "Beds and resting" | scripted: rest menu; static: inert |
 | Locked `DOOR`/`CONT` | bash (hold list, after pick) | none | IN37 blow → crime `LockRequest::Force` | none | off |
 
 - **Scripts win.** A script containing `OnActivate` suppresses the default and calls `Activate` to run it
@@ -334,13 +334,25 @@ named exterior cell (`CELL` name set; later worldgen settlements give theirs, Ma
 **Lights** (`Light` slot, IN19):
 
 - `LightDef` from `LIGH`: `radius_m` as `light_record` converts it (`mw_walkers_bevy/src/light_inputs.rs:164`;
-  `NEGATIVE` and radius 0 give none), `intensity` = `mw.ai.light.lamp_intensity`, `lit_default` = `OFF_BY_DEFAULT`
-  clear (OpenMW inserts such a light's model unlit and without its loop sound, `light.cpp:45, 56`).
+  `NEGATIVE` and radius 0 give none), `intensity` = 1 (a relative weight: the AI copy scales it by its own
+  `mw.ai.light.lamp_intensity`). An `OFF_BY_DEFAULT` light gets **no def** for now: OpenMW inserts its model unlit and
+  without its loop sound (`light.cpp:45, 56`) and our spawner gives it no render light (`mw_world::light_info`), so a
+  relight would light nothing; it joins once the host can spawn its render light. Every def'd light starts lit.
 - Snuff and relight only for `FIRE` lights; glow and magic lights get no verb. `LightChanged` also toggles the loop
   sound (`mw_audio_bevy`).
 - **AI light (MA16):** `write_light_inputs` (`light_inputs.rs:307`) today copies `PlacedLights` (`LightHook`, `on` =
   the record flag); after IN19 it copies the active space's `GameplayLights`, so a snuffed lamp darkens stealth sight.
   Equipped torches stay the host's; a dropped lit torch is a light-bearing placement.
+
+**As built (IN19c, 2026-11-27).** `mw_interaction/src/light.rs`: `LightFacts` (radius, `FIRE`, `CAN_CARRY`, `NEGATIVE`,
+`OFF_BY_DEFAULT`), `light_def`, `light_interactable` (slot 0 at the model bounds' centre, verb snuff `all: [Lit]`;
+slotless relight `none: [Lit]`; a carryable's slotless `take` above them; switch off: no relight), rows Offered,
+`mw.rules.interaction.snuff`. `mw_interaction_bevy/src/light.rs`: `LightHook` on the Light class (visuals under a
+`LightAnchor` holding the saved state; R0 index, slot disabled with the switch off, `LightRest`), `follow_changes`
+(anchor + overlay byte, owner `light`), `apply_anchors` (point lights `Visibility::Hidden`; glow surfaces = emissive or
+additive/premultiplied materials swap to one shared dark copy, a flame fully transparent), verb-only prompts.
+Host: `light::insert_records` (`mw_exterior_bevy`). Not yet: loop sound off (`mw_audio_bevy`), the AI copy
+(`mw_walkers_bevy`, NPC AI lane), moves of a knocked carryable (no `IndexChange::Move`). Tests: 3 core + 7 shell.
 
 **Noise** (IN18): the host emitter (`mw_walkers_bevy/src/noise_emitters.rs`) maps `InteractionNoise` one to one onto
 `NoiseEvent` (`maker` → `PerceptTarget`) and owns the `TagId` → `NoiseKindId` table, beside `KIND_NAMES` /
@@ -367,6 +379,14 @@ noise: crime emits it, `sf_crime_bevy`, crime-locks.md).
   unbreakable by default (quest containers must not vanish); the eligibility table reports them.
 - Debris: generic wood planks, clay shards and cloth scraps (pack meshes, cosmetic).
 
+**As built (IN38a, 2026-11-27).** `mw_interaction/src/breakable.rs`: `classify(BreakFacts)` -> `Not` /
+`Refused(class, Organic | ActivateScript | NamedByScript)` / `Breakable { class, spills }`; `CONT` by id prefix, `MISC`
+and `STAT` by `_` tokens (a metal, wood, bone or stone token rules out first; `STAT` never `ex_*`/`in_*`); classes
+Crate, Barrel (wood), Urn, Pottery (clay), Glass, Sack (cloth). `destructible_def`: one removing stage at 0, the
+material's debris record (`mw_debris_*`), `SpillContents` for containers only; `damage_rules` -> 17 `(kind, material,
+factor)` rows for the shell. Tunables `mw.rules.interaction.break` + `break_*_hp` / factor `Guess` rows
+(`BreakParams`). The cook's counts and the script facts from the `mw_script` index are the shell's (IN38b1). 6 tests.
+
 ## Switches (IN34)
 
 - Every working vanilla lever, button or pull chain is an `ACTI` whose script does the work (`OnActivate` then
@@ -377,13 +397,34 @@ noise: crime emits it, `sf_crime_bevy`, crime-locks.md).
 
 ## Beds and resting
 
-- Beds that are `ACTI` with a rest script (vanilla `Bed_Standard`-style scripts; the census lists `active_*` beds;
-  verify the script set at IN3) keep their behaviour: activation opens the rest menu, now after a lie-down clip.
-  Sleeping in an owned bed is `OT_SleepingInOwnedBed` (crime-adapter.md "Offences"), unchanged.
-- Static `furn_*` beds: lie down only; resting follows the normal "can rest here" rules (`GetPCSleep`, illegal-rest
-  cells), not the bed.
-- NPCs: `AIWander` idles become slot activities when slots are near (ai-adapter.md mapping table); the `home` anchor
-  is an owned bed (AI14); NPCs sleep in their own or their faction's beds (ownership on the placement).
+Framework contract: interaction.md "Beds, lean spots and rest (IN3)". Rules from OpenMW `ca5e2576`
+(`mwscript/guiextensions.cpp:50-59`, `mwmechanics/mechanicsmanagerimp.cpp:902, 927-952`, `mwgui/waitdialog.cpp:88-117`).
+
+- **Scripted beds** (`ACTI` whose script calls `ShowRestMenu`, vanilla `BedStandard` / `CharGenBed`; the census
+  classifies `active_*` beds as `Kind::Bed`): the class verb `use` stays first and runs the script, which owns the
+  sleep (no separate `sleep` verb: one path, no second menu). `ShowRestMenu` is scripting's (`functions.txt` `later`):
+  it opens the rest UI with this bed, so OpenMW's bed rules apply there: `sleepInBed` first (werewolf
+  `sWerewolfRefusal`, enemies near `sNotifyMessage2`, owned or faction-owned: `commitCrime(SleepingInOwnedBed)`, seen
+  -> `sNotifyMessage64` and no sleep, unseen -> sleep; crime-adapter.md A3), then the UI with the bed: in the air and
+  the cell's no-sleep flag do not refuse, underwater and enemies do. Classic: the same (vanilla behaviour).
+- **Static beds** (`furn_*`, inert in vanilla; modern only): a slotless `sleep` (`VERB_SLEEP`) beside `lie` and the
+  edge `sit`s; its approval is a `RestRequested` and the rest UI opens **without** the bed override (the rest key's
+  rules: where the cell forbids sleep, Wait only), owner Q (IN3) below. The A3 owned-bed gate runs in
+  `ActivationSystems::Gates` on an owned placement (refusal reason = `sNotifyMessage64`) once crime A3 exists.
+  Classic: no def (furniture inert); the row's `Classic::RestMenu` only records that vanilla rests by the rest key and
+  the scripted beds' `ShowRestMenu`, nothing is offered on a static.
+- **Where `sleep` is added (IN3-REV):** `def_for` knows only the census kind, so the bake adds it beside the class
+  verb (`mw_bake/src/interact.rs:154-163`): a pure `mw_interaction::bed_verb(kind, class)` gives the slotless `sleep`
+  at `CLASS_VERB_PRIORITY` when the kind is `Bed` and `class_verb` is `None` (a `STAT`); an `ACTI` / `CONT` bed keeps
+  its class verb only. The defs product changes, so `InteractDefsStep::VERSION` goes 2 -> 3. Known gap: an `ACTI` bed
+  with no script gets `use` that does nothing and no `sleep` (none in vanilla; logged, not fixed in IN3a).
+- **Lie first** (IN3b): the host chains the bed's `lie` use before the UI when lie clips exist (AN30c).
+- **NPCs**: `AIWander` idles become slot activities when slots are near (ai-adapter.md mapping table); the `home` anchor
+  is an owned bed (AI14); NPCs sleep in their own or their faction's beds (ownership on the placement); never a
+  `RestRequested` (players only).
+- **Sleep interruption and level-up** (`waitdialog.cpp:197-217, 279`) belong to the rest UI, not the bed.
+- Owner Q (IN3): should a static bed count as a bed (sleep where the cell only allows Wait, like Skyrim / KCD2)?
+  Recommended: no, keep vanilla's rest rules for statics; only scripted beds override.
 
 ## Moving furniture (IN9, IN6)
 

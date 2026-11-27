@@ -113,6 +113,52 @@ pub const STATE_OWNER: &str = "physics";
 /// Version byte of the `physics` state blob: v1 = asleep flag, linear and
 /// angular velocity (6 × f32 LE).
 pub const STATE_VERSION: u8 = 1;
+/// Length of a v1 `physics` blob: version, asleep flag, 6 × f32.
+const STATE_LEN: usize = 2 + 6 * 4;
+
+/// The motion an item had when it left (the `physics` overlay blob,
+/// interaction-destruction.md "Spill", `IN38b3b`): an item that left awake
+/// comes back awake with these velocities (a spill, a throw that crossed a
+/// cell edge); asleep, it comes back at rest as any item.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ItemMotion {
+    pub asleep: bool,
+    /// Linear velocity, m/s.
+    pub linear: Vec3,
+    /// Angular velocity, rad/s.
+    pub angular: Vec3,
+}
+
+impl ItemMotion {
+    /// Awake with zero velocity: falls from where it is placed and settles.
+    pub const DROPPED: Self = Self { asleep: false, linear: Vec3::ZERO, angular: Vec3::ZERO };
+
+    /// The v1 blob: `[STATE_VERSION, asleep u8, linear xyz, angular xyz (f32 LE)]`.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        let mut blob = Vec::with_capacity(STATE_LEN);
+        blob.extend_from_slice(&[STATE_VERSION, u8::from(self.asleep)]);
+        for x in self.linear.to_array().into_iter().chain(self.angular.to_array()) {
+            blob.extend_from_slice(&x.to_le_bytes());
+        }
+        blob
+    }
+
+    /// Reads a v1 blob; `None` for another version, a short blob or a
+    /// non-finite velocity.
+    #[must_use]
+    pub fn decode(blob: &[u8]) -> Option<Self> {
+        if blob.len() != STATE_LEN || blob[0] != STATE_VERSION {
+            return None;
+        }
+        let f = |i: usize| {
+            let at = 2 + i * 4;
+            f32::from_le_bytes([blob[at], blob[at + 1], blob[at + 2], blob[at + 3]])
+        };
+        let (linear, angular) = (Vec3::new(f(0), f(1), f(2)), Vec3::new(f(3), f(4), f(5)));
+        (linear.is_finite() && angular.is_finite()).then_some(Self { asleep: blob[1] != 0, linear, angular })
+    }
+}
 
 /// Shape cache key prefix of body shapes (mesh shapes use the bare model path).
 const BODY: &str = "body:";
@@ -133,6 +179,8 @@ struct Pending {
     /// Bounding radius around the placement's origin, m (`IndexedPlacement::radius`).
     radius: f32,
     item: bool,
+    /// An item whose overlay blob says it left awake ([`ItemMotion`]).
+    motion: Option<ItemMotion>,
 }
 
 /// Streamed placements whose static body is inserted `Kinematic` instead of
@@ -240,6 +288,12 @@ impl PhysicsStreaming {
     /// The body of a placement, if it has one.
     pub fn body(&self, worldspace: &WorldspaceId, id: PlacementId) -> Option<BodyId> {
         self.placed.get(&(worldspace.clone(), id)).copied()
+    }
+
+    /// Lists a body the host inserted itself for a placement streaming does not place (its own
+    /// spawn path, tests): [`Self::body`] finds it.
+    pub fn insert_placed(&mut self, worldspace: &WorldspaceId, id: PlacementId, body: BodyId) {
+        self.placed.insert((worldspace.clone(), id), body);
     }
 
     /// Whether static collision around `pos` is still streaming in (the
@@ -354,6 +408,7 @@ impl PlacementSpawner for PhysicsHook {
         }
         let key = (cx.worldspace.clone(), p.id);
         remove_placed(world, &key);
+        let mut motion = None;
         if item && let Some(overlay) = world.get_resource::<WorldOverlay>() {
             // Visuals that stayed loaded carry the transform from before a move.
             let overlay = overlay.0.read().expect("overlay lock");
@@ -365,6 +420,7 @@ impl PlacementSpawner for PhysicsHook {
             {
                 p.transform = moved.transform;
             }
+            motion = overlay.state(p.id, STATE_OWNER).and_then(ItemMotion::decode).filter(|m| !m.asleep);
         }
         let support = !item
             && world.get_resource::<PhysicsBodySource>().is_some_and(|b| b.supports.is_some() && b.items.is_support(cx.worldspace, &p));
@@ -376,7 +432,7 @@ impl PlacementSpawner for PhysicsHook {
             model.as_str().to_owned()
         };
         if let Some(mut s) = world.get_resource_mut::<PhysicsStreaming>() {
-            s.pending.insert(key.clone(), Pending { shape, placement: p, radius: placement.radius, item });
+            s.pending.insert(key.clone(), Pending { shape, placement: p, radius: placement.radius, item, motion });
             s.order.push_back(key);
         }
     }
@@ -411,12 +467,8 @@ fn moved_item(world: &World, key: &Key) -> Option<(WorldTransform, Vec<u8>)> {
         return None;
     }
     let asleep = w.is_sleeping(id).unwrap_or(true);
-    let (v, a) = w.velocity(id).unwrap_or_default();
-    let mut blob = vec![STATE_VERSION, u8::from(asleep)];
-    for x in v.to_array().into_iter().chain(a.to_array()) {
-        blob.extend_from_slice(&x.to_le_bytes());
-    }
-    Some((pose, blob))
+    let (linear, angular) = w.velocity(id).unwrap_or_default();
+    Some((pose, ItemMotion { asleep, linear, angular }.encode()))
 }
 
 fn write_moved(overlay: &mut PlacementOverlay, placement: &Placement, key: &Key, (pose, blob): (WorldTransform, Vec<u8>)) {
@@ -639,7 +691,11 @@ pub(crate) fn apply_inserts(
                         let ItemBody { mass, hold } = content.item_body(&key.0, p, body.volume);
                         let layer = item_layer(&settings, mass, &body, p.transform.scale);
                         let shape = ShapeRef::Body(body);
-                        let desc = if hold {
+                        // An item that left moving comes back moving, never held
+                        // (`hold` is for resting items).
+                        let desc = if pending.motion.is_some() {
+                            BodyDesc { ccd: true, kind: BodyKind::Dynamic { asleep: false }, ..BodyDesc::item(p.transform, shape, layer, mass) }
+                        } else if hold {
                             BodyDesc::held(p.transform, shape, layer, mass)
                         } else {
                             BodyDesc { ccd: true, ..BodyDesc::item(p.transform, shape, layer, mass) }
@@ -671,6 +727,11 @@ pub(crate) fn apply_inserts(
                 let removed = s.pending.remove(&key);
                 let t = Instant::now();
                 let id = physics.insert(&key.0, &desc);
+                if let Some(m) = removed.as_ref().and_then(|p| p.motion)
+                    && let Some(w) = physics.world_mut(&key.0)
+                {
+                    w.set_velocity(id, m.linear, m.angular);
+                }
                 let cost = t.elapsed().as_secs_f64();
                 let estimate = if item { &mut s.insert_item_s } else { &mut s.insert_static_s };
                 *estimate = cost.max(*estimate * 0.95);

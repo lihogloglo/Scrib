@@ -5,7 +5,7 @@ use sf_world::PlacementId;
 use smallvec::SmallVec;
 
 use crate::claims::SlotRef;
-use crate::def::{InteractableDef, TagId};
+use crate::def::{InteractableDef, SlotKind, TagId};
 use crate::params::InteractParams;
 
 /// What a verb acts through: one of the object's slots, or the object itself.
@@ -27,7 +27,8 @@ pub struct VerbChoice {
 /// The uses `def` placed as `placement` offers now: slot verbs whose `requires` matches
 /// `state_tags` and whose claim would not be refused (`would_claim`, the caller's
 /// [`crate::Claims::would_claim`] for this user, tags and priority), then slotless verbs whose
-/// `requires` matches. Sorted by `priority` descending, then def order (slots, then slotless verbs).
+/// `requires` matches. Surface slots are never offered: a put-down point is a claim target, not a
+/// use (interaction.md "Errand spots"). Sorted by `priority` descending, then def order (slots, then slotless verbs).
 pub fn rank_verbs(
     def: &InteractableDef,
     placement: PlacementId,
@@ -37,6 +38,9 @@ pub fn rank_verbs(
     let mut out: SmallVec<[VerbChoice; 4]> = SmallVec::new();
     for (i, slot) in def.slots.iter().enumerate() {
         let Ok(i) = u8::try_from(i) else { break };
+        if matches!(slot.kind, SlotKind::Surface { .. }) {
+            continue;
+        }
         let r = SlotRef { placement, slot: i };
         if slot.verb.requires.matches(state_tags) && would_claim(r) {
             out.push(VerbChoice { verb: slot.verb.verb, priority: slot.verb.priority, target: VerbTarget::Slot(r) });

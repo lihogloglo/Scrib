@@ -42,6 +42,8 @@ sf_ai_bevy.workspace = true
 # The content's calendar the `MWScript` date globals follow (`services::sync_clock`).
 sf_calendar = { workspace = true, features = ["bevy"] }
 sf_character_bevy = { workspace = true, features = ["world"] }
+# A spilled item's transform (`breakable`, IN38b3c); already in the graph through `sf_world`.
+sf_coords.workspace = true
 # Magic effects on the characters (`effects`).
 sf_effects_bevy.workspace = true
 # `UseApproved` and `ActivationSystems`: talk and take run on an approved use (IN32c2); already in
@@ -58,6 +60,8 @@ sf_ui.workspace = true
 sf_ui_bevy.workspace = true
 sf_ui_inventory.workspace = true
 sf_ui_screens.workspace = true
+# A spilled item's model path (`breakable`, IN38b3c); already in the graph through `sf_world`.
+sf_vfs.workspace = true
 sf_world.workspace = true
 sf_world_bevy.workspace = true
 tes3 = { workspace = true, features = ["esp"] }
@@ -71,8 +75,6 @@ mw_install.workspace = true
 mw_vfs.workspace = true
 # The dialogue pin's headless test: actors the allocator sees (a `Mover` at a `WorldPos`).
 sf_controller_bevy.workspace = true
-sf_coords.workspace = true
-sf_vfs.workspace = true
 
 [lints]
 workspace = true

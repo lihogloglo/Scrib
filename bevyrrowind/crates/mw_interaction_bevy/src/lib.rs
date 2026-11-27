@@ -28,31 +28,60 @@
 //! - **Focus**: the focus ray's raw first hit (`mw_player_bevy::Focus::hit`) is the player's one
 //!   `FocusCandidates` per fixed tick (score from distance; none: empty). A target with a def
 //!   prompts the verb its focus offers, from the furniture rows (`mw_interaction::activation::ROWS`:
-//!   "Sit", "Lie down", "Lean"); every other target keeps `activatable`'s name and verb, and so
-//!   does a def'd census container or activator whose best verb is its class's own (the baked
+//!   "Sit", "Lie down", "Lean", a static bed's "Sleep"); every other target keeps `activatable`'s
+//!   name and verb, and so does a def'd census container or activator whose best verb is its class's own (the baked
 //!   slotless class verb, `IN32c0`: "Open", "Use"; its pose verbs follow in the hold list), with
 //!   that verb's own row prompt when `activatable`'s is another (an open swing door's `close`:
 //!   "Close", `IN33c2c`).
 //! - **Activation**: each latched Use press (`mw_player_bevy::UsePresses`, written by
 //!   `mw_scripts_bevy`) becomes one `ActivateCommand` ([`FocusState::command`], best verb and slot;
 //!   a def-less target's primary use) between `InteractionSystems::Focus` and `::Activate`.
+//! - **Lights** ([`light`], `IN19c`): a hook on the Light class spawns a fire light's visuals under
+//!   a [`LightAnchor`] carrying its lit state (saved byte, else lit) and, in R0, indexes it with
+//!   `mw_interaction::light_interactable` (slot disabled when `mw.rules.interaction.snuff` is off)
+//!   and restores its saved state (`LightRest`); each `LightChanged` sets the anchor and writes
+//!   the overlay byte (owner `light`), and the anchor hides its point lights and darkens its glow
+//!   surfaces while unlit. A snuff / relight prompts verb-only ("Snuff", "Relight"); a carryable
+//!   light keeps "Take". The host inserts the records ([`light::insert_records`]).
+//! - **Breakables** ([`breakable`], `IN38b1`): the breakable `CONT` and `MISC` records
+//!   ([`BreakablesTable`], `mw_interaction::breakable::classify`; scripted and script-named ones
+//!   refused) get their `destructible_def` on top of their furniture def (or a slotless def of their
+//!   own) as they enter R0, so the shell's `Destructibles` registers them, and their saved state
+//!   back (`DestructRest`); `DestructionRules` follow the live `mw.rules.interaction.break*`
+//!   tunables ([`BreakSettings`]); each `DestructChanged` of a standing placement is saved to the
+//!   overlay (owner `destruct`). Dev builds: `Delete` breaks the focused breakable. The host
+//!   inserts the records ([`breakable::insert_records`]).
+//! - **Rest** (`IN3a`): the shell's `RestRequested` (a static bed's approved `sleep`) is logged, the
+//!   host's only consumer until a rest UI exists.
+//! - **Noise** ([`noise`], `IN18c`): each shell `InteractionNoise` (door, break, impact, thrown
+//!   landing) is reported to perception as one `sf_ai_bevy::NoiseEvent` (kinds from
+//!   [`noise::KIND_BASE`], maker as source), heard on the next perception tick.
 //!
 //! Log lines: `interact: N furniture defs loaded (S slots)` at startup and
 //! `interact: indexed M furniture placements in <worldspace> (x, y, z)` once per cell activation.
 //!
 //! [`FocusState::command`]: sf_interaction_bevy::FocusState::command
 
+pub mod breakable;
 pub mod door;
 pub mod door_body;
 pub mod index;
 pub mod input;
+pub mod light;
+pub mod noise;
 mod report;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tests_door;
 #[cfg(test)]
+mod tests_breakable;
+#[cfg(test)]
 mod tests_door_body;
+#[cfg(test)]
+mod tests_light;
+#[cfg(test)]
+mod tests_noise;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -65,14 +94,17 @@ use mw_game_core::player::FocusUpdate;
 use mw_player_bevy::{Focus, UsePresses};
 use sf_bake::{Manifest, Store};
 use sf_interaction::InteractableDef;
-use sf_interaction_bevy::{DoorSystems, InteractionPlugin, InteractionSystems};
+use sf_interaction_bevy::{DestroySystems, DoorSystems, InteractionPlugin, InteractionSystems, LightSystems};
 use sf_physics_bevy::PhysicsSystems;
 use sf_records::RecordId;
 use sf_tunables_bevy::{TunablesAppExt, tunable_changed};
 
+pub use breakable::{BreakSettings, BreakablesTable};
 pub use door::{DoorHook, DoorPivot, DoorPivots, SwingDoor, SwingDoors};
 pub use index::{ResidentFurniture, SitSwitch};
 pub use input::furniture_prompt;
+pub use noise::InteractionNoiseKinds;
+pub use light::{LightAnchor, LightAnchors, LightFactsTable, LightHook, ResidentLights, SnuffSwitch};
 
 /// The baked furniture defs, by base record.
 #[derive(Resource, Clone, Debug, Default)]
@@ -122,8 +154,24 @@ pub fn add_with_defs(app: &mut App, defs: FurnitureDefs) {
     }
     app.register_tunables(mw_interaction::TUNABLES);
     let sit = app.add_tunable(&mw_interaction::tunables::SIT).id();
+    let snuff = app.add_tunable(&mw_interaction::tunables::SNUFF).id();
+    breakable::bind_settings(app);
+    app.add_systems(FixedUpdate, breakable::sync_rules.run_if(resource_changed::<BreakSettings>).before(DestroySystems::Damage))
+        .add_systems(FixedUpdate, breakable::save_rest.after(DestroySystems::Damage));
+    #[cfg(feature = "dev")]
+    app.add_systems(Update, breakable::dev_break);
     app.insert_resource(defs)
         .insert_resource(SitSwitch(sit))
+        .insert_resource(SnuffSwitch(snuff))
+        .init_resource::<LightFactsTable>()
+        .init_resource::<LightAnchors>()
+        .init_resource::<ResidentLights>()
+        .init_resource::<light::LightLog>()
+        .init_resource::<light::DarkMaterials>()
+        .add_observer(light::forget_anchor)
+        .add_systems(PostStartup, light::hook_spawners)
+        .add_systems(Update, (light::sync_snuff.run_if(tunable_changed(snuff)), light::log_indexed))
+        .add_systems(Update, (light::follow_changes, light::apply_anchors).chain().after(LightSystems))
         .init_resource::<ResidentFurniture>()
         .init_resource::<index::IndexLog>()
         .init_resource::<DoorPivots>()
@@ -138,8 +186,12 @@ pub fn add_with_defs(app: &mut App, defs: FurnitureDefs) {
         .add_systems(FixedUpdate, input::candidates.after(InteractionSystems::Apply).before(InteractionSystems::Focus))
         .add_systems(FixedUpdate, input::commands.after(InteractionSystems::Focus).before(InteractionSystems::Activate))
         .add_systems(Update, door::save_rest.after(DoorSystems::Default))
-        .add_systems(Update, report::log_reports.after(sf_interaction_bevy::SeatSystems::Request))
+        .add_systems(
+            Update,
+            report::log_reports.after(sf_interaction_bevy::SeatSystems::Request).after(sf_interaction_bevy::RestSystems),
+        )
         .add_systems(FixedUpdate, door_body::block_sweeps.after(DoorSystems::Plan).before(DoorSystems::Commit))
         .add_systems(FixedUpdate, door_body::move_bodies.after(DoorSystems::Commit).before(PhysicsSystems::Step))
         .add_systems(Update, (door_body::pose_new_bodies, door_body::follow_pivots).chain().after(PhysicsSystems::Stream));
+    noise::add(app);
 }

@@ -51,6 +51,43 @@
 //!   the rest and writes [`DoorMoved`]. A [`DoorRest`] puts a registered door at rest in a restored
 //!   state (one [`DoorMoved`] with `snap: true`).
 //!
+//! - Rest (`IN3a`, [`rest`] module docs): the default ([`RestSystems`]) of an approved
+//!   [`sf_interaction::VERB_SLEEP`] use by an [`InteractionUser`] writes one [`RestRequested`];
+//!   the rest UI is the host's.
+//!
+//! - Light as state (`IN19b`, [`light`] module docs): [`Lights`] registers every resident object
+//!   with a [`sf_interaction::SlotKind::Light`] slot from the [`IndexChange`]s and keeps its
+//!   [`sf_interaction::LIT`] state tag and its [`GameplayLights`] entry (the AI's lights); the
+//!   default ([`LightSystems`]) runs an approved snuff / relight and writes [`LightChanged`]. A
+//!   [`LightRest`] puts a registered light in its saved state.
+//!
+//! - Destruction (`IN1b`, [`destroy`] module docs): [`Destructibles`] registers every resident object
+//!   whose def has a `destructible` from the [`IndexChange`]s; [`DestroySystems`] (after `Apply`)
+//!   applies the tick's [`PropDamage`] (sorted, scaled by [`DestructionRules`]) at once, writes
+//!   [`DestructChanged`], queues each crossed stage and releases at most
+//!   `interact.debris.breaks_per_tick` [`Destroyed`] per tick; a removing break writes
+//!   `IndexChange::Remove` with `OwnerDestroyed`. A [`DestructRest`] restores a saved state.
+//! - Debris (`IN1c`, `physics` feature, `debris` module docs): every client spawns a break's
+//!   cosmetic pieces from its seed within `interact.debris.lod_m` of `PhysicsFocus`, capped at
+//!   `interact.debris.awake_max` (oldest fade first), faded on sleep or after `fade_s`, shrunk over
+//!   `shrink_s`, despawned. Never saved, never gameplay.
+//! - Impacts (`IN4b`, `physics` feature, `impact` module docs): a gated physics contact
+//!   (`interact.impact.*`) is a [`PropDamage`] of kind `impact` on each registered side it touches.
+//!   Its culprit (`IN4c`) is the user who threw either body, while it flies (`impact::Thrown`).
+//! - Noise (`IN18b`, [`noise`] module docs): the tick's door toggles, breaks and (`physics`) contacts
+//!   thinned by the core's `NoiseMerge` into [`InteractionNoise`] in [`NoiseSystems::Emit`]; door
+//!   and break reaches scale by the material's ratio in [`InteractionMaterials`].
+//!
+//! - Rules (`IN39a2`, [`rules`] module docs): [`RuleCause`]s into the core's `step_rules` in
+//!   [`RuleSystems`] (after `Apply`, before [`FireSystems`] and `DestroySystems::Damage`); every
+//!   event one [`RuleApplied`], rule tags mirrored into [`InteractionStateTags`], `Lit` routed to the
+//!   light registry, damage / stage / change / noise / effect to [`PropDamage`], [`PropStage`],
+//!   [`ChangeInbox`], [`NoiseInbox`] and [`RuleEffect`].
+//! - Fire (`IN39b`, [`fire`] module docs): the core's `step_fire` in [`FireSystems`] over the resident
+//!   flammable placements ([`FireCandidates`]); host wetness, shelter and zones as optional closures,
+//!   `Wet` refreshed from wetness, tags mirrored, culprits kept along the spread ([`FireCulprits`]),
+//!   `Ignited` / `Burnt` into [`ChangeInbox`].
+//!
 //! Not here: game wiring (`IN32`).
 
 use std::collections::BTreeMap;
@@ -70,31 +107,86 @@ use sf_world::PlacementId;
 use smallvec::SmallVec;
 
 pub mod activate;
+pub mod bash;
+#[cfg(feature = "physics")]
+pub mod debris;
+pub mod destroy;
 pub mod door;
+pub mod fire;
 pub mod focus;
+#[cfg(feature = "physics")]
+pub mod impact;
+pub mod light;
+pub mod noise;
+pub mod rest;
+pub mod rules;
 pub mod seat;
 pub mod seat_clips;
+pub mod world_change;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tests_activate;
 #[cfg(test)]
+mod tests_bash;
+#[cfg(all(test, feature = "physics"))]
+mod tests_debris;
+#[cfg(test)]
+mod tests_destroy;
+#[cfg(test)]
 mod tests_door;
 #[cfg(test)]
+mod tests_fire;
+#[cfg(test)]
 mod tests_focus;
+#[cfg(all(test, feature = "physics"))]
+mod tests_impact;
+#[cfg(test)]
+mod tests_light;
+#[cfg(test)]
+mod tests_noise;
+#[cfg(test)]
+mod tests_rest;
+#[cfg(test)]
+mod tests_rules;
 #[cfg(test)]
 mod tests_seat;
+#[cfg(test)]
+mod tests_world_change;
 
 pub use activate::{
     ActivateCommand, ActivationSystems, InteractionDefs, InteractionStateTags, PendingUse, PendingUses, ScriptActivate,
     UseApproved, UseRefused,
 };
+pub use bash::{BashBlows, BashPending, BashSystems, Bashed, BlowOf, InteractionBashRules, NOISE_BASH, PendingBlow};
+#[cfg(feature = "physics")]
+pub use debris::{DebrisFading, DebrisPiece, DebrisPieceDef, DebrisSets, DebrisSystems};
+pub use destroy::{
+    DestroySystems, Destroyed, DestructChanged, DestructRest, Destructible, Destructibles, DestructionRules,
+    PendingBreaks, PropDamage, PropStage,
+};
 pub use door::{Door, DoorChanged, DoorMoved, DoorRest, DoorSweep, DoorSweeps, DoorSystems, Doors};
+pub use fire::{
+    BurningObject, BurningObjects, FireCandidate, FireCandidates, FireChanged, FireCulprit, FireCulprits, FireShelter,
+    FireWeather, FireWetness, FireZones, InteractionFire, ProbeAt, SampleAt,
+};
 pub use focus::{FocusCandidates, FocusState, PlayerFocus};
+#[cfg(feature = "physics")]
+pub use impact::{ImpactCursor, ImpactSystems, Thrown, ThrownBy};
+pub use light::{GameplayLight, GameplayLights, Light, LightChanged, LightRest, LightSystems, Lights};
+pub use noise::{InteractionMaterials, InteractionNoise, NOISE_BREAK, NOISE_DOOR, NoiseInbox, NoiseSystems, source_key};
+#[cfg(feature = "physics")]
+pub use noise::NoiseCursor;
+pub use rest::{RestRequested, RestSystems};
+pub use rules::{
+    FireSystems, HOST_OWNED, InteractionObjectStates, InteractionRuleQueue, InteractionRules, RULE_SOURCE, RuleApplied,
+    RuleCause, RuleEffect, RuleSystems,
+};
 pub use seat::{
     EndPoseFree, EndPoseTest, InteractionUser, SeatClips, SeatLoss, SeatPhase, SeatReport, SeatStep, SeatSystems, SeatUse, SeatUses,
     seat_target,
 };
+pub use world_change::{ChangeInbox, ChangeOwners, ChangeOwnership, WorldChangeSystems, WorldChanged};
 pub use seat_clips::{SIT_APPROACH, SIT_ENTER, SIT_EXIT, SIT_LOOP, SeatClipSets, SeatClipSystems, SeatSet, bind_seat_clips};
 /// The Bevy-free core, for crates that read or write this shell's messages without their own
 /// dependency on it (`sf_interaction::DoorChanged`, `UserKey`).
@@ -115,6 +207,11 @@ const fn gp_count(d: Def<u32>) -> Def<u32> {
 /// A presentation tunable (net `Presentation`, scope `Dev`, source `Guess`, live).
 const fn pres(d: Def<f32>) -> Def<f32> {
     d.source(Source::Guess).scope(Scope::Dev).net(Net::Presentation).lifetime(Lifetime::Live)
+}
+
+/// A presentation count (as [`pres`], unit `Count`).
+const fn pres_count(d: Def<u32>) -> Def<u32> {
+    d.source(Source::Guess).scope(Scope::Dev).net(Net::Presentation).lifetime(Lifetime::Live).unit(Unit::Count)
 }
 
 pub const PRIORITY_AMBIENT: Def<u32> = gp_count(def!(count "interact.claim.priority_ambient" = 10)
@@ -175,6 +272,158 @@ pub const DOOR_CLOSE_BEHIND_S: Def<f32> = gp(def!(float "interact.door.close_beh
     .range(0.0, 10.0)
     .unit(Unit::Seconds)
     .help("Delay before a door closes behind the user that opened it"));
+pub const PLACE_CLEARANCE_M: Def<f32> = gp(def!(float "interact.place.clearance_m" = 0.35)
+    .range(0.1, 1.5)
+    .unit(Unit::Meters)
+    .help("A put-down spot within this of a resting prop is taken (a crate's half width; IN46)"));
+pub const PLACE_SPREAD_M: Def<f32> = gp(def!(float "interact.place.spread_m" = 0.4)
+    .range(0.1, 2.0)
+    .unit(Unit::Meters)
+    .help("Spacing of the put-down floor spiral: point k at this x sqrt(k) (16 tries reach ~1.5 m)"));
+pub const PLACE_FLOOR_TRIES: Def<u32> = gp_count(def!(count "interact.place.floor_tries" = 16)
+    .range(1, 64)
+    .help("Floor spiral points tried before a prop is put down at the anchor itself"));
+pub const DEBRIS_LOD_M: Def<f32> = pres(def!(float "interact.debris.lod_m" = 25.0)
+    .range(5.0, 100.0)
+    .unit(Unit::Meters)
+    .help("Beyond this from the camera a break spawns no debris bodies (Chaos debris removal by distance; IN1)"));
+pub const DEBRIS_BREAKS_PER_TICK: Def<u32> = gp_count(def!(count "interact.debris.breaks_per_tick" = 6)
+    .range(1, 32)
+    .help("Breaks applied per tick; the rest wait for the next tick (IN1)"));
+pub const DEBRIS_AWAKE_MAX: Def<u32> = pres_count(def!(count "interact.debris.awake_max" = 48)
+    .range(0, 256)
+    .help("Debris pieces alive in the active space; past it the oldest start fading (IN1c)"));
+pub const DEBRIS_FADE_S: Def<f32> = pres(def!(float "interact.debris.fade_s" = 8.0)
+    .range(1.0, 60.0)
+    .unit(Unit::Seconds)
+    .help("A debris piece fades on sleep or this long after spawning (Chaos sleep removal; IN1c)"));
+pub const DEBRIS_SHRINK_S: Def<f32> = pres(def!(float "interact.debris.shrink_s" = 0.5)
+    .range(0.1, 3.0)
+    .unit(Unit::Seconds)
+    .help("A fading debris piece scales to zero over this, then despawns (Chaos scale on removal; IN1c)"));
+pub const DEBRIS_SPEED_MPS: Def<f32> = pres(def!(float "interact.debris.speed_mps" = 2.5)
+    .range(0.0, 10.0)
+    .help("Launch speed of a debris piece away from the hit, m/s (IN1c)"));
+pub const DEBRIS_SPREAD: Def<f32> = pres(def!(float "interact.debris.spread" = 0.35)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Seeded jitter of a debris piece's launch direction and speed (IN1c)"));
+pub const RULES_EVALS_PER_TICK: Def<u32> = gp_count(def!(count "interact.rules.evals_per_tick" = 64)
+    .range(8, 1024)
+    .help("Rule causes evaluated per tick; the rest wait, oldest first (IN17b)"));
+pub const RULES_WET_THRESHOLD: Def<f32> = gp(def!(float "interact.rules.wet_threshold" = 0.3)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Surface wetness from which a target counts as wet (sf_surface wetness scale; IN17b)"));
+pub const RULES_WET_TTL_S: Def<f32> = gp(def!(float "interact.rules.wet_ttl_s" = 120.0)
+    .range(5.0, 900.0)
+    .unit(Unit::Seconds)
+    .help("How long Wet lasts once a target is dry again (IN17b)"));
+
+pub const FIRE_SPREAD_RADIUS_M: Def<f32> = gp(def!(float "interact.fire.spread_radius_m" = 2.5)
+    .range(0.5, 10.0)
+    .unit(Unit::Meters)
+    .help("Reach of a burning body's heat; linear falloff to 0 at it (IN17c1)"));
+pub const FIRE_HEAT_PER_S: Def<f32> = gp(def!(float "interact.fire.heat_per_s" = 0.5)
+    .range(0.05, 5.0)
+    .help("Heat per second a target gains next to one source, before falloff and wind, ratio/s (IN17c1)"));
+pub const FIRE_COOL_PER_S: Def<f32> = gp(def!(float "interact.fire.cool_per_s" = 0.2)
+    .range(0.0, 5.0)
+    .help("Heat per second a target loses with no source in reach, ratio/s (IN17c1)"));
+pub const FIRE_JITTER: Def<f32> = gp(def!(float "interact.fire.jitter" = 0.25)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Seeded per-target, per-second spread of the heat gain (IN17c1)"));
+pub const FIRE_WIND_BIAS: Def<f32> = gp(def!(float "interact.fire.wind_bias" = 0.6)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("How much wind speeds fire downwind and slows it upwind (Far Cry 2 wind-driven fire; IN17c1)"));
+pub const FIRE_WIND_REF_MPS: Def<f32> = gp(def!(float "interact.fire.wind_ref_mps" = 8.0)
+    .range(1.0, 30.0)
+    .help("Wind speed at which the fire wind bias is full, m/s (IN17c1)"));
+pub const FIRE_RAIN_DOUSE: Def<f32> = gp(def!(float "interact.fire.rain_douse" = 0.6)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Surface wetness at which rain puts a burning body out (sf_surface wetness scale; IN17c1)"));
+pub const FIRE_REGION_M: Def<f32> = gp(def!(float "interact.fire.region_m" = 64.0)
+    .range(16.0, 256.0)
+    .unit(Unit::Meters)
+    .help("Side of the square fire budget regions on the ground plane (IN17c2)"));
+pub const FIRE_BURNING_MAX: Def<u32> = gp_count(def!(count "interact.fire.burning_max" = 24)
+    .range(2, 128)
+    .help("Burning bodies per fire region; more ignitions queue, oldest first (Far Cry 2 capped fires; IN17c2)"));
+pub const FIRE_SPREAD_CHECKS_PER_TICK: Def<u32> = gp_count(def!(count "interact.fire.spread_checks_per_tick" = 48)
+    .range(4, 512)
+    .help("Fire heat checks per tick, round-robin with the elapsed time: slows fire, never redirects it (IN17c2)"));
+pub const FIRE_DAMAGE_PER_S: Def<f32> = gp(def!(float "interact.fire.damage_per_s" = 5.0)
+    .range(0.0, 100.0)
+    .help("Raw damage a burning destructible takes per second; the (fire, material) factor scales it (IN39c)"));
+pub const FIRE_LIGHTS_MAX: Def<u32> = pres_count(def!(count "interact.fire.lights_max" = 4)
+    .range(0, 16)
+    .help("Fire lights per fire region, earliest-started first, kept until they go out; the rest are flames without a light (IN39c)"));
+pub const FIRE_LIGHT_RADIUS_M: Def<f32> = gp(def!(float "interact.fire.light_radius_m" = 6.0)
+    .range(1.0, 20.0)
+    .unit(Unit::Meters)
+    .help("Reach of a burning object's gameplay light, the AI's light exposure (IN39c)"));
+pub const IMPACT_SPEED_MIN_MPS: Def<f32> = gp(def!(float "interact.impact.speed_min_mps" = 3.0)
+    .range(0.5, 10.0)
+    .help("Normal speed change under which a contact deals no impact damage, m/s (Source min speed; IN4a)"));
+pub const IMPACT_IMPULSE_MIN_NS: Def<f32> = gp(def!(float "interact.impact.impulse_min_ns" = 0.5)
+    .range(0.0, 50.0)
+    .help("Impact impulse dead zone: up to it a contact deals nothing, N·s (Source minhealthdmg; IN4a)"));
+pub const IMPACT_DAMAGE_PER_NS: Def<f32> = gp(def!(float "interact.impact.damage_per_ns" = 0.5)
+    .range(0.0, 10.0)
+    .unit(Unit::Ratio)
+    .help("Impact damage per N·s of impulse past the dead zone (Source physdamagescale; IN4a)"));
+pub const NOISE_MIN_SPEED_MPS: Def<f32> = gp(def!(float "interact.noise.min_speed_mps" = 1.0)
+    .range(0.0, 5.0)
+    .help("Impact speed under which a contact makes no noise, m/s (IN18a)"));
+pub const NOISE_REF_SPEED_MPS: Def<f32> = gp(def!(float "interact.noise.ref_speed_mps" = 5.0)
+    .range(1.0, 20.0)
+    .help("Impact speed at which a material is heard at its impact reach, m/s (IN18a)"));
+pub const NOISE_SPEED_MUL_MAX: Def<f32> = gp(def!(float "interact.noise.speed_mul_max" = 2.0)
+    .range(1.0, 4.0)
+    .unit(Unit::Ratio)
+    .help("Most an impact's speed multiplies its material's noise reach (IN18a)"));
+pub const NOISE_MERGE_S: Def<f32> = gp(def!(float "interact.noise.merge_s" = 0.25)
+    .range(0.0, 2.0)
+    .unit(Unit::Seconds)
+    .help("One object's noise window: inside it only a louder noise is heard (one rattle, one noise; IN18a)"));
+pub const NOISE_PER_TICK_MAX: Def<u32> = gp_count(def!(count "interact.noise.per_tick_max" = 16)
+    .range(1, 128)
+    .help("Noises heard per tick, loudest kept (IN18a)"));
+pub const NOISE_REVEAL_M: Def<f32> = gp(def!(float "interact.noise.reveal_m" = 1.5)
+    .range(0.0, 5.0)
+    .unit(Unit::Meters)
+    .help("A dropped prop's landing reveals a dropper within this distance (IN18a)"));
+pub const NOISE_DOOR_REACH_M: Def<f32> = gp(def!(float "interact.noise.door_reach_m" = 8.0)
+    .range(0.0, 40.0)
+    .unit(Unit::Meters)
+    .help("Reach of a door opening or closing, before the material's ratio (IN18a)"));
+pub const NOISE_BASH_REACH_M: Def<f32> = gp(def!(float "interact.noise.bash_reach_m" = 20.0)
+    .range(0.0, 60.0)
+    .unit(Unit::Meters)
+    .help("Reach of a blow on a lock or door, before the material's ratio (IN18a)"));
+pub const NOISE_LOCKPICK_REACH_M: Def<f32> = gp(def!(float "interact.noise.lockpick_reach_m" = 3.0)
+    .range(0.0, 20.0)
+    .unit(Unit::Meters)
+    .help("Reach of a lock pick attempt, before the material's ratio (IN18a)"));
+pub const NOISE_MATERIAL_REF_M: Def<f32> = gp(def!(float "interact.noise.material_ref_m" = 10.0)
+    .range(1.0, 60.0)
+    .unit(Unit::Meters)
+    .help("Impact reach of the reference material (wood) the door, bash and pick reaches are set for; a material's ratio is its reach over this (IN18b)"));
+pub const BASH_WINDUP_S: Def<f32> = gp(def!(float "interact.bash.windup_s" = 0.45)
+    .range(0.1, 1.5)
+    .unit(Unit::Seconds)
+    .help("A bash's swing from the press to contact; ticks rounded up (IN37b)"));
+pub const BASH_RECOVER_S: Def<f32> = gp(def!(float "interact.bash.recover_s" = 1.0)
+    .range(0.3, 3.0)
+    .unit(Unit::Seconds)
+    .help("After a landed blow, the user's next bash press is dropped for this long (IN37b)"));
+pub const BASH_REACH_M: Def<f32> = gp(def!(float "interact.bash.reach_m" = 2.0)
+    .range(0.5, 4.0)
+    .unit(Unit::Meters)
+    .help("A pending blow lands only with the user's feet within this of the target point (IN37b)"));
 
 /// The `interact.*` tunables [`InteractParams`] has, bound by [`InteractionPlugin`].
 pub const TUNABLES: &[&dyn AnyDef] = &[
@@ -193,6 +442,48 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &HAND_MAX,
     &DOOR_SWING_S,
     &DOOR_CLOSE_BEHIND_S,
+    &PLACE_CLEARANCE_M,
+    &PLACE_SPREAD_M,
+    &PLACE_FLOOR_TRIES,
+    &DEBRIS_LOD_M,
+    &DEBRIS_BREAKS_PER_TICK,
+    &DEBRIS_AWAKE_MAX,
+    &DEBRIS_FADE_S,
+    &DEBRIS_SHRINK_S,
+    &DEBRIS_SPEED_MPS,
+    &DEBRIS_SPREAD,
+    &RULES_EVALS_PER_TICK,
+    &RULES_WET_THRESHOLD,
+    &RULES_WET_TTL_S,
+    &FIRE_SPREAD_RADIUS_M,
+    &FIRE_HEAT_PER_S,
+    &FIRE_COOL_PER_S,
+    &FIRE_JITTER,
+    &FIRE_WIND_BIAS,
+    &FIRE_WIND_REF_MPS,
+    &FIRE_RAIN_DOUSE,
+    &FIRE_REGION_M,
+    &FIRE_BURNING_MAX,
+    &FIRE_SPREAD_CHECKS_PER_TICK,
+    &FIRE_DAMAGE_PER_S,
+    &FIRE_LIGHTS_MAX,
+    &FIRE_LIGHT_RADIUS_M,
+    &IMPACT_SPEED_MIN_MPS,
+    &IMPACT_IMPULSE_MIN_NS,
+    &IMPACT_DAMAGE_PER_NS,
+    &NOISE_MIN_SPEED_MPS,
+    &NOISE_REF_SPEED_MPS,
+    &NOISE_SPEED_MUL_MAX,
+    &NOISE_MERGE_S,
+    &NOISE_PER_TICK_MAX,
+    &NOISE_REVEAL_M,
+    &NOISE_DOOR_REACH_M,
+    &NOISE_BASH_REACH_M,
+    &NOISE_LOCKPICK_REACH_M,
+    &NOISE_MATERIAL_REF_M,
+    &BASH_WINDUP_S,
+    &BASH_RECOVER_S,
+    &BASH_REACH_M,
 ];
 
 // --- Resources ----------------------------------------------------------------------------------
@@ -401,7 +692,7 @@ impl Plugin for InteractionPlugin {
             .init_resource::<DoorSweeps>()
             .add_message::<DoorMoved>()
             .add_message::<DoorRest>()
-            .add_systems(FixedUpdate, (sync_params, step, door::register).chain().in_set(InteractionSystems::Apply))
+            .add_systems(FixedUpdate, (sync_params, step, door::register, light::register, destroy::register).chain().in_set(InteractionSystems::Apply))
             .configure_sets(
                 FixedUpdate,
                 (DoorSystems::Plan, DoorSystems::Commit).chain().after(InteractionSystems::Apply),
@@ -421,6 +712,15 @@ impl Plugin for InteractionPlugin {
             .add_systems(Update, seat::seat_requests.in_set(SeatSystems::Request))
             .configure_sets(Update, DoorSystems::Default.after(ActivationSystems::Default))
             .add_systems(Update, door::door_default.in_set(DoorSystems::Default))
+            .add_message::<RestRequested>()
+            .configure_sets(Update, RestSystems.after(ActivationSystems::Default))
+            .add_systems(Update, rest::rest_default.in_set(RestSystems))
+            .init_resource::<Lights>()
+            .init_resource::<GameplayLights>()
+            .add_message::<LightChanged>()
+            .add_message::<LightRest>()
+            .configure_sets(Update, LightSystems.after(ActivationSystems::Default))
+            .add_systems(Update, light::light_default.in_set(LightSystems))
             .configure_sets(
                 FixedUpdate,
                 SeatClipSystems.after(SeatSystems::Offer).before(sf_action_bevy::ActionSystems::Step),
@@ -428,6 +728,8 @@ impl Plugin for InteractionPlugin {
             .add_systems(FixedUpdate, seat::seat_offers.in_set(SeatSystems::Offer))
             .add_systems(FixedUpdate, bind_seat_clips.in_set(SeatClipSystems))
             .add_systems(FixedUpdate, seat::seat_events.in_set(SeatSystems::Events));
+        destroy::build(app);
+        build_reports(app);
         bind!(app, PRIORITY_AMBIENT, |p, v| p.priority_ambient = to_u8(v));
         bind!(app, PRIORITY_SCHEDULE, |p, v| p.priority_schedule = to_u8(v));
         bind!(app, PRIORITY_QUEST, |p, v| p.priority_quest = to_u8(v));
@@ -443,7 +745,73 @@ impl Plugin for InteractionPlugin {
         bind!(app, HAND_MAX, |p, v| p.hand_max = to_u8(v));
         bind!(app, DOOR_SWING_S, |p, v| p.door_swing_s = v);
         bind!(app, DOOR_CLOSE_BEHIND_S, |p, v| p.door_close_behind_s = v);
+        bind!(app, PLACE_CLEARANCE_M, |p, v| p.place_clearance_m = v);
+        bind!(app, PLACE_SPREAD_M, |p, v| p.place_spread_m = v);
+        bind!(app, PLACE_FLOOR_TRIES, |p, v| p.place_floor_tries = to_u8(v));
+        bind!(app, DEBRIS_LOD_M, |p, v| p.debris_lod_m = v);
+        bind!(app, DEBRIS_BREAKS_PER_TICK, |p, v| p.debris_breaks_per_tick = to_u8(v));
+        bind_rules(app);
+        bind_debris(app);
     }
+}
+
+/// The `interact.rules.*` (`IN17b`), `interact.fire.*` (`IN17c1`, `IN17c2`), `interact.impact.*`
+/// (`IN4a`) and `interact.noise.*` (`IN18a`) gameplay tunables.
+fn bind_rules(app: &mut App) {
+    bind!(app, RULES_EVALS_PER_TICK, |p, v| p.rules_evals_per_tick = u16::try_from(v).unwrap_or(u16::MAX));
+    bind!(app, RULES_WET_THRESHOLD, |p, v| p.rules_wet_threshold = v);
+    bind!(app, RULES_WET_TTL_S, |p, v| p.rules_wet_ttl_s = v);
+    bind!(app, FIRE_SPREAD_RADIUS_M, |p, v| p.fire_spread_radius_m = v);
+    bind!(app, FIRE_HEAT_PER_S, |p, v| p.fire_heat_per_s = v);
+    bind!(app, FIRE_COOL_PER_S, |p, v| p.fire_cool_per_s = v);
+    bind!(app, FIRE_JITTER, |p, v| p.fire_jitter = v);
+    bind!(app, FIRE_WIND_BIAS, |p, v| p.fire_wind_bias = v);
+    bind!(app, FIRE_WIND_REF_MPS, |p, v| p.fire_wind_ref_mps = v);
+    bind!(app, FIRE_RAIN_DOUSE, |p, v| p.fire_rain_douse = v);
+    bind!(app, FIRE_REGION_M, |p, v| p.fire_region_m = v);
+    bind!(app, FIRE_BURNING_MAX, |p, v| p.fire_burning_max = u16::try_from(v).unwrap_or(u16::MAX));
+    bind!(app, FIRE_SPREAD_CHECKS_PER_TICK, |p, v| {
+        p.fire_spread_checks_per_tick = u16::try_from(v).unwrap_or(u16::MAX);
+    });
+    bind!(app, FIRE_DAMAGE_PER_S, |p, v| p.fire_damage_per_s = v);
+    bind!(app, FIRE_LIGHTS_MAX, |p, v| p.fire_lights_max = u16::try_from(v).unwrap_or(u16::MAX));
+    bind!(app, FIRE_LIGHT_RADIUS_M, |p, v| p.fire_light_radius_m = v);
+    bind!(app, IMPACT_SPEED_MIN_MPS, |p, v| p.impact_speed_min_mps = v);
+    bind!(app, IMPACT_IMPULSE_MIN_NS, |p, v| p.impact_impulse_min_ns = v);
+    bind!(app, IMPACT_DAMAGE_PER_NS, |p, v| p.impact_damage_per_ns = v);
+    bind!(app, NOISE_MIN_SPEED_MPS, |p, v| p.noise_min_speed_mps = v);
+    bind!(app, NOISE_REF_SPEED_MPS, |p, v| p.noise_ref_speed_mps = v);
+    bind!(app, NOISE_SPEED_MUL_MAX, |p, v| p.noise_speed_mul_max = v);
+    bind!(app, NOISE_MERGE_S, |p, v| p.noise_merge_s = v);
+    bind!(app, NOISE_PER_TICK_MAX, |p, v| p.noise_per_tick_max = u16::try_from(v).unwrap_or(u16::MAX));
+    bind!(app, NOISE_REVEAL_M, |p, v| p.noise_reveal_m = v);
+    bind!(app, NOISE_DOOR_REACH_M, |p, v| p.noise_door_reach_m = v);
+    bind!(app, NOISE_BASH_REACH_M, |p, v| p.noise_bash_reach_m = v);
+    bind!(app, NOISE_LOCKPICK_REACH_M, |p, v| p.noise_lockpick_reach_m = v);
+    bind!(app, NOISE_MATERIAL_REF_M, |p, v| p.noise_material_ref_m = v);
+    bind!(app, BASH_WINDUP_S, |p, v| p.bash_windup_s = v);
+    bind!(app, BASH_RECOVER_S, |p, v| p.bash_recover_s = v);
+    bind!(app, BASH_REACH_M, |p, v| p.bash_reach_m = v);
+}
+
+/// What the shell reports to the host's AI and crime: noises ([`noise`]) and lasting changes ([`world_change`]).
+fn build_reports(app: &mut App) {
+    rules::build(app);
+    fire::build(app);
+    bash::build(app);
+    noise::build(app);
+    world_change::build(app);
+}
+
+/// The `interact.debris.*` presentation tunables and, with the `physics` feature, the debris systems.
+fn bind_debris(app: &mut App) {
+    bind!(app, DEBRIS_AWAKE_MAX, |p, v| p.debris_awake_max = u16::try_from(v).unwrap_or(u16::MAX));
+    bind!(app, DEBRIS_FADE_S, |p, v| p.debris_fade_s = v);
+    bind!(app, DEBRIS_SHRINK_S, |p, v| p.debris_shrink_s = v);
+    bind!(app, DEBRIS_SPEED_MPS, |p, v| p.debris_speed_mps = v);
+    bind!(app, DEBRIS_SPREAD, |p, v| p.debris_spread = v);
+    #[cfg(feature = "physics")]
+    debris::build(app);
 }
 
 /// The settings with `tick_hz` from the fixed timestep (the settings' own without one).
