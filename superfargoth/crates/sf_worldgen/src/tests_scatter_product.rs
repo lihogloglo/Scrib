@@ -114,6 +114,7 @@ fn computed() -> LayerWinners {
             size_m: 1.0 / 3.0,
             tiebreak: u64::MAX - u64::from(i),
             source: [-0.0, 1e-300],
+            regime: [None, Some(0), Some(254)][i as usize],
         });
     }
     won

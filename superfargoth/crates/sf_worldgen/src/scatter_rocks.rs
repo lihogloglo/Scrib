@@ -24,6 +24,12 @@
 //! thinned to the unit's own density at the parent; each stone is thinned by the slope hat (1 up to
 //! `scatter.rock.field_slope_full_deg`, 0 at `loose_slope_max_deg`), sizes from the `[rocks.field]` row's law.
 //!
+//! **Regime** (RG-9j, `rockgen.md` "(e) Typology"). With a `[rock_regimes]` table each parent reads the climate
+//! class at its point ([`crate::scatter_fields::FieldSample::class`]) and its regime (one clump, one regime, read
+//! where the unit is read): the unit's regime override then sets the field-stone density and the entry lists (an
+//! outcrop parent is kept where the regime's outcrop list is non-empty), and every block carries the id
+//! ([`RockCandidate::regime`]). Without the table nothing samples the fields and the blocks are today's.
+//!
 //! **Determinism.** A block is a pure function of its parent's stream and the ground at the two points; a rect keeps
 //! the blocks inside it from every parent tile within `reach_max_m`, so any covering build returns the same blocks
 //! over the rect, bit for bit. Output order is the integer [`RockKey`].
@@ -33,7 +39,7 @@
 use crate::Result;
 use crate::filter::Declared;
 use crate::scatter::{M2_PER_HA, THOMAS_REACH_SIGMAS, draw, hash_k, mix, poisson, stream, unit};
-use crate::scatter_fields::hat;
+use crate::scatter_fields::{Fields, hat};
 use crate::scatter_species::{Hat, RockContext, RockEntry, SpeciesFile};
 
 #[cfg(test)]
@@ -196,6 +202,9 @@ pub struct RockCandidate {
     pub tiebreak: u64,
     /// The parent's position, m (a talus block's source on the scarp).
     pub source: [f64; 2],
+    /// The weathering regime id at the parent (an index of [`SpeciesFile::rock_regime_names`], RG-9j); `None`
+    /// without `[rock_regimes]`, or where the climate has no class or one the table does not map.
+    pub regime: Option<u8>,
 }
 
 /// The truncated Pareto size of quantile `u` in `[0, 1)` (spec "Size law"): `s = s_min (1 - u (1 - (s_min /
@@ -265,6 +274,19 @@ pub struct RockRules<'a> {
 }
 
 impl RockRules<'_> {
+    /// The regime id at a point of `fields` (module docs "Regime"): a sample only when the file maps a class of
+    /// the fields to a regime, else `None` everywhere without sampling.
+    fn regime_at<'f>(&self, fields: &'f dyn Fields) -> impl Fn(f64, f64) -> Option<u8> + 'f {
+        let ids = self.file.regime_ids(fields.class_names());
+        let on = ids.iter().any(Option::is_some);
+        move |x, y| {
+            if !on {
+                return None;
+            }
+            fields.sample(x, y).class.and_then(|c| ids.get(usize::from(c)).copied().flatten())
+        }
+    }
+
     /// How far a talus block lands from its source at most, m: the parents a rect needs lie within it.
     #[must_use]
     pub fn talus_reach_m(&self) -> f64 {
@@ -289,7 +311,7 @@ impl RockRules<'_> {
     // Tile indices of world metres and hashed counts of a few thousand per tile.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     #[must_use]
-    pub fn talus_candidates(&self, ground: &dyn RockGround, rect: [f64; 4]) -> Vec<RockCandidate> {
+    pub fn talus_candidates(&self, ground: &dyn RockGround, fields: &dyn Fields, rect: [f64; 4]) -> Vec<RockCandidate> {
         let mut out = Vec::new();
         let Some(row) = self.file.rocks.get(&RockContext::Talus) else { return out };
         let v = &self.values;
@@ -298,6 +320,7 @@ impl RockRules<'_> {
         if kappa_max <= 0.0 || v.talus_child_mean <= 0.0 {
             return out;
         }
+        let regime_at = self.regime_at(fields);
         let rockfall = |x: f64, y: f64| {
             ground.unit(x, y).and_then(|u| self.file.rock_units.get(u)).map_or(0.0, |u| u.rockfall)
         };
@@ -333,6 +356,7 @@ impl RockRules<'_> {
                         continue;
                     }
                     let zp = ground.height_m(px, py);
+                    let regime = regime_at(px, py);
                     let m = poisson(v.talus_child_mean, draw(base, j, 3));
                     let ob = mix(base ^ (j + 1).wrapping_mul(0xa076_1d64_78bd_642f));
                     for o in 0..u64::from(m) {
@@ -354,7 +378,8 @@ impl RockRules<'_> {
                         }
                         let key =
                             RockKey { context: RockContext::Talus, tile: (tx, ty), parent: j as u32, offspring: o as u32 };
-                        out.push(RockCandidate { key, pos: [qx, qy], size_m: s, tiebreak: hash_k(ob, o, 3), source: [px, py] });
+                        let tiebreak = hash_k(ob, o, 3);
+                        out.push(RockCandidate { key, pos: [qx, qy], size_m: s, tiebreak, source: [px, py], regime });
                     }
                 }
             }
@@ -366,7 +391,7 @@ impl RockRules<'_> {
     /// (a parent is offspring 0, its debris 1..); none without a `[rocks.outcrop]` row.
     #[allow(clippy::cast_possible_truncation)] // parent and offspring indices of a few thousand at most
     #[must_use]
-    pub fn outcrop_candidates(&self, ground: &dyn RockGround, rect: [f64; 4]) -> Vec<RockCandidate> {
+    pub fn outcrop_candidates(&self, ground: &dyn RockGround, fields: &dyn Fields, rect: [f64; 4]) -> Vec<RockCandidate> {
         let mut out = Vec::new();
         let Some(row) = self.file.rocks.get(&RockContext::Outcrop) else { return out };
         let v = &self.values;
@@ -378,22 +403,24 @@ impl RockRules<'_> {
         let s_lo = v.outcrop_parent_min_m.clamp(smin, smax);
         let sigma = v.cluster_sigma_m;
         let inside = |x: f64, y: f64| x >= rect[0] && x < rect[2] && y >= rect[1] && y < rect[3];
-        let outcrops = |x: f64, y: f64| {
+        let regime_at = self.regime_at(fields);
+        let outcrops = |x: f64, y: f64, regime: Option<u8>| {
             ground
                 .unit(x, y)
                 .and_then(|u| self.file.rock_units.get(u))
-                .is_some_and(|u| !u.entries(RockContext::Outcrop).is_empty())
+                .is_some_and(|u| !u.entries_in(RockContext::Outcrop, self.file.regime_name(regime)).is_empty())
         };
         let reach = THOMAS_REACH_SIGMAS * sigma;
         for_parents(self.seed ^ OUTCROP_SALT, self.tile_m, kappa, rect, reach, |tile, j, base, px, py| {
-            if !outcrops(px, py) {
+            let regime = regime_at(px, py);
+            if !outcrops(px, py, regime) {
                 return;
             }
             let sp = pareto_size(s_lo, smax, v.size_dim, draw(base, j, 2));
             let key = |o: u64| RockKey { context: RockContext::Outcrop, tile, parent: j as u32, offspring: o as u32 };
             if inside(px, py) {
                 let tiebreak = hash_k(base, j, 4);
-                out.push(RockCandidate { key: key(0), pos: [px, py], size_m: sp, tiebreak, source: [px, py] });
+                out.push(RockCandidate { key: key(0), pos: [px, py], size_m: sp, tiebreak, source: [px, py], regime });
             }
             let cut = (v.child_size_ratio * sp).min(smax);
             if cut < smin {
@@ -409,7 +436,7 @@ impl RockRules<'_> {
                 }
                 let s = pareto_size(smin, cut, v.size_dim, draw(ob, o, 2));
                 let tiebreak = hash_k(ob, o, 3);
-                out.push(RockCandidate { key: key(o + 1), pos: [x, y], size_m: s, tiebreak, source: [px, py] });
+                out.push(RockCandidate { key: key(o + 1), pos: [x, y], size_m: s, tiebreak, source: [px, py], regime });
             }
         });
         out.sort_unstable_by_key(|c| c.key);
@@ -420,11 +447,11 @@ impl RockRules<'_> {
     /// `[rocks.field]` row.
     #[allow(clippy::cast_possible_truncation)] // parent and offspring indices of a few thousand at most
     #[must_use]
-    pub fn field_candidates(&self, ground: &dyn RockGround, rect: [f64; 4]) -> Vec<RockCandidate> {
+    pub fn field_candidates(&self, ground: &dyn RockGround, fields: &dyn Fields, rect: [f64; 4]) -> Vec<RockCandidate> {
         let mut out = Vec::new();
         let Some(row) = self.file.rocks.get(&RockContext::Field) else { return out };
         let v = &self.values;
-        let fs_max = self.file.rock_units.values().map(|u| u.field_stone_per_ha).fold(0.0, f64::max);
+        let fs_max = self.file.rock_units.values().map(crate::scatter_species::RockUnit::field_stone_max).fold(0.0, f64::max);
         let kappa = fs_max / M2_PER_HA / v.field_child_mean;
         if kappa <= 0.0 {
             return out;
@@ -433,12 +460,15 @@ impl RockRules<'_> {
         let sigma = v.field_cluster_sigma_m;
         let slope_hat = Hat { e_min: -1.0, i_min: 0.0, i_max: v.field_slope_full_deg, e_max: v.loose_slope_max_deg };
         let inside = |x: f64, y: f64| x >= rect[0] && x < rect[2] && y >= rect[1] && y < rect[3];
-        let density = |x: f64, y: f64| {
-            ground.unit(x, y).and_then(|u| self.file.rock_units.get(u)).map_or(0.0, |u| u.field_stone_per_ha)
+        let regime_at = self.regime_at(fields);
+        let density = |x: f64, y: f64, regime: Option<u8>| {
+            let unit = ground.unit(x, y).and_then(|u| self.file.rock_units.get(u));
+            unit.map_or(0.0, |u| u.field_stone_in(self.file.regime_name(regime)))
         };
         let reach = THOMAS_REACH_SIGMAS * sigma;
         for_parents(self.seed ^ FIELD_SALT, self.tile_m, kappa, rect, reach, |tile, j, base, px, py| {
-            if draw(base, j, 2) >= density(px, py) / fs_max {
+            let regime = regime_at(px, py);
+            if draw(base, j, 2) >= density(px, py, regime) / fs_max {
                 return;
             }
             let m = poisson(v.field_child_mean, draw(base, j, 3));
@@ -451,7 +481,7 @@ impl RockRules<'_> {
                 }
                 let s = pareto_size(smin, smax, v.size_dim, draw(ob, o, 2));
                 let key = RockKey { context: RockContext::Field, tile, parent: j as u32, offspring: o as u32 };
-                out.push(RockCandidate { key, pos: [x, y], size_m: s, tiebreak: hash_k(ob, o, 4), source: [px, py] });
+                out.push(RockCandidate { key, pos: [x, y], size_m: s, tiebreak: hash_k(ob, o, 4), source: [px, py], regime });
             }
         });
         out.sort_unstable_by_key(|c| c.key);
@@ -548,11 +578,13 @@ fn weighted(entries: &[RockEntry], s: f64, model: bool, total: f64, v: f64) -> O
 /// when only pack models fit they carry it unless the share is 0 (0 = library only, the A/B arm). So the share is
 /// the chance of a pack model wherever one fits and a class exists. **Variant** `hash(instance, 2)`; **yaw**
 /// `hash(instance, 3)`; **tilt** amount `hash(instance, 4) x tilt_jitter_deg` towards `hash(instance, 5)`. The unit
-/// is the parent's (a talus block is its scarp's rock), as the candidates read it.
+/// is the parent's (a talus block is its scarp's rock), as the candidates read it; the entries are those of the
+/// rock's regime ([`RockCandidate::regime`], RG-9j) when the unit overrides them there.
 #[must_use]
 pub fn pick<'f>(file: &'f SpeciesFile, prm: &crate::scatter::Params, ground: &dyn RockGround, c: &RockCandidate) -> Option<RockPick<'f>> {
     let row = file.rocks.get(&c.key.context)?;
-    let entries = file.rock_units.get(ground.unit(c.source[0], c.source[1])?)?.entries(c.key.context);
+    let rock_unit = file.rock_units.get(ground.unit(c.source[0], c.source[1])?)?;
+    let entries = rock_unit.entries_in(c.key.context, file.regime_name(c.regime));
     let s = c.size_m;
     let total = |model: bool| -> f64 {
         entries.iter().filter(|e| entry_fits(e, s) && matches!(e, RockEntry::Model { .. }) == model).map(RockEntry::weight).sum()

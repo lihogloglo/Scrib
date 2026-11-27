@@ -25,6 +25,12 @@
 //!   `{ kind = "class", class, weight }` (a library class by name) or
 //!   `{ kind = "model", model, axis_m, scale_min, scale_max, weight }` (a pack model with its longest axis and
 //!   allowed scale range). Weights are finite and positive; an entry is not repeated within its context.
+//! - `[rock_regimes]` (slice RG-9j, `rockgen.md` "(e) Typology"): weathering regimes, `"<climate class>" =
+//!   "<regime>"`, each class one of the file's classes. The framework's map for its own class table is
+//!   `rock_regimes.toml` ([`default_rock_regimes`]); a game on that table copies it. No table: no regime anywhere.
+//! - `[rock_units."<unit>".regime."<regime>"]`: a unit's overrides in one regime (a name `[rock_regimes]` maps
+//!   to): optional `field_stone_per_ha` and per context an entry list that replaces the unit's (an empty list:
+//!   none of that context in this regime).
 //!
 //! [`SpeciesFile::to_toml`] writes every value explicitly, so a written file parses back to the same
 //! [`SpeciesFile`]. Nothing here names a game: species, models and classes are the adapter's data.
@@ -451,6 +457,15 @@ impl RockEntry {
     }
 }
 
+/// A rock unit's overrides in one weathering regime (`[rock_units."<unit>".regime."<regime>"]`, RG-9j).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RegimeOverride {
+    /// Field stones per hectare in the regime; `None` keeps the unit's.
+    pub field_stone_per_ha: Option<f64>,
+    /// Entry lists replacing the unit's, per context given (an empty list: none of that context in the regime).
+    pub entries: BTreeMap<RockContext, Vec<RockEntry>>,
+}
+
 /// One rock unit (a geology unit of the adapter): its values and the mesh entries of each context.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RockUnit {
@@ -458,6 +473,8 @@ pub struct RockUnit {
     pub rockfall: f64,
     /// Entries per context; a context with none is left out.
     pub entries: BTreeMap<RockContext, Vec<RockEntry>>,
+    /// Overrides per regime name (RG-9j); empty: the unit is the same in every regime.
+    pub regimes: BTreeMap<String, RegimeOverride>,
 }
 
 impl RockUnit {
@@ -465,6 +482,30 @@ impl RockUnit {
     #[must_use]
     pub fn entries(&self, context: RockContext) -> &[RockEntry] {
         self.entries.get(&context).map_or(&[], Vec::as_slice)
+    }
+
+    /// The entries of one context in `regime`: the regime's list when it gives one, else the unit's.
+    #[must_use]
+    pub fn entries_in(&self, context: RockContext, regime: Option<&str>) -> &[RockEntry] {
+        regime
+            .and_then(|r| self.regimes.get(r))
+            .and_then(|o| o.entries.get(&context))
+            .map_or_else(|| self.entries(context), Vec::as_slice)
+    }
+
+    /// Field stones per hectare in `regime`: the regime's value when it gives one, else the unit's.
+    #[must_use]
+    pub fn field_stone_in(&self, regime: Option<&str>) -> f64 {
+        regime
+            .and_then(|r| self.regimes.get(r))
+            .and_then(|o| o.field_stone_per_ha)
+            .unwrap_or(self.field_stone_per_ha)
+    }
+
+    /// The largest field-stone density of the unit over its regimes (the parent intensity bound).
+    #[must_use]
+    pub fn field_stone_max(&self) -> f64 {
+        self.regimes.values().filter_map(|o| o.field_stone_per_ha).fold(self.field_stone_per_ha, f64::max)
     }
 }
 
@@ -486,6 +527,10 @@ pub struct SpeciesFile {
     pub rocks: BTreeMap<RockContext, RockRow>,
     /// The `[rock_units."<unit>"]` tables, by unit name.
     pub rock_units: BTreeMap<String, RockUnit>,
+    /// The `[rock_regimes]` table: regime name per climate class name (RG-9j).
+    pub rock_regimes: BTreeMap<String, String>,
+    /// The distinct regime names of `rock_regimes`, sorted: a regime id (`u8`) is an index here.
+    pub rock_regime_names: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -503,6 +548,8 @@ struct RawFile {
     rocks: RawRocks,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     rock_units: BTreeMap<String, RawRockUnit>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    rock_regimes: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -556,6 +603,34 @@ struct RawRockUnit {
     outcrop: Vec<RockEntry>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     field: Vec<RockEntry>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    regime: BTreeMap<String, RawRegime>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRegime {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    field_stone_per_ha: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    talus: Option<Vec<RockEntry>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    outcrop: Option<Vec<RockEntry>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    field: Option<Vec<RockEntry>>,
+}
+
+impl RawRegime {
+    /// The written form of one override: every value and list it gives, nothing else.
+    fn of(o: &RegimeOverride) -> Self {
+        let list = |c: RockContext| o.entries.get(&c).cloned();
+        Self {
+            field_stone_per_ha: o.field_stone_per_ha,
+            talus: list(RockContext::Talus),
+            outcrop: list(RockContext::Outcrop),
+            field: list(RockContext::Field),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -847,8 +922,26 @@ fn check_entry(owner: &str, e: &RockEntry) -> Result<()> {
     Ok(())
 }
 
-/// Resolves one rock unit: a non-empty name, its values in their columns, entries valid and not repeated.
-fn rock_unit(name: &str, raw: &RawRockUnit, columns: &BTreeMap<String, ColumnDecl>) -> Result<RockUnit> {
+/// Checks one entry list of `owner`: every entry valid, none repeated.
+fn check_list(owner: &str, list: &[RockEntry]) -> Result<()> {
+    for (i, e) in list.iter().enumerate() {
+        check_entry(owner, e)?;
+        if list[..i].iter().any(|p| p.name() == e.name()) {
+            let (kind, n) = e.name();
+            return Err(Error::Invalid(format!("scatter species: {owner} {kind} {n:?} repeated")));
+        }
+    }
+    Ok(())
+}
+
+/// Resolves one rock unit: a non-empty name, its values in their columns, entries valid and not repeated, every
+/// regime override of a known regime (`regimes`: the file's regime names) under the same checks.
+fn rock_unit(
+    name: &str,
+    raw: &RawRockUnit,
+    columns: &BTreeMap<String, ColumnDecl>,
+    regimes: &[String],
+) -> Result<RockUnit> {
     if name.is_empty() {
         return Err(Error::Invalid("scatter species: empty rock unit name".into()));
     }
@@ -860,23 +953,67 @@ fn rock_unit(name: &str, raw: &RawRockUnit, columns: &BTreeMap<String, ColumnDec
         (RockContext::Outcrop, &raw.outcrop),
         (RockContext::Field, &raw.field),
     ] {
-        let owner = format!("{owner} {context:?}");
-        for (i, e) in list.iter().enumerate() {
-            check_entry(&owner, e)?;
-            if list[..i].iter().any(|p| p.name() == e.name()) {
-                let (kind, n) = e.name();
-                return Err(Error::Invalid(format!("scatter species: {owner} {kind} {n:?} repeated")));
-            }
-        }
+        check_list(&format!("{owner} {context:?}"), list)?;
         if !list.is_empty() {
             entries.insert(context, list.clone());
         }
+    }
+    let mut overrides = BTreeMap::new();
+    for (r, o) in &raw.regime {
+        if !regimes.contains(r) {
+            return Err(Error::Invalid(format!("scatter species: {owner} regime {r:?} is not a [rock_regimes] regime")));
+        }
+        let owner = format!("{owner} regime {r:?}");
+        let field_stone_per_ha = o
+            .field_stone_per_ha
+            .map(|v| rock_value(&owner, "field_stone_per_ha", Some(v), columns, &declared))
+            .transpose()?;
+        let mut entries = BTreeMap::new();
+        for (context, list) in [
+            (RockContext::Talus, &o.talus),
+            (RockContext::Outcrop, &o.outcrop),
+            (RockContext::Field, &o.field),
+        ] {
+            if let Some(list) = list {
+                check_list(&format!("{owner} {context:?}"), list)?;
+                entries.insert(context, list.clone());
+            }
+        }
+        overrides.insert(r.clone(), RegimeOverride { field_stone_per_ha, entries });
     }
     Ok(RockUnit {
         field_stone_per_ha: rock_value(&owner, "field_stone_per_ha", raw.field_stone_per_ha, columns, &declared)?,
         rockfall: rock_value(&owner, "rockfall", raw.rockfall, columns, &declared)?,
         entries,
+        regimes: overrides,
     })
+}
+
+/// The distinct regime names of a `[rock_regimes]` table, sorted: every class one of `classes`, every regime name
+/// non-empty, at most [`u8::MAX`] regimes (an id is a `u8`).
+fn regime_names(map: &BTreeMap<String, String>, classes: &BTreeMap<String, Entry>) -> Result<Vec<String>> {
+    for (class, regime) in map {
+        if !classes.contains_key(class) {
+            return Err(Error::Invalid(format!("scatter species: [rock_regimes] class {class:?} is not a known class")));
+        }
+        if regime.is_empty() {
+            return Err(Error::Invalid(format!("scatter species: [rock_regimes] class {class:?} has an empty regime")));
+        }
+    }
+    let names: Vec<String> = map.values().cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+    if names.len() > usize::from(u8::MAX) {
+        return Err(Error::Invalid(format!("scatter species: {} regimes, at most {}", names.len(), u8::MAX)));
+    }
+    Ok(names)
+}
+
+/// The framework's weathering regimes of its own climate class table (`rock_regimes.toml`; `rockgen.md` "(e)
+/// Typology": frost, arid, semi-arid, temperate, wet), regime name per class name.
+#[must_use]
+pub fn default_rock_regimes() -> BTreeMap<String, String> {
+    SpeciesFile::parse_toml(include_str!("rock_regimes.toml"))
+        .unwrap_or_else(|e| unreachable!("shipped rock_regimes.toml: {e}"))
+        .rock_regimes
 }
 
 /// Checks one class entry `key` against its declaration `d`: non-empty name, the declared unit, valid source, range
@@ -914,7 +1051,28 @@ impl SpeciesFile {
             species: Vec::new(),
             rocks: BTreeMap::new(),
             rock_units: BTreeMap::new(),
+            rock_regimes: BTreeMap::new(),
+            rock_regime_names: Vec::new(),
         }
+    }
+
+    /// The name of regime id `id` (an index of [`Self::rock_regime_names`]); `None` for no regime or an unknown id.
+    #[must_use]
+    pub fn regime_name(&self, id: Option<u8>) -> Option<&str> {
+        id.and_then(|i| self.rock_regime_names.get(usize::from(i))).map(String::as_str)
+    }
+
+    /// The regime id of each class of `class_names` (a climate product's class list: the ids
+    /// [`crate::scatter_fields::FieldSample::class`] indexes); `None` for a class `[rock_regimes]` does not map.
+    #[must_use]
+    pub fn regime_ids(&self, class_names: &[String]) -> Vec<Option<u8>> {
+        class_names
+            .iter()
+            .map(|c| {
+                let r = self.rock_regimes.get(c)?;
+                self.rock_regime_names.iter().position(|n| n == r).and_then(|i| u8::try_from(i).ok())
+            })
+            .collect()
     }
 
     /// Parses a species file (module docs): params declared with their unit and a valid source, in range, the
@@ -973,11 +1131,23 @@ impl SpeciesFile {
                 rocks.insert(context, rock_row(context, raw, &file.columns)?);
             }
         }
+        let rock_regime_names = regime_names(&file.rock_regimes, &classes)?;
         let mut rock_units = BTreeMap::new();
         for (name, raw) in &file.rock_units {
-            rock_units.insert(name.clone(), rock_unit(name, raw, &file.columns)?);
+            rock_units.insert(name.clone(), rock_unit(name, raw, &file.columns, &rock_regime_names)?);
         }
-        Ok(Self { values, declared, columns: file.columns, classes, class_size_max, species, rocks, rock_units })
+        Ok(Self {
+            values,
+            declared,
+            columns: file.columns,
+            classes,
+            class_size_max,
+            species,
+            rocks,
+            rock_units,
+            rock_regimes: file.rock_regimes,
+            rock_regime_names,
+        })
     }
 
     /// Writes the file with every value explicit (params, columns, classes, each species' numeric values in its
@@ -1063,11 +1233,20 @@ impl SpeciesFile {
                     talus: u.entries(RockContext::Talus).to_vec(),
                     outcrop: u.entries(RockContext::Outcrop).to_vec(),
                     field: u.entries(RockContext::Field).to_vec(),
+                    regime: u.regimes.iter().map(|(r, o)| (r.clone(), RawRegime::of(o))).collect(),
                 };
                 (n.clone(), raw)
             })
             .collect();
-        let raw = RawFile { params, columns: self.columns.clone(), classes, species, rocks, rock_units };
+        let raw = RawFile {
+            params,
+            columns: self.columns.clone(),
+            classes,
+            species,
+            rocks,
+            rock_units,
+            rock_regimes: self.rock_regimes.clone(),
+        };
         toml::to_string(&raw).map_err(|e| Error::Invalid(e.to_string()))
     }
 }

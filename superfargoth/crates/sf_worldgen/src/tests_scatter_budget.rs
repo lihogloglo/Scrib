@@ -296,6 +296,7 @@ fn the_rock_group_keeps_its_share_beside_the_plant_layers() {
             size_m: 0.3 + f64::from(i % 17),
             tiebreak: u64::from(i),
             source: [0.0, 0.0],
+            regime: None,
         })
         .collect();
     let w = LayerWinners { rocks, plants };
@@ -349,6 +350,7 @@ fn the_full_radius_keeps_everything_inside_and_one_remainder_outside() {
             size_m: 0.3 + f64::from(i % 13),
             tiebreak: u64::from(i),
             source: [0.0, 0.0],
+            regime: None,
         })
         .collect();
     let w = LayerWinners { rocks, plants };
@@ -438,6 +440,7 @@ fn stand_fixture(canopy: [u32; 4]) -> LayerWinners {
             size_m: 0.3 + f64::from(i % 13),
             tiebreak: u64::from(i),
             source: [0.0, 0.0],
+            regime: None,
         })
         .collect();
     LayerWinners { rocks, plants }

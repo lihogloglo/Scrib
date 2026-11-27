@@ -1,0 +1,17 @@
+# Default weathering regimes of the rock layer (sf_worldgen::scatter_species, slice RG-9j) for the shipped climate
+# class table climate_classes.toml: a species-file fragment, one regime name per class (rockgen.md "(e) Typology",
+# after Peltier 1950: frost, arid, semi-arid, temperate, wet). A game on that class table copies this block into its
+# scatter species file; a game with its own classes writes its own.
+[rock_regimes]
+"tundra" = "frost"
+"taiga" = "frost"
+"desert" = "arid"
+"cold desert" = "arid"
+"shrubland" = "semi-arid"
+"grassland" = "semi-arid"
+"savanna" = "semi-arid"
+"woodland" = "temperate"
+"temperate forest" = "temperate"
+"seasonal forest" = "temperate"
+"temperate rainforest" = "wet"
+"rainforest" = "wet"

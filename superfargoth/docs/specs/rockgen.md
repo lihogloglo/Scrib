@@ -425,7 +425,8 @@ RG-9h re-records it, see there). Reviewed 2026-11-27 against the source (fixes: 
 - **RG-9j: regime key in the scatter** (`sf_worldgen::scatter_species`, `scatter_rocks`). `[rock_regimes]` maps
   climate class names to regime names (framework default for its `climate_classes.toml`, "(e)"); `[rock_units.
   "<unit>".regime."<name>"]` overrides per context the entry lists and `field_stone_per_ha`; a candidate reads
-  `FieldSample::class` at its point; placements carry `regime: Option<u8>`. Test: round trip; unknown class or regime
+  `FieldSample::class` at its parent's point (as built: one clump one regime, where the unit is read); placements
+  carry `regime: Option<u8>`. Test: round trip; unknown class or regime
   rejected; on a two-class `GridFields` fixture every rock in the frost half draws only frost entries (exact); no
   `[rock_regimes]` gives today's placements bitwise (tile-alone hash).
 - **RG-9k: adapter data** (`bevyrrowind/worldgen/scatter_species.toml`, after WG-E3f creates it): the "(e)" unit table
@@ -513,6 +514,15 @@ Columnar 2 m 388 -> 97 ms, LOD0/1/2/3 26803/20340/11123/762 -> 1360/679/338/168;
 LOD0; snap arm closes now (805 at 2 m). 17 of 384 other rocks changed (pinched levels now at the nominal ratio, e.g.
 scoria LOD3 306 -> 224); same error bound. Left: columnar interior stays near zero along shared faces (block skip
 can't prune; a per-shared-face union term would make the cavity fill unnecessary).
+
+**RG-9j (2026-11-27, ecosystems loop).** `scatter_species`: `[rock_regimes]` (class -> regime, classes checked
+against the file's class table, <= 255 regimes, ids = sorted names), `[rock_units."<u>".regime."<r>"]` (`RegimeOverride`:
+optional `field_stone_per_ha`, per-context lists that replace the unit's, `[]` = none), `entries_in` / `field_stone_in`;
+the framework map ships as `rock_regimes.toml` (`default_rock_regimes`). `scatter_rocks`: candidates take `&dyn Fields`,
+read the class at the parent (only when a class maps; else no sample, bitwise today's), field-stone bound over the
+overrides, outcrop parents kept by the regime's list; `RockCandidate::regime` rides in `rocks.bin`'s former pad word
+(0 = none, id + 1), so `FORMAT` 3 products stay valid. `pick` uses the regime's entries. 5 tests (species round trip,
+refusals, shipped default; frost-parent rocks draw only frost entries, no table = today's, tile alone).
 
 **RG-2 (2026-11-22, rockgen-rg2).** `sf_rockgen::library` (`build_library(params, &LibrarySettings, seed) -> Library {
 key, size_m, variants }`, `Library::pick(placement_seed)`, `scale_for(size_m)`, `content_hash`; `Variant { seed, lods,

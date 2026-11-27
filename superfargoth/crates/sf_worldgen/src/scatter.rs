@@ -916,10 +916,10 @@ impl CandidateRules<'_> {
     /// its own point in a forced clearing (roads, sites, anchors, footprints) or on water (pass 8), then one
     /// competition over the three contexts (footprint `s / 2`, `rock_k`, priority size then hash; pass 6), sorted
     /// by key. Exact over the rect shrunk by the rock competition reach.
-    fn rock_winners(&self, rl: RockLayer<'_>, stand: &StandMap, rect: [f64; 4]) -> Vec<RockCandidate> {
-        let mut cands = rl.rules.talus_candidates(rl.ground, rect);
-        cands.extend(rl.rules.outcrop_candidates(rl.ground, rect));
-        cands.extend(rl.rules.field_candidates(rl.ground, rect));
+    fn rock_winners(&self, rl: RockLayer<'_>, fields: &dyn Fields, stand: &StandMap, rect: [f64; 4]) -> Vec<RockCandidate> {
+        let mut cands = rl.rules.talus_candidates(rl.ground, fields, rect);
+        cands.extend(rl.rules.outcrop_candidates(rl.ground, fields, rect));
+        cands.extend(rl.rules.field_candidates(rl.ground, fields, rect));
         cands.retain(|c| self.dry_ground(c.pos[0], c.pos[1], stand.at(c.pos[0], c.pos[1]).forced));
         cands.sort_unstable_by_key(|c| c.key);
         let won = compete_rocks(&cands, rl.rules.values.rock_k, self.file.values.competition_rounds);
@@ -949,7 +949,7 @@ impl CandidateRules<'_> {
         let mut cover = Cover::new(self.file.values.shade_per_crown);
         let mut out = LayerWinners::default();
         if let (Some(rl), Some(g)) = (self.rocks, self.rock_grow_m()) {
-            let won = self.rock_winners(rl, stand, grown(square, g));
+            let won = self.rock_winners(rl, fields, stand, grown(square, g));
             cover.add_rocks(&won);
             out.rocks = won.into_iter().filter(|c| in_rect(c.pos, square)).collect();
         }

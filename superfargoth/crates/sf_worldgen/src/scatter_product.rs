@@ -11,7 +11,9 @@
 //!
 //! Files (little-endian, fixed-size records in output order): `plants.bin` (64 bytes each: layer u32, species u32,
 //! tile i32 x2, parent u32, offspring u32, pos f64 x2, size f64, crown f64, tiebreak u64) and `rocks.bin` (72 bytes:
-//! context u32, pad u32, tile i32 x2, parent u32, offspring u32, pos f64 x2, size f64, tiebreak u64, source f64 x2);
+//! context u32, regime u32, tile i32 x2, parent u32, offspring u32, pos f64 x2, size f64, tiebreak u64, source f64
+//! x2; regime 0 = none, else the regime id + 1: RG-9j took the former pad, so a product written before reads as no
+//! regime and [`FORMAT`] stays);
 //! `meta.json` holds the format, the inputs hash, the record counts, per-file and product blake3. Floats are kept
 //! as f64 so a read equals the computed set bit for bit.
 
@@ -208,7 +210,7 @@ fn rock_bytes(rocks: &[RockCandidate]) -> Vec<u8> {
     let mut out = Vec::with_capacity(rocks.len() * ROCK_BYTES);
     for r in rocks {
         let k = &r.key;
-        for v in [context_id(k.context), 0] {
+        for v in [context_id(k.context), r.regime.map_or(0, |g| u32::from(g) + 1)] {
             out.extend_from_slice(&v.to_le_bytes());
         }
         for v in [k.tile.0, k.tile.1] {
@@ -282,14 +284,17 @@ fn rocks_of(bytes: &[u8]) -> std::result::Result<Vec<RockCandidate>, String> {
             let mut r = Rec(b);
             let id = r.u32();
             let context = context_of(id).ok_or_else(|| format!("rock {i} has context id {id}"))?;
-            let _pad = r.u32();
+            let regime = match r.u32() {
+                0 => None,
+                g => Some(u8::try_from(g - 1).map_err(|_| format!("rock {i} has regime id {}", g - 1))?),
+            };
             let tile = (r.i32(), r.i32());
             let (parent, offspring) = (r.u32(), r.u32());
             let pos = [r.f64(), r.f64()];
             let size_m = r.f64();
             let tiebreak = r.u64();
             let source = [r.f64(), r.f64()];
-            Ok(RockCandidate { key: RockKey { context, tile, parent, offspring }, pos, size_m, tiebreak, source })
+            Ok(RockCandidate { key: RockKey { context, tile, parent, offspring }, pos, size_m, tiebreak, source, regime })
         })
         .collect()
 }
