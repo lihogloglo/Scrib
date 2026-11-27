@@ -605,6 +605,24 @@ fn scatter_v2_counts_and_seconds_on_x10s() {
     println!("second: {}", flora::summary_line(&second));
     println!("full:   {}", flora::summary_line(&full));
     println!("load seconds: first {first_s:.1} (passes + write), second {second_s:.1} (product read), no budget {full_s:.1}");
+    let product_mb = std::fs::read_dir(dir.join("scatter"))
+        .map_or(0, |d| d.filter_map(Result::ok).filter_map(|e| e.metadata().ok()).map(|m| m.len()).sum::<u64>())
+        as f64
+        / 1e6;
+    println!("scatter/ product on disk: {product_mb:.0} MB");
+    // WG-E2o.m: the calibration the first pass made (target T, reached W, scale g, ceiling flag per class).
+    let cal = first.calibration.as_ref().expect("the passes' calibration");
+    println!("| class | target /ha | land ha | weight mean | scale g | reached /ha | steps | ceiling | low weight |");
+    println!("|---|---:|---:|---:|---:|---:|---:|---|---|");
+    for c in cal.classes.iter().filter(|c| c.area_ha > 0.0) {
+        println!(
+            "| {} | {:.0} | {:.0} | {:.3} | {:.2} | {:.1} | {} | {} | {} |",
+            c.name, c.stems_per_ha, c.area_ha, c.weight_mean, c.scale, c.reached_per_ha, c.steps, c.ceiling, c.low_weight
+        );
+    }
+    for w in &cal.warnings {
+        println!("calibration warning: {w}");
+    }
     class_table(&full, &f);
 }
 

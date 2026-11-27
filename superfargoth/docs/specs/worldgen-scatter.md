@@ -458,6 +458,10 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
   adapter runs census (over `World::rect`) + calibration before the passes; class ids = the fields' class order;
   `scatter_cached` writes `calibration.toml` before the product and reads it back with a read product
   (`FloraRun::calibration`); warnings go to the `worldgen flora:` log and the census table. `canopy_weight` is pub.
+- **WG-E2o.m** (2026-11-27, measurement, x10s, release): world canopy/ha vs T: tundra 5.3/5, grassland 6.6/5,
+  shrubland 12.0/10, woodland 52.9/60, temperate forest 64.3/150, rainforest 61.9/250, taiga 47.1/250 (the last four
+  flagged at the crown ceiling). Off > 25 %: taiga, temperate forest, rainforest (under: `size_max_m` rows) and grassland
+  (over). Calibration `reached` sits under the world count in every class (woodland 35.3 vs 52.9). Bake 262 s (was 58).
 
 ## Tunables
 
