@@ -327,3 +327,23 @@ fn scatter_keeps_out_of_the_guide_clearings() {
     assert!(excluded >= 10, "the clearings held {excluded} of {} instances", before.len());
     println!("flora census delta: clearings excluded {excluded} of {} instances ({} sites, {} road segments)", before.len(), c.sites, c.roads);
 }
+
+/// WG-E2i.2: the shipped species file parses, has its one canopy tree plus understorey and ground rows, and names
+/// only classes of the shipped class table (the x10 climate run's).
+#[test]
+fn shipped_species_file_parses_and_names_only_table_classes() {
+    use sf_worldgen::climate_classes::ClassTable;
+    use sf_worldgen::scatter_species::{Layer, SpeciesFile};
+    assert_eq!(flora::SPECIES_FILE, "scatter_species.toml");
+    let f = SpeciesFile::parse_toml(include_str!("../../../worldgen/scatter_species.toml")).unwrap();
+    let layer = |l: Layer| f.species.iter().filter(|s| s.layer == l).count();
+    assert_eq!(layer(Layer::Canopy), 1, "one canopy tree species (owner 2026-11-18)");
+    assert!(layer(Layer::Understorey) >= 1 && layer(Layer::Ground) >= 1);
+    assert!(f.species.iter().all(|s| s.model.is_none()), "model slots are filled from learned refs at run time");
+    let table = ClassTable::whittaker();
+    let names = table.names();
+    for class in f.classes.keys().chain(f.species.iter().flat_map(|s| &s.classes)) {
+        assert!(names.contains(class), "class {class:?} is not in the shipped class table");
+    }
+    assert_eq!(f.classes.len(), 12, "every table class has its stems per hectare");
+}

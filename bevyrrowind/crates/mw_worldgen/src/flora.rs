@@ -65,6 +65,10 @@ pub const GROUP_ROCKS: u8 = 1;
 /// Group names, by group index.
 pub const GROUP_NAMES: [&str; 2] = ["flora", "rocks"];
 
+/// The adapter-file name of the scatter v2 species file (`bevyrrowind/worldgen/`; WG-E2i.2).
+// tunables: const (file name)
+pub const SPECIES_FILE: &str = "scatter_species.toml";
+
 /// Size of a species whose model has no bounds, metres.
 // tunables: const (fallback: only the budget's priority reads it, and every Morrowind flora mesh has bounds)
 const UNKNOWN_SIZE_M: f32 = 1.0;

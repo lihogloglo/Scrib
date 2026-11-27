@@ -1,0 +1,114 @@
+# WG-E2i.2: scatter v2 species of the "same map at 10x" island (spec superfargoth/docs/specs/worldgen-scatter.md
+# "Adapter data"; format sf_worldgen::scatter_species, WG-E2a). Read by mw_worldgen::flora (WG-E2i.3).
+#
+# One canopy tree species (owner 2026-11-18), the source's shrubs as one understorey row and its small flora as one
+# ground row. Species are data (owner 2026-11-11: generic, not pack-tuned): no row names a model. At run time the
+# adapter fills each row's model slots from the learned references of its layer, and replaces the learned columns:
+# size bounds (scale range x extent), pose (align, tilt_jitter_deg, offset_m), the slope hat's e_max (v1
+# max_slope_deg) and the region prior. Everything else here is authored: layer, allometry, clusters, shade, hats,
+# classes. Class names are those of the shipped Whittaker table (sf_worldgen climate_classes.toml), which the x10
+# climate run uses (no --classes).
+#
+# Values without a measurement are `Guess` (the spec's "Tunables" table); the owner's WG-E2 look settles them.
+# [params] is left out: every scatter-wide value keeps its declared default.
+
+[columns]
+parent_per_ha = { unit = "1/ha", min = 0, max = 100, source = "Guess" }
+cluster_sigma_m = { unit = "m", min = 2, max = 40, source = "Guess" }  # Thomas process spread
+offspring_mean = { unit = "count", min = 1, max = 60, source = "Guess" }
+background_fraction = { unit = "ratio", min = 0, max = 0.5, source = "Guess" }
+size_shape = { unit = "ratio", min = 0.5, max = 6, source = "Guess" }  # reverse-J rate or Weibull k
+size_min_m = { unit = "m", min = 0.2, max = 40, source = "Measured(learned scale range x model extent, WG-E2i.3)" }
+size_max_m = { unit = "m", min = 0.2, max = 40, source = "Measured(learned scale range x model extent, WG-E2i.3)" }
+crown_a_m = { unit = "m", min = 0, max = 5, source = "Reference(Brack and Wood crown width form)" }
+crown_b = { unit = "ratio", min = 0, max = 0.5, source = "Reference(Brack and Wood crown width form)" }
+crown_k = { unit = "ratio", min = 0.3, max = 1.2, source = "Guess" }  # zone of influence
+shade_tolerance = { unit = "ratio", min = 0, max = 1, source = "Industry(Makowski 2019 stol form)" }
+footprint_ratio = { unit = "ratio", min = 0, max = 0.5, source = "Guess" }
+hat_slope_deg = { unit = "deg", min = 0, max = 90, source = "Guess" }  # e_max replaced by the learned max slope
+
+# Canopy stems per hectare per class: the spec's "Counts per biome class" (N = 10,000 f / (pi r^2)), stated here so
+# the adapter can tune them (WG-E1c2 overrides put the forest regions in forest classes).
+[classes."desert"]
+stems_per_ha = { v = 0, unit = "1/ha", min = 0, max = 50, source = "Guess" }
+[classes."cold desert"]
+stems_per_ha = { v = 0, unit = "1/ha", min = 0, max = 50, source = "Guess" }
+[classes."tundra"]
+stems_per_ha = { v = 5, unit = "1/ha", min = 0, max = 50, source = "Guess" }
+[classes."grassland"]
+stems_per_ha = { v = 5, unit = "1/ha", min = 0, max = 50, source = "Guess" }
+[classes."shrubland"]
+stems_per_ha = { v = 10, unit = "1/ha", min = 0, max = 100, source = "Guess" }
+[classes."savanna"]
+stems_per_ha = { v = 20, unit = "1/ha", min = 0, max = 200, source = "Guess" }
+[classes."woodland"]
+stems_per_ha = { v = 60, unit = "1/ha", min = 0, max = 500, source = "Guess" }
+[classes."taiga"]
+stems_per_ha = { v = 250, unit = "1/ha", min = 0, max = 1000, source = "Guess" }
+[classes."temperate forest"]
+stems_per_ha = { v = 150, unit = "1/ha", min = 0, max = 1000, source = "Guess" }
+[classes."seasonal forest"]
+stems_per_ha = { v = 150, unit = "1/ha", min = 0, max = 1000, source = "Guess" }
+[classes."temperate rainforest"]
+stems_per_ha = { v = 250, unit = "1/ha", min = 0, max = 1000, source = "Guess" }
+[classes."rainforest"]
+stems_per_ha = { v = 300, unit = "1/ha", min = 0, max = 1000, source = "Guess" }
+
+# The one canopy tree: every class with canopy stems (deserts have none). Reverse-J heights (many young, few old).
+[[species]]
+name = "tree"
+layer = "canopy"
+size_law = "reverse_j"
+classes = ["tundra", "grassland", "shrubland", "savanna", "woodland", "taiga", "temperate forest",
+  "seasonal forest", "temperate rainforest", "rainforest"]
+parent_per_ha = 4
+cluster_sigma_m = 12
+offspring_mean = 12
+background_fraction = 0.2
+size_shape = 1.2
+size_min_m = 3
+size_max_m = 20
+crown_a_m = 0.75
+crown_b = 0.2
+crown_k = 0.8
+shade_tolerance = 0.3
+footprint_ratio = 0.01
+hat_slope_deg = [0, 0, 30, 40]
+
+# Shrubs under and between the trees: tighter, more shade tolerant clumps; any class (desert shrubs included).
+[[species]]
+name = "shrub"
+layer = "understorey"
+size_law = "reverse_j"
+parent_per_ha = 8
+cluster_sigma_m = 6
+offspring_mean = 10
+background_fraction = 0.3
+size_shape = 1.2
+size_min_m = 0.5
+size_max_m = 3
+crown_a_m = 0.3
+crown_b = 0.3
+crown_k = 0.8
+shade_tolerance = 0.5
+footprint_ratio = 0.01
+hat_slope_deg = [0, 0, 35, 45]
+
+# Small flora (herbs, ferns, harvestable plants): dense small clumps, the most shade tolerant layer; any class.
+[[species]]
+name = "flora"
+layer = "ground"
+size_law = "weibull"
+parent_per_ha = 12
+cluster_sigma_m = 4
+offspring_mean = 20
+background_fraction = 0.3
+size_shape = 2
+size_min_m = 0.2
+size_max_m = 1
+crown_a_m = 0.15
+crown_b = 0.3
+crown_k = 0.8
+shade_tolerance = 0.8
+footprint_ratio = 0.0
+hat_slope_deg = [0, 0, 40, 50]

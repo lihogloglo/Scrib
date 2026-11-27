@@ -301,6 +301,10 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
   `budget` + `mfd_stuck` (older products read 0). `GridFields::from_products(&Guide, &ClimateMap)`: climate rasters as
   is; `terrain_shape` = Horn slope/aspect + Florinsky plan curvature (1/m, convex +); sea distance by exact EDT
   (`NO_WATER_M` without sea; inland water stays E2g's exact distance). 3 tests.
+- **WG-E2i.2** (2026-11-27, `bevyrrowind/worldgen/scatter_species.toml`, `mw_worldgen::flora::SPECIES_FILE`): one canopy
+  `tree` (reverse-J 3-20 m, every class with canopy stems), `shrub` (understorey, stol 0.5) and `flora` (ground,
+  Weibull 0.2-1 m, stol 0.8); no model named (filled from learned refs at E2i.3); the 12 class stems stated over the
+  shipped Whittaker names; `[params]` on defaults. 1 test (parses; 1 canopy row; every named class in the table).
 
 ## Tunables
 
