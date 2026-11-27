@@ -36,6 +36,12 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   `at` the health fraction reaches is crossed once, in def order, several per hit; `overkill` (damage past zero over
   full health) feeds the adapter's spill curve. `debris_lod` (`interact.debris.lod_m`), `BreakQueue` (at most
   `interact.debris.breaks_per_tick` per tick, the rest next tick) and the `destruct` rest state (stage + health).
+- **Destruction shell.** `Destructibles` (`sf_interaction_bevy/src/destroy.rs`, IN1b) registers defs with a
+  `destructible` from `IndexChange`; `DestroySystems::Damage` (after Apply) sorts the tick's `PropDamage` by a total
+  key, scales by `DestructionRules` (kind x material), applies health at once (one `DestructChanged` per object per
+  tick) and queues each crossed stage; `Release` sends at most `breaks_per_tick` `Destroyed` (hit tick, `break_seed`)
+  and `Remove { OwnerDestroyed }` for a removing stage of a resident object (claims end next tick). `DestructRest`
+  restores clamped, no event. Drops: gone, factor <= 0, non-script kinds on `ignore_external`.
 - **Claims.** `Claims` (`sf_interaction/src/claims.rs:225`): priority with preemption of Reserved claims only,
   queue tickets, leases, exclusion groups, one body hold per user plus hand claims, typed `Refusal`
   (`claims.rs:114`), invalidation reasons. Requests are applied as one sorted batch per tick
@@ -102,7 +108,7 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
 
 - No rest UI: `RestRequested` is only logged. Lying down (IN3b) and lean (IN3c) wait for baked bed and lean clips.
 - `interact.cook` is a stub (`sf_interaction/src/cook.rs:16`); defs are cooked by the game's bake step only.
-- Carry and world rules are spec only; destruction has its core maths only (no prop targets, swap or debris: IN1b).
+- Carry and world rules are spec only; destruction has core + shell only (no game wiring IN38b, debris IN1c).
 - Lights: off-by-default lights get no def; the loop sound and the AI's light copy don't follow `LightChanged` yet.
 - History of each slice: [ledger](../../ledger/interaction.md).
 

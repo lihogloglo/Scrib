@@ -61,6 +61,13 @@
 //!   default ([`LightSystems`]) runs an approved snuff / relight and writes [`LightChanged`]. A
 //!   [`LightRest`] puts a registered light in its saved state.
 //!
+//! - Destruction (`IN1b`, [`destroy`] module docs): [`Destructibles`] registers every resident object
+//!   whose def has a `destructible` from the [`IndexChange`]s; [`DestroySystems`] (after `Apply`)
+//!   applies the tick's [`PropDamage`] (sorted, scaled by [`DestructionRules`]) at once, writes
+//!   [`DestructChanged`], queues each crossed stage and releases at most
+//!   `interact.debris.breaks_per_tick` [`Destroyed`] per tick; a removing break writes
+//!   `IndexChange::Remove` with `OwnerDestroyed`. A [`DestructRest`] restores a saved state.
+//!
 //! Not here: game wiring (`IN32`).
 
 use std::collections::BTreeMap;
@@ -80,6 +87,7 @@ use sf_world::PlacementId;
 use smallvec::SmallVec;
 
 pub mod activate;
+pub mod destroy;
 pub mod door;
 pub mod focus;
 pub mod light;
@@ -90,6 +98,8 @@ pub mod seat_clips;
 mod tests;
 #[cfg(test)]
 mod tests_activate;
+#[cfg(test)]
+mod tests_destroy;
 #[cfg(test)]
 mod tests_door;
 #[cfg(test)]
@@ -104,6 +114,10 @@ mod tests_seat;
 pub use activate::{
     ActivateCommand, ActivationSystems, InteractionDefs, InteractionStateTags, PendingUse, PendingUses, ScriptActivate,
     UseApproved, UseRefused,
+};
+pub use destroy::{
+    DestroySystems, Destroyed, DestructChanged, DestructRest, Destructible, Destructibles, DestructionRules,
+    PendingBreaks, PropDamage,
 };
 pub use door::{Door, DoorChanged, DoorMoved, DoorRest, DoorSweep, DoorSweeps, DoorSystems, Doors};
 pub use focus::{FocusCandidates, FocusState, PlayerFocus};
@@ -442,7 +456,7 @@ impl Plugin for InteractionPlugin {
             .init_resource::<DoorSweeps>()
             .add_message::<DoorMoved>()
             .add_message::<DoorRest>()
-            .add_systems(FixedUpdate, (sync_params, step, door::register, light::register).chain().in_set(InteractionSystems::Apply))
+            .add_systems(FixedUpdate, (sync_params, step, door::register, light::register, destroy::register).chain().in_set(InteractionSystems::Apply))
             .configure_sets(
                 FixedUpdate,
                 (DoorSystems::Plan, DoorSystems::Commit).chain().after(InteractionSystems::Apply),
@@ -478,6 +492,7 @@ impl Plugin for InteractionPlugin {
             .add_systems(FixedUpdate, seat::seat_offers.in_set(SeatSystems::Offer))
             .add_systems(FixedUpdate, bind_seat_clips.in_set(SeatClipSystems))
             .add_systems(FixedUpdate, seat::seat_events.in_set(SeatSystems::Events));
+        destroy::build(app);
         bind!(app, PRIORITY_AMBIENT, |p, v| p.priority_ambient = to_u8(v));
         bind!(app, PRIORITY_SCHEDULE, |p, v| p.priority_schedule = to_u8(v));
         bind!(app, PRIORITY_QUEST, |p, v| p.priority_quest = to_u8(v));

@@ -10,6 +10,8 @@
 //! - [`BreakQueue`]: breaks over `interact.debris.breaks_per_tick` wait for the next tick, in order.
 //! - [`DestructState::rest_bytes`] / [`DestructState::from_rest_bytes`]: the state at rest, stored as the
 //!   [`DESTRUCT_STATE_OWNER`] state blob of its placement.
+//! - [`Destroyed`]: one released break (`IN1b`), the event the shell wraps; [`break_seed`] its debris seed,
+//!   the same on host and clients (`splitmix64` over placement, hit tick and stage).
 //!
 //! The adapter's `DestructionRules` turns (source, damage type, the def's `InteractableDef::material`) into
 //! the damage number; nothing here names a stat, a source or a game.
@@ -17,15 +19,70 @@
 use std::collections::VecDeque;
 use std::ops::Range;
 
+use glam::Vec3;
 use serde::{Deserialize, Serialize};
+use sf_world::PlacementId;
 
-use crate::def::DestructibleDef;
+use crate::claims::{Tick, UserKey};
+use crate::def::{DestructibleDef, TagId};
 
 /// The owner name of a destructible's rest state among a placement's state blobs.
 pub const DESTRUCT_STATE_OWNER: &str = "destruct";
 
 /// Version byte of a destructible's rest state; v1 = `[version, stage, health as f32 LE (4 bytes)]`.
 pub const DESTRUCT_REST_VERSION: u8 = 1;
+
+/// The damage kind of a script's hit: the only kind an `ignore_external` def takes (Bethesda's
+/// "ignore external damage": only a quest breaks it).
+pub const DAMAGE_SCRIPT: TagId = TagId::of("script");
+
+/// One break the host released (interaction-destruction.md "Shell and game"): the stage swap, the
+/// spill, the debris and the effect all start from it. "Net" sends its first six fields.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Destroyed {
+    /// The tick of the hit (not of the release: the break queue may delay it).
+    pub tick: Tick,
+    pub placement: PlacementId,
+    /// Index into the def's `stages` of the stage crossed.
+    pub stage: u8,
+    /// Where the hit landed, world metres.
+    pub point: Vec3,
+    /// The hit's direction, world.
+    pub dir: Vec3,
+    /// [`break_seed`]`(placement, tick, stage)`: the debris stream.
+    pub seed: u64,
+    /// Who hit it; `None` = a rule (fire) or a script.
+    pub culprit: Option<UserKey>,
+    /// The hit's overkill on the last stage it crossed, 0 on the others ([`Hit::overkill`]).
+    pub overkill: f32,
+    /// The stage removes the object (its `model` is `None`).
+    pub removes: bool,
+}
+
+/// One splitmix64 step (Steele, Lea, Flood 2014; the `SplittableRandom` finaliser): mixes `z`
+/// into a well spread `u64`.
+#[must_use]
+pub const fn splitmix64(z: u64) -> u64 {
+    let mut z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// The debris seed of a break: `h = 0; for w in [placement >> 64, placement as u64, tick, stage] {
+/// h = splitmix64(h ^ w) }`. Pure, so every client spawns the same pieces for the same event.
+#[must_use]
+#[allow(clippy::cast_possible_truncation)]
+pub const fn break_seed(placement: PlacementId, tick: Tick, stage: u8) -> u64 {
+    let words = [(placement.0 >> 64) as u64, placement.0 as u64, tick.0, stage as u64];
+    let mut h = 0u64;
+    let mut i = 0;
+    while i < words.len() {
+        h = splitmix64(h ^ words[i]);
+        i += 1;
+    }
+    h
+}
 
 /// One destructible's state: its health and how many of its def's stages it has reached.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

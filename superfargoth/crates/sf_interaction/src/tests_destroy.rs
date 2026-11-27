@@ -1,8 +1,9 @@
 //! `IN1a` destruction core: stage math (one stage, several per hit, never twice, no-op damage,
 //! overkill), the debris distance gate, the break queue's overflow to the next tick and the rest
-//! state codec.
+//! state codec; `IN1b`: the break seed (splitmix64 reference value, fixed seeds, the u128 high word too).
 
 use sf_records::RecordId;
+use sf_world::PlacementId;
 use smallvec::smallvec;
 
 use crate::*;
@@ -145,4 +146,16 @@ fn rest_bytes_round_trip_and_reject_malformed() {
         assert_eq!(DestructState::from_rest_bytes(&b), None, "{bad}");
     }
     assert_eq!(DESTRUCT_STATE_OWNER, "destruct");
+}
+
+#[test]
+fn break_seed_is_splitmix64_over_placement_tick_and_stage() {
+    // The reference first output of SplitMix64 seeded 0 (Steele et al. 2014).
+    assert_eq!(splitmix64(0), 0xE220_A839_7B1D_CDAF);
+    let p = PlacementId(7);
+    assert_eq!(break_seed(p, Tick(100), 0), 0x8890_7C86_2F28_3E61);
+    // Each input moves it: the stage, the tick and the placement's high word.
+    assert_eq!(break_seed(p, Tick(100), 1), 0xE62C_9292_0F82_8E90);
+    assert_eq!(break_seed(p, Tick(101), 0), 0xA3CF_7A21_94EB_189C);
+    assert_eq!(break_seed(PlacementId((1 << 64) | 7), Tick(100), 0), 0x279C_0320_C6CA_D5D9);
 }

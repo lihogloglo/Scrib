@@ -230,3 +230,12 @@ twice; overkill = damage past zero / `def.health`; zero, negative or non-finite 
 NaN = no bodies), `BreakQueue<T>` (`take_tick(n)`, FIFO carry-over), rest state `[v1, stage, health f32 LE]` under owner
 `destruct` (stage past the def is the shell's to clamp). `interact.debris.{lod_m, breaks_per_tick}` bound in
 `sf_interaction_bevy`; `awake_max` / `fade_s` wait for the shell (IN1b). Tests: `tests_destroy.rs` (6).
+
+## As built (IN1b, 2026-11-27)
+
+Core: `Destroyed` (stage = index into `stages`), `DAMAGE_SCRIPT`, `splitmix64`, `break_seed` (`destroy.rs`). Shell
+`sf_interaction_bevy/src/destroy.rs`: `Destructibles` (`register` last in the Apply chain), `DestructionRules`
+(`(kind, material)`, factor 1 when absent or the def has no material), `PropDamage`, `DestructRest`, `DestructChanged`,
+`Destroyed`, `PendingBreaks`; `DestroySystems::{Damage, Release}` chained after Apply. A hit that changes nothing writes
+no `DestructChanged`. `awake_max` / `fade_s` stay with IN1c. Tests: core 7 (+ splitmix64 reference value and fixed
+seeds), shell `tests_destroy.rs` (8).

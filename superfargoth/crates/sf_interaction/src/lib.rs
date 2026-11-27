@@ -8,7 +8,8 @@
 //! - [`index`]: the point index of resident slots (grid buckets) and `find_slots`.
 //! - [`verbs`]: `rank_verbs` (the uses an object offers now) and the per-player `FocusStabilizer`.
 //! - [`destroy`]: tier 1 destruction maths: `apply_damage` (stages crossed, overkill), the debris
-//!   distance gate, the per-tick break queue, the health + stage rest state.
+//!   distance gate, the per-tick break queue, the health + stage rest state, the `Destroyed` event and
+//!   its `break_seed`.
 //! - [`door`]: the swing-door state machine (toggle, step, leaf pose, close-behind schedule).
 //! - [`rest`]: the rest hook's slotless verb `VERB_SLEEP`.
 //! - [`light`]: light as state: `LightDef`, the `Lit` toggle (snuff / relight, rule sets), `LightChanged`,
@@ -48,7 +49,8 @@ pub use def::{
 };
 pub use cook::cook;
 pub use destroy::{
-    BreakQueue, DESTRUCT_REST_VERSION, DESTRUCT_STATE_OWNER, DestructState, Hit, apply_damage, debris_lod,
+    BreakQueue, DAMAGE_SCRIPT, DESTRUCT_REST_VERSION, DESTRUCT_STATE_OWNER, DestructState, Destroyed, Hit,
+    apply_damage, break_seed, debris_lod, splitmix64,
 };
 pub use door::{DOOR_OPEN, DOOR_REST_VERSION, DOOR_STATE_OWNER, DoorChanged, DoorState, VERB_CLOSE, VERB_OPEN, swing_sign};
 pub use entrance::{pick_entrance, pick_exit, to_local};
