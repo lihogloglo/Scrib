@@ -440,10 +440,10 @@ None for the owner on method (decided from the industry standard above). The loo
 call at RG-3.
 
 Typology (RG-9), scope and taste only:
-1. Should the weathering regime change rock **shape** in the world (frost-shattered vs rounded classes per climate),
+1. (Answered, owner 2026-11-27: shape and cover.) Should the weathering regime change rock **shape** in the world (frost-shattered vs rounded classes per climate),
    or only the **cover** (moss, lichen, varnish), keeping one shape set per geology unit? Recommendation: both, since
    the research shows climate decides rounding (T§3); "cover only" drops RG-9j's class overrides, not the row.
-2. Is the moss / lichen cover layer (RG-9h, RG-9i) wanted now, or after the placed rocks have been seen bare (WG-E3
+2. (Answered, owner 2026-11-27: after the WG-E3 check.) Is the moss / lichen cover layer (RG-9h, RG-9i) wanted now, or after the placed rocks have been seen bare (WG-E3
    check)? Recommendation: after, so the owner judges shapes and covers separately.
 
 ## As built
