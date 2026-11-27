@@ -338,6 +338,9 @@ breaks: see [(d) World rules](interaction-world-rules.md) (IN28).
 | `interact.debris.awake_max` | count | 48 | 0-256 | Guess (spec 2026-11-11) | Presentation |
 | `interact.debris.breaks_per_tick` | count | 6 | 1-32 | Guess | Gameplay |
 | `interact.debris.fade_s` | s | 8 | 1-60 | Guess | Presentation |
+| `interact.place.clearance_m` | m | 0.35 | 0.1-1.5 | Guess (a crate's half width; IN46) | Gameplay |
+| `interact.place.spread_m` | m | 0.4 | 0.1-2 | Guess (spiral spacing; reach √15 × 0.4 ≈ 1.5 m at 16 tries) | Gameplay |
+| `interact.place.floor_tries` | count | 16 | 1-64 | Guess (16 points ≈ 1.5 m reach at 0.4 m) | Gameplay |
 
 All `Scope::Dev`, `Lifetime::Live` except `interact.focus.hold_s` (`Scope::Player`, a menu row). Record data (carry
 class multipliers, verb priorities, queue capacities per def, job durations) is mod data with its own source, not a
@@ -683,6 +686,66 @@ Review (IN3-REV, 2026-11-27): every type, set and line above checked against `sf
 `mw_bake/src/interact.rs` and the anim graph. Fixed: the handler's verb match and user lookup, sleep's priority, where
 static beds get `sleep` (the bake, which alone knows the record class), hand IK through the existing `HandIk` ops and
 `grip.rs` (no `LimbIk` in `sf_anim`), IN3a/IN3d crates. OpenMW line cites are the research doc's, not re-read.
+
+## Errand spots: `pick_spot` (IN46, designed 2026-11-27)
+
+ai.md "Errands, operators and links" (AI0f, AI32) needs one pure answer to "where does this carried prop go", called
+by tier 2 and tier 0 alike so an errand run off-screen leaves the prop where an on-screen one would. It lives in
+`sf_interaction` (`spot.rs`), over the same `PointIndex` the AI already queries; the AI lane calls it.
+
+```rust
+// Illustrative, not compiled.
+pub struct SpotAnchor { pub at: Vec3 /* world */, pub placement: Option<PlacementId> /* this shelf only */ }
+pub struct Occupancy<'a> { pub claims: &'a Claims, pub props: &'a [Vec3] /* resting props near `at` */ }
+pub struct SpotQuery<'a> { pub anchor: SpotAnchor, pub filter: &'a TagFilter /* the errand's `spot` */,
+                           pub user: UserKey /* ai.md's ActorKey as UserKey::Actor */, pub tags: &'a [TagId],
+                           pub radius_m: f32 /* the caller's `ai.errand.spot_radius_m` */ }
+pub enum Spot { Slot { slot: SlotRef, frame: Frame /* world */ }, Floor(Vec3) }
+pub fn spot_candidates<O: Clone>(index: &PointIndex<O>, q: &SpotQuery, occ: &Occupancy, p: &InteractParams)
+    -> Vec<(SlotRef, Frame)>;
+pub fn pick_spot<O: Clone>(index: &PointIndex<O>, q: &SpotQuery, occ: &Occupancy, p: &InteractParams,
+                           floor: impl Fn(Vec3) -> Option<Vec3>) -> Spot;
+```
+
+- **Place spots are ordinary slots.** No new `SlotKind`: a put-down point (a shelf board, a table top, a crate lid) is
+  an indexed slot whose tags pass the errand's `spot` filter (its verb tag, e.g. `place`, plus a pose family such as
+  `place.shelf`; `IndexedSlot::tags`, `index.rs:67-69`). Which bake step cooks them is a later slice (the adapter's,
+  like the IN3 lean spots); IN46 needs only slots in the index.
+- **Candidates** (`spot_candidates`): the slots within `radius_m` (3D) of `anchor.at` whose tags pass `filter` and whose
+  `users` pass `tags` (the `find_slots` tests, `index.rs:233-264`, with need `None`); with `anchor.placement` set, only
+  that placement's slots. Dropped: a slot another user holds (`Claims::claim_on(slot)` with `user != q.user`, either
+  phase; the user's own claim stays, so a re-pick after reserving is stable), and a slot with a resting prop within
+  `interact.place.clearance_m` of its frame (`occ.props`; the carried prop is not resting, so it is never listed).
+  Sorted by distance to `anchor.at` (ascending, `f32::total_cmp`), then `SlotRef`: geometric, not the advert score
+  (a spot is where to put a thing, not a need to satisfy).
+- **Result** (`pick_spot`): the first candidate as `Spot::Slot`. None: the floor fallback, the first of
+  `interact.place.floor_tries` points on a golden-angle spiral around `anchor.at` (point k at radius
+  `interact.place.spread_m` × √k, angle k × 2.399963 rad, k from 0) that `floor` projects (`Some(q)`) and that lies
+  `interact.place.clearance_m` clear of every `occ.props` point, as `Spot::Floor(q)`; none passes: `Spot::Floor(anchor.at)`
+  (ai.md: "placed at `to`"). Points are tried in k order, so the first valid one wins, never a score.
+- **Claim after pick.** The caller (AI32) reserves the slot with an ordinary `Claims::claim` at its reason's priority
+  (the carrier holds no body claim: `HeldProp` is not one) and releases it on `Place`. A refusal the index cannot see
+  (`GroupTaken`, `Disabled`: `IndexedSlot` carries no group nor enabled bit) takes the next of `spot_candidates`, then
+  the floor (UE's flow: claim a result, on an invalid handle try the next one).
+- **Determinism and both tiers.** No float sums over unordered sets, no `HashMap` iteration: the index is `BTreeMap`
+  ordered and ties break on `SlotRef`, so an index built in another insertion order gives the same `Spot`. Tier 2 passes
+  the resident `PointIndex`; tier 0, whose cell may not be resident, passes an index built from that cell's placements
+  (`PointIndex::insert_placement`, the same defs and frames) and the same `occ.props` (from the overlay's resting
+  placements). `floor` is the caller's: the same projection in both tiers (nav's nearest-poly query on the cell's cached
+  tile), else the tiers differ on the fallback only; tests pass a flat-floor closure.
+- **Out of scope:** choosing which prop to fetch (`item: Tagged(TagFilter)`, an AI query), facing (the carrier's
+  approach or the def's `pairs_with`, interaction-carry.md), the drop at the feet under pre-emption (ai.md: no spot
+  search). `PointIndex::placement_slots` (`index.rs:224`) becomes `pub(crate)` for the placement-only candidates.
+
+Reuse check (rule 0): Bevy has no spatial or smart-object query (the index is ours, IN0b). Crates: none for
+smart-object slot search (searched for IN0, see "Reuse check" above). Industry: UE Smart Objects
+`USmartObjectSubsystem::FindSmartObjects(FSmartObjectRequest)`: a box query with a tag/activity filter
+(`FSmartObjectRequestFilter`, which can include or skip claimed and disabled slots), then `MarkSlotAsClaimed`, the
+next result on failure [M: API reference and overview read in part, U for the source]; UE EQS for the floor fallback:
+a points generator (`Points: Circle` / `Grid`), filter tests (pathfinding, distance), `Single Best Item` [M]; The
+Sims' surface "slots" on tables and shelves where a carried object goes (community docs, U). Ours matches UE's
+find-then-claim split; it departs from EQS by trying points in fixed order with one validity test instead of scoring,
+so tier 0 needs no physics or trace, only `floor`.
 
 ## As built (IN3a, 2026-11-27)
 
