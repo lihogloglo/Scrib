@@ -223,7 +223,7 @@ impl<O: Clone> PointIndex<O> {
         refs.len()
     }
 
-    fn placement_slots(&self, placement: PlacementId) -> impl Iterator<Item = SlotRef> + '_ {
+    pub(crate) fn placement_slots(&self, placement: PlacementId) -> impl Iterator<Item = SlotRef> + '_ {
         let lo = SlotRef { placement, slot: 0 };
         let hi = SlotRef { placement, slot: u8::MAX };
         self.slots.range(lo..=hi).map(|(s, _)| *s)

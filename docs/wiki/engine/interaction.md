@@ -27,6 +27,11 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   a placement with a def enters R0 and `Remove` when it leaves. The shell keeps `InteractionIndex`, a
   `PointIndex<Entity>` (`sf_interaction_bevy/src/lib.rs:218`; core `sf_interaction/src/index.rs:122`, grid
   buckets); `find_slots` (`index.rs:233`) returns slots in radius by `advert x falloff`, ties by `SlotRef`.
+- **Errand spots.** `pick_spot` (`sf_interaction/src/spot.rs`, IN46b) answers "where does this carried prop go"
+  for both AI tiers: the nearest slot in radius passing the errand's filter (`spot_candidates`: distance, then
+  `SlotRef`), skipping moving or hand-held props, other users' claims and slots a resting prop covers
+  (`interact.place.clearance_m`); none: the first clear point of a golden-angle floor spiral the caller projects
+  (`interact.place.spread_m`, `floor_tries`), else the anchor. Pure and order-independent; the AI claims the result.
 - **Claims.** `Claims` (`sf_interaction/src/claims.rs:225`): priority with preemption of Reserved claims only,
   queue tickets, leases, exclusion groups, one body hold per user plus hand claims, typed `Refusal`
   (`claims.rs:114`), invalidation reasons. Requests are applied as one sorted batch per tick

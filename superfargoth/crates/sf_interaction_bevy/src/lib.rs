@@ -193,6 +193,17 @@ pub const DOOR_CLOSE_BEHIND_S: Def<f32> = gp(def!(float "interact.door.close_beh
     .range(0.0, 10.0)
     .unit(Unit::Seconds)
     .help("Delay before a door closes behind the user that opened it"));
+pub const PLACE_CLEARANCE_M: Def<f32> = gp(def!(float "interact.place.clearance_m" = 0.35)
+    .range(0.1, 1.5)
+    .unit(Unit::Meters)
+    .help("A put-down spot within this of a resting prop is taken (a crate's half width; IN46)"));
+pub const PLACE_SPREAD_M: Def<f32> = gp(def!(float "interact.place.spread_m" = 0.4)
+    .range(0.1, 2.0)
+    .unit(Unit::Meters)
+    .help("Spacing of the put-down floor spiral: point k at this x sqrt(k) (16 tries reach ~1.5 m)"));
+pub const PLACE_FLOOR_TRIES: Def<u32> = gp_count(def!(count "interact.place.floor_tries" = 16)
+    .range(1, 64)
+    .help("Floor spiral points tried before a prop is put down at the anchor itself"));
 
 /// The `interact.*` tunables [`InteractParams`] has, bound by [`InteractionPlugin`].
 pub const TUNABLES: &[&dyn AnyDef] = &[
@@ -211,6 +222,9 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &HAND_MAX,
     &DOOR_SWING_S,
     &DOOR_CLOSE_BEHIND_S,
+    &PLACE_CLEARANCE_M,
+    &PLACE_SPREAD_M,
+    &PLACE_FLOOR_TRIES,
 ];
 
 // --- Resources ----------------------------------------------------------------------------------
@@ -470,6 +484,9 @@ impl Plugin for InteractionPlugin {
         bind!(app, HAND_MAX, |p, v| p.hand_max = to_u8(v));
         bind!(app, DOOR_SWING_S, |p, v| p.door_swing_s = v);
         bind!(app, DOOR_CLOSE_BEHIND_S, |p, v| p.door_close_behind_s = v);
+        bind!(app, PLACE_CLEARANCE_M, |p, v| p.place_clearance_m = v);
+        bind!(app, PLACE_SPREAD_M, |p, v| p.place_spread_m = v);
+        bind!(app, PLACE_FLOOR_TRIES, |p, v| p.place_floor_tries = to_u8(v));
     }
 }
 

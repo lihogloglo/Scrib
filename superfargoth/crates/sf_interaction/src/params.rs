@@ -37,6 +37,12 @@ pub struct InteractParams {
     pub door_swing_s: f32,
     /// Delay before a close-behind door closes once its opener has left the doorway, s (range 0-10).
     pub door_close_behind_s: f32,
+    /// A put-down spot within this of a resting prop is taken (slot frames and floor points), m (range 0.1-1.5).
+    pub place_clearance_m: f32,
+    /// Spacing of the floor fallback's golden-angle spiral (point k at this × √k), m (range 0.1-2).
+    pub place_spread_m: f32,
+    /// Spiral points the floor fallback tries before the anchor itself, count (range 1-64).
+    pub place_floor_tries: u8,
     /// Fixed simulation rate leases count in, ticks per second.
     pub tick_hz: f32,
 }
@@ -74,6 +80,12 @@ impl Default for InteractParams {
             door_swing_s: 0.8,
             // tunables: const (bound from interact.door.close_behind_s in sf_interaction_bevy (IN33b2); Guess)
             door_close_behind_s: 1.0,
+            // tunables: const (bound from interact.place.clearance_m in sf_interaction_bevy (IN46b); Guess, a crate's half width)
+            place_clearance_m: 0.35,
+            // tunables: const (bound from interact.place.spread_m in sf_interaction_bevy (IN46b); Guess, reach √15 × 0.4 ≈ 1.5 m)
+            place_spread_m: 0.4,
+            // tunables: const (bound from interact.place.floor_tries in sf_interaction_bevy (IN46b); Guess)
+            place_floor_tries: 16,
             // tunables: const (bound from the app's fixed timestep in sf_interaction_bevy; net.md 60 Hz tick)
             tick_hz: 60.0,
         }

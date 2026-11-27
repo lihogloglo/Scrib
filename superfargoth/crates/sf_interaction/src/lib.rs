@@ -12,6 +12,8 @@
 //! - [`light`]: light as state: `LightDef`, the `Lit` toggle (snuff / relight, rule sets), `LightChanged`,
 //!   the one-byte rest state.
 //! - [`entrance`]: `pick_entrance` / `pick_exit` (side order, the shell's validity checks).
+//! - [`spot`]: `pick_spot` / `spot_candidates`, where a carried prop is put down (surface slots, then a
+//!   floor spiral), the same answer in both AI tiers.
 //! - [`cook`]: `interact.cook`, the one-time def bake (stub).
 //! - [`params`]: the core's tunables as plain fields (`interact.*`, bound by `sf_interaction_bevy`).
 //!
@@ -26,6 +28,7 @@ pub mod index;
 pub mod light;
 pub mod params;
 pub mod rest;
+pub mod spot;
 pub mod verbs;
 
 pub use claims::{
@@ -47,6 +50,7 @@ pub use light::{
 };
 pub use params::InteractParams;
 pub use rest::VERB_SLEEP;
+pub use spot::{Spot, SpotAnchor, SpotBlockers, SpotQuery, pick_spot, spiral_point, spot_candidates};
 pub use verbs::{FocusStabilizer, VerbChoice, VerbTarget, rank_verbs};
 
 #[cfg(test)]
@@ -57,3 +61,5 @@ mod tests_door;
 mod tests_light;
 #[cfg(test)]
 mod tests_queries;
+#[cfg(test)]
+mod tests_spot;

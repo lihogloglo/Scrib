@@ -761,6 +761,14 @@ Sims' surface "slots" on tables and shelves where a carried object goes (communi
 find-then-claim split; it departs from EQS by trying points in fixed order with one validity test instead of scoring,
 so tier 0 needs no physics or trace, only `floor`.
 
+## As built (IN46b, 2026-11-27)
+
+`sf_interaction::spot` (`spot.rs`): `SpotAnchor`, `SpotBlockers`, `SpotQuery`, `Spot`, `spot_candidates`, `pick_spot`,
+and `spiral_point` (public so callers and tests share the spiral). Unanchored searches reuse `find_slots` (falloff 1,
+need `None`); an anchored one walks `placement_slots` (now `pub(crate)`). "Within clearance" is strictly closer than
+`place_clearance_m`, for slot frames and floor points alike. `InteractParams::{place_clearance_m, place_spread_m,
+place_floor_tries}` bound from `interact.place.*` in `sf_interaction_bevy`. Tests: `tests_spot.rs` (6).
+
 ## As built (IN46a, 2026-11-27)
 
 `SlotKind::Surface { family }` (`def.rs`) and `KindTag::Surface { family }` (`index.rs`): the family is pushed into
