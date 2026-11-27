@@ -316,6 +316,7 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
 | WG-E2o.2 | class census + calibration (Design 4), `calibration.toml` write/read | Scrib `sf_worldgen` (new `scatter_calib.rs`, `tests_scatter_calib.rs`) | E2o.1 | census: two-class fixture, `A` exact, `m` == brute mean, same on 1 and N threads; calibration: a target below the ceiling reaches `W` within `calib_tol`; a target above it is flagged within `calib_iters`; same inputs same `g` | same |
 | WG-E2o.3 | adapter wiring: `mw_worldgen::flora` runs census + calibration before the passes, class names to ids, warnings to the bake log, `calibration.toml` beside the product | Scrib `mw_worldgen` (`flora.rs`, `tests_flora.rs`) | E2o.2, E2j | fixture guide: class means exact; a target change makes the product stale; a read product has its calibration file | `test -p mw_worldgen` + clippy `bevyrrowind` |
 | WG-E2o.m | measurement: winners/ha per class vs target, lower-layer counts, bake s, product size | `mw_worldgen` (test only) | E2o.3 | re-run `canopy_density_trace_on_x10s`, `scatter_v2_counts_and_seconds_on_x10s` | ledger line; a class off > 25 % sets its `size_max_m` row or parks the look |
+| WG-E2o.d | diagnosis: calibration `reached` vs the world at the same `g`, term by term | `mw_worldgen` (test only) | E2o.m | `canopy_density_trace_on_x10s` gap table | ledger line naming the cause and the fix row |
 | WG-E2p | full radius round a focus at load (Design 10), one global remainder budget | Scrib `sf_worldgen` (`scatter.rs` `Params` + `budget_cut_layers` remainder form), `mw_worldgen` (`flora.rs` `place`, `extra`), app `world.rs` (pass the eye of `:89` to the content fn and on at `:291`; `--set scatter.full_radius_m` read like `scatter.budget`) | E2o.3 | inside the radius == unbudgeted set; total == `max(budget, inside)` capped by the set; outside nests with the budget; no focus == today's cut | `test -p mw_worldgen` + clippy `bevyrrowind` |
 | WG-E2q | stand cap per tile at load (`canopy_stems_per_ha_max`, Design 10), before the radius and budget | Scrib `sf_worldgen` (value moved from `scatter_species.rs` to `scatter.rs` `Params`: out of the product hash), `mw_worldgen` (`flora.rs` `place`), app `world.rs` (`--set` like `scatter.budget`) | E2p | no tile above the cap, inside the radius too; the cap's survivors are the lowest ranks; cap 2000 == uncapped on a 400/ha fixture; a cap change reads the product (no rebuild) | same |
 | WG-E3a | rock columns, `[rock_units]` table (entries: library class or pack model) | Scrib `sf_worldgen` (`scatter_species.rs`) | E2a | round trip; bad weight or unknown entry kind rejected | `test -p sf_worldgen` |
@@ -462,6 +463,11 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
   shrubland 12.0/10, woodland 52.9/60, temperate forest 64.3/150, rainforest 61.9/250, taiga 47.1/250 (the last four
   flagged at the crown ceiling). Off > 25 %: taiga, temperate forest, rainforest (under: `size_max_m` rows) and grassland
   (over). Calibration `reached` sits under the world count in every class (woodland 35.3 vs 52.9). Bake 262 s (was 58).
+- **WG-E2o.d** (2026-11-27, diagnosis, x10s): the calibration counts exactly (raw `W` == the passes on its tiles
+  built alone == the world run on them, every class): no halo, attribution or pass gap. The gap is the tile choice:
+  the purest tiles' `m_t` is far from `m` (0.12-0.96 vs 0.20-0.38) and `W` is not linear in weight, so `x m / m_t`
+  misreads the class (rainforest 21 vs world 62, woodland 35 vs 53, shrubland 9.9 vs 12.1; grassland, 20 % share, 5.1 vs
+  6.6: converged before its neighbours' `g` settled). Fix: E2o.e/E2o.f (sampled tiles, no rescale, final joint check).
 
 ## Tunables
 
