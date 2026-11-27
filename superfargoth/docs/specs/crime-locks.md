@@ -38,7 +38,7 @@ physical noise (IN18), the trap's effect (effects.md `Inflict`), perception (ai.
 |---|---|
 | Crime (`sf_crime`, `sf_crime_bevy`) | `LockState` (with `hp`), `TrapState`, keys, the gate, `LockRules` pick/probe/force, `LockRequest` / `LockOutcome`, trespass and vandalism offences, outcome noise, the lock and trap overlay in `sf/crime` |
 | IN33 swing doors | the swing slot (Open/Closed, hinge, doorway queue); reads "Locked" from the gate's refusal |
-| IN37 forced entry | the blow: strength, weapon, contents risk, impact noise; sends `LockRequest::Force` |
+| IN37 forced entry | the blow: strength, weapon, contents risk, impact noise; writes `Bashed` (crime turns it into `LockRequest::Force`) |
 | IN18 noise | physical noise: impacts, doors, breaks |
 | DQ-7 world functions | `Lock`, `Unlock`, `GetLocked` opcodes, acting on `LockState` through `CrimeCommand` |
 
@@ -108,7 +108,8 @@ level: Option<i32> }, Unlock { object } }`: no roll, no trespass, no noise; the 
 
 ### Force (IN37)
 
-IN37 computes `damage` from the blow and sends `LockRequest::Force`. Crime subtracts it from `hp`: above 0 is
+IN37 computes the blow and writes `Bashed { lock_damage, .. }` (interaction-destruction.md "Bashing (IN37)"); crime's host
+turns each one on an `ObjectLaw` target into `LockRequest::Force` (zero damage included). Crime subtracts it from `hp`: above 0 is
 `Damaged`, at 0 the lock is `Forced` (`broken`, unlocked). `impossible` locks take no damage. The hit's impact sound is
 IN18's; the lock giving way is crime's noise.
 
