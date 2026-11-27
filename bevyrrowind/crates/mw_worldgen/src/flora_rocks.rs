@@ -12,14 +12,22 @@
 //! table's default `[shares]`, normalised). The scatter's entries are per unit, not per region, so the region's
 //! count reaches the unit through the shares the geology map itself draws its units from. Model entries are added to
 //! the unit's own lists only: a regime override list (RG-9j) replaces them, as it replaces the classes.
+//!
+//! **Ground** ([`Ground`], the scatter's [`RockGround`], spec "Rocks (WG-E3)" "Inputs"): unit and cliff from the
+//! guide's `geology/` product ([`GeologyGrid`], nearest sample) when the guide has one, else no cliff and per region
+//! its largest [`unit_shares`] unit (ties: the first name); slope and aspect from the guide heights (central
+//! differences one sample apart, [`Grid::gradient`]); height the final ground ([`World::height`]), which the rocks
+//! stand on.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
-use sf_worldgen::geology::GeologyTable;
+use sf_worldgen::geology::{GeologyGrid, GeologyTable};
+use sf_worldgen::scatter_rocks::RockGround;
 use sf_worldgen::scatter_species::{RockContext, RockEntry};
 
-use super::Learned;
-use crate::RegionMap;
+use super::{Grid, Learned, World};
+use crate::{DumpError, RegionMap};
 
 /// Per legend index of `regions`: the unit shares of its `[region."<name>"]` row (by the legend's `name`), else the
 /// table's default `[shares]`, normalised to sum 1 (no share at all when they sum to 0).
@@ -94,4 +102,90 @@ pub fn rock_prior(density: &[f64], land: &[u64]) -> Vec<f64> {
     }
     let mean = if den > 0.0 { num / den } else { 0.0 };
     (0..land.len()).map(|r| if mean > 0.0 { density.get(r).copied().unwrap_or(0.0) / mean } else { 0.0 }).collect()
+}
+
+/// The geology product of a guide folder (`dir/geology/`), when it has one.
+///
+/// # Errors
+/// A product that is present (its `meta.json` exists) but unreadable.
+pub fn guide_geology(dir: &Path) -> Result<Option<GeologyGrid>, DumpError> {
+    if !dir.join("geology").join("meta.json").exists() {
+        return Ok(None);
+    }
+    GeologyGrid::read(dir).map(Some).map_err(|e| DumpError::Invalid(format!("{}: {e}", dir.join("geology").display())))
+}
+
+/// The game's rock ground ([module docs](self)).
+pub struct Ground<'a> {
+    world: &'a World<'a>,
+    geology: Option<&'a GeologyGrid>,
+    /// Per region legend index, its default unit (used without a geology product).
+    defaults: Vec<Option<String>>,
+}
+
+impl<'a> Ground<'a> {
+    /// The ground of `world`, on `geology` when given (its frame must be the guide's), else on `table`'s region
+    /// shares.
+    ///
+    /// # Errors
+    /// A geology product whose dims, spacing or origin are not the guide's.
+    pub fn new(world: &'a World<'a>, geology: Option<&'a GeologyGrid>, table: &GeologyTable) -> Result<Self, DumpError> {
+        if let Some(g) = geology {
+            let w = &world.guide;
+            let close = |a: f64, b: f64| (a - b).abs() <= 1e-6 * b.abs().max(1.0);
+            if [g.w, g.h] != [w.w, w.h]
+                || !close(g.spacing_m, w.spacing)
+                || !close(g.origin_m[0], w.origin[0])
+                || !close(g.origin_m[1], w.origin[1])
+            {
+                return Err(DumpError::Invalid(format!(
+                    "rocks: the geology product ({}x{} @ {} m, origin {:?}) is not the guide ({}x{} @ {} m, origin {:?})",
+                    g.w, g.h, g.spacing_m, g.origin_m, w.w, w.h, w.spacing, w.origin
+                )));
+            }
+        }
+        let defaults = unit_shares(world.regions, table)
+            .into_iter()
+            .map(|m| {
+                let mut best: Option<(&String, f64)> = None;
+                for (u, &v) in &m {
+                    if best.is_none_or(|(_, b)| v > b) {
+                        best = Some((u, v));
+                    }
+                }
+                best.map(|(u, _)| u.clone())
+            })
+            .collect();
+        Ok(Self { world, geology, defaults })
+    }
+
+    fn guide(&self) -> &Grid<'a> {
+        &self.world.guide
+    }
+}
+
+impl RockGround for Ground<'_> {
+    fn height_m(&self, x: f64, y: f64) -> f64 {
+        self.world.height(x, y)
+    }
+
+    fn slope_aspect_deg(&self, x: f64, y: f64) -> (f64, f64) {
+        let (c, r) = self.guide().colrow(x, y);
+        let (gx, gy) = self.guide().gradient(c, r);
+        let slope = gx.hypot(gy).atan().to_degrees();
+        // Downslope is -(gx, gy); its compass azimuth, clockwise from north.
+        let aspect = if gx == 0.0 && gy == 0.0 { 0.0 } else { (-gx).atan2(-gy).to_degrees().rem_euclid(360.0) };
+        (slope, aspect)
+    }
+
+    fn cliff(&self, x: f64, y: f64) -> bool {
+        self.geology.is_some_and(|g| g.cliff_at(x, y))
+    }
+
+    fn unit(&self, x: f64, y: f64) -> Option<&str> {
+        match self.geology {
+            Some(g) => g.unit_at(x, y),
+            None => self.defaults.get(usize::from(self.world.region(x, y)?))?.as_deref(),
+        }
+    }
 }

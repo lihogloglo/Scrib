@@ -648,6 +648,109 @@ impl GeologyMap {
     }
 }
 
+/// The unit and cliff layers of a `geology/` product, read back for the scatter's rock ground (worldgen-scatter.md
+/// "Rocks (WG-E3)" "Inputs"; WG-E3f.3): the frame, the unit names and `unit.u8` / `cliff.u8`, nothing else.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeologyGrid {
+    pub w: usize,
+    pub h: usize,
+    /// `meta.json`'s spacing and origin (guide-frame metres of sample (0, 0), row 0 north), as written.
+    pub spacing_m: f64,
+    pub origin_m: [f64; 2],
+    /// Unit names in index order (`geology.json`'s `units`).
+    pub units: Vec<String>,
+    /// Unit index per sample (row-major, row 0 north).
+    pub unit: Vec<u8>,
+    /// Cliff flag per sample (non-zero = a mapped cliff).
+    pub cliff: Vec<u8>,
+}
+
+impl GeologyGrid {
+    /// Reads `dir/geology/` (written by [`GeologyMap::write`]): the format of `meta.json` and `geology.json`, the size
+    /// and blake3 of `unit.u8` and `cliff.u8` against `meta.json`, every unit index against the unit names.
+    ///
+    /// # Errors
+    /// A missing or unreadable file, another format, a size or hash mismatch, an out-of-range unit index.
+    pub fn read(dir: &Path) -> Result<Self> {
+        #[derive(Deserialize)]
+        struct Meta {
+            format: u32,
+            dims: [usize; 2],
+            sample_spacing_m: f64,
+            origin_m: [f64; 2],
+            files: BTreeMap<String, String>,
+        }
+        #[derive(Deserialize)]
+        struct Unit {
+            name: String,
+        }
+        #[derive(Deserialize)]
+        struct Info {
+            format: u32,
+            units: Vec<Unit>,
+        }
+        let src = dir.join("geology");
+        let bad = |what: String| Error::Invalid(format!("geology product {}: {what}", src.display()));
+        let meta: Meta = serde_json::from_str(&std::fs::read_to_string(src.join("meta.json"))?)?;
+        let info: Info = serde_json::from_str(&std::fs::read_to_string(src.join("geology.json"))?)?;
+        if meta.format != FORMAT || info.format != FORMAT {
+            return Err(bad(format!(
+                "format {} / {} (meta / geology.json), this build reads {FORMAT}",
+                meta.format, info.format
+            )));
+        }
+        let [w, h] = meta.dims;
+        let layer = |name: &str| -> Result<Vec<u8>> {
+            let want = meta.files.get(name).ok_or_else(|| bad(format!("meta.json has no blake3 for {name}")))?;
+            let bytes = std::fs::read(src.join(name))?;
+            if bytes.len() != w * h {
+                return Err(bad(format!("{name} is {} bytes, {w} x {h} needs {}", bytes.len(), w * h)));
+            }
+            let got = blake3::hash(&bytes).to_hex().to_string();
+            if &got != want {
+                return Err(bad(format!("{name} blake3 {got} differs from meta.json's {want}")));
+            }
+            Ok(bytes)
+        };
+        let unit = layer("unit.u8")?;
+        let cliff = layer("cliff.u8")?;
+        let units: Vec<String> = info.units.into_iter().map(|u| u.name).collect();
+        if let Some(&u) = unit.iter().find(|&&u| usize::from(u) >= units.len()) {
+            return Err(bad(format!("unit index {u}, geology.json names {} units", units.len())));
+        }
+        Ok(Self {
+            w,
+            h,
+            spacing_m: meta.sample_spacing_m,
+            origin_m: meta.origin_m,
+            units,
+            unit,
+            cliff,
+        })
+    }
+
+    /// The nearest sample's index at guide-frame point (x, y); `None` outside the grid by more than half a sample.
+    #[must_use]
+    pub fn sample(&self, x: f64, y: f64) -> Option<usize> {
+        let col = ((x - self.origin_m[0]) / self.spacing_m).round();
+        let row = ((self.origin_m[1] - y) / self.spacing_m).round();
+        let inside = |v: f64, n: usize| v >= 0.0 && v <= (n - 1) as f64;
+        (inside(col, self.w) && inside(row, self.h)).then(|| row as usize * self.w + col as usize)
+    }
+
+    /// The unit name at (x, y) (nearest sample).
+    #[must_use]
+    pub fn unit_at(&self, x: f64, y: f64) -> Option<&str> {
+        self.sample(x, y).map(|i| self.units[usize::from(self.unit[i])].as_str())
+    }
+
+    /// A mapped cliff at (x, y) (nearest sample; `false` outside the grid).
+    #[must_use]
+    pub fn cliff_at(&self, x: f64, y: f64) -> bool {
+        self.sample(x, y).is_some_and(|i| self.cliff[i] != 0)
+    }
+}
+
 /// One `scrib-worldgen geology` invocation.
 #[derive(Debug, Clone)]
 pub struct GeologyRequest {

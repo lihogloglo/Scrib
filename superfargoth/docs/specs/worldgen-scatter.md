@@ -436,6 +436,10 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
   the field-stone parent bound is `fs_max x region_prior_max / field_child_mean` and each parent is also kept with
   `prior.max(0).min(pmax) / pmax` at its point (NaN or negative: none); without one both factors are exactly 1, so the
   stones are today's bit for bit (digest pinned in the test). Talus and outcrops take no prior. Not set by the game yet (E3f.4).
+- **WG-E3f.3** (2026-11-27, `sf_worldgen::geology::GeologyGrid::read` (unit names, `unit.u8`, `cliff.u8`, each file's
+  size and blake3 against `meta.json`); `mw_worldgen` `flora_rocks.rs` `guide_geology`, `Ground`): the product's
+  nearest-sample unit and cliff (its frame must be the guide's), else no cliff and per region its largest unit share
+  (ties: first name); slope/aspect from the guide heights, height the final ground. Not used by the passes yet (E3f.4).
 
 ## Tunables
 

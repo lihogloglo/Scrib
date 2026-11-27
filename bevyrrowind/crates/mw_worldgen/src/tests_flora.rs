@@ -1214,3 +1214,177 @@ fn the_stand_cap_thins_the_densest_tiles_at_load() {
     assert!(keys(&cut, true).len() < keys(&open, true).len() && keys(&cut, true).is_subset(&keys(&open, true)));
     assert_eq!(run(&Params { canopy_stems_per_ha_max: 2000.0, ..prm }).0, open, "a cap above every tile is no cap");
 }
+
+// WG-E3f.3: the game's rock ground. The fixture's geology product: all six geology.toml units, `tuff` west of col 32,
+// `basalt_flow` from it; one mapped cliff column at col 34 (on the 45 deg ramp, below the scarp slope, so only the product makes it a
+// scarp; its talus runs out west onto the flat).
+
+const CLIFF_COL: usize = 34;
+
+fn rock_scratch(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("mw_worldgen_rock_ground_{}_{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Writes the fixture's geology product for `world` into `dir`.
+fn write_geology(world: &World<'_>, dir: &std::path::Path) {
+    use sf_worldgen::geology::{GeologyMap, GeologyParams, declared_defaults, f16_bits};
+    let table = geology_table();
+    let idx = |n: &str| u8::try_from(table.units.iter().position(|u| u.name == n).unwrap()).unwrap();
+    let g = &world.guide;
+    let n = g.w * g.h;
+    let map = GeologyMap {
+        w: g.w,
+        h: g.h,
+        spacing_m: g.spacing,
+        origin_m: g.origin,
+        params: GeologyParams::from_declared(&declared_defaults()).unwrap(),
+        units: table.units.clone(),
+        unit: (0..n).map(|k| if k % g.w < 32 { idx("tuff") } else { idx("basalt_flow") }).collect(),
+        hardness: vec![0; n],
+        datum: vec![0.0; n],
+        cliff: (0..n).map(|k| u8::from(k % g.w == CLIFF_COL)).collect(),
+        talus: vec![0; n],
+        human: vec![0; n],
+        lip: vec![f16_bits(0.0); n],
+        feature: vec![0; n],
+    };
+    map.write(dir, &declared_defaults()).unwrap();
+}
+
+/// The product's unit and cliff at every sample (and half a sample off it), nothing outside the guide; a tampered or
+/// misframed product is refused, a folder without one reads `None`; slope and aspect from the guide heights.
+#[test]
+fn rock_ground_reads_the_geology_product_unit_and_cliff() {
+    use flora::rocks::{Ground, guide_geology};
+    use sf_worldgen::scatter_rocks::RockGround;
+    let (m, regions) = (mosaic(), regions());
+    let t = tiles(&m);
+    let towns = TownMask::default();
+    let world = World::new(&m, &regions, &t, None, &towns);
+    let dir = rock_scratch("product");
+    assert!(guide_geology(&dir).unwrap().is_none());
+    write_geology(&world, &dir);
+    let geo = guide_geology(&dir).unwrap().unwrap();
+    let ground = Ground::new(&world, Some(&geo), &geology_table()).unwrap();
+    let g = &world.guide;
+    for r in 0..g.h {
+        for c in 0..g.w {
+            let (x, y) = (g.origin[0] + c as f64 * g.spacing, g.origin[1] - r as f64 * g.spacing);
+            let want = if c < 32 { "tuff" } else { "basalt_flow" };
+            for (dx, dy) in [(0.0, 0.0), (0.45, -0.45), (-0.45, 0.45)] {
+                let (px, py) = (x + dx * g.spacing, y + dy * g.spacing);
+                assert_eq!(ground.unit(px, py), Some(want), "({c}, {r})");
+                assert_eq!(ground.cliff(px, py), c == CLIFF_COL, "({c}, {r})");
+            }
+        }
+    }
+    let [x0, y0, x1, y1] = world.rect();
+    assert_eq!(ground.unit(x0 - g.spacing, y0), None);
+    assert_eq!(ground.unit(x1, y1 + g.spacing), None);
+    assert!(!ground.cliff(x1 + g.spacing, y1));
+    // Flat west of col 32, the 45 deg ramp rising east beyond: downslope west.
+    let at = |c: f64| ground.slope_aspect_deg(g.origin[0] + c * g.spacing, g.origin[1] - 30.0 * g.spacing);
+    assert_eq!(at(20.0), (0.0, 0.0));
+    let (s, a) = at(45.0);
+    assert!((s - 45.0).abs() < 1e-3 && (a - 270.0).abs() < 1e-9, "{s} {a}");
+    // Misframed: one sample wider.
+    let mut wide = geo.clone();
+    wide.w += 1;
+    assert!(Ground::new(&world, Some(&wide), &geology_table()).is_err());
+    // Tampered unit layer.
+    let path = dir.join("geology").join("unit.u8");
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[0] ^= 1;
+    std::fs::write(&path, bytes).unwrap();
+    assert!(guide_geology(&dir).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Without a product: no cliff anywhere, and the region's largest share as its unit (the table's default shares for a
+/// region without a row; ties to the first name); nothing outside the guide.
+#[test]
+fn rock_ground_without_a_product_takes_the_region_default_unit() {
+    use flora::rocks::Ground;
+    use sf_worldgen::geology::{GeologyTable, RegionShares};
+    use sf_worldgen::scatter_rocks::RockGround;
+    let m = mosaic();
+    let t = tiles(&m);
+    let towns = TownMask::default();
+    let check = |rm: &RegionMap, table: &GeologyTable, want: Option<&str>| {
+        let world = World::new(&m, rm, &t, None, &towns);
+        let ground = Ground::new(&world, None, table).unwrap();
+        let g = &world.guide;
+        for (c, r) in [(10.0, 10.0), (40.0, 50.0), (64.0, 0.0)] {
+            let (x, y) = (g.origin[0] + c * g.spacing, g.origin[1] - r * g.spacing);
+            assert_eq!(ground.unit(x, y), want, "({c}, {r})");
+            assert!(!ground.cliff(x, y));
+        }
+        assert_eq!(ground.unit(g.origin[0] - 2.0 * g.spacing, g.origin[1]), None);
+    };
+    let mut table = geology_table();
+    let mut rm = regions();
+    // The fixture region has no row: the default shares' largest (first name on a tie).
+    let mut best: Option<(&String, f64)> = None;
+    for (u, &v) in &table.shares {
+        if best.is_none_or(|(_, b)| v > b) {
+            best = Some((u, v));
+        }
+    }
+    let best = best.map(|(u, _)| u.clone());
+    check(&rm, &table, best.as_deref());
+    // Its own row.
+    rm.legend[1].name = "Test Region".into();
+    let row = |a: f64, b: f64| RegionShares {
+        shares: [("tephra".to_string(), a), ("alluvium".to_string(), b)].into_iter().collect(),
+    };
+    table.region.insert("Test Region".into(), row(0.4, 0.6));
+    check(&rm, &table, Some("alluvium"));
+    table.region.insert("Test Region".into(), row(0.5, 0.5));
+    check(&rm, &table, Some("alluvium"));
+    table.region.insert("Test Region".into(), row(0.0, 0.0));
+    check(&rm, &table, None);
+}
+
+/// The rock candidates of each context on the game's ground, one rect alone, are the full run's inside it.
+#[test]
+fn rock_ground_candidates_tile_alone() {
+    use flora::rocks::{Ground, guide_geology};
+    use sf_worldgen::scatter_rocks::{RockCandidate, RockRules, RockValues};
+    let (m, regions) = (mosaic(), regions());
+    let t = tiles(&m);
+    let towns = TownMask::default();
+    let world = World::new(&m, &regions, &t, None, &towns);
+    let dir = rock_scratch("alone");
+    write_geology(&world, &dir);
+    let geo = guide_geology(&dir).unwrap().unwrap();
+    let ground = Ground::new(&world, Some(&geo), &geology_table()).unwrap();
+    let file = shipped();
+    let f = fields(&world);
+    let rules = RockRules { file: &file, values: RockValues::default(), seed: 5, tile_m: 256.0, prior: None };
+    let full = world.rect();
+    let g = &world.guide;
+    let col = |c: f64| g.origin[0] + c * g.spacing;
+    let row = |r: f64| g.origin[1] - r * g.spacing;
+    let rects = [[col(12.0), full[1], col(30.5), full[3]], [col(33.0), row(40.0), col(60.0), row(10.25)]];
+    let run = |name: &str, rect: [f64; 4]| match name {
+        "talus" => rules.talus_candidates(&ground, &f, rect),
+        "outcrop" => rules.outcrop_candidates(&ground, &f, rect),
+        _ => rules.field_candidates(&ground, &f, rect),
+    };
+    for name in ["talus", "outcrop", "field"] {
+        let all = run(name, full);
+        assert!(!all.is_empty(), "{name}");
+        for rect in rects {
+            let inside: Vec<RockCandidate> = all
+                .iter()
+                .filter(|c| c.pos[0] >= rect[0] && c.pos[0] < rect[2] && c.pos[1] >= rect[1] && c.pos[1] < rect[3])
+                .copied()
+                .collect();
+            assert_eq!(run(name, rect), inside, "{name} {rect:?}");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
