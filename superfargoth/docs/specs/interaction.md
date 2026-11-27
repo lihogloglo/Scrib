@@ -622,12 +622,17 @@ a lean spot is a pose slot. Neither needs a new slot kind or a second use path.
 
 **The rest hook (IN3a).** `sleep` is an ordinary verb through the activation contract (scripts, gates, default):
 - The verb tag is the framework's `VERB_SLEEP = TagId::of("sleep")` in `sf_interaction` (beside `VERB_OPEN` /
-  `VERB_CLOSE`, so the Bevy-free adapter shares it). A def offers it as a slotless `VerbDef` (`requires` empty).
+  `VERB_CLOSE`, `door.rs:24-27`, so the Bevy-free adapter shares it). A def offers it as a slotless `VerbDef`
+  (`requires` empty) at the def's top priority, so the press is Sleep and `lie` / `sit` are on the hold list (Skyrim,
+  KCD2, RDR2: activating a bed opens the sleep menu; the adapter uses `CLASS_VERB_PRIORITY`).
 - Its default handler (`sf_interaction_bevy` `rest.rs`, `Update`, `.after(ActivationSystems::Default)`) writes one
   `RestRequested { tick, user, actor, placement, slot }` per `UseApproved` whose verb is `VERB_SLEEP` (`tick` =
-  `InteractionTick` at the write, `user` from the actor's `InteractionUser`, `slot` = the approval's, `None` for the
-  slotless verb). A handled (script) use or a gate refusal writes none (contract steps 4-5); no other verb writes one.
-  The seat handler already skips it: `resolve_slot` finds no pose slot with verb `sleep` (`seat.rs:321-347`).
+  `InteractionTick` at the write, `user` from the `InteractionUser` whose `actor` is the approval's, as the seat
+  handler finds it (`seat.rs:400`; none found: nothing written), `slot` = the approval's, `None` for the slotless
+  verb). It matches `verb == Some(VERB_SLEEP)` only: a validated use always names its verb (`validate`,
+  `activate.rs:241-266`); a script `Activate` with no verb is the primary use of no default here. A handled (script)
+  use or a gate refusal writes none (contract steps 4-5); no other verb writes one. The seat handler already skips
+  it: `resolve_slot` finds no pose slot with verb `sleep` (`seat.rs:320-348`).
 - **No `owned` field** (planned in 2026-11-25, dropped): ownership is crime's (game) data on the placement; the host's
   gates read it. The framework knows nothing of werewolves, enemies or owners.
 - **The host gates and opens the UI.** Refusals are gates in `ActivationSystems::Gates` with a reason tag for the prompt
@@ -638,7 +643,8 @@ a lean spot is a pose slot. Neither needs a new slot kind or a second use path.
   `RestRequested`, when the bed has a free `lie` slot with clips, the host writes an `ActivateCommand { verb: lie,
   slot }` for the same user and opens the menu on that use's `SeatReport` `Entered` (any other end: at once);
   without lie clips it opens at once. Leaving the menu exits the slot like any exit input.
-- **Players only.** NPCs sleep through AI activities on the `lie` slot (AI14 / IN8), never a `RestRequested`.
+- **Players only.** NPCs sleep through AI activities on the `lie` slot (AI14 / IN8): the AI never commands `sleep`.
+  The handler does not filter users (it knows no players); the host's consumer acts on player users only.
 - **Co-op (rule, nothing built):** the request carries its `user`; the host decides the skip (all players or a share
   in bed, Valheim / Minecraft pattern). Single player: the request is the skip.
 
@@ -650,23 +656,33 @@ row (vertical faces beside the navmesh), not IN3.
 
 **Hand IK (IN3d).** Contact points are cooked into the slot's `IkTargets.hands` (object frame, `[left, right]`, empty
 = none): armrest tops (seat collision above the seat band within the seat's width, per side) and, for stations, the
-top edge in front of the user at shoulder width. At run time each hand with a target gets a two-bone `LimbIk`
-(`sf_anim`; not `FullBodyIk`: the body pose is the clip's, two arms cost less), weight ramping in over the enter
-clip's last part and out over the exit's first part (tunables `interact.ik.hand_in_s`, `interact.ik.hand_out_s`,
-`Guess`). Armrests need no grip table; held props do (MG7b, IN35), so IN3d does not wait on MG7b.
+top edge in front of the user at shoulder width. At run time no new IK: the humanoid graph already has two-bone
+hand ops (`HandIk` -> `LimbIk`, `sf_anim_graph/src/asset.rs:943-1013`; `mw_humanoid.animgraph.ron:455-456`, targets
+`hand_l` / `hand_r`, weights `hand_ik_l` / `hand_ik_r`; not `FullBodyIk`: the body pose is the clip's, two arms cost
+less). Their feed (`mw_player_bevy/src/grip.rs`, today ledge grip and wall brace) gets a third source: the held
+slot's cooked points, winning while the user is in a seat use (the brace runs only in plain locomotion anyway), the
+weight ramping in over the enter clip's last part and out over the exit's first part (tunables
+`interact.ik.hand_in_s`, `interact.ik.hand_out_s`, `Guess`). NPC users get the same feed with their animator (later
+row). Armrests need no grip table; held props do (MG7b, IN35), so IN3d does not wait on MG7b.
 
 | Slice | Deliverable | Crates | Depends on | Verify |
 |---|---|---|---|---|
-| IN3a | `VERB_SLEEP`, `RestRequested` + its default handler; adapter: bed defs carry slotless `sleep` (static beds), the row Offered; game logs it | `sf_interaction(_bevy)`, `mw_interaction(_bevy)` | IN31, IN32 | exact: one press -> one request; handled or refused -> none; Classic row `RestMenu` |
+| IN3a | `VERB_SLEEP`, `RestRequested` + its default handler; adapter: bed defs carry slotless `sleep` (static beds, added in the bake), the row Offered; game logs it | `sf_interaction(_bevy)`, `mw_interaction(_bevy)`, `mw_bake` | IN31, IN32 | exact: one press -> one request; handled or refused -> none; Classic row `RestMenu` |
 | IN3b | Lie use + lie-then-menu sequencing in the host | `mw_interaction_bevy` | IN3a, AN30c | exact sequencing; owner IN-3 |
 | IN3c | Lean use at stations | `mw_interaction` | AN30d/e | owner IN-3 |
-| IN3d | Hand contact points in the cook + `LimbIk` on seats/stations | `mw_interaction`, `sf_interaction_bevy`, `sf_anim_bevy` | IN2 | exact cooked points; sanity: hands on the armrest; owner IN-3 |
+| IN3d | Hand contact points in the cook + the `grip.rs` seat source | `mw_interaction`, `mw_bake`, `mw_player_bevy` | IN2 | exact cooked points; sanity: hands on the armrest; owner IN-3 |
 
 Reuse check: Bevy 0.20 has nothing for slots, beds, rest or lean; crates.io (2026-11-27, "bevy smart object", "bevy
 interaction", "bevy furniture") has no maintained crate; IK is ours (`sf_anim`). Industry comparison: bed = slot +
 verb with the menu outside it (all engines read); owned bed = the game's crime rule (OpenMW kept, below); lean = an
 authored marker / scenario / workspot per spot (Bethesda, GTA, Cyberpunk), ours cooked from collision; hand contact
-= UE Control Rig / Motion Warping style IK onto object points [M], ours `LimbIk` onto cooked points.
+= UE Control Rig / Motion Warping style IK onto object points [M], ours the graph's `HandIk` onto cooked points.
+
+Review (IN3-REV, 2026-11-27): every type, set and line above checked against `sf_interaction_bevy` (`activate.rs`,
+`seat.rs`, `lib.rs:395-422`), `sf_interaction` (`door.rs`, `def.rs`), `mw_interaction` (`activation.rs`, `defs.rs`),
+`mw_bake/src/interact.rs` and the anim graph. Fixed: the handler's verb match and user lookup, sleep's priority, where
+static beds get `sleep` (the bake, which alone knows the record class), hand IK through the existing `HandIk` ops and
+`grip.rs` (no `LimbIk` in `sf_anim`), IN3a/IN3d crates. OpenMW line cites are the research doc's, not re-read.
 
 ## As built (IN33a, 2026-11-26)
 

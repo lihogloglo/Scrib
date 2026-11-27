@@ -391,7 +391,13 @@ Framework contract: interaction.md "Beds, lean spots and rest (IN3)". Rules from
   edge `sit`s; its approval is a `RestRequested` and the rest UI opens **without** the bed override (the rest key's
   rules: where the cell forbids sleep, Wait only), owner Q (IN3) below. The A3 owned-bed gate runs in
   `ActivationSystems::Gates` on an owned placement (refusal reason = `sNotifyMessage64`) once crime A3 exists.
-  Classic: no def (furniture inert).
+  Classic: no def (furniture inert); the row's `Classic::RestMenu` only records that vanilla rests by the rest key and
+  the scripted beds' `ShowRestMenu`, nothing is offered on a static.
+- **Where `sleep` is added (IN3-REV):** `def_for` knows only the census kind, so the bake adds it beside the class
+  verb (`mw_bake/src/interact.rs:154-163`): a pure `mw_interaction::bed_verb(kind, class)` gives the slotless `sleep`
+  at `CLASS_VERB_PRIORITY` when the kind is `Bed` and `class_verb` is `None` (a `STAT`); an `ACTI` / `CONT` bed keeps
+  its class verb only. The defs product changes, so `InteractDefsStep::VERSION` goes 2 -> 3. Known gap: an `ACTI` bed
+  with no script gets `use` that does nothing and no `sleep` (none in vanilla; logged, not fixed in IN3a).
 - **Lie first** (IN3b): the host chains the bed's `lie` use before the UI when lie clips exist (AN30c).
 - **NPCs**: `AIWander` idles become slot activities when slots are near (ai-adapter.md mapping table); the `home` anchor
   is an owned bed (AI14); NPCs sleep in their own or their faction's beds (ownership on the placement); never a
