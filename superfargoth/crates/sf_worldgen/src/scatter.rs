@@ -78,6 +78,10 @@ pub fn declared() -> Vec<Declared> {
         d("scatter.canopy_stems_per_ha_max", 400.0, "1/ha", 50.0, 2000.0,
           "Reference(big-world-rendering.md Cost model, the stand case)",
           "cap on canopy stems per hectare of a tile at load, lowest ranks kept; before the full radius and the budget"),
+        d("scatter.rock.tilt_jitter_deg", 15.0, "deg", 0.0, 30.0, "Reference(WG-R, U)",
+          "a rock's up axis tilts uniformly up to this far off its aligned axis (pose at load)"),
+        d("scatter.rock.pack_model_share", 0.5, "ratio", 0.0, 1.0, "Guess(owner check WG-E3: 0 and 1 are the A/B arms)",
+          "chance a rock takes a fitting pack model over a library class at load: 0 library only, 1 a pack model            wherever one fits"),
     ]
 }
 
@@ -98,6 +102,10 @@ pub struct Params {
     pub focus: Option<[f64; 2]>,
     /// Stand cap, canopy stems per hectare of a tile ([`stand_cap`], WG-E2q). Load only, like `budget`.
     pub canopy_stems_per_ha_max: f64,
+    /// Rock tilt jitter, deg ([`crate::scatter_rocks::pick`], WG-E3e). Load only, like `budget`.
+    pub rock_tilt_jitter_deg: f64,
+    /// Rock pack-model share ([`crate::scatter_rocks::pick`], WG-E3e). Load only, like `budget`.
+    pub rock_pack_model_share: f64,
     /// Sea level of the terrain, metres (a fact of the terrain, not a tunable; 0 by default).
     pub sea_level_m: f64,
 }
@@ -116,6 +124,8 @@ impl Default for Params {
             full_radius_m: v("scatter.full_radius_m"),
             focus: None,
             canopy_stems_per_ha_max: v("scatter.canopy_stems_per_ha_max"),
+            rock_tilt_jitter_deg: v("scatter.rock.tilt_jitter_deg"),
+            rock_pack_model_share: v("scatter.rock.pack_model_share"),
             sea_level_m: 0.0, // tunables: const (a fact of the terrain the host passes, not a tunable)
         }
     }

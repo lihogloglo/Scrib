@@ -324,8 +324,9 @@ in the scatter next to the library (owner 2026-11-26, question 3). A **library c
 `classes.rs:44-157`, 9 classes) fits any `s`: variant `hash(instance, 2) mod N` (`rockgen.md:119-120`), scale `s /
 class size` (`rockgen.md:364`). A **pack model** (a model the adapter supplies with its longest axis and allowed
 scale range) is eligible only when `s` lies in `axis x [scale_min, scale_max]`, drawn at scale `s / axis`, with its
-own collision. Entry by `hash(instance, 1)` over the eligible weights, pack models x `rock.pack_model_share` and
-classes x its complement (0 = library only, 1 = a pack model wherever one fits: the A/B arms). No stretch:
+own collision. Entry by `hash(instance, 1)`: the kind first (a pack model with chance `rock.pack_model_share` when
+both kinds fit; classes alone carry a size no model covers; models alone carry it unless the share is 0), then the
+entry by weight within its kind (0 = library only, 1 = a pack model wherever one fits: the A/B arms; E3e). No stretch:
 `aspect_spread` varies shape, hulls stay exact (`sf_physics` statics). One size law and one pose rule for both kinds.
 
 **Pose.** Uniform yaw; up = v1 `align` blend + up to `tilt_jitter_deg`. Sink = `lerp(sink_small, sink_large, t)` of
@@ -418,6 +419,10 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
   survivors: capped plants are out of `n`, the shares and the inside count), `Params::canopy_stems_per_ha_max` (moved
   from `scatter_species.rs`, so no longer in the product hash); `flora::place` calls `budget_cut_load`; app `--set
   scatter.canopy_stems_per_ha_max` range-checked): as Design 10, cap tile = `scatter.tile_m` by position, rank = `budget_rank`.
+- **WG-E3e** (2026-11-27, `scatter_rocks.rs` `pick`, `RockPick`, `entry_fits`; `scatter.rs` `Params::rock_tilt_jitter_deg`,
+  `rock_pack_model_share`, declared `scatter.rock.*` load values out of the product hash): pick + pose at load, a pure
+  function of seed, key, size and ground; unit read at the parent (as the candidates); entry kind first, then weight;
+  variant raw hash (reader mod N); `sink` a share of the mesh's short axis (the reader knows the axis). Not yet called.
 
 ## Tunables
 
@@ -458,8 +463,8 @@ Prefix `scatter.`; source Guess unless noted. Species columns go in the file's `
 | `rock.talus_parent_per_ha` / `talus_spread_deg` / `talus_child_mean` | 1/ha / deg / count | 0-500 / 0-60 / 0-40 | 40 / 20 / 4 | Guess (child mean added at E3b: the process needs it) |
 | `rock.outcrop_parent_per_ha`, `_parent_min_m`, `cluster_sigma_m`, `child_mean`, `child_size_ratio` | | 0-50, 1-40, 2-30, 0-40, 0.05-1 | 2, 4, 6, 8, 0.4 | Guess (WG-R sigma 3-15) |
 | `rock.field_cluster_sigma_m` / `field_child_mean` / `field_slope_full_deg` | m / count / deg | 0.5-20 / 1-40 / 0-45 | 2 / 5 / 15 | Guess (added at E3c: the clumps and the slope hat need them) |
-| `rock.rock_k` / `tilt_jitter_deg` | ratio / deg | 0.5-1.2 / 0-30 | 0.9 / 15 | WG-R (U) |
-| `rock.pack_model_share` | ratio | 0-1 | 0.5 | Guess; owner check WG-E3 (0 and 1 are the A/B arms) |
+| `rock.rock_k` / `tilt_jitter_deg` | ratio / deg | 0.5-1.2 / 0-30 | 0.9 / 15 | WG-R (U); tilt is a load value (`scatter.rs` `Params`, not hashed; E3e) |
+| `rock.pack_model_share` | ratio | 0-1 | 0.5 | Guess; owner check WG-E3 (0 and 1 are the A/B arms); load value (`Params`, not hashed: live per load) |
 | row `size_min_m`, `size_max_m`; `sink_small`, `sink_large` | m; ratio | 0.2-40; 0-0.6 | talus 0.4-12, outcrop 1-20, field 0.3-2; 0.35, 0.15 | Guess |
 | unit `field_stone_per_ha` / `rockfall` | 1/ha / ratio | 0-500 / 0-4 | 20 / 1 | Guess |
 

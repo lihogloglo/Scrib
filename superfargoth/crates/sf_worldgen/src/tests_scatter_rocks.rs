@@ -368,3 +368,203 @@ fn outcrops_and_field_stones_tile_alone() {
         }
     }
 }
+
+// WG-E3e: mesh pick and pose. Synthetic kept rocks (talus, one per parent index) on flat ground or on a 30 deg slope
+// facing east. Basalt's talus entries: classes `a` (weight 1) and `b` (weight 3), the pack model `m` (axis 2 m, scale
+// 0.5-2: sizes 1-4 m, weight 1); `bare` lists only `m`. Row 0.4-12 m, default sinks, align from the file.
+
+/// A uniform slope of `slope_deg` facing east (0: flat); unit `unit` everywhere.
+struct Slope {
+    slope_deg: f64,
+    unit: &'static str,
+}
+
+impl RockGround for Slope {
+    fn height_m(&self, x: f64, _y: f64) -> f64 {
+        -x * self.slope_deg.to_radians().tan()
+    }
+    fn slope_aspect_deg(&self, _x: f64, _y: f64) -> (f64, f64) {
+        (self.slope_deg, 90.0)
+    }
+    fn cliff(&self, _x: f64, _y: f64) -> bool {
+        false
+    }
+    fn unit(&self, _x: f64, _y: f64) -> Option<&str> {
+        Some(self.unit)
+    }
+}
+
+fn pick_file(align: f64) -> SpeciesFile {
+    let src = format!(
+        r#"
+[columns]
+size_min_m = {{ unit = "m", min = 0.2, max = 40, source = "Guess" }}
+size_max_m = {{ unit = "m", min = 0.2, max = 40, source = "Guess" }}
+align = {{ unit = "ratio", min = 0, max = 1, source = "Guess" }}
+
+[rocks.talus]
+size_min_m = 0.4
+size_max_m = 12
+align = {align}
+
+[rock_units.basalt]
+talus = [
+  {{ kind = "class", class = "a", weight = 1 }},
+  {{ kind = "class", class = "b", weight = 3 }},
+  {{ kind = "model", model = "m", axis_m = 2, scale_min = 0.5, scale_max = 2, weight = 1 }},
+]
+
+[rock_units.bare]
+talus = [{{ kind = "model", model = "m", axis_m = 2, scale_min = 0.5, scale_max = 2, weight = 1 }}]
+"#
+    );
+    SpeciesFile::parse_toml(&src).unwrap()
+}
+
+fn pick_params(share: f64, tilt: f64) -> crate::scatter::Params {
+    crate::scatter::Params { rock_pack_model_share: share, rock_tilt_jitter_deg: tilt, ..crate::scatter::Params::default() }
+}
+
+/// `n` kept talus rocks of size `size(i)`, keys (tile 0 0, parent i, offspring 0).
+fn rocks(n: u32, size: impl Fn(u32) -> f64) -> Vec<RockCandidate> {
+    (0..n)
+        .map(|i| RockCandidate {
+            key: RockKey { context: RockContext::Talus, tile: (0, 0), parent: i, offspring: 0 },
+            pos: [f64::from(i % 100), f64::from(i / 100)],
+            size_m: size(i),
+            tiebreak: 0,
+            source: [0.0, 0.0],
+        })
+        .collect()
+}
+
+fn name(e: &RockEntry) -> &str {
+    match e {
+        RockEntry::Class { class, .. } => class,
+        RockEntry::Model { model, .. } => model,
+    }
+}
+
+/// `|got - p n| <= 3 sqrt(n p (1 - p))`.
+fn within_3_sigma(got: usize, n: usize, p: f64) -> bool {
+    let (g, n) = (got as f64, n as f64);
+    (g - p * n).abs() <= 3.0 * (n * p * (1.0 - p)).sqrt()
+}
+
+#[test]
+fn pick_entry_shares_hold_within_three_sigma() {
+    let f = pick_file(0.0);
+    let g = Slope { slope_deg: 0.0, unit: "basalt" };
+    for share in [0.25, 0.5, 0.8] {
+        let prm = pick_params(share, 15.0);
+        // s = 2 m: the model fits; the kind first at `share`, then a:b = 1:3 among the classes.
+        let picks: Vec<_> = rocks(10_000, |_| 2.0).iter().map(|c| pick(&f, &prm, &g, c).unwrap()).collect();
+        let m = picks.iter().filter(|p| name(p.entry) == "m").count();
+        let a = picks.iter().filter(|p| name(p.entry) == "a").count();
+        assert!(within_3_sigma(m, picks.len(), share), "share {share}: {m} models of {}", picks.len());
+        assert!(within_3_sigma(a, picks.len() - m, 0.25), "share {share}: {a} a of {} classes", picks.len() - m);
+    }
+    // s = 8 m: no model fits, the classes carry every rock at 1:3.
+    let prm = pick_params(0.5, 15.0);
+    let picks: Vec<_> = rocks(10_000, |_| 8.0).iter().map(|c| pick(&f, &prm, &g, c).unwrap()).collect();
+    assert!(picks.iter().all(|p| matches!(p.entry, RockEntry::Class { .. })));
+    let a = picks.iter().filter(|p| name(p.entry) == "a").count();
+    assert!(within_3_sigma(a, picks.len(), 0.25), "{a} a of {}", picks.len());
+}
+
+#[test]
+fn pick_never_draws_a_pack_model_outside_its_scale_range() {
+    let f = pick_file(0.0);
+    let g = Slope { slope_deg: 0.0, unit: "basalt" };
+    let sized = rocks(10_000, |i| pareto_size(0.4, 12.0, 1.0, f64::from(i) / 10_000.0));
+    for share in [0.0, 0.5, 1.0] {
+        let prm = pick_params(share, 15.0);
+        let mut models = 0;
+        for c in &sized {
+            let p = pick(&f, &prm, &g, c).unwrap();
+            let fits = (1.0..=4.0).contains(&c.size_m);
+            match p.entry {
+                RockEntry::Model { axis_m, .. } => {
+                    models += 1;
+                    assert!(fits, "model at {} m", c.size_m);
+                    assert_eq!(p.scale, c.size_m / axis_m);
+                }
+                RockEntry::Class { .. } => {
+                    assert_eq!(p.scale, c.size_m);
+                    // Share 1: a pack model wherever one fits.
+                    assert!(!(share == 1.0 && fits), "class at {} m with share 1", c.size_m);
+                }
+            }
+        }
+        // Share 0: library only.
+        assert_eq!(models == 0, share == 0.0, "share {share}: {models} models");
+    }
+    // A unit with only pack models: share 0 leaves its rocks without a mesh; share 0.5 gives them the model where it
+    // fits and nothing elsewhere.
+    let bare = Slope { slope_deg: 0.0, unit: "bare" };
+    for c in &sized {
+        assert!(pick(&f, &pick_params(0.0, 15.0), &bare, c).is_none());
+        let p = pick(&f, &pick_params(0.5, 15.0), &bare, c);
+        assert_eq!(p.is_some(), (1.0..=4.0).contains(&c.size_m), "{} m", c.size_m);
+    }
+}
+
+#[test]
+fn pick_sinks_small_stones_deep_and_big_blocks_high() {
+    let f = pick_file(0.0);
+    let g = Slope { slope_deg: 0.0, unit: "basalt" };
+    let prm = pick_params(0.5, 15.0);
+    let row = f.rocks[&RockContext::Talus];
+    let sink = |s: f64| pick(&f, &prm, &g, &rocks(1, |_| s)[0]).unwrap().sink;
+    assert_eq!(sink(0.4), row.sink_small);
+    assert_eq!(sink(12.0), row.sink_large);
+    let mid = sink((0.4f64 * 12.0).sqrt());
+    assert!((mid - f64::midpoint(row.sink_small, row.sink_large)).abs() < 1e-12, "{mid}");
+    assert!(sink(1.0) > sink(5.0));
+}
+
+fn angle_deg(a: [f64; 3], b: [f64; 3]) -> f64 {
+    (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]).clamp(-1.0, 1.0).acos().to_degrees()
+}
+
+#[test]
+fn pick_up_follows_align_and_tilts_within_the_jitter() {
+    let g = Slope { slope_deg: 30.0, unit: "basalt" };
+    let normal = [30f64.to_radians().sin(), 0.0, 30f64.to_radians().cos()];
+    let cs = rocks(2000, |_| 2.0);
+    // No jitter: align 0 is upright, align 1 the normal (leaning downslope, east).
+    for (align, want) in [(0.0, [0.0, 0.0, 1.0]), (1.0, normal)] {
+        let f = pick_file(align);
+        for c in &cs {
+            let up = pick(&f, &pick_params(0.5, 0.0), &g, c).unwrap().up;
+            assert!(angle_deg(up, want) < 1e-6, "align {align}: {up:?}");
+        }
+    }
+    // Jitter 15 deg: every up within 15 deg of the aligned axis, spread over the range; yaw over the turn.
+    let f = pick_file(1.0);
+    let picks: Vec<_> = cs.iter().map(|c| pick(&f, &pick_params(0.5, 15.0), &g, c).unwrap()).collect();
+    let tilts: Vec<f64> = picks.iter().map(|p| angle_deg(p.up, normal)).collect();
+    assert!(tilts.iter().all(|t| *t <= 15.0 + 1e-9));
+    assert!(tilts.iter().any(|t| *t > 14.0) && tilts.iter().any(|t| *t < 1.0));
+    assert!(picks.iter().all(|p| (0.0..std::f64::consts::TAU).contains(&p.yaw_rad) && p.up.iter().all(|v| v.is_finite())));
+    assert!(picks.iter().any(|p| p.yaw_rad > 6.0) && picks.iter().any(|p| p.yaw_rad < 0.3));
+}
+
+#[test]
+fn pick_tile_alone() {
+    let f = file(0.4, 12.0);
+    let v = values(2.0, 0.4);
+    let prm = pick_params(0.5, 15.0);
+    let g = Scarp::new();
+    let all = talus(&f, v, ALL);
+    for rect in [[0.0, 0.0, 256.0, 256.0], [-37.5, 900.0, 64.0, 1100.25]] {
+        let alone: Vec<_> = talus(&f, v, rect).iter().map(|c| pick(&f, &prm, &g, c)).collect();
+        let inside: Vec<_> = all
+            .iter()
+            .filter(|c| c.pos[0] >= rect[0] && c.pos[0] < rect[2] && c.pos[1] >= rect[1] && c.pos[1] < rect[3])
+            .map(|c| pick(&f, &prm, &g, c))
+            .collect();
+        assert!(!alone.is_empty() && alone.iter().all(Option::is_some));
+        assert_eq!(alone, inside, "rect {rect:?}");
+    }
+}
