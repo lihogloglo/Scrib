@@ -16,8 +16,9 @@
 //! source point is the same `(col, row)`. Slope and normal come from the guide's own heights (the scaled source plus
 //! the volcano uplift, the macro surface the occupancy was measured at), the height band from the source height at
 //! that point (source-equivalent metres, so bands keep their meaning under the uplift), the region from the source
-//! cell, the exclusion from the stamps (weight > 0: settlement footprints and bands) and the guide's own towns (no
-//! stamp: their placements' built-up area, [`towns`]), the placement height from the
+//! cell, the exclusion from the stamps (weight > 0: settlement footprints and bands), the guide's site and road
+//! clearings (WG-V1b, [`guide_clearings`]) and the guide's own towns (no stamp: their placements' built-up area,
+//! [`towns`]), the placement height from the
 //! runtime tiles (`GuideTiles::height` at level 0, stamps and filter included: the ground the game draws). The
 //! macro slope rather than the filtered one: the filter's detail is below the scale the source was measured at.
 
@@ -29,6 +30,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use glam::{DVec3, Quat, Vec3};
@@ -39,6 +41,10 @@ use sf_records::RecordDb;
 use sf_vfs::VfsPath;
 use sf_world::{Placement, PlacementClass, PlacementFlags, PlacementId, RecordRef};
 use sf_worldgen::guide::Guide;
+use sf_worldgen::reach::VALID_FILE;
+use sf_worldgen::roads::RoadNetwork;
+use sf_worldgen::sites::SitesFile;
+use sf_worldgen::sites::clearings::{ClearingValues, Clearings};
 use sf_worldgen::scatter::{self, Item, Learner, Observed, Params, Scatter, Site, Species, Table, Terrain};
 use sf_worldgen::tiles::GuideTiles;
 
@@ -288,9 +294,32 @@ pub struct World<'a> {
     pub source: &'a Mosaic,
     pub regions: &'a RegionMap,
     pub tiles: &'a GuideTiles,
+    /// The guide's site and road clearings (WG-V1b), when it has any.
+    pub clearings: Option<&'a Clearings>,
+    /// Points only the clearings excluded (the stamps' are not counted).
+    pub clearing_hits: AtomicUsize,
 }
 
-impl World<'_> {
+impl<'a> World<'a> {
+    /// The 10× world on `tiles`' guide (`source` and `regions` the content's), outside `clearings` too.
+    #[must_use]
+    pub fn new(source: &'a Mosaic, regions: &'a RegionMap, tiles: &'a GuideTiles, clearings: Option<&'a Clearings>) -> Self {
+        let g = tiles.guide();
+        Self {
+            guide: Grid { w: g.w, h: g.h, origin: g.origin_m, spacing: g.spacing_m, data: &g.heights },
+            source,
+            regions,
+            tiles,
+            clearings,
+            clearing_hits: AtomicUsize::new(0),
+        }
+    }
+
+    /// The clearings' count so far, reset to 0.
+    pub fn take_clearing_hits(&self) -> usize {
+        self.clearing_hits.swap(0, Ordering::Relaxed)
+    }
+
     fn sample(&self, x: f64, y: f64) -> Option<(f64, f64)> {
         let (c, r) = self.guide.colrow(x, y);
         self.guide.inside(c, r).then_some((c, r))
@@ -333,7 +362,14 @@ impl Terrain for World<'_> {
     }
 
     fn excluded(&self, x: f64, y: f64) -> bool {
-        self.tiles.stamps().and_then(|s| s.sample(x, y)).is_some_and(|(_, w)| w > 0.0)
+        if self.tiles.stamps().and_then(|s| s.sample(x, y)).is_some_and(|(_, w)| w > 0.0) {
+            return true;
+        }
+        let hit = self.clearings.is_some_and(|c| c.contains(x, y));
+        if hit {
+            self.clearing_hits.fetch_add(1, Ordering::Relaxed);
+        }
+        hit
     }
 
     fn height(&self, x: f64, y: f64) -> f64 {
@@ -355,8 +391,42 @@ pub struct FloraRun {
     pub stamped: bool,
     /// The guide towns' exclusion.
     pub towns: TownCensus,
+    /// The guide's site and road clearings.
+    pub clearings: ClearingCensus,
     /// Seconds: source (mosaic, regions, references), learning, area census, scatter.
     pub seconds: [f64; 4],
+}
+
+/// The clearings of a flora run: what gave them, and the candidates only they excluded.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ClearingCensus {
+    /// Sites that gave a clearing (not dropped, not kept towns).
+    pub sites: usize,
+    /// Road segments that gave a clearing.
+    pub roads: usize,
+    /// Candidates the clearings excluded (not the stamps' nor the towns').
+    pub excluded: usize,
+}
+
+/// The site list of a guide folder before V1 judged it (format 1 or 2), read when there is no [`VALID_FILE`].
+// tunables: const (file name)
+pub const SITES_FILE: &str = "sites.json";
+
+/// The clearings of a guide folder (spec `sites.md` "WG-V1b clearings"): its judged sites ([`VALID_FILE`], else
+/// [`SITES_FILE`]) and its `roads.json`, each when present, at the declared `clearing.*` values; `None` when they give
+/// no clearing (format-1 sites are kept towns, which clear nothing: only their roads do).
+///
+/// # Errors
+/// A site list or road network that is present but unreadable.
+pub fn guide_clearings(dir: &Path) -> Result<Option<Clearings>, DumpError> {
+    let invalid = |what: &Path, e: sf_worldgen::Error| DumpError::Invalid(format!("{}: {e}", what.display()));
+    let sites = match [dir.join(VALID_FILE), dir.join(SITES_FILE)].into_iter().find(|p| p.exists()) {
+        Some(p) => SitesFile::read(&p).map_err(|e| invalid(&p, e))?.sites,
+        None => Vec::new(),
+    };
+    let roads = RoadNetwork::read(dir).map_err(|e| invalid(&dir.join("roads.json"), e))?;
+    let c = Clearings::new(&sites, roads.as_ref(), &ClearingValues::default());
+    Ok((!c.is_empty()).then_some(c))
 }
 
 /// Checks the guide is the mosaic's grid scaled by some S (dims equal, origin = source origin × S); returns S.
@@ -376,12 +446,13 @@ pub fn guide_scale(guide: &Guide, m: &Mosaic) -> Result<f64, DumpError> {
     Ok(s)
 }
 
-/// Learns from `db`'s exterior and scatters on `tiles`' guide, outside the stamps and `towns`.
+/// Learns from `db`'s exterior and scatters on `tiles`' guide, outside the stamps, `clearings` and `towns`.
 pub fn scatter_world(
     db: &RecordDb,
     source: &MwWorldSource,
     bounds: Bounds<'_>,
     tiles: &GuideTiles,
+    clearings: Option<&Clearings>,
     towns: &TownMask,
     prm: Params,
 ) -> Result<FloraRun, DumpError> {
@@ -395,24 +466,21 @@ pub fn scatter_world(
     let t1 = Instant::now();
     let learned = learn(&m, &regions, &refs, &prm, crate::anchor::SEA_LEVEL_M);
     let t2 = Instant::now();
-    let world = World {
-        guide: Grid { w: g.w, h: g.h, origin: g.origin_m, spacing: g.spacing_m, data: &g.heights },
-        source: &m,
-        regions: &regions,
-        tiles,
-    };
+    let plain = World::new(&m, &regions, tiles, clearings);
     let rect = [
         g.origin_m[0],
         g.origin_m[1] - (g.h - 1) as f64 * g.spacing_m,
         g.origin_m[0] + (g.w - 1) as f64 * g.spacing_m,
         g.origin_m[1],
     ];
-    let world = WithTowns::new(&world, towns);
+    let world = WithTowns::new(&plain, towns);
     let area = scatter::area_census(&world, &prm, rect, regions.legend.len());
     let expected = scatter::expected(&learned.table, &prm, &area);
     let keep = scatter::budget_keep(&learned.table, &prm, &expected);
     let t3 = Instant::now();
-    world.take_hits(); // the census's land samples, not candidates
+    // The census's land samples, not candidates.
+    world.take_hits();
+    plain.take_clearing_hits();
     let items = Scatter::new(&learned.table, keep.clone(), prm).run(&world, rect);
     let t4 = Instant::now();
     let region_names = regions
@@ -431,6 +499,11 @@ pub fn scatter_world(
         scale,
         stamped: tiles.stamps().is_some(),
         towns: TownCensus { excluded: world.take_hits(), ..towns.census },
+        clearings: ClearingCensus {
+            sites: clearings.map_or(0, |c| c.sites),
+            roads: clearings.map_or(0, |c| c.roads),
+            excluded: plain.take_clearing_hits(),
+        },
         seconds: [s(t0, t1), s(t1, t2), s(t2, t3), s(t3, t4)],
     })
 }
@@ -470,12 +543,14 @@ pub fn placements(run: &FloraRun) -> Vec<Placement> {
 }
 
 /// The hook of `view world:<dir>` (`mw_exterior_bevy::worldgen::WorldgenContent::extra`): the flora pass at the
-/// declared defaults (`budget` overrides `scatter.budget`, from `--set`), outside the guide's `towns` (one placement
-/// list per town, `bounds` covering their models), logged; an error is logged and gives nothing.
+/// declared defaults (`budget` overrides `scatter.budget`, from `--set`), outside the clearings of the `guide` folder
+/// ([`guide_clearings`]) and the guide's `towns` (one placement list per town, `bounds` covering their models),
+/// logged; an error is logged and gives nothing.
 pub fn extra(
     db: &RecordDb,
     source: &MwWorldSource,
     bounds: Bounds<'_>,
+    guide: &Path,
     tiles: &GuideTiles,
     towns: &[&[Placement]],
     budget: Option<f64>,
@@ -485,7 +560,14 @@ pub fn extra(
         prm.budget = b;
     }
     let towns = TownMask::new(towns, bounds, &TownParams::default());
-    match scatter_world(db, source, bounds, tiles, &towns, prm) {
+    let clearings = match guide_clearings(guide) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("worldgen flora: {e}");
+            return Vec::new();
+        }
+    };
+    match scatter_world(db, source, bounds, tiles, clearings.as_ref(), &towns, prm) {
         Ok(run) => {
             println!("worldgen flora: {}", summary_line(&run));
             vec![("flora".into(), placements(&run))]
@@ -517,8 +599,8 @@ fn full_per_group(run: &FloraRun) -> [f64; 2] {
     n
 }
 
-/// `212345 placements (flora 180000 of 3.1 M full, rocks ...), 312 species, budget 200000, stamps, 1 towns (...),
-/// 4.2 s`.
+/// `212345 placements (flora 180000 of 3.1 M full, rocks ...), 312 species, budget 200000, stamps, clearings (...),
+/// 1 towns (...), 4.2 s`.
 pub fn summary_line(run: &FloraRun) -> String {
     let (n, full) = (items_per_group(run), full_per_group(run));
     let t = &run.towns;
@@ -530,9 +612,15 @@ pub fn summary_line(run: &FloraRun) -> String {
             t.towns, t.footprints, t.unbounded, t.area_m2, t.excluded
         )
     };
+    let c = &run.clearings;
+    let clearings = if c.sites + c.roads == 0 {
+        "no clearings".to_owned()
+    } else {
+        format!("clearings ({} sites, {} road segments, {} candidates excluded)", c.sites, c.roads, c.excluded)
+    };
     format!(
         "{} placements (flora {} of {:.0} at full density, rocks {} of {:.0}), {} species, budget {:.0}, {}stamps, \
-         {towns}, {:.1} s (source {:.1}, learn {:.1}, census {:.1}, scatter {:.1})",
+         {clearings}, {towns}, {:.1} s (source {:.1}, learn {:.1}, census {:.1}, scatter {:.1})",
         run.items.len(),
         n[0],
         full[0],
@@ -648,7 +736,8 @@ pub fn run_census(db: &RecordDb, bounds: Bounds<'_>, guide: &Path, budget: Optio
     if let Some(b) = budget {
         prm.budget = b;
     }
-    let run = scatter_world(db, &source, bounds, &tiles, &TownMask::default(), prm)?;
+    let clearings = guide_clearings(guide)?;
+    let run = scatter_world(db, &source, bounds, &tiles, clearings.as_ref(), &TownMask::default(), prm)?;
     let md = census_md(&run, guide, 8);
     std::fs::write(guide.join("flora-census.md"), &md)?;
     Ok(md)

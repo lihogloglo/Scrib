@@ -11,7 +11,7 @@ use sf_worldgen::guide::Guide;
 use sf_worldgen::scatter::{Params, Scatter, Terrain};
 use sf_worldgen::tiles::{GuideTiles, TileSettings};
 
-use crate::flora::{self, FloraRun, GROUP_FLORA, GROUP_ROCKS, Grid, SourceRef, World};
+use crate::flora::{self, FloraRun, GROUP_FLORA, GROUP_ROCKS, SourceRef, World};
 use crate::{Mosaic, RegionEntry, RegionMap};
 
 /// One cell, 65 × 65 samples: wet for col ≤ 3, flat at 5 m to col 31, then a 45° ramp rising east.
@@ -133,12 +133,7 @@ fn scatter_on_the_ten_times_guide_and_its_placements() {
     let t = tiles(&m);
     let g = t.guide();
     assert!((flora::guide_scale(g, &m).unwrap() - 10.0).abs() < 1e-9);
-    let world = World {
-        guide: Grid { w: g.w, h: g.h, origin: g.origin_m, spacing: g.spacing_m, data: &g.heights },
-        source: &m,
-        regions: &regions,
-        tiles: &t,
-    };
+    let world = World::new(&m, &regions, &t, None);
     let rect = [g.origin_m[0], g.origin_m[1] - 64.0 * g.spacing_m, g.origin_m[0] + 64.0 * g.spacing_m, g.origin_m[1]];
     let area = sf_worldgen::scatter::area_census(&world, &prm, rect, regions.legend.len());
     let expected = sf_worldgen::scatter::expected(&learned.table, &prm, &area);
@@ -171,6 +166,7 @@ fn scatter_on_the_ten_times_guide_and_its_placements() {
         scale: 10.0,
         stamped: false,
         towns: flora::towns::TownCensus::default(),
+        clearings: flora::ClearingCensus::default(),
         seconds: [0.0; 4],
     };
     let placements = flora::placements(&run);
@@ -205,12 +201,7 @@ fn scatter_keeps_out_of_a_guide_town() {
     let learned = flora::learn(&m, &regions, &fixture_refs(&m), &prm, 0.0);
     let t = tiles(&m);
     let g = t.guide();
-    let world = World {
-        guide: Grid { w: g.w, h: g.h, origin: g.origin_m, spacing: g.spacing_m, data: &g.heights },
-        source: &m,
-        regions: &regions,
-        tiles: &t,
-    };
+    let world = World::new(&m, &regions, &t, None);
     let rect = [g.origin_m[0], g.origin_m[1] - 64.0 * g.spacing_m, g.origin_m[0] + 64.0 * g.spacing_m, g.origin_m[1]];
     let area = sf_worldgen::scatter::area_census(&world, &prm, rect, regions.legend.len());
     let expected = sf_worldgen::scatter::expected(&learned.table, &prm, &area);
@@ -269,4 +260,70 @@ fn scatter_keeps_out_of_a_guide_town() {
     // No town: the same instances as the plain terrain.
     let none = TownMask::default();
     assert_eq!(scatter.run(&WithTowns::new(&world, &none), rect), before);
+}
+
+/// WG-V1b.2: a guide folder with a road across the flat, then a judged site list (a ring site, a disc site, a dropped
+/// one) beside a format-1 list: the scatter keeps out of every clearing, is the same everywhere else, and counts what
+/// the clearings took; `sites.valid.json` wins over `sites.json`; no file, no clearing.
+#[test]
+fn scatter_keeps_out_of_the_guide_clearings() {
+    let m = mosaic();
+    let regions = regions();
+    let prm = Params { tile_m: 128.0, census_step_m: 8.0, ..Params::default() };
+    let learned = flora::learn(&m, &regions, &fixture_refs(&m), &prm, 0.0);
+    let t = tiles(&m);
+    let g = t.guide();
+    let plain = World::new(&m, &regions, &t, None);
+    let rect = [g.origin_m[0], g.origin_m[1] - 64.0 * g.spacing_m, g.origin_m[0] + 64.0 * g.spacing_m, g.origin_m[1]];
+    let area = sf_worldgen::scatter::area_census(&plain, &prm, rect, regions.legend.len());
+    let expected = sf_worldgen::scatter::expected(&learned.table, &prm, &area);
+    let keep = sf_worldgen::scatter::budget_keep(&learned.table, &prm, &expected);
+    let scatter = Scatter::new(&learned.table, keep, prm);
+    let before = scatter.run(&plain, rect);
+
+    // Guide frame on the flat (cols 5..=31): a north-south road at col 12, a 60 m ring site at col 24 row 32, a disc
+    // site at col 24 row 12 and a dropped site at col 24 row 52.
+    let at = |c: f64, r: f64| [g.origin_m[0] + c * g.spacing_m, g.origin_m[1] - r * g.spacing_m];
+    let dir = tempfile::tempdir().unwrap();
+    assert!(flora::guide_clearings(dir.path()).unwrap().is_none(), "no file, no clearing");
+    let (r0, r1, r2) = (at(12.0, 2.0), at(12.0, 32.0), at(12.0, 62.0));
+    let roads = serde_json::json!({ "format": 1, "junctions": [], "segments": [{ "id": 1, "class": "local",
+        "surface": "dirt", "width_m": 4.0, "a": 0, "b": 1, "points": [r0, r1, r2], "crossings": [],
+        "length_m": r0[1] - r2[1], "grade": 0.0 }] });
+    std::fs::write(dir.path().join("roads.json"), roads.to_string()).unwrap();
+    let town = serde_json::json!({ "format": 1, "sites": [{ "key": "town", "population": 100, "culture": "c",
+        "centre_m": at(24.0, 32.0), "radius_m": 200.0 }] });
+    std::fs::write(dir.path().join(flora::SITES_FILE), town.to_string()).unwrap();
+    let c = flora::guide_clearings(dir.path()).unwrap().expect("the road clears");
+    assert_eq!((c.sites, c.roads), (0, 1), "a format-1 list holds kept towns only");
+
+    let ring = at(24.0, 32.0);
+    let sq = |dx: f64, dy: f64| [ring[0] + dx, ring[1] + dy];
+    let valid = serde_json::json!({ "format": 2, "seed": 1, "guide_blake3": "g", "table_blake3": "t",
+        "packs_blake3": "p", "sites": [
+        { "key": "ring", "centre_m": ring, "kind": "remote", "kept": false, "status": "placed", "clearing_m": 12.0,
+          "footprint": [sq(-30.0, -30.0), sq(30.0, -30.0), sq(30.0, 30.0), sq(-30.0, 30.0)] },
+        { "key": "disc", "centre_m": at(24.0, 12.0), "radius_m": 10.0, "kind": "hamlet", "kept": false,
+          "status": "reseated", "clearing_m": 10.0 },
+        { "key": "gone", "centre_m": at(24.0, 52.0), "radius_m": 10.0, "kind": "remote", "kept": false,
+          "status": "dropped", "clearing_m": 10.0 }
+    ]});
+    std::fs::write(dir.path().join(sf_worldgen::reach::VALID_FILE), valid.to_string()).unwrap();
+    let c = flora::guide_clearings(dir.path()).unwrap().expect("sites and road clear");
+    assert_eq!((c.sites, c.roads), (2, 1), "the judged list wins; the dropped site clears nothing");
+
+    let with = World::new(&m, &regions, &t, Some(&c));
+    let after = scatter.run(&with, rect);
+    let excluded = with.take_clearing_hits();
+    for i in &after {
+        assert!(!c.contains(i.pos[0], i.pos[1]), "{i:?} in a clearing");
+    }
+    // Elsewhere the same instances, in the same order: only the clearings' are gone, and the count says how many.
+    let kept: Vec<_> = before.iter().filter(|i| !c.contains(i.pos[0], i.pos[1])).copied().collect();
+    assert_eq!(after, kept);
+    assert_eq!(excluded, before.len() - after.len());
+    let in_ring = before.iter().filter(|i| (i.pos[0] - ring[0]).abs() < 30.0 && (i.pos[1] - ring[1]).abs() < 30.0);
+    assert!(in_ring.count() > 0, "the ring site held instances before");
+    assert!(excluded >= 10, "the clearings held {excluded} of {} instances", before.len());
+    println!("flora census delta: clearings excluded {excluded} of {} instances ({} sites, {} road segments)", before.len(), c.sites, c.roads);
 }

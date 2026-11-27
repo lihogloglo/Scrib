@@ -122,7 +122,7 @@ pub(crate) fn view(install: &MorrowindInstall, dir: &str, mut flags: crate::View
     }
     let anchors = AnchorTransform::read(path).map_err(|e| format!("world:{dir}: {e}"))?;
     let mut world_content =
-        anchors.map(|a| moved_content(&content.db, &a, &tiles, &towns, &options.store, &options.manifest, flora_budget));
+        anchors.map(|a| moved_content(&content.db, &a, path, &tiles, &towns, &options.store, &options.manifest, flora_budget));
     if !towns.is_empty() {
         let c = world_content.get_or_insert_with(Default::default);
         c.extra.extend(towns.into_iter().map(|t| (t.name, t.placements)));
@@ -239,10 +239,12 @@ fn with_exterior_layers(
 }
 
 /// The content's exterior references moved through `anchors` (`world_content`), with their log lines; the flora pass
-/// keeps out of the guide's `towns` too.
+/// keeps out of the guide's `towns` and of the clearings of its folder (`guide`) too.
+#[allow(clippy::too_many_arguments)] // the `view world:` load's pieces, each borrowed from a different owner
 fn moved_content(
     db: &RecordDb,
     anchors: &AnchorTransform,
+    guide: &Path,
     tiles: &GuideTiles,
     towns: &[GuideTown],
     store: &Store,
@@ -286,7 +288,7 @@ fn moved_content(
     );
     println!("worldgen anchors: {}", census.line());
     let town_sets: Vec<&[Placement]> = towns.iter().map(|t| t.placements.as_slice()).collect();
-    let extra = mw_worldgen::flora::extra(db, &source, &bounds, tiles, &town_sets, flora_budget);
+    let extra = mw_worldgen::flora::extra(db, &source, &bounds, guide, tiles, &town_sets, flora_budget);
     mw_exterior_bevy::worldgen::WorldgenContent { placements, extra }
 }
 

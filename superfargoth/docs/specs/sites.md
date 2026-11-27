@@ -257,6 +257,10 @@ back to the region map.
   clear them; a format-1 `radius_m` is a town extent) give ring + `clearing_m` (else disc + `clearing_m`); roads give
   capsules of `width_m / 2 + clearing.road_m` round chords every `clearing.road_step_m` (new, 2 m) of the ribbon spline.
   Sparse 64 m bucket grid (speed only; equals one bucket on a 70 k point grid, any order).
+- **WG-V1b.2 (2026-11-27)** game exclusion: `mw_worldgen::flora::World::excluded` = stamps OR `Clearings::contains`
+  (`flora.rs`; `WithTowns` adds the towns on top, so flora and rocks both skip them), clearings from
+  `flora::guide_clearings(<guide>)`: `sites.valid.json`, else `sites.json`, plus `roads.json`, each when present.
+  Census `ClearingCensus` (sites, road segments, candidates only the clearings took) in the `worldgen flora:` line.
 
 ## Tunables
 
