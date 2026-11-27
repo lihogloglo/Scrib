@@ -296,6 +296,11 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
   `rock_grow_m` = max over plant layers (`grow_l + s_max / 2 + foot_l`) + `(2k - 1) rock_k s_max`; dropped at their point in a
   forced clearing or on water, one competition over the contexts (`scatter.rock.rock_k`, declared here), footprints `s / 2`
   into `Cover` as obstacles. The rock budget group is not wired (`budget_cut` takes plants). 2 tests.
+- **WG-E2i.1** (2026-11-27, `climate_map.rs`, `scatter_fields.rs`): `ClimateMap::read(dir)` loads `dir/climate/`,
+  refusing a wrong format, size or blake3 (per file and product) and out-of-range class ids; `climate.json` gains
+  `budget` + `mfd_stuck` (older products read 0). `GridFields::from_products(&Guide, &ClimateMap)`: climate rasters as
+  is; `terrain_shape` = Horn slope/aspect + Florinsky plan curvature (1/m, convex +); sea distance by exact EDT
+  (`NO_WATER_M` without sea; inland water stays E2g's exact distance). 3 tests.
 
 ## Tunables
 

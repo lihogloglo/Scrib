@@ -9,7 +9,9 @@
 //! Files (row-major, row 0 north, little-endian, one value per guide sample): `temperature.f32` (C),
 //! `precipitation.f32` (mm/yr, never below 0), `moisture.f32` (0..1), `classes.u8` (index into
 //! `climate.json` `classes`); plus `climate.json` (class names, declared values, applied overrides) and
-//! `meta.json` (dims, spacing, origin, per-file and product blake3).
+//! `meta.json` (dims, spacing, origin, per-file and product blake3). [`ClimateMap::read`] loads it back, every file's
+//! blake3 checked against `meta.json` (a product without the `budget` / `mfd_stuck` diagnostics of `climate.json`,
+//! written before 2026-11-27, reads them as 0).
 //!
 //! [`run_climate`] is one `scrib-worldgen climate` invocation: guide folder in, `climate/` out, one summary line.
 
@@ -233,6 +235,13 @@ impl ClimateMap {
                 "classes": self.class_names,
                 "values": values,
                 "overrides": overrides,
+                "budget": {
+                    "inflow": self.budget.inflow,
+                    "source": self.budget.source,
+                    "rain": self.budget.rain,
+                    "outflow": self.budget.outflow,
+                },
+                "mfd_stuck": self.mfd_stuck,
             }))?,
         )?;
         std::fs::write(
@@ -249,6 +258,144 @@ impl ClimateMap {
         )?;
         Ok(hash)
     }
+
+    /// Reads `dir/climate/` (written by [`ClimateMap::write`]): the format, every file's size and blake3 and the
+    /// product blake3 are checked against `meta.json`, the class ids against `climate.json`'s class names.
+    pub fn read(dir: &Path) -> Result<Self> {
+        let src = dir.join("climate");
+        let bad = |what: String| Error::Invalid(format!("climate product {}: {what}", src.display()));
+        let meta: MetaJson = serde_json::from_str(&std::fs::read_to_string(src.join("meta.json"))?)?;
+        let info: ClimateJson = serde_json::from_str(&std::fs::read_to_string(src.join("climate.json"))?)?;
+        if meta.format != FORMAT || info.format != FORMAT {
+            return Err(bad(format!(
+                "format {} / {} (meta / climate.json), this build reads {FORMAT}",
+                meta.format, info.format
+            )));
+        }
+        let [w, h] = meta.dims;
+        let n = w * h;
+        // File, bytes per sample (the order of `layers`).
+        let names = [("temperature.f32", 4), ("precipitation.f32", 4), ("moisture.f32", 4), ("classes.u8", 1)];
+        if let Some(extra) = meta.files.keys().find(|k| !names.iter().any(|(name, _)| name == k)) {
+            return Err(bad(format!("meta.json lists an unknown file {extra}")));
+        }
+        let mut total = blake3::Hasher::new();
+        let mut layers = Vec::with_capacity(names.len());
+        for (name, bytes_per_sample) in names {
+            let want = meta.files.get(name).ok_or_else(|| bad(format!("meta.json has no blake3 for {name}")))?;
+            let bytes = std::fs::read(src.join(name))?;
+            let size = bytes_per_sample * n;
+            if bytes.len() != size {
+                return Err(bad(format!("{name} is {} bytes, {w} x {h} needs {size}", bytes.len())));
+            }
+            let got = blake3::hash(&bytes).to_hex().to_string();
+            if &got != want {
+                return Err(bad(format!("{name} blake3 {got} differs from meta.json's {want}")));
+            }
+            total.update(&bytes);
+            layers.push(bytes);
+        }
+        let got = total.finalize().to_hex().to_string();
+        if got != meta.blake3 {
+            return Err(bad(format!("product blake3 {got} differs from meta.json's {}", meta.blake3)));
+        }
+        if info.classes.len() > usize::from(u8::MAX) {
+            return Err(bad(format!("{} class names, at most {}", info.classes.len(), u8::MAX)));
+        }
+        let classes = layers.pop().unwrap_or_default();
+        if let Some(&c) = classes.iter().find(|&&c| usize::from(c) >= info.classes.len()) {
+            return Err(bad(format!("class id {c} with {} class names", info.classes.len())));
+        }
+        let floats = |b: &[u8]| b.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect::<Vec<f32>>();
+        let budget = info.budget.unwrap_or(BudgetJson { inflow: 0.0, source: 0.0, rain: 0.0, outflow: 0.0 });
+        Ok(Self {
+            w,
+            h,
+            spacing_m: meta.sample_spacing_m,
+            origin_m: meta.origin_m,
+            temperature: floats(&layers[0]),
+            precipitation: floats(&layers[1]),
+            moisture: floats(&layers[2]),
+            classes,
+            class_names: info.classes,
+            overrides: info
+                .overrides
+                .into_iter()
+                .map(|o| AppliedOverride {
+                    name: o.region,
+                    index: o.index,
+                    temperature: o.temperature.into(),
+                    rain: o.rain.into(),
+                })
+                .collect(),
+            budget: Budget {
+                inflow: budget.inflow,
+                source: budget.source,
+                rain: budget.rain,
+                outflow: budget.outflow,
+            },
+            mfd_stuck: info.mfd_stuck.unwrap_or(0),
+        })
+    }
+}
+
+/// `climate/meta.json`.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MetaJson {
+    format: u32,
+    #[allow(dead_code)] // read for the schema check, not used
+    producer: String,
+    dims: [usize; 2],
+    sample_spacing_m: f64,
+    origin_m: [f64; 2],
+    files: std::collections::BTreeMap<String, String>,
+    blake3: String,
+}
+
+/// `climate/climate.json` (`values` is the record of the declared values; the map does not keep it).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClimateJson {
+    format: u32,
+    classes: Vec<String>,
+    #[allow(dead_code)] // read for the schema check, not used
+    values: serde_json::Value,
+    overrides: Vec<OverrideJson>,
+    budget: Option<BudgetJson>,
+    mfd_stuck: Option<usize>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OverrideJson {
+    region: String,
+    index: u8,
+    temperature: AdjustJson,
+    rain: AdjustJson,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AdjustJson {
+    scale: f64,
+    add: f64,
+    pin: Option<f64>,
+}
+
+impl From<AdjustJson> for Adjust {
+    fn from(a: AdjustJson) -> Self {
+        Self { scale: a.scale, add: a.add, pin: a.pin }
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BudgetJson {
+    inflow: f64,
+    source: f64,
+    rain: f64,
+    outflow: f64,
 }
 
 /// One `scrib-worldgen climate` invocation.

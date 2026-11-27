@@ -203,3 +203,77 @@ fn warm_share_is_monotone_on_a_temperature_ramp() {
     assert_eq!(shares.last().copied(), Some(1.0));
     assert!(shares.iter().any(|&s| s > 0.2 && s < 0.8), "the hats overlap: some mixed share");
 }
+
+/// The `climate_map` fixture guide: 16 x 12 at 100 m, sea level 10 m, heights `10 + (col - 3) * 40 + row * 5` m.
+fn product_guide() -> Guide {
+    let (w, h) = (16usize, 12usize);
+    Guide {
+        w,
+        h,
+        spacing_m: 100.0,
+        sea_level_m: 10.0,
+        fill_m: None,
+        origin_m: [500.0, -300.0],
+        heights: (0..w * h)
+            .map(|i| 10.0 + ((i % w) as f32 - 3.0) * 40.0 + (i / w) as f32 * 5.0)
+            .collect(),
+        regions: None,
+    }
+}
+
+#[test]
+fn product_fields_equal_the_rasters_at_samples() {
+    let gd = product_guide();
+    let climate = crate::climate_map::build(
+        &gd,
+        &crate::climate::ClimateFile::defaults(),
+        &crate::climate_classes::ClassTable::whittaker(),
+    )
+    .unwrap();
+    let f = GridFields::from_products(&gd, &climate).unwrap();
+    assert_eq!(f.class_names, climate.class_names);
+    // Plane: dz/dx = 0.4, dz/dnorth = -0.05; downslope points west by north.
+    let slope = 0.4f64.hypot(0.05).atan().to_degrees();
+    let aspect = (-0.4f64).atan2(0.05).to_degrees().rem_euclid(360.0);
+    // (col, row, distance to the nearest sea sample in m)
+    for (col, row, water) in [(5usize, 4usize, 300.0f64), (5, 11, 400.0), (9, 0, 600.0), (2, 3, 0.0)] {
+        let i = row * gd.w + col;
+        let s = f.sample(500.0 + col as f64 * 100.0, -300.0 - row as f64 * 100.0);
+        assert_eq!(s.temperature_c, f64::from(climate.temperature[i]), "({col}, {row})");
+        assert_eq!(s.precipitation_mm, f64::from(climate.precipitation[i]));
+        assert_eq!(s.moisture, f64::from(climate.moisture[i]));
+        assert_eq!(s.class, Some(climate.classes[i]));
+        assert_eq!(s.altitude_m, f64::from(gd.heights[i]) - 10.0);
+        assert_eq!(s.water_distance_m, f64::from(water as f32), "({col}, {row})");
+        if (1..gd.w - 1).contains(&col) && (1..gd.h - 1).contains(&row) {
+            assert!((s.slope_deg - slope).abs() < 1e-5, "slope {} vs {slope}", s.slope_deg);
+            assert!((s.aspect_deg - aspect).abs() < 1e-4, "aspect {} vs {aspect}", s.aspect_deg);
+            assert_eq!(s.curvature, 0.0, "a plane has no contour curvature");
+        }
+    }
+    // A product of another guide is refused.
+    let mut other = climate.clone();
+    other.origin_m = [0.0, 0.0];
+    assert!(GridFields::from_products(&gd, &other).is_err());
+}
+
+#[test]
+fn plan_curvature_is_positive_on_a_cone_and_negative_in_a_bowl() {
+    // 41 x 41 at 10 m, apex at the centre; at 15 samples out the contour radius is 150 m.
+    let (n, l) = (41usize, 10.0);
+    let cone: Vec<f64> = (0..n * n)
+        .map(|i| {
+            let (dx, dy) = ((i % n) as f64 - 20.0, (i / n) as f64 - 20.0);
+            -dx.hypot(dy) * l
+        })
+        .collect();
+    let bowl: Vec<f64> = cone.iter().map(|z| -z).collect();
+    let east = 20 * n + 35;
+    let (c, b) = (terrain_shape(&cone, n, n, l), terrain_shape(&bowl, n, n, l));
+    let k = 1.0 / 150.0;
+    assert!((c.curvature[east] - k).abs() < 0.05 * k, "cone {} vs {k}", c.curvature[east]);
+    assert!((b.curvature[east] + k).abs() < 0.05 * k, "bowl {} vs -{k}", b.curvature[east]);
+    // East of the apex the cone falls away east (aspect 90), the bowl's side falls back west (270); slope 45 deg.
+    assert!((c.aspect_deg[east] - 90.0).abs() < 1e-9 && (b.aspect_deg[east] - 270.0).abs() < 1e-9);
+    assert!((c.slope_deg[east] - 45.0).abs() < 0.5, "slope {}", c.slope_deg[east]);
+}

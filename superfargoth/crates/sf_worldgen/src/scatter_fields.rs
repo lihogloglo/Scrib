@@ -3,7 +3,8 @@
 //! - [`Fields`]: what the scatter passes read at a point (climate, class, terrain shape, distance to water). Two
 //!   providers: [`NeutralFields`] (one sample everywhere, for tests and for runs without a climate product) and
 //!   [`GridFields`] (row-major rasters in the guide frame, bilinear; the class is the nearest sample and the aspect
-//!   is interpolated as a unit vector, so 359 deg and 1 deg blend to 0 deg, not 180).
+//!   is interpolated as a unit vector, so 359 deg and 1 deg blend to 0 deg, not 180). [`GridFields::from_products`]
+//!   builds it from a guide and its climate product (slice WG-E2i.1; terrain rasters in [`terrain_shape`]).
 //! - [`hat`]: a suitability hat `[e_min, i_min, i_max, e_max]`, 0 outside, 1 inside, linear between (Gain 2017 via
 //!   Cordonnier 2017).
 //! - [`Suitability`]: one species' hats combined by minimum (Liebig's law; Ecormier-Nocca 2021, Cordonnier 2017),
@@ -12,6 +13,11 @@
 //! Frame: x east, y north, metres; raster row 0 is the north edge, sample (0, 0) sits at `origin_m` (the guide
 //! convention of `geology.rs` and `cliffs.rs`). Nothing here names a game.
 
+use rayon::prelude::*;
+
+use crate::climate_map::ClimateMap;
+use crate::guide::Guide;
+use crate::measure::distance_transform;
 use crate::scatter_species::{Hat, Species};
 use crate::{Error, Result};
 
@@ -119,6 +125,64 @@ impl GridFields {
         }
     }
 
+    /// The fields of `guide` and its climate product `climate` (same dims, spacing and origin): temperature,
+    /// precipitation, moisture and class from the product; slope, aspect and plan curvature from the guide heights
+    /// ([`terrain_shape`]); altitude = height - sea level; water distance = Euclidean distance to the nearest sea
+    /// sample (height <= sea level), [`NO_WATER_M`] on a map with no sea. Inland water is not in this raster: the
+    /// scatter takes the minimum with its exact lake and river distance (`scatter::WaterMask`, WG-E2g).
+    pub fn from_products(guide: &Guide, climate: &ClimateMap) -> Result<Self> {
+        // The product is written from this guide's own values, so they compare equal bit for bit.
+        #[allow(clippy::float_cmp)]
+        let other = (guide.w, guide.h) != (climate.w, climate.h)
+            || guide.spacing_m != climate.spacing_m
+            || guide.origin_m != climate.origin_m;
+        if other {
+            return Err(Error::Invalid(format!(
+                "scatter fields: guide {} x {} at {} m from {:?} and climate {} x {} at {} m from {:?} differ",
+                guide.w,
+                guide.h,
+                guide.spacing_m,
+                guide.origin_m,
+                climate.w,
+                climate.h,
+                climate.spacing_m,
+                climate.origin_m
+            )));
+        }
+        let (w, h) = (guide.w, guide.h);
+        let z: Vec<f64> = guide.heights.iter().map(|&x| f64::from(x)).collect();
+        let t = terrain_shape(&z, w, h, guide.spacing_m);
+        let sea: Vec<bool> = z.iter().map(|&x| x <= guide.sea_level_m).collect();
+        // Rasters are f32 (the climate product's type).
+        #[allow(clippy::cast_possible_truncation)]
+        let f32s = |v: &[f64]| v.iter().map(|&x| x as f32).collect::<Vec<f32>>();
+        #[allow(clippy::cast_possible_truncation)]
+        let water_distance_m = distance_transform(&sea, w, h)
+            .iter()
+            .map(|&d| if d.is_finite() { (d * guide.spacing_m) as f32 } else { NO_WATER_M })
+            .collect();
+        #[allow(clippy::cast_possible_truncation)]
+        let altitude_m = z.iter().map(|&x| (x - guide.sea_level_m) as f32).collect();
+        let fields = Self {
+            w,
+            h,
+            spacing_m: guide.spacing_m,
+            origin_m: guide.origin_m,
+            temperature_c: climate.temperature.clone(),
+            precipitation_mm: climate.precipitation.clone(),
+            moisture: climate.moisture.clone(),
+            classes: climate.classes.clone(),
+            class_names: climate.class_names.clone(),
+            slope_deg: f32s(&t.slope_deg),
+            aspect_deg: f32s(&t.aspect_deg),
+            altitude_m,
+            curvature: f32s(&t.curvature),
+            water_distance_m,
+        };
+        fields.check()?;
+        Ok(fields)
+    }
+
     /// Checks the grid: at least one sample, a positive finite spacing, every raster `w * h` long, class ids in
     /// range (or [`NO_CLASS`]), at most 255 class names.
     pub fn check(&self) -> Result<()> {
@@ -188,6 +252,63 @@ impl GridFields {
             (r1 * w + c0, (1.0 - tx) * ty),
             (r1 * w + c1, tx * ty),
         ]
+    }
+}
+
+/// Water distance of a map with no water sample, m (finite, so a bilinear blend with a zero weight stays a number).
+// tunables: const (format: the "no water on this map" sentinel of the distance raster)
+pub const NO_WATER_M: f32 = f32::MAX;
+
+/// Terrain shape per sample (see [`terrain_shape`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TerrainShape {
+    /// Degrees from horizontal.
+    pub slope_deg: Vec<f64>,
+    /// Downslope direction, degrees clockwise from north, in `[0, 360)`; 0 where flat.
+    pub aspect_deg: Vec<f64>,
+    /// Plan (contour) curvature, 1/m, positive = convex (spurs, peaks), negative = concave (hollows); 0 where flat.
+    pub curvature: Vec<f64>,
+}
+
+/// Slope, aspect and plan curvature of heights `z` (`w` x `h`, row-major, row 0 north, spacing `l` m), edges clamped.
+/// Slope and aspect from Horn's 3x3 gradient (Horn 1981; the GDAL and `ArcGIS` default). Plan curvature from the
+/// Evans-Young second-order partials `p, q, r, s, t` (central differences) as
+/// `-(q^2 r - 2 p q s + p^2 t) / (p^2 + q^2)^(3/2)` (Florinsky 2016, "Digital Terrain Analysis", ch. 2), with y north.
+#[must_use]
+pub fn terrain_shape(z: &[f64], w: usize, h: usize, l: f64) -> TerrainShape {
+    // tunables: const (maths: squared gradient below which a sample is flat and has no aspect or contour)
+    const FLAT: f64 = 1e-18;
+    let at = |x: isize, y: isize| {
+        let xc = x.clamp(0, w.cast_signed() - 1).cast_unsigned();
+        let yc = y.clamp(0, h.cast_signed() - 1).cast_unsigned();
+        z[yc * w + xc]
+    };
+    let mut rows: Vec<(f64, f64, f64)> = vec![(0.0, 0.0, 0.0); w * h];
+    rows.par_chunks_mut(w).enumerate().for_each(|(y, line)| {
+        let yi = y.cast_signed();
+        for (x, o) in line.iter_mut().enumerate() {
+            let xi = x.cast_signed();
+            // Offsets: dx east, dy south (row order); north is dy = -1.
+            let s = |dx: isize, dy: isize| at(xi + dx, yi + dy);
+            let de = ((s(1, -1) + 2.0 * s(1, 0) + s(1, 1)) - (s(-1, -1) + 2.0 * s(-1, 0) + s(-1, 1))) / (8.0 * l);
+            let dn = ((s(-1, -1) + 2.0 * s(0, -1) + s(1, -1)) - (s(-1, 1) + 2.0 * s(0, 1) + s(1, 1))) / (8.0 * l);
+            let slope = de.hypot(dn).atan().to_degrees();
+            let flat = de * de + dn * dn < FLAT;
+            let aspect = if flat { 0.0 } else { (-de).atan2(-dn).to_degrees().rem_euclid(360.0) };
+            let p = (s(1, 0) - s(-1, 0)) / (2.0 * l);
+            let q = (s(0, -1) - s(0, 1)) / (2.0 * l);
+            let r = (s(1, 0) - 2.0 * s(0, 0) + s(-1, 0)) / (l * l);
+            let t = (s(0, -1) - 2.0 * s(0, 0) + s(0, 1)) / (l * l);
+            let sxy = (s(1, -1) - s(-1, -1) - s(1, 1) + s(-1, 1)) / (4.0 * l * l);
+            let g2 = p * p + q * q;
+            let curv = if g2 < FLAT { 0.0 } else { -(q * q * r - 2.0 * p * q * sxy + p * p * t) / g2.powf(1.5) };
+            *o = (slope, aspect, curv);
+        }
+    });
+    TerrainShape {
+        slope_deg: rows.iter().map(|v| v.0).collect(),
+        aspect_deg: rows.iter().map(|v| v.1).collect(),
+        curvature: rows.iter().map(|v| v.2).collect(),
     }
 }
 
