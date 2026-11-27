@@ -5492,6 +5492,7 @@ dependencies = [
  "mw_vfs",
  "mw_walkers_bevy",
  "mw_world",
+ "serde",
  "sf_action",
  "sf_action_bevy",
  "sf_anim",
@@ -5552,6 +5553,7 @@ dependencies = [
  "sf_worldgen",
  "tempfile",
  "tes3",
+ "toml 0.9.12+spec-1.1.0",
  "workspace-hack",
 ]
 

@@ -722,3 +722,9 @@ without features (the app's reader needs `bake`, `mw_boot_bevy` already has it).
 Parts go straight under `cx.parent` with `cx.local` (no root entity per rock, as `StaticSpawner`), each with the
 worldspace's `RenderLayers`, the variant's engine-frame LOD0 `Aabb` + `NoAutoAabb`; `part_ranges` drops levels whose
 start fade begins past `max_distance` and ends the last kept one at `[max, max + band]`. Gains `sf_world` + `sf_world_bevy`.
+
+**RG-P4 (2026-11-27).** `bevyrrowind/worldgen/rock_textures.toml` (`default` = `tx_rock_wg_01`, no class rows: which
+texture suits which class is the owner's WG-E3 call) read by `mw_exterior_bevy::rock_materials`: `RockTextureTable::parse`
+(unknown keys, non built-in classes, empty textures rejected; paths normalized as `--rock-textures`), `material_set(..)`
+-> `RockMaterialSet` with every built-in class (its texture x its `tint`; equal pairs share handles, one batch) and an
+untinted `default`. `rock_textures` + `lod_materials` are the rock lab's path, which now calls them. Gains `serde`, `toml`.

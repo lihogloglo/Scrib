@@ -9,9 +9,9 @@
 //!   -z from small (near the `wide` camera) to large. LODs are Bevy `VisibilityRange` children (dithered
 //!   crossfade at `rockgen.lod.*` distances). No colliders yet (RG-2 adds the convex hulls).
 //! - **Textures** ([`DEFAULT_TEXTURES`], `--rock-textures a,b,...`): each is built by the statics' material
-//!   path (`cooked_material_with` over the bake's companions) and its maps are sampled triplanar, at the
-//!   terrain's land-texture tiling. A texture the bake lists no companion for shows albedo only (the log line
-//!   names the maps bound).
+//!   path (`crate::rock_materials`, shared with the library rocks: `cooked_material_with` over the bake's companions)
+//!   and its maps are sampled triplanar, at the terrain's land-texture tiling. A texture the bake lists no
+//!   companion for shows albedo only (the log line names the maps bound).
 //!
 //! Keys: X next texture, Z next class (all, then one at a time), R regenerate with a new seed, L LOD tint,
 //! M wireframe, N crease normals on/off (off = RG-3's smooth SDF normals), Q edge snap on/off (off = RG-3's
@@ -23,13 +23,13 @@ use bevy::prelude::*;
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use mw_assets::SharedVfs;
-use mw_assets::cooked::{TextureCompanions, cooked_material_with};
+use mw_assets::cooked::TextureCompanions;
 use sf_coords::WorldPos;
 use sf_level::{Level, Shape};
 use sf_rockgen::{BoulderParams, FORMATIONS, RockLods, generate_boulder, generate_formation};
 use sf_rockgen_bevy::{
-    CLASSES, RockDebug, RockLodSettings, RockMaterial, RockMaterialSettings, RockTextures, RockgenPlugin, class_params, lod_bundles,
-    lod_ranges, params_from_tunables, rock_material, rock_mesh,
+    CLASSES, RockDebug, RockLodSettings, RockMaterial, RockMaterialSettings, RockgenPlugin, class_params, lod_bundles,
+    lod_ranges, params_from_tunables, rock_mesh,
 };
 
 use sf_tunables_bevy::Tunables;
@@ -283,14 +283,10 @@ fn spawn(
     lab.root = Some(entry.root);
     let companions = TextureCompanions::read(&vfs.0);
     let (params, settings, _) = live(tunables.as_deref());
-    // The terrain's land-texture repeat, so rocks and ground share texel density.
-    #[allow(clippy::cast_possible_truncation)]
-    let tiling_m = (f64::from(mw_world::terrain::TEXEL_UNITS) * mw_world::convert::UNIT_METERS_F64) as f32;
     let lods = params.lod_levels.max(1);
     let mut sets = Vec::new();
     for texture in &lab.content.textures {
-        let standard = cooked_material_with(&super::texture_lab::swatch_source(texture), &vfs.0, &companions, &server);
-        let textures = RockTextures::from_standard(&standard, tiling_m);
+        let textures = crate::rock_materials::rock_textures(texture, &vfs.0, &companions, &server);
         let maps = format!(
             "albedo {}, normal {}, orm {}{}",
             yes(textures.albedo.is_some()),
@@ -303,13 +299,8 @@ fn spawn(
             .iter()
             .map(|class| class.tint)
             .chain(FORMATIONS.iter().map(|f| f.tint))
-            .map(|tint| {
-                // The class tint darkens the texture (scoria); adapter data at RG-A1.
-                let mut tinted = textures.clone();
-                let c = tinted.base_color.to_linear();
-                tinted.base_color = LinearRgba::new(c.red * tint, c.green * tint, c.blue * tint, c.alpha).into();
-                (0..lods).map(|k| materials.add(rock_material(&tinted, &settings, k, debug.lod_tint))).collect()
-            })
+            // The class tint darkens the texture (scoria); adapter data at RG-A1.
+            .map(|tint| crate::rock_materials::lod_materials(&textures, tint, &settings, lods, debug.lod_tint, &mut materials))
             .collect();
         sets.push(TextureSet { path: texture.clone(), materials, maps });
     }

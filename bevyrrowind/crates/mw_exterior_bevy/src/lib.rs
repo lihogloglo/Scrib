@@ -19,6 +19,7 @@ pub mod nav_links;
 mod origin_rebase;
 pub mod quality_presets;
 pub mod restream;
+pub mod rock_materials;
 pub mod main_menu;
 pub mod pause_menu;
 pub mod phase;
