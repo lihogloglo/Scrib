@@ -229,6 +229,8 @@ fn def_defaults_are_the_struct_defaults() {
         (&DEBRIS_SHRINK_S, d.debris_shrink_s),
         (&DEBRIS_SPEED_MPS, d.debris_speed_mps),
         (&DEBRIS_SPREAD, d.debris_spread),
+        (&RULES_WET_THRESHOLD, d.rules_wet_threshold),
+        (&RULES_WET_TTL_S, d.rules_wet_ttl_s),
     ];
     let counts = [
         (&PRIORITY_AMBIENT, d.priority_ambient),
@@ -241,7 +243,8 @@ fn def_defaults_are_the_struct_defaults() {
         (&DEBRIS_BREAKS_PER_TICK, d.debris_breaks_per_tick),
     ];
     assert_eq!(DEBRIS_AWAKE_MAX.default_value(), u32::from(d.debris_awake_max), "interact.debris.awake_max");
-    assert_eq!(floats.len() + counts.len() + 1, TUNABLES.len(), "one def per field but tick_hz");
+    assert_eq!(RULES_EVALS_PER_TICK.default_value(), u32::from(d.rules_evals_per_tick), "interact.rules.evals_per_tick");
+    assert_eq!(floats.len() + counts.len() + 2, TUNABLES.len(), "one def per field but tick_hz");
     for (def, field) in floats {
         assert!((def.default_value() - field).abs() < f32::EPSILON, "{}", def.name());
     }

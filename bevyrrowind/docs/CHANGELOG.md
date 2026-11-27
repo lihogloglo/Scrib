@@ -3,6 +3,7 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-27 (interaction loop, IN17b): the world-rules core can now evaluate its rule table: a cause (water, fire, a hit) on an object picks the first matching rule for the object's material and states, so water on something burning makes it wet, and wet wood will not catch; a per-tick budget delays the rest oldest first, and the result never depends on the order causes arrived in. Nothing in the game feeds it yet (fire in game is IN39).
 - 2026-11-27 (interaction loop, IN1c): the framework can now throw seeded debris pieces when something breaks near the camera (capped, they settle, fade and shrink away); the game does not give them meshes yet, so nothing shows in play.
 - 2026-11-27 (interaction loop, IN38c3): breakable urns and pots stay out of the merged near meshes, so they break in the precombine view (`--off scene`) too; the next bake re-merges cells once.
 - 2026-11-27 (interaction loop, IN38c2): decorative urns and pots (Morrowind `STAT`s) now break like crates: the collider, the drawn object and its saved place go at once (the precombine view, `--off scene`, still draws them until IN38c3).

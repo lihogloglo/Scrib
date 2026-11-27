@@ -19,6 +19,8 @@
 //!   floor spiral), the same answer in both AI tiers.
 //! - [`states`]: object states, `TagId`s with a TTL by placement (`ObjectStates`: add/refresh, remove,
 //!   `has`, sorted expiry), the table world rules read and write.
+//! - [`rules`]: the rules layer: `InteractionRule` records, the `RuleQueue` of causes and `step_rules`
+//!   (first match in record order, budgeted, oldest first, the same result whatever the arrival order).
 //! - [`cook`]: `interact.cook`, the one-time def bake (stub).
 //! - [`params`]: the core's tunables as plain fields (`interact.*`, bound by `sf_interaction_bevy`).
 //!
@@ -34,6 +36,7 @@ pub mod index;
 pub mod light;
 pub mod params;
 pub mod rest;
+pub mod rules;
 pub mod spot;
 pub mod states;
 pub mod verbs;
@@ -61,6 +64,9 @@ pub use light::{
 };
 pub use params::InteractParams;
 pub use rest::VERB_SLEEP;
+pub use rules::{
+    Cause, Flammable, InteractionRule, MaterialDef, RuleEvent, RuleOutput, RuleQueue, RuleResult, Rules, step_rules,
+};
 pub use spot::{Spot, SpotAnchor, SpotBlockers, SpotQuery, pick_spot, spiral_point, spot_candidates};
 pub use states::{ObjectStates, StateEntry, Ttl};
 pub use verbs::{FocusStabilizer, VerbChoice, VerbTarget, rank_verbs};
@@ -75,6 +81,8 @@ mod tests_door;
 mod tests_light;
 #[cfg(test)]
 mod tests_queries;
+#[cfg(test)]
+mod tests_rules;
 #[cfg(test)]
 mod tests_spot;
 #[cfg(test)]

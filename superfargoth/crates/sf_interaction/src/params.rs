@@ -57,6 +57,12 @@ pub struct InteractParams {
     pub debris_speed_mps: f32,
     /// Seeded jitter of a piece's launch direction and speed, ratio (range 0-1).
     pub debris_spread: f32,
+    /// Rule causes evaluated per tick; the rest wait, oldest first, count (range 8-1024).
+    pub rules_evals_per_tick: u16,
+    /// Surface wetness from which a target counts as wet (`sf_surface` scale), ratio (range 0-1).
+    pub rules_wet_threshold: f32,
+    /// How long `Wet` lasts once a target is dry again, s (range 5-900).
+    pub rules_wet_ttl_s: f32,
     /// Fixed simulation rate leases count in, ticks per second.
     pub tick_hz: f32,
 }
@@ -114,6 +120,12 @@ impl Default for InteractParams {
             debris_speed_mps: 2.5,
             // tunables: const (bound from interact.debris.spread in sf_interaction_bevy (IN1c); Guess)
             debris_spread: 0.35,
+            // tunables: const (bound from interact.rules.evals_per_tick in sf_interaction_bevy (IN17b); Guess)
+            rules_evals_per_tick: 64,
+            // tunables: const (bound from interact.rules.wet_threshold in sf_interaction_bevy (IN17b); Guess, sf_surface wetness scale)
+            rules_wet_threshold: 0.3,
+            // tunables: const (bound from interact.rules.wet_ttl_s in sf_interaction_bevy (IN17b); Guess)
+            rules_wet_ttl_s: 120.0,
             // tunables: const (bound from the app's fixed timestep in sf_interaction_bevy; net.md 60 Hz tick)
             tick_hz: 60.0,
         }

@@ -258,6 +258,17 @@ pub const DEBRIS_SPREAD: Def<f32> = pres(def!(float "interact.debris.spread" = 0
     .range(0.0, 1.0)
     .unit(Unit::Ratio)
     .help("Seeded jitter of a debris piece's launch direction and speed (IN1c)"));
+pub const RULES_EVALS_PER_TICK: Def<u32> = gp_count(def!(count "interact.rules.evals_per_tick" = 64)
+    .range(8, 1024)
+    .help("Rule causes evaluated per tick; the rest wait, oldest first (IN17b)"));
+pub const RULES_WET_THRESHOLD: Def<f32> = gp(def!(float "interact.rules.wet_threshold" = 0.3)
+    .range(0.0, 1.0)
+    .unit(Unit::Ratio)
+    .help("Surface wetness from which a target counts as wet (sf_surface wetness scale; IN17b)"));
+pub const RULES_WET_TTL_S: Def<f32> = gp(def!(float "interact.rules.wet_ttl_s" = 120.0)
+    .range(5.0, 900.0)
+    .unit(Unit::Seconds)
+    .help("How long Wet lasts once a target is dry again (IN17b)"));
 
 /// The `interact.*` tunables [`InteractParams`] has, bound by [`InteractionPlugin`].
 pub const TUNABLES: &[&dyn AnyDef] = &[
@@ -286,6 +297,9 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &DEBRIS_SHRINK_S,
     &DEBRIS_SPEED_MPS,
     &DEBRIS_SPREAD,
+    &RULES_EVALS_PER_TICK,
+    &RULES_WET_THRESHOLD,
+    &RULES_WET_TTL_S,
 ];
 
 // --- Resources ----------------------------------------------------------------------------------
@@ -551,8 +565,16 @@ impl Plugin for InteractionPlugin {
         bind!(app, PLACE_FLOOR_TRIES, |p, v| p.place_floor_tries = to_u8(v));
         bind!(app, DEBRIS_LOD_M, |p, v| p.debris_lod_m = v);
         bind!(app, DEBRIS_BREAKS_PER_TICK, |p, v| p.debris_breaks_per_tick = to_u8(v));
+        bind_rules(app);
         bind_debris(app);
     }
+}
+
+/// The `interact.rules.*` gameplay tunables (`IN17b`).
+fn bind_rules(app: &mut App) {
+    bind!(app, RULES_EVALS_PER_TICK, |p, v| p.rules_evals_per_tick = u16::try_from(v).unwrap_or(u16::MAX));
+    bind!(app, RULES_WET_THRESHOLD, |p, v| p.rules_wet_threshold = v);
+    bind!(app, RULES_WET_TTL_S, |p, v| p.rules_wet_ttl_s = v);
 }
 
 /// The `interact.debris.*` presentation tunables and, with the `physics` feature, the debris systems.

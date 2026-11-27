@@ -61,6 +61,15 @@ plus a `(tick, placement, tag)` deadline set), `add(placement, tag, Ttl, now, pa
 `interact.tick_hz`, at least one; refresh keeps the later expiry, `UntilRemoved` wins), `remove`, `has`, `tags`, `expire(now)`
 (`expires <= now`, sorted). 4 exact tests (`tests_states.rs`). Rules, save codec and replication: IN17b on.
 
+**As built (IN17b, 2026-11-27).** `sf_interaction/src/rules.rs`: `InteractionRule`, `RuleResult` (serde-default
+fields), `MaterialDef`, `Flammable`, `Rules` (record order), `Cause { placement, material, source }` queued in a
+`RuleQueue` and `step_rules(&mut ObjectStates, &mut RuleQueue, &Rules, now, &InteractParams) -> Vec<RuleEvent>`:
+expiries first, then causes in (queued tick, placement, material, sorted source) order; the target filter sees the
+cause's material plus the states; results apply remove, add, damage, stage, effect, change, noise; state events only
+for real changes. The budget counts evaluated causes, matched or not (`interact.rules.evals_per_tick`, the scan is the
+cost). `wet_threshold` / `wet_ttl_s` are bound for the shell's wetness causes (IN39). 5 exact tests (`tests_rules.rs`,
+incl. all 120 orders of 5 causes). No system gathers causes yet; save codec and replication follow with IN39.
+
 ## Fire (IN17 core, IN39 in game, IN41 adapter)
 
 - **Ignition.** A cause matching a rule that adds `Burning` to a flammable material: a torch or fire-spell hit, a

@@ -104,7 +104,11 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   materials to a shared dark copy. Prompts "Snuff" / "Relight" verb-only; a carryable keeps "Take".
 - **Object states (IN17a, core only).** `ObjectStates` (`sf_interaction/src/states.rs`): `TagId` states with a TTL
   per placement (`Ttl::Secs` in ticks, refresh keeps the later expiry, `UntilRemoved`), `expire(now)` in (tick,
-  placement, tag) order. No system writes it yet (rules IN17b). Materials: `InteractableDef::material`.
+  placement, tag) order. Materials: `InteractableDef::material`.
+- **Rules (IN17b, core only).** `step_rules` (`sf_interaction/src/rules.rs`): expires TTLs, then evaluates up to
+  `interact.rules.evals_per_tick` queued `Cause`s oldest first in a canonical order (arrival order never matters);
+  the first `InteractionRule` in record order whose `source` passes the cause's tags and `target` the material +
+  states applies (remove, add, then damage/stage/effect/change/noise as `RuleEvent`s). No shell system feeds it yet.
 
 ## Bevy features used
 
