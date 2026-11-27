@@ -55,6 +55,12 @@ pub struct Flammable { pub ignite_heat: f32, pub fuel_s: f32, pub burnt_stage: O
   same result at any frame rate. Visuals (flames, smoke, char) are seeded per client from `hash(placement, state,
   tick)` (rule 4); only state changes replicate.
 
+**As built (IN17a, 2026-11-27).** `InteractableDef::material: Option<TagId>` (`#[serde(default)]`: older data loads
+`None`), gone from `DestructibleDef`. `sf_interaction/src/states.rs`: `ObjectStates` (per placement a tag-sorted list
+plus a `(tick, placement, tag)` deadline set), `add(placement, tag, Ttl, now, params) -> bool` (Secs = whole ticks at
+`interact.tick_hz`, at least one; refresh keeps the later expiry, `UntilRemoved` wins), `remove`, `has`, `tags`, `expire(now)`
+(`expires <= now`, sorted). 4 exact tests (`tests_states.rs`). Rules, save codec and replication: IN17b on.
+
 ## Fire (IN17 core, IN39 in game, IN41 adapter)
 
 - **Ignition.** A cause matching a rule that adds `Burning` to a flammable material: a torch or fire-spell hit, a

@@ -11,8 +11,8 @@
 //! - [`DestructState::rest_bytes`] / [`DestructState::from_rest_bytes`]: the state at rest, stored as the
 //!   [`DESTRUCT_STATE_OWNER`] state blob of its placement.
 //!
-//! The adapter's `DestructionRules` turns (source, damage type, material) into the damage number;
-//! nothing here names a stat, a source or a game.
+//! The adapter's `DestructionRules` turns (source, damage type, the def's `InteractableDef::material`) into
+//! the damage number; nothing here names a stat, a source or a game.
 
 use std::collections::VecDeque;
 use std::ops::Range;

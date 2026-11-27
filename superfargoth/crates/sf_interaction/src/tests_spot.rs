@@ -39,12 +39,12 @@ fn slot(kind: SlotKind, verb: &str, local: Frame) -> SlotDef {
 /// A shelf: one surface board 1 m up; a chair: one seat (never a spot).
 fn shelf() -> InteractableDef {
     let board = slot(SlotKind::Surface { family: tag("place.shelf") }, "place", at(0.0, 1.0, 0.0));
-    InteractableDef { id: RecordId::new("shelf"), slots: vec![board], verbs: smallvec![], destructible: None, carry: None, adverts: vec![] }
+    InteractableDef { id: RecordId::new("shelf"), slots: vec![board], verbs: smallvec![], material: None, destructible: None, carry: None, adverts: vec![] }
 }
 
 fn chair() -> InteractableDef {
     let seat = slot(SlotKind::Pose { family: tag("seat") }, "sit", at(0.0, 0.0, 0.0));
-    InteractableDef { id: RecordId::new("chair"), slots: vec![seat], verbs: smallvec![], destructible: None, carry: None, adverts: vec![] }
+    InteractableDef { id: RecordId::new("chair"), slots: vec![seat], verbs: smallvec![], material: None, destructible: None, carry: None, adverts: vec![] }
 }
 
 fn p(n: u128) -> PlacementId {

@@ -87,6 +87,7 @@ fn bed(id: &str) -> Arc<InteractableDef> {
         id: RecordId::new(id),
         slots: vec![lie],
         verbs: smallvec![VerbDef { verb: VERB_SLEEP, priority: 1, requires: TagFilter::default() }],
+        material: None,
         destructible: None,
         carry: None,
         adverts: Vec::new(),

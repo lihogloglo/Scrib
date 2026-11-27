@@ -575,9 +575,9 @@ fn defs_serde_round_trip_every_slot_kind() {
             pose_slot(SlotKind::Light(LightDef::default()), "snuff"),
         ],
         verbs: smallvec![verb("carry"), verb("break")],
+        material: Some(TagId::of("wood")),
         destructible: Some(DestructibleDef {
             health: 40.0,
-            material: TagId::of("wood"),
             stages: smallvec![
                 Stage {
                     at: 0.5,

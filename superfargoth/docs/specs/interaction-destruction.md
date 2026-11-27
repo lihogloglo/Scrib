@@ -7,7 +7,7 @@ Status: design 2026-11-11, updated 2026-11-25 (IN27; moved out of [interaction.m
 [gameplay-2026-11-25/interaction](../../../docs/research/gameplay-2026-11-25/interaction.md) §4.
 
 <!-- agent-summary -->
-> **Agent summary.** Destructible props as data on `InteractableDef`: health, material, stages. Tier 1 stage swap
+> **Agent summary.** Destructible props as data on `InteractableDef`: health and stages (material on the def itself, IN17a). Tier 1 stage swap
 > (IN1) with spill, loot and salvage, cosmetic seeded debris under caps and a distance LOD, baked glass shard sets;
 > lock and door bashing by strength (IN37, crime settles the lock); tier 2 pre-fractured chunks with Chaos-style
 > cluster thresholds (IN12, later); tier 3 buildings parked (IN13, owner). One `Destroyed` event + seed; saved as
@@ -25,7 +25,9 @@ breaking an owned object is a vandalism offence (the adapter's).
 
 ```rust
 // Illustrative, not compiled.
-pub struct DestructibleDef { pub health: f32, pub material: TagId /* wood, clay, glass, stone */,
+// `material: Option<TagId>` (wood, clay, glass, stone) sits on `InteractableDef` since IN17a (a banner burns
+// without being destructible); `DestructionRules` reads it from there.
+pub struct DestructibleDef { pub health: f32,
     pub stages: SmallVec<[Stage; 4]>, pub ignore_external: bool,
     pub loot: Option<RecordId> /* rolled on break: the pack's levelled list, adapter */,
     pub salvage: SmallVec<[(RecordId, u16); 2]> /* a barrel yields planks */ }

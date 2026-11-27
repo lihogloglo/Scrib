@@ -117,7 +117,7 @@ Stages 2 and 3 run in parallel after Stage 1; Stage 6 can start any time (IN20 n
 | ID | Deliverable | Crate | Depends | Verify |
 |---|---|---|---|---|
 | IN19 | `Lit`, snuff/relight verb, light follows, `LightChanged` | `sf_interaction(_bevy)`, `mw_interaction` | IN31 | exact events; owner IN-19. **IN19a done 2026-11-27** (core `LightState`, `LightChanged`, rest byte); **IN19b done 2026-11-27** (shell `Lights`, `GameplayLights`, snuff/relight default); **IN19c done 2026-11-27** (adapter defs, game light hook, saved state; owner IN-19 awaiting) |
-| IN17 | Rules core: `InteractionRules`, states + TTL, `Wet`, budgeted wind spread | `sf_interaction` | IN28, IN1 | exact on a synthetic grid; rain stops it |
+| IN17 | Rules core: `InteractionRules`, states + TTL, `Wet`, budgeted wind spread | `sf_interaction` | IN28, IN1 | exact on a synthetic grid; rain stops it. **IN17a done 2026-11-27** (material on the def, `ObjectStates` + TTL) |
 | IN39 | Fire in game: effects (capped lights), charred stage, damage, extinguish | `sf_interaction_bevy`, `sf_effects` | IN17 | sanity; owner IN-39 |
 | IN40 | Ground burn grid: groundcover/terrain tint, fast regrow | `sf_interaction_bevy` | IN17 | exact regrow; owner IN-40 |
 | IN41 | Adapter: ignition sources, flammables, town rule (Q1), Classic off | `mw_interaction` | IN39, IN40 | exact rows; Classic ignites nothing |

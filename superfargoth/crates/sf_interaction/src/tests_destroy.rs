@@ -15,7 +15,6 @@ fn stage(at: f32, model: Option<&str>, on_break: BreakAction) -> Stage {
 fn crate_def() -> DestructibleDef {
     DestructibleDef {
         health: 40.0,
-        material: TagId::of("wood"),
         stages: smallvec![
             stage(0.5, Some("crate_cracked"), BreakAction::None),
             stage(0.25, Some("crate_splintered"), BreakAction::None),

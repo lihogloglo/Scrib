@@ -78,6 +78,9 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   indexes `mw_interaction::light_interactable` in R0 (slot disabled when `mw.rules.interaction.snuff` is off),
   `follow_changes` sets the anchor and saves the byte, `apply_anchors` hides the point light and swaps glow
   materials to a shared dark copy. Prompts "Snuff" / "Relight" verb-only; a carryable keeps "Take".
+- **Object states (IN17a, core only).** `ObjectStates` (`sf_interaction/src/states.rs`): `TagId` states with a TTL
+  per placement (`Ttl::Secs` in ticks, refresh keeps the later expiry, `UntilRemoved`), `expire(now)` in (tick,
+  placement, tag) order. No system writes it yet (rules IN17b). Materials: `InteractableDef::material`.
 
 ## Bevy features used
 

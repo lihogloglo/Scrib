@@ -16,6 +16,8 @@
 //! - [`entrance`]: `pick_entrance` / `pick_exit` (side order, the shell's validity checks).
 //! - [`spot`]: `pick_spot` / `spot_candidates`, where a carried prop is put down (surface slots, then a
 //!   floor spiral), the same answer in both AI tiers.
+//! - [`states`]: object states, `TagId`s with a TTL by placement (`ObjectStates`: add/refresh, remove,
+//!   `has`, sorted expiry), the table world rules read and write.
 //! - [`cook`]: `interact.cook`, the one-time def bake (stub).
 //! - [`params`]: the core's tunables as plain fields (`interact.*`, bound by `sf_interaction_bevy`).
 //!
@@ -32,6 +34,7 @@ pub mod light;
 pub mod params;
 pub mod rest;
 pub mod spot;
+pub mod states;
 pub mod verbs;
 
 pub use claims::{
@@ -57,6 +60,7 @@ pub use light::{
 pub use params::InteractParams;
 pub use rest::VERB_SLEEP;
 pub use spot::{Spot, SpotAnchor, SpotBlockers, SpotQuery, pick_spot, spiral_point, spot_candidates};
+pub use states::{ObjectStates, StateEntry, Ttl};
 pub use verbs::{FocusStabilizer, VerbChoice, VerbTarget, rank_verbs};
 
 #[cfg(test)]
@@ -71,3 +75,5 @@ mod tests_light;
 mod tests_queries;
 #[cfg(test)]
 mod tests_spot;
+#[cfg(test)]
+mod tests_states;

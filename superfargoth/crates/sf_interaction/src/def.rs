@@ -73,6 +73,11 @@ pub struct InteractableDef {
     pub slots: Vec<SlotDef>,
     /// Slotless uses: carry, take, break, read, the pack's defaults.
     pub verbs: SmallVec<[VerbDef; 2]>,
+    /// What it is made of (wood, cloth, glass, stone): the target tag world rules match
+    /// (interaction-world-rules.md "Rules layer"), also for objects that never break (a banner burns).
+    /// `None`: no rule targets it by material. Older data without the field loads as `None`.
+    #[serde(default)]
+    pub material: Option<TagId>,
     /// (b) destruction, interaction-destruction.md.
     pub destructible: Option<DestructibleDef>,
     /// (a) carrying, interaction-carry.md.
@@ -286,8 +291,6 @@ pub struct CarryClass {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DestructibleDef {
     pub health: f32,
-    /// Wood, clay, glass, stone.
-    pub material: TagId,
     pub stages: SmallVec<[Stage; 4]>,
     pub ignore_external: bool,
     /// Rolled on break: the pack's levelled list (adapter).

@@ -106,6 +106,7 @@ pub fn light_interactable(base: &RecordId, f: &LightFacts, flame: Vec3, snuff: b
         id: base.clone(),
         slots: vec![slot],
         verbs,
+        material: None,
         destructible: None,
         carry: None,
         adverts: Vec::new(),

@@ -446,6 +446,7 @@ fn door_def_is_one_npc_doorway_and_the_toggle_verbs() {
                 requires: TagFilter { all: smallvec![DOOR_OPEN], any: SmallVec::new(), none: SmallVec::new() },
             },
         ],
+        material: None,
         destructible: None,
         carry: None,
         adverts: Vec::new(),

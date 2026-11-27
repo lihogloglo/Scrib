@@ -125,6 +125,7 @@ fn def(id: &str, slots: Vec<SlotDef>, verbs: SmallVec<[VerbDef; 2]>) -> Arc<Inte
         id: RecordId::new(id),
         slots,
         verbs,
+        material: None,
         destructible: None,
         carry: None,
         adverts: Vec::new(),

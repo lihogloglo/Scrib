@@ -54,7 +54,7 @@ fn seat(v: &str) -> SlotDef {
 }
 
 fn def(slots: Vec<SlotDef>, verbs: SmallVec<[VerbDef; 2]>, adverts: Vec<(TagId, f32)>) -> InteractableDef {
-    InteractableDef { id: RecordId::new("chair"), slots, verbs, destructible: None, carry: None, adverts }
+    InteractableDef { id: RecordId::new("chair"), slots, verbs, material: None, destructible: None, carry: None, adverts }
 }
 
 fn p(n: u128) -> PlacementId {
