@@ -8,10 +8,14 @@
 //!   shape (seat front from the backrest, bed head from the boards; the bake calls it, `IN32b2`).
 //! - [`light`]: [`light_interactable`], a fire `LIGH` record to its `Light` slot def (snuff,
 //!   relight; a carryable keeps "Take"), `IN19c`.
+//! - [`breakable`]: [`classify`](breakable::classify) crates, barrels, urns, sacks, pottery and
+//!   glass (refusing organic and scripted records), their [`destructible_def`] and the
+//!   [`damage_rules`] rows, `IN38a`.
 //! - [`activation`]: the per-record-class activation table ([`ROWS`]): verb, default action and
 //!   Classic behaviour; today's prompts unchanged, unbuilt actions listed but never offered;
 //!   [`runs_default`], whether a default handler acts on an approved use's verb.
-//! - [`tunables`]: `mw.rules.interaction.sit` and `.snuff`, the `mw.interact.*` furniture lengths
+//! - [`tunables`]: `mw.rules.interaction.sit`, `.snuff` and `.break` (+ the `break_*` healths and
+//!   factors, [`BreakParams`]), the `mw.interact.*` furniture lengths
 //!   ([`FurnitureParams`]) and the `mw.interact.measure.*` bake thresholds ([`MeasureParams`]).
 //!
 //! The bake fills [`Measured`] from the census through [`measure()`] and stores the defs as
@@ -19,6 +23,7 @@
 //! (`IN32c`).
 
 pub mod activation;
+pub mod breakable;
 pub mod defs;
 pub mod furniture;
 pub mod light;
@@ -29,6 +34,7 @@ pub use activation::{
     Availability, Classic, Condition, DefaultAction, ROWS, RecordClass, Row, Switch, offered, primary, rows,
     runs_default,
 };
+pub use breakable::{BreakClass, BreakFacts, Breakable, Eligibility, Refusal, damage_rules, destructible_def};
 pub use defs::{
     Basis, CLASS_VERB_PRIORITY, Facing, Measured, POSE_VERB_PRIORITY, USER_NPC, bed_verb, class_verb, def_for, door_def,
 };
@@ -37,10 +43,12 @@ pub use light::{LIGHT_INTENSITY, LIGHT_SLOT, LightFacts, TAKE_PRIORITY, light_de
 pub use measure::measure;
 /// The def types [`def_for`] fills (re-exported so the bake needs no `sf_interaction` dependency).
 pub use sf_interaction::{InteractableDef, Side, SlotDef, TagId};
-pub use tunables::{FurnitureParams, MeasureParams, TUNABLES};
+pub use tunables::{BreakParams, FurnitureParams, MeasureParams, TUNABLES};
 
 #[cfg(test)]
 mod tests_activation;
+#[cfg(test)]
+mod tests_breakable;
 #[cfg(test)]
 mod tests_defs;
 #[cfg(test)]

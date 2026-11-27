@@ -3,7 +3,7 @@
 //! [`FurnitureParams`] (defs) and [`MeasureParams`] (the bake's measuring, `IN32b1`), defaults straight
 //! from the declarations, so no value is written twice.
 //!
-//! Switches: `mw.rules.interaction.sit` and `.snuff` so far; the other `mw.rules.interaction.*` switches
+//! Switches: `mw.rules.interaction.sit`, `.snuff` and `.break` so far; the other `mw.rules.interaction.*` switches
 //! (interaction-adapter.md "Morrowind has none of this") land with their slices.
 
 use sf_tunables::{AnyDef, Def, Lifetime, Net, Scope, Source, Unit, def};
@@ -32,6 +32,57 @@ pub const SNUFF: Def<bool> = def!(bool "mw.rules.interaction.snuff" = true)
     .scope(Scope::Dev)
     .net(Net::Gameplay)
     .lifetime(Lifetime::Respawn);
+
+/// `mw.rules.interaction.break`: crates, barrels, urns, sacks, pottery and glass break
+/// (`crate::breakable`, `IN38a`). Off = no destructible def and no damage rows: nothing breaks, as in
+/// vanilla (the Classic preset turns it off).
+pub const BREAK: Def<bool> = def!(bool "mw.rules.interaction.break" = true)
+    .help("Crates, barrels, urns, sacks, pottery and glass can be broken; off = unbreakable as in vanilla (Classic)")
+    .source(Source::Owner("everything breakable breaks, pottery too (interaction-adapter.md \"Breakables\")"))
+    .scope(Scope::Dev)
+    .net(Net::Gameplay)
+    .lifetime(Lifetime::Respawn);
+
+/// A breakable's health or damage factor (net `Gameplay`, scope `Dev`, source `Guess`): defs are
+/// built when cells load, so a change applies to defs built after it; the rows apply when the shell
+/// refills its rules.
+const fn breaking(d: Def<f32>) -> Def<f32> {
+    d.source(Source::Guess).scope(Scope::Dev).net(Net::Gameplay).lifetime(Lifetime::Respawn)
+}
+
+/// A breakable class's health, hit points.
+const fn break_hp(d: Def<f32>) -> Def<f32> {
+    breaking(d.range(0.5, 500.0))
+}
+
+pub const BREAK_CRATE_HP: Def<f32> = break_hp(def!(float "mw.rules.interaction.break_crate_hp" = 15.0)
+    .help("Health of a breakable crate (hit points, before the damage factors)"));
+pub const BREAK_BARREL_HP: Def<f32> = break_hp(def!(float "mw.rules.interaction.break_barrel_hp" = 20.0)
+    .help("Health of a breakable barrel (hit points): a few arrows at x0.25"));
+pub const BREAK_URN_HP: Def<f32> = break_hp(def!(float "mw.rules.interaction.break_urn_hp" = 10.0)
+    .help("Health of a clay urn, container or decorative (hit points)"));
+pub const BREAK_SACK_HP: Def<f32> = break_hp(def!(float "mw.rules.interaction.break_sack_hp" = 8.0)
+    .help("Health of a breakable sack (hit points)"));
+pub const BREAK_POTTERY_HP: Def<f32> = break_hp(def!(float "mw.rules.interaction.break_pottery_hp" = 2.0)
+    .help("Health of loose pottery (redware, pots, plates, cups; hit points)"));
+pub const BREAK_GLASS_HP: Def<f32> = break_hp(def!(float "mw.rules.interaction.break_glass_hp" = 1.0)
+    .help("Health of loose glass (bottles, flasks, glassware; hit points)"));
+
+/// A damage kind's factor on breakables.
+const fn break_factor(d: Def<f32>) -> Def<f32> {
+    breaking(d.range(0.0, 4.0).unit(Unit::Ratio))
+}
+
+pub const BREAK_BLUNT: Def<f32> = break_factor(def!(float "mw.rules.interaction.break_blunt" = 1.0)
+    .help("Blunt weapon damage factor on breakables (wood, clay, glass, cloth)"));
+pub const BREAK_BLADE: Def<f32> = break_factor(def!(float "mw.rules.interaction.break_blade" = 0.5)
+    .help("Blade damage factor on breakables"));
+pub const BREAK_ARROW: Def<f32> = break_factor(def!(float "mw.rules.interaction.break_arrow" = 0.25)
+    .help("Arrow and bolt damage factor on breakables (a barrel takes a few arrows)"));
+pub const BREAK_HAND: Def<f32> = break_factor(def!(float "mw.rules.interaction.break_hand" = 0.25)
+    .help("Hand-to-hand damage factor on breakables"));
+pub const BREAK_FIRE_WOOD: Def<f32> = break_factor(def!(float "mw.rules.interaction.break_fire_wood" = 1.5)
+    .help("Fire damage factor on wooden breakables (crates, barrels)"));
 
 /// `mw.interact.bench_seat_m`: the width one sitter takes on a bench.
 pub const BENCH_SEAT_M: Def<f32> = length(def!(float "mw.interact.bench_seat_m" = 0.55)
@@ -121,6 +172,18 @@ pub const HEAD_SHARE: Def<f32> = measuring(def!(float "mw.interact.measure.head_
 pub const TUNABLES: &[&dyn AnyDef] = &[
     &SIT,
     &SNUFF,
+    &BREAK,
+    &BREAK_CRATE_HP,
+    &BREAK_BARREL_HP,
+    &BREAK_URN_HP,
+    &BREAK_SACK_HP,
+    &BREAK_POTTERY_HP,
+    &BREAK_GLASS_HP,
+    &BREAK_BLUNT,
+    &BREAK_BLADE,
+    &BREAK_ARROW,
+    &BREAK_HAND,
+    &BREAK_FIRE_WOOD,
     &BENCH_SEAT_M,
     &APPROACH_M,
     &EDGE_SEAT_INSET_M,
@@ -200,6 +263,70 @@ impl Default for MeasureParams {
             headboard_above_m: HEADBOARD_ABOVE_M.default_value(),
             bed_end_share: BED_END_SHARE.default_value(),
             head_share: HEAD_SHARE.default_value(),
+        }
+    }
+}
+
+/// The values [`crate::breakable`] reads, as plain fields (the shell binds them from [`TUNABLES`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BreakParams {
+    /// [`BREAK`].
+    pub enabled: bool,
+    /// [`BREAK_CRATE_HP`].
+    pub crate_hp: f32,
+    /// [`BREAK_BARREL_HP`].
+    pub barrel_hp: f32,
+    /// [`BREAK_URN_HP`].
+    pub urn_hp: f32,
+    /// [`BREAK_SACK_HP`].
+    pub sack_hp: f32,
+    /// [`BREAK_POTTERY_HP`].
+    pub pottery_hp: f32,
+    /// [`BREAK_GLASS_HP`].
+    pub glass_hp: f32,
+    /// [`BREAK_BLUNT`].
+    pub blunt: f32,
+    /// [`BREAK_BLADE`].
+    pub blade: f32,
+    /// [`BREAK_ARROW`].
+    pub arrow: f32,
+    /// [`BREAK_HAND`].
+    pub hand: f32,
+    /// [`BREAK_FIRE_WOOD`].
+    pub fire_wood: f32,
+}
+
+impl BreakParams {
+    /// The health of `class`.
+    #[must_use]
+    pub const fn health(&self, class: crate::breakable::BreakClass) -> f32 {
+        use crate::breakable::BreakClass as C;
+        match class {
+            C::Crate => self.crate_hp,
+            C::Barrel => self.barrel_hp,
+            C::Urn => self.urn_hp,
+            C::Sack => self.sack_hp,
+            C::Pottery => self.pottery_hp,
+            C::Glass => self.glass_hp,
+        }
+    }
+}
+
+impl Default for BreakParams {
+    fn default() -> Self {
+        Self {
+            enabled: BREAK.default_value(),
+            crate_hp: BREAK_CRATE_HP.default_value(),
+            barrel_hp: BREAK_BARREL_HP.default_value(),
+            urn_hp: BREAK_URN_HP.default_value(),
+            sack_hp: BREAK_SACK_HP.default_value(),
+            pottery_hp: BREAK_POTTERY_HP.default_value(),
+            glass_hp: BREAK_GLASS_HP.default_value(),
+            blunt: BREAK_BLUNT.default_value(),
+            blade: BREAK_BLADE.default_value(),
+            arrow: BREAK_ARROW.default_value(),
+            hand: BREAK_HAND.default_value(),
+            fire_wood: BREAK_FIRE_WOOD.default_value(),
         }
     }
 }

@@ -379,6 +379,14 @@ noise: crime emits it, `sf_crime_bevy`, crime-locks.md).
   unbreakable by default (quest containers must not vanish); the eligibility table reports them.
 - Debris: generic wood planks, clay shards and cloth scraps (pack meshes, cosmetic).
 
+**As built (IN38a, 2026-11-27).** `mw_interaction/src/breakable.rs`: `classify(BreakFacts)` -> `Not` /
+`Refused(class, Organic | ActivateScript | NamedByScript)` / `Breakable { class, spills }`; `CONT` by id prefix, `MISC`
+and `STAT` by `_` tokens (a metal, wood, bone or stone token rules out first; `STAT` never `ex_*`/`in_*`); classes
+Crate, Barrel (wood), Urn, Pottery (clay), Glass, Sack (cloth). `destructible_def`: one removing stage at 0, the
+material's debris record (`mw_debris_*`), `SpillContents` for containers only; `damage_rules` -> 17 `(kind, material,
+factor)` rows for the shell. Tunables `mw.rules.interaction.break` + `break_*_hp` / factor `Guess` rows
+(`BreakParams`). The cook's counts and the script facts from the `mw_script` index are the shell's (IN38b1). 6 tests.
+
 ## Switches (IN34)
 
 - Every working vanilla lever, button or pull chain is an `ACTI` whose script does the work (`OnActivate` then
