@@ -48,6 +48,10 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   `destructible_def` + material to the furniture def or a slotless def (kept indexed with sitting off), then sends
   `DestructRest` from overlay owner `destruct`; `DestructionRules` = `damage_rules(BreakSettings)` live; standing
   `DestructChanged` saved to the overlay (a removing state writes none). Dev build: `Delete` breaks the focus.
+- **Breaking out.** `mw_rpg_bevy/src/breakable.rs` (IN38b2) on each removing `Destroyed` after `Release`:
+  `remove_broken` -> `ActivePlacements::remove_live` (`mw_scripts_bevy/src/lib.rs`: hooks, overlay removal, the
+  container's `LiveRoot` visuals; containers are live there since IN38b2) plus an item's `ItemPivot`, or overlay
+  only for an unloaded cell. No spill, loot or debris yet (IN38b3, IN1c).
 - **Claims.** `Claims` (`sf_interaction/src/claims.rs:225`): priority with preemption of Reserved claims only,
   queue tickets, leases, exclusion groups, one body hold per user plus hand claims, typed `Refusal`
   (`claims.rs:114`), invalidation reasons. Requests are applied as one sorted batch per tick
@@ -114,7 +118,7 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
 
 - No rest UI: `RestRequested` is only logged. Lying down (IN3b) and lean (IN3c) wait for baked bed and lean clips.
 - `interact.cook` is a stub (`sf_interaction/src/cook.rs:16`); defs are cooked by the game's bake step only.
-- Carry and world rules are spec only; destruction has core + shell only (no game wiring IN38b, debris IN1c).
+- Carry and world rules are spec only; breaking removes the object but spills nothing yet (IN38b3), no debris (IN1c), no `STAT` urns (IN38c).
 - Lights: off-by-default lights get no def; the loop sound and the AI's light copy don't follow `LightChanged` yet.
 - History of each slice: [ledger](../../ledger/interaction.md).
 

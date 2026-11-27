@@ -157,12 +157,16 @@ keeping their owner, damaged by `overkill` through the adapter's curve, rolls `l
 through `ActivePlacements` (`mw_scripts_bevy` `lib.rs:233`), which holds only `Dynamic` and `Light` placements: a
 `CONTAINER` (`PlacementClass::Custom(1)`, `mw_world` `source.rs:25`) has no live removal yet, so IN38b2 first adds
 `CONTAINER` to `ActivePlacements` and a removal that despawns its spawned entity. MISC pottery is `Dynamic` already.
-Decorative `STAT` urns are static-scene instances: their removal is its own row (IN38c, after IN38b2). The
+Decorative `STAT` urns are static-scene instances: their removal is its own row (IN38c, after IN38b2). **Split
+(IN38b2, 2026-11-27):** the spill, loot, salvage and effect are IN38b3: a live item into a loaded cell goes through
+`Streaming::spawn_into` (`sf_world_bevy` `stream.rs`), which refuses a placement whose model is not loaded and starts
+no load, so spilled items would show only at the cell's next fetch; the model load comes first. Until then a broken
+container's store stays keyed by its placement (nothing lost). The
 deactivation hook (`mw_interaction_bevy` `index.rs:91`) writes `IndexChange::unload` too: ordered after `Release`, the
 shell's `OwnerDestroyed` is sent first and wins (the step sorts stable by placement; the second `Remove` finds nothing).
 Crime's vandalism hook and noise (IN28) read `Destroyed` too. Classic rules: no destructible defs, nothing runs.
 
-**Dev source** (IN38b1, owner check IN-1 before C14): behind the game's `dev` feature, a dev key writes one
+**Dev source** (IN38b1, owner check IN-38 before C14 (IN-1 was the keymap check, now KM-1)): behind the game's `dev` feature, a dev key writes one
 `PropDamage { amount: def.health, kind: blunt }` at the player's `PlayerFocus` placement, so one press runs every
 stage of a one-stage crate; the build slice greps the game's dev key table for a free key.
 
@@ -219,7 +223,7 @@ placement per tick. IN1c (headless, `--features physics`): same seed same piece 
 (oldest fades first); beyond LOD no bodies; all despawned after fade + shrink; sanity: no NaN, pieces rest. IN38b1
 (headless exact): a breakable placement registers, rest bytes round trip through the overlay, the dev key damages the
 focused placement. IN38b2 (headless exact): the hook removes a container once, spill count and owners, an unloaded
-placement's break removes it from the overlay; owner scene IN-1.
+placement's break removes it from the overlay; owner scene IN-38. IN38b3 (headless exact): spill count and owners.
 
 ## As built (IN1a, 2026-11-27)
 
@@ -251,3 +255,14 @@ own; a breakable stays indexed with that def while sitting is off. `DestructRest
 owner `destruct`; `save_rest` after `Damage` writes standing states only. `sync_rules` refills `DestructionRules`. Dev
 key `Delete` (`dev_break`, registered under the crate's `dev` feature, which the app's `dev` turns on). Host:
 `exterior.rs` calls `breakable::insert_records`. Tests: `tests_breakable.rs` (4).
+
+## As built (IN38b2, 2026-11-27)
+
+`mw_scripts_bevy`: `LIVE_CLASSES` (Dynamic, Light, `CONTAINER`) fill `ActivePlacements`; a container's visuals spawn
+under a `LiveRoot(PlacementId)` per level (pose on the root, scale on the visuals, as `ItemPivot`);
+`ActivePlacements::remove_live` = deactivation hooks, then overlay removal, then its roots. `mw_rpg_bevy`
+`breakable.rs`: `apply_breaks` (`FixedUpdate`, `.after(DestroySystems::Release)`) runs `remove_broken` on every
+removing `Destroyed`: `Live` (`remove_live` + its `ItemPivot`), `Unloaded` (overlay only, any visual left despawned),
+`Gone`. A standing stage changes nothing (no model swap stage exists yet). Host call: `exterior.rs`. Tests:
+`mw_scripts_bevy` `tests.rs` (1), `mw_rpg_bevy` `tests_breakable.rs` (2). Uncooked models (runtime importer) spawn
+through the uncooked hook without a root: they would stay drawn until the cell reloads (U: count unknown).

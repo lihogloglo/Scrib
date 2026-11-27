@@ -219,7 +219,7 @@ fn hook_placements(spawners: Option<ResMut<PlacementSpawners>>) {
     }
 }
 
-/// An R0 placement that can leave the world through gameplay (an item taken): what its
+/// An R0 placement that can leave the world through gameplay (an item taken, a crate broken): what its
 /// spawner chain needs to deactivate it early (`inventory.rs`).
 #[derive(Clone)]
 pub struct ActivePlacement {
@@ -229,11 +229,44 @@ pub struct ActivePlacement {
     pub cell_entity: Entity,
 }
 
-/// R0 items and lights (the classes the player can take), by placement id.
+/// The classes [`ActivePlacements`] holds: what can leave the world through gameplay while its
+/// cell stays loaded. Items and lights are taken (`inventory.rs`); containers are broken
+/// (`mw_rpg_bevy` `breakable.rs`, `IN38b2`).
+pub const LIVE_CLASSES: [PlacementClass; 3] = [PlacementClass::Dynamic, PlacementClass::Light, mw_world::source::CONTAINER];
+
+/// The classes whose visuals spawn under a [`LiveRoot`], so a live removal finds them: the
+/// [`LIVE_CLASSES`] without an entity of their own (items and carryable lights spawn under
+/// the physics `ItemPivot`).
+const ROOTED_CLASSES: [PlacementClass; 1] = [mw_world::source::CONTAINER];
+
+/// The entity a [`ROOTED_CLASSES`] placement's visuals spawn under, one per spawned level; it
+/// carries the placement's pose, the visuals keep their scale. Despawned with its cell level,
+/// or at once by [`ActivePlacements::remove_live`].
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LiveRoot(pub PlacementId);
+
+/// R0 placements of the [`LIVE_CLASSES`], by placement id.
 #[derive(Resource, Default)]
 pub struct ActivePlacements(pub HashMap<PlacementId, ActivePlacement>);
 
 impl ActivePlacements {
+    /// Removes `placement` from the world now, as a take or a break does: its deactivation hooks
+    /// ([`Self::deactivate`]), then its overlay removal (after the hooks: a hook that writes a
+    /// rest pose must not undo it), then every [`LiveRoot`] of it (its visuals). `None` when it
+    /// is not live (not in R0, or removed already): nothing changes. An item's physics
+    /// `ItemPivot` is the caller's to despawn (`inventory::take_placement`).
+    pub fn remove_live(world: &mut World, id: PlacementId) -> Option<ActivePlacement> {
+        let active = Self::deactivate(world, id)?;
+        if let Some(overlay) = world.get_resource::<WorldOverlay>() {
+            overlay.0.write().unwrap_or_else(PoisonError::into_inner).remove(id);
+        }
+        let roots: Vec<Entity> = world.query::<(Entity, &LiveRoot)>().iter(world).filter(|(_, r)| r.0 == id).map(|(e, _)| e).collect();
+        for e in roots {
+            world.despawn(e);
+        }
+        Some(active)
+    }
+
     /// Runs `placement`'s deactivation hooks now (physics body, script handle, sounds), as if
     /// its cell had left R0, and forgets it. The caller removes it from the overlay and
     /// despawns its visuals.
@@ -248,13 +281,22 @@ impl ActivePlacements {
     }
 }
 
-/// Registers placements entering R0 in [`ScriptPlacements`] (items and lights also in
-/// [`ActivePlacements`]) and removes them on leaving.
+/// Registers placements entering R0 in [`ScriptPlacements`] (the [`LIVE_CLASSES`] also in
+/// [`ActivePlacements`]) and removes them on leaving; spawns [`ROOTED_CLASSES`] visuals under a
+/// [`LiveRoot`].
 struct ScriptHandleHook(Arc<dyn PlacementSpawner>);
 
 impl PlacementSpawner for ScriptHandleHook {
     fn spawn(&self, world: &mut World, cx: &SpawnCx<'_>, placement: &IndexedPlacement) -> u32 {
-        self.0.spawn(world, cx, placement)
+        let p = &placement.placement;
+        if !ROOTED_CLASSES.contains(&p.class) {
+            return self.0.spawn(world, cx, placement);
+        }
+        // As the physics `ItemPivot`: the root takes the pose, the visuals the scale (LOD ranges read it).
+        let local = Transform { translation: cx.local.translation, rotation: cx.local.rotation, scale: bevy_math::Vec3::ONE };
+        let root = world.spawn((local, Visibility::Inherited, ChildOf(cx.parent), LiveRoot(p.id))).id();
+        let inner = SpawnCx { parent: root, local: Transform::from_scale(cx.local.scale), ..*cx };
+        1 + self.0.spawn(world, &inner, placement)
     }
     fn needs_model(&self, placement: &IndexedPlacement) -> bool {
         self.0.needs_model(placement)
@@ -280,7 +322,7 @@ impl PlacementSpawner for ScriptHandleHook {
                 },
             );
         }
-        if matches!(p.class, PlacementClass::Dynamic | PlacementClass::Light)
+        if LIVE_CLASSES.contains(&p.class)
             && let Some(mut active) = world.get_resource_mut::<ActivePlacements>()
         {
             let entry = ActivePlacement { placement: placement.clone(), worldspace: cx.worldspace.clone(), cell: cx.cell, cell_entity: cx.cell_entity };
