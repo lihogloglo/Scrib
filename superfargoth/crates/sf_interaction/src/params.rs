@@ -110,6 +110,12 @@ pub struct InteractParams {
     /// The impact reach of the reference material that the door, bash and lock pick reaches are
     /// set for: a material's ratio is its `impact_reach_m` over this, m (range 1-60, `IN18b`).
     pub noise_material_ref_m: f32,
+    /// A bash's swing from the press to contact, s (range 0.1-1.5, `IN37b`).
+    pub bash_windup_s: f32,
+    /// After a landed blow, a user's next bash press is dropped for this long, s (range 0.3-3).
+    pub bash_recover_s: f32,
+    /// A pending blow lands only when the user's feet are within this of the target point, m (range 0.5-4).
+    pub bash_reach_m: f32,
     /// Fixed simulation rate leases count in, ticks per second.
     pub tick_hz: f32,
 }
@@ -219,6 +225,12 @@ impl Default for InteractParams {
             noise_lockpick_reach_m: 3.0,
             // tunables: const (bound from interact.noise.material_ref_m in sf_interaction_bevy (IN18b); Guess, wood)
             noise_material_ref_m: 10.0,
+            // tunables: const (bound from interact.bash.windup_s in sf_interaction_bevy (IN37b); Guess, a heavy swing to contact)
+            bash_windup_s: 0.45,
+            // tunables: const (bound from interact.bash.recover_s in sf_interaction_bevy (IN37b); Guess)
+            bash_recover_s: 1.0,
+            // tunables: const (bound from interact.bash.reach_m in sf_interaction_bevy (IN37b); Guess)
+            bash_reach_m: 2.0,
             // tunables: const (bound from the app's fixed timestep in sf_interaction_bevy; net.md 60 Hz tick)
             tick_hz: 60.0,
         }
@@ -256,5 +268,28 @@ impl InteractParams {
     #[must_use]
     pub fn door_close_behind_ticks(&self) -> u64 {
         self.ticks(self.door_close_behind_s)
+    }
+
+    /// Seconds to whole ticks at `tick_hz`, rounded up (a blow never lands early), at least one. A
+    /// product within a thousandth of a tick of a whole one is that one: `0.1 s` at 60 Hz is 6 ticks,
+    /// not 7 from `0.1f32`'s representation error.
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    pub fn ticks_ceil(&self, secs: f32) -> u64 {
+        // tunables: const (maths: float slack of an f32 seconds value times the rate)
+        const SLACK: f64 = 1e-3;
+        ((f64::from(secs.max(0.0)) * f64::from(self.tick_hz) - SLACK).ceil() as u64).max(1)
+    }
+
+    /// Press to contact of a bash, ticks (`ceil(windup_s x tick_hz)`).
+    #[must_use]
+    pub fn bash_windup_ticks(&self) -> u64 {
+        self.ticks_ceil(self.bash_windup_s)
+    }
+
+    /// A user's recovery after a landed blow, ticks (rounded up).
+    #[must_use]
+    pub fn bash_recover_ticks(&self) -> u64 {
+        self.ticks_ceil(self.bash_recover_s)
     }
 }

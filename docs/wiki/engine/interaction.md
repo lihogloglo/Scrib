@@ -159,7 +159,12 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   `force x kind_factor` is under the material's `threshold`, else its floor; bare-handed blows cost `self_per_force`
   health, armed ones `wear_per_force` weapon wear; `contents_risk` from the raw force, capped. Non-finite or negative
   force = zero. `Bashed` + `bash_seed` (splitmix64 over placement, user, tick); `from_bashed` = `CHANGE_BASHED`, cause
-  the blow kind, `ChangeDetail::Force(floor(force))`. The shell (IN37b) and the game blow (IN37c) are not built yet.
+  the blow kind, `ChangeDetail::Force(floor(force))`. Shell (IN37b) `sf_interaction_bevy/src/bash.rs`: an approved `bash`
+  use (Update, `BashSystems::Press`) queues one blow from the host's `BashBlows` landing `ceil(interact.bash.windup_s x
+  tick_hz)` ticks on (one pending per user, none within `interact.bash.recover_s` of the last); a culprit non-impact
+  `PropDamage` on a bashable non-destructible is a blow now (`Hits`); `Land` drops blows whose target left, whose
+  `requires` fail or whose user is past `interact.bash.reach_m`, else writes `Bashed`, a destructible's `PropDamage`, a
+  revealed `NoiseCase::Bash` noise and `from_bashed` into `ChangeInbox`. The game blow (IN37c) is not built yet.
 
 ## Bevy features used
 

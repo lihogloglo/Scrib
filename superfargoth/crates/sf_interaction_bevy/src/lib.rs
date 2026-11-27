@@ -103,6 +103,7 @@ use sf_world::PlacementId;
 use smallvec::SmallVec;
 
 pub mod activate;
+pub mod bash;
 #[cfg(feature = "physics")]
 pub mod debris;
 pub mod destroy;
@@ -121,6 +122,8 @@ pub mod world_change;
 mod tests;
 #[cfg(test)]
 mod tests_activate;
+#[cfg(test)]
+mod tests_bash;
 #[cfg(all(test, feature = "physics"))]
 mod tests_debris;
 #[cfg(test)]
@@ -148,6 +151,7 @@ pub use activate::{
     ActivateCommand, ActivationSystems, InteractionDefs, InteractionStateTags, PendingUse, PendingUses, ScriptActivate,
     UseApproved, UseRefused,
 };
+pub use bash::{BashBlows, BashPending, BashSystems, Bashed, BlowOf, InteractionBashRules, NOISE_BASH, PendingBlow};
 #[cfg(feature = "physics")]
 pub use debris::{DebrisFading, DebrisPiece, DebrisPieceDef, DebrisSets, DebrisSystems};
 pub use destroy::{
@@ -387,6 +391,18 @@ pub const NOISE_MATERIAL_REF_M: Def<f32> = gp(def!(float "interact.noise.materia
     .range(1.0, 60.0)
     .unit(Unit::Meters)
     .help("Impact reach of the reference material (wood) the door, bash and pick reaches are set for; a material's ratio is its reach over this (IN18b)"));
+pub const BASH_WINDUP_S: Def<f32> = gp(def!(float "interact.bash.windup_s" = 0.45)
+    .range(0.1, 1.5)
+    .unit(Unit::Seconds)
+    .help("A bash's swing from the press to contact; ticks rounded up (IN37b)"));
+pub const BASH_RECOVER_S: Def<f32> = gp(def!(float "interact.bash.recover_s" = 1.0)
+    .range(0.3, 3.0)
+    .unit(Unit::Seconds)
+    .help("After a landed blow, the user's next bash press is dropped for this long (IN37b)"));
+pub const BASH_REACH_M: Def<f32> = gp(def!(float "interact.bash.reach_m" = 2.0)
+    .range(0.5, 4.0)
+    .unit(Unit::Meters)
+    .help("A pending blow lands only with the user's feet within this of the target point (IN37b)"));
 
 /// The `interact.*` tunables [`InteractParams`] has, bound by [`InteractionPlugin`].
 pub const TUNABLES: &[&dyn AnyDef] = &[
@@ -441,6 +457,9 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &NOISE_BASH_REACH_M,
     &NOISE_LOCKPICK_REACH_M,
     &NOISE_MATERIAL_REF_M,
+    &BASH_WINDUP_S,
+    &BASH_RECOVER_S,
+    &BASH_REACH_M,
 ];
 
 // --- Resources ----------------------------------------------------------------------------------
@@ -743,11 +762,15 @@ fn bind_rules(app: &mut App) {
     bind!(app, NOISE_BASH_REACH_M, |p, v| p.noise_bash_reach_m = v);
     bind!(app, NOISE_LOCKPICK_REACH_M, |p, v| p.noise_lockpick_reach_m = v);
     bind!(app, NOISE_MATERIAL_REF_M, |p, v| p.noise_material_ref_m = v);
+    bind!(app, BASH_WINDUP_S, |p, v| p.bash_windup_s = v);
+    bind!(app, BASH_RECOVER_S, |p, v| p.bash_recover_s = v);
+    bind!(app, BASH_REACH_M, |p, v| p.bash_reach_m = v);
 }
 
 /// What the shell reports to the host's AI and crime: noises ([`noise`]) and lasting changes ([`world_change`]).
 fn build_reports(app: &mut App) {
     rules::build(app);
+    bash::build(app);
     noise::build(app);
     world_change::build(app);
 }

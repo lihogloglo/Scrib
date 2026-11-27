@@ -3,6 +3,10 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-27 (interaction loop, IN37b): bashing now runs: pressing bash on a locked door or chest swings after a short
+  wind-up and lands a blow if you are still in reach and it is still locked, a weapon hit on a locked door counts as a
+  blow, and each blow makes a loud noise that names you and is reported as a lasting change. Not playable yet: the
+  game's blow strength and the bash verb on doors (IN37c) and crime's locks come next.
 - 2026-11-27 (interaction loop, IN39a2): world rules now run every tick: water on a burning object puts it out and
   wets it, a rule can snuff a lamp, damage or char an object, and report a lasting change or a noise. Not visible yet:
   nothing in the game sends rule causes until the fire and host rows land (IN39b, IN39e).

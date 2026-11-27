@@ -737,3 +737,12 @@ costs), `BashResult`, `bash` (threshold `>=` passes; a non-finite product is no 
 (culprit a `UserKey`, never none), `bash_seed` (words placement hi/lo, user kind 0 actor / 1 player, key hi/lo, tick).
 `world_change.rs`: `ChangeDetail::Force(u32)`, `from_bashed`. Tests `tests_bash.rs` (7 exact): thresholds, neutral
 default, fists vs armed costs, raw-force capped risk, NaN/inf/negative/zero, fixed seeds, mapper + fold to the first.
+
+## As built (IN37b, 2026-11-27)
+
+`sf_interaction_bevy/src/bash.rs`: `InteractionBashRules(BashRules)`, `BashBlows(Box<BlowOf>)` (default none), `BashPending`
+(blows + each user's last landed tick, pruned past recovery), shell message `Bashed(sf_interaction::Bashed)`, `NOISE_BASH`,
+`BashSystems::{Press (Update), Hits, Land}` chained `FireSystems -> Hits -> Land -> DestroySystems::Damage`. A user with no
+`ActionBody` is in reach; a press whose user left is dropped; land's destructible `PropDamage` has `dir` feet -> point (no
+body: zero); the change's `at` is the object origin. Params: `bash_windup_s/recover_s/reach_m` + `ticks_ceil` (a 1e-3 tick
+slack so `0.1 s` x 60 Hz is 6). Tests `tests_bash.rs` (6 headless exact).
