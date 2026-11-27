@@ -43,6 +43,7 @@ variant (`--off ...`, `--dlss ...`) itself; the owner never types commands or re
    | P | pause/resume the clock |
    | T | time-lapse (x600; again for normal x30) |
    | F9 | print the camera as `--camera "..." --hour h` and copy it to the clipboard |
+   | Delete | dev build: break the breakable you aim at (crate, barrel, urn, sack, pottery; IN38b1: state and log only, the model goes with IN38b2) |
    | F12 | screenshot to `play\shots\<scene>-<time>.png` |
 
    Not switchable live (decided at startup, compare two runs): `--off

@@ -239,3 +239,15 @@ Core: `Destroyed` (stage = index into `stages`), `DAMAGE_SCRIPT`, `splitmix64`, 
 `Destroyed`, `PendingBreaks`; `DestroySystems::{Damage, Release}` chained after Apply. A hit that changes nothing writes
 no `DestructChanged`. `awake_max` / `fade_s` stay with IN1c. Tests: core 7 (+ splitmix64 reference value and fixed
 seeds), shell `tests_destroy.rs` (8).
+
+## As built (IN38b1, 2026-11-27)
+
+`mw_interaction_bevy/src/breakable.rs`: `BreakablesTable::build(db)` classifies every `CONT` / `MISC` / `STAT` record
+(own script with an `OnActivate`, `OnDeath`, `OnMurder`, `OnKnockout` or `OnPCHitMe` block, or named by any `SCPT` /
+dialogue token via `mw_world::source::collect_script_tokens`, refuses); `STAT` urns are only counted (IN38c). The
+index hook (`index.rs`, now also wrapping `Dynamic` for MISC pottery) attaches `destructible_def` (live `BreakSettings`,
+the 12 `mw.rules.interaction.break*` tunables bound) and the material to the furniture def, or a slotless def of its
+own; a breakable stays indexed with that def while sitting is off. `DestructRest` follows the `Insert` from overlay
+owner `destruct`; `save_rest` after `Damage` writes standing states only. `sync_rules` refills `DestructionRules`. Dev
+key `Delete` (`dev_break`, registered under the crate's `dev` feature, which the app's `dev` turns on). Host:
+`exterior.rs` calls `breakable::insert_records`. Tests: `tests_breakable.rs` (4).

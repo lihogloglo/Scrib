@@ -15,7 +15,7 @@ publish = false
 # `bevy_tasks`/`bevy_platform` `async-io` (Bevy's executor then blocks on async-io's reactor) at Bevy's root,
 # `bevy/dynamic_linking` also sets `bevy_diagnostic/dynamic_linking` (no sysinfo), `bevy/dev` sets `file_watcher`
 # and `debug`. superfargoth/docs/build-perf.md "Feature unification" (build-speed BS1b, 2026-11-11).
-dev = ["bevy/dynamic_linking", "bevy/dev", "mw_viewers_bevy/clip_preview", "mw_game_core/dev", "mw_player_bevy/debug", "sf_ai_bevy/debug", "mw_boot_bevy/dev", "mw_audio_bevy/dev", "sf_vfs/watch", "remote"]
+dev = ["bevy/dynamic_linking", "bevy/dev", "mw_viewers_bevy/clip_preview", "mw_game_core/dev", "mw_player_bevy/debug", "sf_ai_bevy/debug", "mw_boot_bevy/dev", "mw_audio_bevy/dev", "mw_interaction_bevy/dev", "sf_vfs/watch", "remote"]
 # Delirium on by default again (2026-11-19): the no-game fork's own stand-in engine numbers replace the GTA IV program
 # it read from 2026-11-10 to 2026-11-19 (`mw_delirium::sim::install`). `--no-default-features` builds without it.
 default = ["delirium"]
@@ -67,6 +67,8 @@ mw_environment_bevy.workspace = true
 mw_exterior_bevy.workspace = true
 mw_game_core.workspace = true
 mw_install.workspace = true
+# Only for its `dev` feature (the dev break key, IN38b1); the game view pulls it in.
+mw_interaction_bevy.workspace = true
 mw_nif.workspace = true
 mw_physics = { path = "../../crates/mw_physics" }
 # Only for its `debug` feature under `dev` (the combat gizmos); the game view pulls it in.

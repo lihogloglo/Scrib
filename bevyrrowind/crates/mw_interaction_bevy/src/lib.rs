@@ -43,6 +43,14 @@
 //!   the overlay byte (owner `light`), and the anchor hides its point lights and darkens its glow
 //!   surfaces while unlit. A snuff / relight prompts verb-only ("Snuff", "Relight"); a carryable
 //!   light keeps "Take". The host inserts the records ([`light::insert_records`]).
+//! - **Breakables** ([`breakable`], `IN38b1`): the breakable `CONT` and `MISC` records
+//!   ([`BreakablesTable`], `mw_interaction::breakable::classify`; scripted and script-named ones
+//!   refused) get their `destructible_def` on top of their furniture def (or a slotless def of their
+//!   own) as they enter R0, so the shell's `Destructibles` registers them, and their saved state
+//!   back (`DestructRest`); `DestructionRules` follow the live `mw.rules.interaction.break*`
+//!   tunables ([`BreakSettings`]); each `DestructChanged` of a standing placement is saved to the
+//!   overlay (owner `destruct`). Dev builds: `Delete` breaks the focused breakable. The host
+//!   inserts the records ([`breakable::insert_records`]).
 //! - **Rest** (`IN3a`): the shell's `RestRequested` (a static bed's approved `sleep`) is logged, the
 //!   host's only consumer until a rest UI exists.
 //!
@@ -51,6 +59,7 @@
 //!
 //! [`FocusState::command`]: sf_interaction_bevy::FocusState::command
 
+pub mod breakable;
 pub mod door;
 pub mod door_body;
 pub mod index;
@@ -61,6 +70,8 @@ mod report;
 mod tests;
 #[cfg(test)]
 mod tests_door;
+#[cfg(test)]
+mod tests_breakable;
 #[cfg(test)]
 mod tests_door_body;
 #[cfg(test)]
@@ -77,11 +88,12 @@ use mw_game_core::player::FocusUpdate;
 use mw_player_bevy::{Focus, UsePresses};
 use sf_bake::{Manifest, Store};
 use sf_interaction::InteractableDef;
-use sf_interaction_bevy::{DoorSystems, InteractionPlugin, InteractionSystems, LightSystems};
+use sf_interaction_bevy::{DestroySystems, DoorSystems, InteractionPlugin, InteractionSystems, LightSystems};
 use sf_physics_bevy::PhysicsSystems;
 use sf_records::RecordId;
 use sf_tunables_bevy::{TunablesAppExt, tunable_changed};
 
+pub use breakable::{BreakSettings, BreakablesTable};
 pub use door::{DoorHook, DoorPivot, DoorPivots, SwingDoor, SwingDoors};
 pub use index::{ResidentFurniture, SitSwitch};
 pub use input::furniture_prompt;
@@ -136,6 +148,11 @@ pub fn add_with_defs(app: &mut App, defs: FurnitureDefs) {
     app.register_tunables(mw_interaction::TUNABLES);
     let sit = app.add_tunable(&mw_interaction::tunables::SIT).id();
     let snuff = app.add_tunable(&mw_interaction::tunables::SNUFF).id();
+    breakable::bind_settings(app);
+    app.add_systems(FixedUpdate, breakable::sync_rules.run_if(resource_changed::<BreakSettings>).before(DestroySystems::Damage))
+        .add_systems(FixedUpdate, breakable::save_rest.after(DestroySystems::Damage));
+    #[cfg(feature = "dev")]
+    app.add_systems(Update, breakable::dev_break);
     app.insert_resource(defs)
         .insert_resource(SitSwitch(sit))
         .insert_resource(SnuffSwitch(snuff))

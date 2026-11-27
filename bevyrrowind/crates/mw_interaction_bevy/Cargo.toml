@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+# The dev break key (`breakable::dev_break`); the app's `dev` turns it on.
+dev = []
+
 # A thin shell (build-perf.md rule 1): the logic is in `mw_interaction` and `sf_interaction`.
 [dependencies]
 bevy_app = { workspace = true, features = ["std"] }
@@ -16,6 +20,8 @@ bevy_camera.workspace = true
 # A snuffed light's dark glow material.
 bevy_color = { workspace = true, features = ["std"] }
 bevy_ecs = { workspace = true, features = ["std"] }
+# `ButtonInput<KeyCode>`: the dev break key (`dev`).
+bevy_input = { workspace = true, features = ["keyboard"] }
 # `PointLight`: the lights a snuffed light's anchor hides.
 bevy_light.workspace = true
 bevy_log.workspace = true

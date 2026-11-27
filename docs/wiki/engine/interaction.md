@@ -42,6 +42,12 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   tick) and queues each crossed stage; `Release` sends at most `breaks_per_tick` `Destroyed` (hit tick, `break_seed`)
   and `Remove { OwnerDestroyed }` for a removing stage of a resident object (claims end next tick). `DestructRest`
   restores clamped, no event. Drops: gone, factor <= 0, non-script kinds on `ignore_external`.
+- **Game breakables.** `mw_interaction_bevy/src/breakable.rs` (IN38b1): `BreakablesTable` (CONT + MISC records,
+  `classify` with script facts: own script with an `OnActivate`-like block, or named by any script/dialogue token,
+  refuses; STAT urns counted only, IN38c); the index hook (`index.rs`, now also on `Dynamic`) attaches
+  `destructible_def` + material to the furniture def or a slotless def (kept indexed with sitting off), then sends
+  `DestructRest` from overlay owner `destruct`; `DestructionRules` = `damage_rules(BreakSettings)` live; standing
+  `DestructChanged` saved to the overlay (a removing state writes none). Dev build: `Delete` breaks the focus.
 - **Claims.** `Claims` (`sf_interaction/src/claims.rs:225`): priority with preemption of Reserved claims only,
   queue tickets, leases, exclusion groups, one body hold per user plus hand claims, typed `Refusal`
   (`claims.rs:114`), invalidation reasons. Requests are applied as one sorted batch per tick
