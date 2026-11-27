@@ -247,7 +247,8 @@ the robe census: [archive](archive/physics-history.md#cloth-lattice).
   overlaps** wake gently: `max_corrective_velocity` 0.5 m/s.
 - **Inserts** run while a decaying-maximum per-insert cost fits the 0.5 ms budget (at least one static
   per frame); a worldspace's items go in only once its statics are in. Deactivation writes moved items
-  (> 1 mm or 1 mrad) as `move_to` + `physics` blob v1; all reinsert asleep for now.
+  (> 1 mm or 1 mrad) as `move_to` + `physics` blob v1 (`ItemMotion`); an awake blob reinserts awake with its velocities, never held
+  (IN38b3b), the rest asleep.
 - **Rolling resistance** (rapier has none): awake `DEBRIS`/`PROP` in contact lose 20 rad/s² of angular
   speed; items get `ITEM_DAMPING` (0.1 linear, 1.5 angular).
 

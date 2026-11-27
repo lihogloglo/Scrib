@@ -351,3 +351,11 @@ gone near group, an id the cell holds (`holds`, shared with `spawn_into`), or no
 (warn); spawns go through `place` (`spawn_into`'s tail, the user passing to the near group). `pending_spawns()`,
 `StreamStats::pending_dropped`. Tunable `stream.pending_spawns_per_frame` (`sf_world::STREAM_PENDING_SPAWNS`, bound
 live in `mw_exterior_bevy` `restream.rs`). Tests: `tests_pending.rs` (6 headless exact).
+
+## As built (IN38b3b, 2026-11-27)
+
+`sf_physics_bevy` `stream.rs`: public `ItemMotion { asleep, linear, angular }` with `encode` / `decode` (v1, 26 bytes;
+`decode` refuses another version, length or a non-finite velocity) and `ItemMotion::DROPPED` (awake, zero velocity: the
+spill's blob); the deactivation writer uses `encode`. Item activation decodes the overlay blob into `Pending`; an awake
+one inserts `Dynamic { asleep: false }` with CCD (never `Held`, whatever `ItemBody::hold`) and `set_velocity` right
+after the insert. Tests: `motion_tests.rs` (4 headless exact).

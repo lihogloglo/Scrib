@@ -55,6 +55,8 @@ pub mod stream;
 #[cfg(test)]
 mod kinematic_tests;
 #[cfg(test)]
+mod motion_tests;
+#[cfg(test)]
 mod tests;
 
 #[cfg(feature = "controller")]
@@ -70,7 +72,7 @@ pub use ragdoll::{LYING_REST_GET_UP, Ragdoll, RagdollConfig, RagdollFailed, Ragd
 #[cfg(any(feature = "ragdoll", feature = "controller"))]
 pub use sf_ragdoll;
 pub use stream::{
-    BodyLoader, CollisionReady, ItemBody, ItemContent, ItemPivot, KinematicPlacements, PhysicsBodySource, PhysicsHook, PhysicsShapeSource,
+    BodyLoader, CollisionReady, ItemBody, ItemContent, ItemMotion, ItemPivot, KinematicPlacements, PhysicsBodySource, PhysicsHook, PhysicsShapeSource,
     PhysicsStreaming, STATE_OWNER, STATE_VERSION, ShapeLoader, hook_items, hook_physics,
 };
 

@@ -41,7 +41,8 @@ markers use the rest-pose geometry; everything else all NIF triangles (not the r
 **Items** (`mw_bake/src/body.rs`, `mw_physics/src/lib.rs`): `body.cook` fits per model (`sf_physics/src/cook.rs`: authored
 hulls, then a covering primitive, one hull, else V-HACD), `items.check` settles placed items. Which placements are items
 and mass (`item_mass` from weight): `mw_physics`. Items insert asleep and stay put until disturbed (`undisturbed` flag,
-`world.rs`). Cloth rules: `mw_physics/src/cloth.rs`.
+`world.rs`); one whose overlay `physics` blob says it left awake (`ItemMotion`, `sf_physics_bevy/src/stream.rs`) goes
+back in awake with its velocities, never held (a spill, a throw across a cell edge). Cloth rules: `mw_physics/src/cloth.rs`.
 
 **Ragdolls**: `sf_ragdoll` cooks `RagdollDef` (`cook.rs`, `mw_bake/src/ragdoll.rs`: humanoids 75 kg), `RagdollInstance`
 (`instance.rs`), powered stable-PD drives (`powered.rs`), reaction machine (`react.rs`). Runtime `sf_physics_bevy/src/ragdoll.rs`;

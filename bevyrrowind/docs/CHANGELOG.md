@@ -3,6 +3,7 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-27 (interaction loop, IN38b3b): an item that left a loaded area while still moving (thrown, falling) now comes back moving with the speed it had, instead of frozen in the air; a spilled item can be placed so it drops and settles (IN38b3c).
 - 2026-11-27 (interaction loop, IN38b3a): the streaming runtime can now place an item into a loaded area even when its model was never loaded: it starts the load and spawns the item a frame after the model arrives (a few a frame), or drops it if the area unloads first (the save keeps it, so it appears on the next visit). First user: a broken crate's spilled contents (IN38b3c).
 - 2026-11-27 (interaction loop, IN38b2): a broken crate, barrel, sack or pot now leaves the world at once (model, collision, script handle) and stays gone across reloads and saves, also when it broke just as its area unloaded; its contents are kept for the spill that follows (IN38b3).
 - 2026-11-27 (interaction loop, IN38b1): breakable crates, barrels, urns, sacks and loose pottery are now live in the game: they register with the destruction shell as cells load (quest-scripted ones stay whole), take damage by weapon kind, and keep their damage across cell reloads and saves; dev builds break the aimed-at one with `Delete` (the model and the spilled contents follow with IN38b2).
