@@ -75,6 +75,17 @@ entities) is still a success. At Near only it cannot see a twin from the cell's 
 that load did not hold. Caller: an exclusive system outside `StreamingSystems::Drive`, `PlacementSpawners` cloned,
 then `world.resource_scope(|world, mut streaming: Mut<Streaming>| streaming.spawn_into(..))`. First caller: AI10c3c2b.
 
+**Queued spawn that waits for its model (IN38b3a).** `Streaming::spawn_when_ready(world, spawners, ws, cell, placement)`
+(`stream.rs`, `Queued | Refused`) is `spawn_into` for a placement whose model is not loaded (a broken crate's
+spilled items): it refuses like `spawn_into` except for the model (and an id already queued), takes one model user
+at once so the load starts, and queues. After the main-thread stages, `drain_pending` spawns ready entries through
+`spawn_into`'s path (`place`; one settle frame after the model is in, outside burst), at most
+`stream.pending_spawns_per_frame` (8, Guess, live) a frame in call order; an entry waits while a stage of its cell
+is in flight, and is dropped (user released, `StreamStats::pending_dropped`) when its cell's near group changed or
+left, the cell's own load holds the id, or no spawner takes the resolved model (a failed load without an uncooked
+hook, warns). The queue is never saved: the caller writes the overlay, so the cell's next load spawns what was
+dropped. `prepare` assets are not waited on. Tests: `tests_pending.rs`.
+
 **Worldspace left behind (CW-9, on by default (owner 2026-11-17)).** Indoors the exterior stays resident: the residency-cache ghost
 (`scheduler.rs` `linger`) keeps its full rings while the player stands within 32 m of the way back (a small interior:
 the whole visit), and far-field L2/L3 nodes never leave. Without parking it all keeps ticking (visibility, big_space,

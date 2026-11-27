@@ -29,6 +29,7 @@ pub const TUNABLES: &[&dyn AnyDef] =
         &crate::scheduler::STREAM_SELECT_MOVE_M,
         &crate::scheduler::STREAM_SELECT_TURN_DEG,
         &crate::scheduler::STREAM_SCENE_LOAD_MS,
+        &crate::scheduler::STREAM_PENDING_SPAWNS,
         &crate::lod_screen::LOD_BIAS,
         &crate::lod_screen::SIZE_CULL_MIN_PX,
         &crate::lod_screen::SIZE_CULL_MIN_DISTANCE,

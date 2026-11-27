@@ -262,6 +262,17 @@ pub const STREAM_SCENE_LOAD_MS: Def<f32> = def!(float "stream.scene.load_ms" = 5
     .source(Source::Measured("2026-11-22 night walk A/B: 1 ms inconclusive vs off, kept off (docs/ledger/streaming.md)"))
     .group(Group::ViewDistance);
 
+/// `stream.pending_spawns_per_frame`: placements a frame `sf_world_bevy`'s queued spawn
+/// (`Streaming::spawn_when_ready`, `IN38b3a`: a broken crate's spilled items) spawns once their models are
+/// in. Spawn work is time-sliced per frame in every streaming engine (UE `s.LevelStreamingActorsUpdateTimeLimit`;
+/// engine numbers for item spawns U), so a burst of late spawns spreads over frames.
+pub const STREAM_PENDING_SPAWNS: Def<u32> = def!(count "stream.pending_spawns_per_frame" = 8)
+    .range(1, 64)
+    .unit(Unit::Count)
+    .help("Queued late spawns (spilled items and the like) placed per frame once their models are loaded")
+    .source(Source::Guess)
+    .group(Group::ViewDistance);
+
 impl SchedulerConfig {
     /// The streaming gate with its declared quanta, on or off.
     pub fn select_gate_quanta(enabled: bool) -> GateQuanta {

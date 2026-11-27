@@ -9,6 +9,7 @@
 
 use bevy::prelude::*;
 use sf_tunables_bevy::TunablesAppExt;
+use sf_world::STREAM_PENDING_SPAWNS;
 use sf_world::lod_screen::LOD_LIVE_BUDGET;
 use sf_world_bevy::Streaming;
 
@@ -17,4 +18,8 @@ pub fn bind(app: &mut App) {
     let _budget = app
         .add_tunable(&LOD_LIVE_BUDGET)
         .bind_resource(|s: &mut Streaming, v| s.set_lod_live_budget(usize::try_from(v).unwrap_or(usize::MAX)));
+    // Queued late spawns (a broken crate's spilled items, IN38b3a) placed per frame.
+    let _pending = app
+        .add_tunable(&STREAM_PENDING_SPAWNS)
+        .bind_resource(|s: &mut Streaming, v| s.set_pending_spawns_per_frame(usize::try_from(v).unwrap_or(usize::MAX)));
 }

@@ -340,3 +340,14 @@ removing `Destroyed`: `Live` (`remove_live` + its `ItemPivot`), `Unloaded` (over
 `Gone`. A standing stage changes nothing (no model swap stage exists yet). Host call: `exterior.rs`. Tests:
 `mw_scripts_bevy` `tests.rs` (1), `mw_rpg_bevy` `tests_breakable.rs` (2). Uncooked models (runtime importer) spawn
 through the uncooked hook without a root: they would stay drawn until the cell reloads (U: count unknown).
+
+## As built (IN38b3a, 2026-11-27)
+
+`sf_world_bevy` `stream.rs`: `Streaming::spawn_when_ready(world, spawners, ws, cell, placement) -> SpawnWhenReady`
+(`Queued | Refused`; refusals as `spawn_into`'s minus the model, plus an id already queued), one model user taken at
+once; `drain_pending` after the main-thread stages (skipped on origin-guard frames, like them): entries wait on a
+stage in flight or the model (plus one settle frame outside burst, as loads and promotions), drop on a changed or
+gone near group, an id the cell holds (`holds`, shared with `spawn_into`), or no spawner for the resolved model
+(warn); spawns go through `place` (`spawn_into`'s tail, the user passing to the near group). `pending_spawns()`,
+`StreamStats::pending_dropped`. Tunable `stream.pending_spawns_per_frame` (`sf_world::STREAM_PENDING_SPAWNS`, bound
+live in `mw_exterior_bevy` `restream.rs`). Tests: `tests_pending.rs` (6 headless exact).

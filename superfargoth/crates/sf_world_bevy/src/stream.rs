@@ -130,6 +130,9 @@ pub struct StreamingConfig {
     /// a [`Self::lod`] change ([`crate::lod_live`]; `lod.live.chains_per_frame`,
     /// `sf_world::lod_screen::LOD_LIVE_BUDGET`).
     pub lod_live_budget: usize,
+    /// Placements [`Streaming::spawn_when_ready`] spawns a frame once their models are in
+    /// (`stream.pending_spawns_per_frame`, [`sf_world::STREAM_PENDING_SPAWNS`]; at least one).
+    pub pending_spawns_per_frame: usize,
 }
 
 impl Default for StreamingConfig {
@@ -150,6 +153,7 @@ impl Default for StreamingConfig {
             gpu_cull_statics: false,
             pipeline_compile_threads: None,
             lod_live_budget: sf_world::lod_screen::LOD_LIVE_BUDGET.default_value() as usize,
+            pending_spawns_per_frame: sf_world::STREAM_PENDING_SPAWNS.default_value() as usize,
         }
     }
 }
@@ -304,6 +308,9 @@ pub struct StreamStats {
     /// Placements drawn by a static-scene cell table instead of their own
     /// entities, summed over loads ([`crate::CellScene::covered`]).
     pub scene_covered: u64,
+    /// [`Streaming::spawn_when_ready`] entries dropped unspawned (cell gone, its load got the
+    /// id, no spawner for the resolved model).
+    pub pending_dropped: u64,
     /// Bytes the static scene queued in the upload stage, summed over loads.
     pub scene_upload_bytes: u64,
     /// Model uses that wanted ray-tracing variants ([`RayTracingVariants`])
@@ -491,6 +498,39 @@ pub struct SpawnedInto {
     pub listed: bool,
 }
 
+/// What a [`Streaming::spawn_when_ready`] did (`IN38b3a`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpawnWhenReady {
+    /// Queued: its model's load started (one user held); the driver spawns it once the model
+    /// is in, or drops it (see the call).
+    Queued,
+    /// Nothing queued or changed.
+    Refused,
+}
+
+/// A [`Streaming::spawn_when_ready`] entry waiting for its model or its cell's stage.
+struct PendingSpawn {
+    worldspace: WorldspaceId,
+    cell: IVec3,
+    /// The near group it was queued for: another entity there (or none) means the cell left
+    /// Near, and its next load spawns the placement from the overlay.
+    group: Entity,
+    placement: IndexedPlacement,
+    /// The model user this entry holds (`None`: its spawner needs no model).
+    model: Option<VfsPath>,
+    /// The model was ready last frame (the settle frame of the assets stage and promotions).
+    settled: bool,
+}
+
+/// What the driver does with a [`PendingSpawn`] this frame.
+enum PendingStep {
+    Wait,
+    Settle,
+    Spawn,
+    /// Dropped; `true`: warn (the placement will not appear until its cell's next load).
+    Drop(&'static str, bool),
+}
+
 /// The streaming runtime (one per app).
 #[derive(Resource)]
 pub struct Streaming {
@@ -515,6 +555,8 @@ pub struct Streaming {
     /// `None`: never told).
     #[allow(clippy::option_option)]
     active_seen: Option<Option<WorldspaceId>>,
+    /// [`Self::spawn_when_ready`]'s queue, in call order (never saved: the overlay is the truth).
+    pending: VecDeque<PendingSpawn>,
 }
 
 impl Streaming {
@@ -550,6 +592,7 @@ impl Streaming {
             cooldown: 0,
             links_seen: false,
             active_seen: None,
+            pending: VecDeque::new(),
         }
     }
 
@@ -586,6 +629,11 @@ impl Streaming {
     /// LOD chains re-ranged per frame after a screen change (`lod.live.chains_per_frame` live).
     pub fn set_lod_live_budget(&mut self, chains: usize) {
         self.rt.config.lod_live_budget = chains.max(1);
+    }
+
+    /// Queued spawns placed per frame (`stream.pending_spawns_per_frame` live).
+    pub fn set_pending_spawns_per_frame(&mut self, spawns: usize) {
+        self.rt.config.pending_spawns_per_frame = spawns.max(1);
     }
 
     /// Sums one frame of the live re-range into the stats.
@@ -737,11 +785,8 @@ impl Streaming {
         }
         let key = (ws.clone(), cell);
         let resident = self.rt.cells.get(&key)?;
-        let group = resident.groups.get(&Level::Near)?.entity;
-        let id = placement.placement.id;
-        if resident.groups.values().any(|g| g.covered.contains(&id))
-            || resident.active.as_ref().is_some_and(|list| list.iter().any(|p| p.placement.id == id))
-        {
+        resident.groups.get(&Level::Near)?;
+        if holds(resident, placement.placement.id) {
             return None;
         }
         let class = spawners.for_class(placement.placement.class);
@@ -750,17 +795,37 @@ impl Streaming {
             return None;
         }
         spawners.spawner_for(&placement, self.rt.loaded_model(&placement))?;
-        let cell_entity = resident.entity;
-        if needs_model && let Some(model) = placement.placement.model.clone() {
-            let ray_tracing_lod = world.get_resource::<RayTracingVariants>().and_then(|v| v.lod_for(self.rt.info(ws).partition));
-            self.rt.acquire_model(&model, ray_tracing_lod);
-            let near = self.rt.cells.get_mut(&key).and_then(|c| c.groups.get_mut(&Level::Near)).expect("checked above");
-            near.models.push(model); // the near unload releases it with the group's models
+        let model = placement.placement.model.clone().filter(|_| needs_model);
+        if let Some(model) = &model {
+            let ray_tracing_lod = self.ray_tracing_lod(world, ws);
+            self.rt.acquire_model(model, ray_tracing_lod);
         }
+        Some(self.place(world, spawners, ws, cell, placement, model))
+    }
+
+    /// The spawn half of [`Self::spawn_into`] and of a queued spawn, once every check passed:
+    /// `model` (a user already taken) joins the near group's models (the near unload releases
+    /// it with them), the class spawner spawns the placement in a batch under that group, and
+    /// an Active cell lists it and runs its `activate`.
+    fn place(
+        &mut self,
+        world: &mut World,
+        spawners: &PlacementSpawners,
+        ws: &WorldspaceId,
+        cell: IVec3,
+        placement: IndexedPlacement,
+        model: Option<VfsPath>,
+    ) -> SpawnedInto {
+        let key = (ws.clone(), cell);
+        let resident = self.rt.cells.get_mut(&key).expect("checked by the caller");
+        let cell_entity = resident.entity;
+        let near = resident.groups.get_mut(&Level::Near).expect("checked by the caller");
+        let group = near.entity;
+        near.models.extend(model);
         let entities = self.rt.spawn_single(world, spawners, ws, cell, group, &placement);
         let listed = self.rt.cells.get(&key).is_some_and(|c| c.active.is_some());
         if listed {
-            if let Some(s) = class {
+            if let Some(s) = spawners.for_class(placement.placement.class) {
                 let cx = ActivateCx { worldspace: ws, cell, cell_entity, discard: false };
                 s.activate(world, &cx, &placement);
             }
@@ -768,7 +833,115 @@ impl Streaming {
                 Arc::make_mut(list).push(placement);
             }
         }
-        Some(SpawnedInto { entities, listed })
+        SpawnedInto { entities, listed }
+    }
+
+    fn ray_tracing_lod(&self, world: &World, ws: &WorldspaceId) -> Option<usize> {
+        world.get_resource::<RayTracingVariants>().and_then(|v| v.lod_for(self.rt.info(ws).partition))
+    }
+
+    /// Queues one placement for the already loaded `cell` of `ws` and starts its model's load
+    /// (`IN38b3a`, interaction-destruction.md "Spill"): [`Self::spawn_into`] for a placement
+    /// whose model may not be loaded yet (a broken crate's spilled items). The entry takes one
+    /// user of its model at once, so the load starts now. The driver spawns it through
+    /// `spawn_into`'s path once the model is ready (plus one settle frame outside burst mode,
+    /// as loads and promotions) and no stage of the cell is in flight, at most
+    /// [`StreamingConfig::pending_spawns_per_frame`] a frame, in call order; the user passes to
+    /// the cell's near group. It drops the entry and releases the user when the cell left
+    /// residency (its next load spawns the placement from the overlay, which the caller keeps
+    /// right), when the cell's own load holds the id (listed or scene-drawn), or when no
+    /// spawner takes the resolved model (a failed load without an uncooked hook; warns). The
+    /// queue is never saved. The spawner's `prepare` asset is not waited on (it loads behind
+    /// the spawn, like any late entity).
+    ///
+    /// Refused (nothing changed) like `spawn_into` except for the model: `cell` not resident in
+    /// `ws` or without a revealed `Level::Near` group, the id already listed, drawn by a static
+    /// scene of the cell or queued, or no spawner for its class. A stage in flight is no
+    /// refusal (the entry waits). Callable from any system holding `ResMut<Streaming>`.
+    pub fn spawn_when_ready(
+        &mut self,
+        world: &World,
+        spawners: &PlacementSpawners,
+        ws: &WorldspaceId,
+        cell: IVec3,
+        placement: IndexedPlacement,
+    ) -> SpawnWhenReady {
+        let Some(resident) = self.rt.cells.get(&(ws.clone(), cell)) else { return SpawnWhenReady::Refused };
+        let Some(group) = resident.groups.get(&Level::Near).map(|g| g.entity) else { return SpawnWhenReady::Refused };
+        let id = placement.placement.id;
+        if holds(resident, id) || self.pending.iter().any(|p| p.worldspace == *ws && p.placement.placement.id == id) {
+            return SpawnWhenReady::Refused;
+        }
+        let Some(class) = spawners.for_class(placement.placement.class) else { return SpawnWhenReady::Refused };
+        let model = placement.placement.model.clone().filter(|_| class.needs_model(&placement));
+        if let Some(model) = &model {
+            let ray_tracing_lod = self.ray_tracing_lod(world, ws);
+            self.rt.acquire_model(model, ray_tracing_lod);
+        }
+        self.pending.push_back(PendingSpawn { worldspace: ws.clone(), cell, group, placement, model, settled: false });
+        SpawnWhenReady::Queued
+    }
+
+    /// Entries [`Self::spawn_when_ready`] queued that still wait.
+    pub fn pending_spawns(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// What the driver does with `p` this frame.
+    fn pending_step(&self, p: &PendingSpawn, spawners: &PlacementSpawners) -> PendingStep {
+        let resident = self.rt.cells.get(&(p.worldspace.clone(), p.cell));
+        let Some(resident) = resident.filter(|c| c.groups.get(&Level::Near).map(|g| g.entity) == Some(p.group)) else {
+            return PendingStep::Drop("its cell left residency", false);
+        };
+        if holds(resident, p.placement.placement.id) {
+            return PendingStep::Drop("its cell's load holds it", false);
+        }
+        if self.in_flight(&p.worldspace, p.cell) {
+            return PendingStep::Wait;
+        }
+        if let Some(model) = &p.model {
+            if !self.rt.model_ready(model) {
+                return PendingStep::Wait;
+            }
+            if !p.settled && !self.scheduler.in_burst() {
+                return PendingStep::Settle;
+            }
+        }
+        if spawners.spawner_for(&p.placement, self.rt.loaded_model(&p.placement)).is_none() {
+            return PendingStep::Drop("no spawner takes its resolved model", true);
+        }
+        PendingStep::Spawn
+    }
+
+    /// Steps [`Self::spawn_when_ready`]'s queue (in the main-thread stages' turn, after them).
+    fn drain_pending(&mut self, world: &mut World, spawners: &PlacementSpawners) {
+        let cap = self.rt.config.pending_spawns_per_frame.max(1);
+        let (mut i, mut spawned) = (0, 0);
+        while i < self.pending.len() && spawned < cap {
+            match self.pending_step(&self.pending[i], spawners) {
+                PendingStep::Wait => i += 1,
+                PendingStep::Settle => {
+                    self.pending[i].settled = true;
+                    i += 1;
+                }
+                PendingStep::Drop(why, warn) => {
+                    let p = self.pending.remove(i).expect("in range");
+                    let id = p.placement.placement.id;
+                    if warn {
+                        log::warn!("sf_world_bevy: queued spawn of {id:?} dropped: {why}");
+                    } else {
+                        log::debug!("sf_world_bevy: queued spawn of {id:?} dropped: {why}");
+                    }
+                    self.rt.release_models(p.model.as_slice());
+                    self.rt.stats.pending_dropped += 1;
+                }
+                PendingStep::Spawn => {
+                    let p = self.pending.remove(i).expect("in range");
+                    self.place(world, spawners, &p.worldspace, p.cell, p.placement, p.model);
+                    spawned += 1;
+                }
+            }
+        }
     }
 
     /// A stage of `cell` is in flight: some request on it holds engine work.
@@ -922,6 +1095,7 @@ impl Streaming {
             for stage in [Stage::Despawn, Stage::Deactivate, Stage::Spawn, Stage::Upload, Stage::Activate] {
                 self.run_stage(world, stage, spawners, counters);
             }
+            self.drain_pending(world, spawners);
         }
         self.release_unloaded(world);
 
@@ -2073,6 +2247,12 @@ impl Ends {
 /// A precombine's members, if every one is among the fetched placements and
 /// untouched by the overlay (precombine.md, phase 1: any moved, removed or
 /// missing member drops the whole precombine; the cell spawns the old way).
+/// The cell's own load holds `id`: in its Active list or drawn by its static scene (a spawn
+/// through [`Streaming::spawn_into`] or a queued spawn would make a twin).
+fn holds(cell: &CellRuntime, id: PlacementId) -> bool {
+    cell.groups.values().any(|g| g.covered.contains(&id)) || cell.active.as_ref().is_some_and(|list| list.iter().any(|p| p.placement.id == id))
+}
+
 fn valid_members(combine: &CellPrecombine, placements: &[IndexedPlacement], overlay: Option<&WorldOverlay>) -> Option<HashSet<PlacementId>> {
     let fetched: HashSet<PlacementId> = placements.iter().map(|p| p.placement.id).collect();
     let overlay = overlay.map(|o| o.0.read().unwrap_or_else(PoisonError::into_inner));
