@@ -62,6 +62,7 @@ a cell model with no per-tree positions: it supports this choice and gives the h
 | Cascade big to small | Horizon layers (V), Wildlands (U) | rocks, canopy, understorey, ground | match |
 | Debris below cliffs, sized | Houdini scree workflows (U); no game talk found (WG-R §4.7) | talus fall process, Pareto sizes | match (our design) |
 | Rocks prune foliage | UE PCG Difference, Self Pruning (U) | rocks first, footprints as obstacles | match |
+| Density measured over a sample of the whole class | forest inventory (FIA ratio-of-means over mapped plots, U); UE PCG / Foliage Spawner: artist tunes on a view (U) | calibration on a hash-ordered tile sample (E2o.e) | match (inventory form) |
 | Steady-state species competition | Ecormier-Nocca 2021 (V) | suitability min only | gap by choice (Later) |
 | GPU placement per frame | Horizon, ~250 us (V) | CPU, once, cached file | gap by choice (co-op safe) |
 
@@ -117,13 +118,23 @@ first), canopy, understorey, ground flora. "Shared" = the rocks slice reuses it 
      inside a class and smeared over ~sigma at a class border (D).
    - **Calibration** of `g(c)` (bake; research Finding 3: no closed form covers clustered + random radii + size
      priority + k rounds, so the bake does the "artist iterates" loop of UE PCG and the Foliage Spawner). Per class
-     with `T > 0`: the parent tiles in decreasing census share of `c` (ties by tile key) until their `c` land reaches
-     `calib_area_ha` (all of them when the class has less); the rock layer (when present: canopy candidates avoid its
-     footprints) and the canopy layer, with the full halo (exact winners). `W` = winners at class-`c` points per ha
-     of `c` land in those tiles, times `m(c) / m_t(c)`, `m_t` the census mean of `w` over the `c` cells of those
-     tiles (REVIEW: the purest tiles are class cores whose weight mean differs from the class's; `lambda` scales
-     with `w / m`, so the ratio removes that bias; class-border losses, offspring smeared onto other classes or
-     dropped by the point hats, stay outside it and E2o.m measures them class-wide). First guess the Matern II
+     with `T > 0`, a **sample of its tiles** (E2o.e): one world order of the census's parent tiles by
+     `hash(seed, tile key)` (ties by tile key), shared by every class; class `c` takes, in that order, the tiles
+     holding `c` land until their `c` land reaches `calib_area_ha` (all of them when the class has less). The rock
+     layer (when present: canopy candidates avoid its footprints) and the canopy layer run there with the full halo
+     (exact winners). `W` = winners at class-`c` points / `c` land on those tiles, per ha, with no rescale: the
+     forest-inventory ratio-of-means over mapped plots (a plot straddling conditions counts each condition's trees
+     against that condition's area: Zarnoch and Bechtold 2000, Bechtold and Patterson 2005, U), consistent for the
+     class-wide winners / land because a hash order is a simple random sample of tiles. The census mean of `w` over
+     those cells, `m_t`, is reported, not applied. Why (E2o.d, x10s): the purest tiles (the v1 choice, 31 tiles at
+     100 % share for 203 ha) had `m_t` 0.12-0.96 against `m` 0.20-0.38, and `W` is not linear in weight (crowns pack),
+     so the old `x m / m_t` misread the class: reached vs world woodland 35 vs 53, temperate forest 30 vs 65,
+     rainforest 21 vs 62 per ha, while raw `W` equalled the world run on the same tiles exactly (count, halo and class
+     attribution are not the gap). The inventory standard says the same: assigning a whole plot to its predominant
+     condition shifted FIA volume by 3.9 % (Gartner and Reams 2005, U). The shared order (permanent random numbers,
+     the coordinated-sample form of statistics offices, Ohlsson 1995, U) makes one class's sample a prefix of the
+     same list as the others', so a measurement run covers the union of the active classes' samples = the prefix
+     up to the farthest one, and a mixed tile serves every class it holds. First guess the Matern II
      closed form `g0 = -ln(1 - x) / x`, `x = T pi R^2 / 10^4`, `R = crown_k x 2 x (crown_a_m + crown_b x E[h])` over
      the class's species mix (`g0` = the upper end below when `x >= 0.9`), clamped like every iterate to `[1, intensity_scale_max x m(c)]` (`s` <= its bound; when that upper
      end is below 1, `g` is it and the class carries the low-weight warning); then `g := clamp(g x T / W, ...)`
@@ -135,7 +146,23 @@ first), canopy, understorey, ground flora. "Shared" = the rocks slice reuses it 
      `calib_saturation x f`, or `g` at the upper end with `W < (1 - calib_tol) T`, means the target is not reachable
      (packed crowns: above what the class's sizes allow, research Finding 4; or the multiplier clamp); stop, keep
      the iterate with the largest `W` (ties: the smaller `g`), bake warning `class <name>: target T above the crown ceiling, reached W`. Same inputs, same `g`.
-   - **Result file.** `A`, `m`, `g`, `W`, steps and the ceiling flag per class go to `<guide>/scatter/calibration.toml`
+     **Joint check** (E2o.e): a class's `W` on mixed tiles depends on its neighbours' `g` (competition and
+     offspring cross class borders; E2o.d: grassland, 130 tiles at 20 % share, converged at 5.1 while its
+     neighbours' `g` still moved, 6.6 once they settled). When no class is active, one run over the union of every
+     calibrated class's sample at every class's kept `g`; each class's `W` from it is pushed as a measurement at its
+     kept `g`. A converged class now outside `calib_tol` is reopened: it keeps its history and step count and steps
+     from that measurement (secant as above); ceiling and out-of-steps classes are not reopened. Repeat until a joint
+     check reopens nothing, at most `calib_iters` joint checks. The file reports, per class, the last joint check's
+     `g` and `W` (one consistent snapshot: `reached` is what the world run gives on those tiles at those `g`), and the
+     ceiling flag of the last decision. **Cost** (D): per class about `calib_area_ha / (A(c) / N(c))` tiles, `N(c)`
+     the parent tiles holding `c` (mixed tiles: more tiles per 200 ha, grassland at 20 % share needed 130 where the
+     pure classes needed ~31 at x10s's ~6.5 ha tiles); a run covers the prefix up to the farthest active class, at
+     most the whole land (= one world canopy pass) when a class is rare; at most `calib_iters + 1` runs per class
+     plus the joint checks. E2o.f prints tiles per class and the calibration seconds on x10s; if they stop fitting
+     the bake's "a few minutes", the lever is `calib_area_ha` (data). Sampling error (D): ratio-of-means CV ~ the
+     between-tile CV of winners/ha over `sqrt(n)` tiles, so more mixed tiles at the same area lower it; E2o.f compares
+     `reached` with the world over census land per class.
+   - **Result file.** `A`, `m`, `g`, `W`, the sample's tiles, land and `m_t`, steps, joint checks and the ceiling flag per class go to `<guide>/scatter/calibration.toml`
      beside the product (diagnostics and tests read it). They are functions of hashed inputs (the species file with
      its class targets, values, seed, fields), so the product hash needs no extra part; the six new bake tunables
      (`census_step_m`, `calib_*`, `intensity_scale_max`) are species-file declared values, hashed with the others
@@ -317,6 +344,8 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
 | WG-E2o.3 | adapter wiring: `mw_worldgen::flora` runs census + calibration before the passes, class names to ids, warnings to the bake log, `calibration.toml` beside the product | Scrib `mw_worldgen` (`flora.rs`, `tests_flora.rs`) | E2o.2, E2j | fixture guide: class means exact; a target change makes the product stale; a read product has its calibration file | `test -p mw_worldgen` + clippy `bevyrrowind` |
 | WG-E2o.m | measurement: winners/ha per class vs target, lower-layer counts, bake s, product size | `mw_worldgen` (test only) | E2o.3 | re-run `canopy_density_trace_on_x10s`, `scatter_v2_counts_and_seconds_on_x10s` | ledger line; a class off > 25 % sets its `size_max_m` row or parks the look |
 | WG-E2o.d | diagnosis: calibration `reached` vs the world at the same `g`, term by term | `mw_worldgen` (test only) | E2o.m | `canopy_density_trace_on_x10s` gap table | ledger line naming the cause and the fix row |
+| WG-E2o.e | spec: calibration tiles = a hash-ordered sample of the class's tiles (one world order), `W` = class winners / class land with no rescale (`m_t` reported), joint check at the final `g` reopening converged classes out of tol (Design 4) | docs (`worldgen-scatter.md`) | E2o.d | n/a | ledger line |
+| WG-E2o.f | build E2o.e: `calib_tiles` sample, no `bias`, joint check loop, `m_t` + tiles + joint checks in `calibration.toml` | Scrib `sf_worldgen` (`scatter_calib.rs`, `tests_scatter_calib.rs`) | E2o.e | two-class fixture whose purest tiles differ in weight from the class mean, class land above `calib_area_ha`: `reached` within `calib_tol` of the class's winners/ha over its whole land at the kept `g` (fails with the purest-tile choice); a class converging first on mixed tiles is re-measured and reopened; same on 1 and N threads; same inputs same `g`; then `canopy_density_trace_on_x10s`: reached vs world (census land) per class, tiles per class, calibration s | `test -p sf_worldgen -p mw_worldgen` + clippy dependents; ledger line |
 | WG-E2p | full radius round a focus at load (Design 10), one global remainder budget | Scrib `sf_worldgen` (`scatter.rs` `Params` + `budget_cut_layers` remainder form), `mw_worldgen` (`flora.rs` `place`, `extra`), app `world.rs` (pass the eye of `:89` to the content fn and on at `:291`; `--set scatter.full_radius_m` read like `scatter.budget`) | E2o.3 | inside the radius == unbudgeted set; total == `max(budget, inside)` capped by the set; outside nests with the budget; no focus == today's cut | `test -p mw_worldgen` + clippy `bevyrrowind` |
 | WG-E2q | stand cap per tile at load (`canopy_stems_per_ha_max`, Design 10), before the radius and budget | Scrib `sf_worldgen` (value moved from `scatter_species.rs` to `scatter.rs` `Params`: out of the product hash), `mw_worldgen` (`flora.rs` `place`), app `world.rs` (`--set` like `scatter.budget`) | E2p | no tile above the cap, inside the radius too; the cap's survivors are the lowest ranks; cap 2000 == uncapped on a 400/ha fixture; a cap change reads the product (no rebuild) | same |
 | WG-E3a | rock columns, `[rock_units]` table (entries: library class or pack model) | Scrib `sf_worldgen` (`scatter_species.rs`) | E2a | round trip; bad weight or unknown entry kind rejected | `test -p sf_worldgen` |
@@ -468,6 +497,10 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
   the purest tiles' `m_t` is far from `m` (0.12-0.96 vs 0.20-0.38) and `W` is not linear in weight, so `x m / m_t`
   misreads the class (rainforest 21 vs world 62, woodland 35 vs 53, shrubland 9.9 vs 12.1; grassland, 20 % share, 5.1 vs
   6.6: converged before its neighbours' `g` settled). Fix: E2o.e/E2o.f (sampled tiles, no rescale, final joint check).
+- **WG-E2o.e** (2026-11-27, spec): Design 4 calibration samples its tiles (one world hash order shared by every
+  class, each class takes the tiles holding its land until `calib_area_ha`), `W` = class winners / class land with no
+  `m / m_t` (FIA ratio-of-means form, `m_t` reported), and a joint check at the final `g` of all classes reopens a
+  converged class out of tol (at most `calib_iters` checks). Cost and sampling error stated (D); E2o.f builds it.
 
 ## Tunables
 
@@ -486,8 +519,8 @@ Prefix `scatter.`; source Guess unless noted. Species columns go in the file's `
 | `class.<name>.stems_per_ha` | 1/ha | per row, 0-50 (desert, tundra, grassland) to 0-1000 (forests) | table above | Guess (`scatter_species.toml` `[classes]`) |
 | `class.<name>.size_max_m` | m | 1-40 | unset | Reineke (U); set only after E2o.m (Counts "Ceiling") |
 | `census_step_m` | m | 4-128 | 16 | Guess (~15 samples per 250 m stand wavelength) |
-| `calib_area_ha` | ha | 10-2000 | 200 | Guess (~2000 winners at 10/ha: ~8 % clustered sampling error, D) |
-| `calib_iters` / `calib_tol` / `calib_saturation` | count / ratio / ratio | 1-8 / 0.01-0.25 / 0-1 | 4 / 0.05 / 0.25 | research Finding 3 (2-4 steps, D); tol and saturation Guess |
+| `calib_area_ha` | ha | 10-2000 | 200 | Guess (~2000 winners at 10/ha: ~8 % clustered sampling error, D); class land of the hash-ordered tile sample (E2o.e) |
+| `calib_iters` / `calib_tol` / `calib_saturation` | count / ratio / ratio | 1-8 / 0.01-0.25 / 0-1 | 4 / 0.05 / 0.25 | research Finding 3 (2-4 steps, D); tol and saturation Guess; `calib_iters` also bounds the joint checks (E2o.e) |
 | `intensity_scale_max` | ratio | 1-40 | 16 | Guess: bound of the class multiplier `s = g / m` (Design 4; E2n: `m` ~0.3, `g` 2-3 for dense classes gives `s` ~10); candidates reach `s x region_prior_max x T` locally and the parent draws scale with it |
 | `full_radius_m` | m | 0-8000 | 1000 | Guess (UE PCG generation radius, U; Design 10 arithmetic); 0 = off. Load only: v1 `Params` beside `budget`, not hashed |
 | `tile_m`, `seed`, `water_margin_m`, `budget`, `size_priority` | | | v1 | kept (`scatter.rs:49-73`) |
