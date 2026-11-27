@@ -138,10 +138,10 @@ impl GameplayLights {
     }
 }
 
-/// One change of one light (the core's event): the host's light hook, AI (`Darkened`, dusk lamps),
-/// sound and the replay log read it.
+/// One change of one light (the core's event) and, for a rule's change, its cause tag (`None` for a
+/// use): the host's light hook, AI (`Darkened`, dusk lamps), sound and the replay log read it.
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
-pub struct LightChanged(pub sf_interaction::LightChanged);
+pub struct LightChanged(pub sf_interaction::LightChanged, pub Option<TagId>);
 
 /// Puts a registered light in this saved state: a restored save or a streamed-in cell. Not a use,
 /// so no [`LightChanged`].
@@ -184,6 +184,23 @@ fn drop_light(
         tags.remove(placement, LIT);
         gameplay.0.remove(&placement);
     }
+}
+
+/// A rule sets a registered light (`IN39a2`, [`crate::rules`]): its state, tag and AI entry; the
+/// change, if it was one (an unregistered placement or the same state: none).
+pub(crate) fn set_lit(
+    placement: PlacementId,
+    lit: bool,
+    culprit: Option<sf_interaction::UserKey>,
+    tick: sf_interaction::Tick,
+    lights: &mut Lights,
+    tags: &mut InteractionStateTags,
+    gameplay: &mut GameplayLights,
+) -> Option<sf_interaction::LightChanged> {
+    let light = lights.0.get_mut(&placement)?;
+    let changed = light.state.set(lit, placement, light.at, culprit, tick)?;
+    sync(placement, light, tags, gameplay);
+    Some(changed)
 }
 
 /// The registry follows the tick's index changes, then its rest states (module docs).
@@ -253,6 +270,6 @@ pub(crate) fn light_default(
         let culprit = users.iter().find(|u| u.actor == a.activation.actor).map(|u| u.user);
         let Ok(changed) = light.state.use_verb(verb, placement, light.at, culprit, tick.0) else { continue };
         sync(placement, light, &mut tags, &mut gameplay);
-        out.write(LightChanged(changed));
+        out.write(LightChanged(changed, None));
     }
 }

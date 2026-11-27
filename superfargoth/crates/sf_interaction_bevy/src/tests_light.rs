@@ -71,7 +71,7 @@ fn light_def(lit_default: bool) -> LightDef {
 }
 
 /// A light: its slot's verb is snuff (needs `Lit`), the slotless relight needs no `Lit`.
-fn lamp(id: &str, lit_default: bool) -> Arc<InteractableDef> {
+pub(super) fn lamp(id: &str, lit_default: bool) -> Arc<InteractableDef> {
     let slot = SlotDef {
         kind: SlotKind::Light(light_def(lit_default)),
         local: Frame { translation: FLAME, rotation: Quat::IDENTITY },

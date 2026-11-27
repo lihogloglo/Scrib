@@ -20,6 +20,10 @@
 //!   tick, its seed, the overkill on the last crossed stage only); a crossed stage without a model
 //!   sets `gone`. One [`DestructChanged`] per placement whose state changed this tick (its last
 //!   state, by placement): the host's save write.
+//! - **Stages** (same system, after the tick's damage, `IN39a2`): each [`PropStage`] (a rule's or,
+//!   later, fire's `Charred`), sorted by a total key, goes to the core's [`force_stage`] (already
+//!   reached, past the stages, gone, or `ignore_external` but [`DAMAGE_SCRIPT`]: nothing); its crossed
+//!   stages queue as a hit's, no overkill.
 //! - **Release** ([`DestroySystems::Release`]): at most `interact.debris.breaks_per_tick` queued
 //!   breaks, oldest first, each one [`Destroyed`]. A removing break on a still registered placement
 //!   also writes [`IndexChange::Remove`] with `OwnerDestroyed` (its claims end in the next tick's
@@ -34,8 +38,8 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use glam::Vec3;
 use sf_interaction::{
-    BreakQueue, DAMAGE_SCRIPT, DestructState, DestructibleDef, Frame, InteractableDef, InvalidReason, TagId, UserKey,
-    apply_damage, break_seed,
+    BreakQueue, DAMAGE_SCRIPT, DestructState, DestructibleDef, Frame, Hit, InteractableDef, InvalidReason, TagId,
+    Tick, UserKey, apply_damage, break_seed, force_stage,
 };
 use sf_world::PlacementId;
 
@@ -118,6 +122,20 @@ pub struct PropDamage {
     pub culprit: Option<UserKey>,
 }
 
+/// A destruction stage forced on one placed object (a rule's `stage`, fire's `Charred`); ordered
+/// `.before(DestroySystems::Damage)`. Not scaled by [`DestructionRules`].
+#[derive(Message, Clone, Copy, Debug, PartialEq)]
+pub struct PropStage {
+    pub placement: PlacementId,
+    /// Index into the def's `stages` (as [`Destroyed`]'s `stage`).
+    pub stage: u8,
+    /// The cause's tag (the break's `kind`; `ignore_external` defs take only [`DAMAGE_SCRIPT`]).
+    pub kind: TagId,
+    pub culprit: Option<UserKey>,
+    /// Where it applies, world metres.
+    pub point: Vec3,
+}
+
 /// Puts a registered destructible in this saved state (a restored save or a streamed-in cell),
 /// clamped to its def. No event.
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
@@ -164,6 +182,7 @@ pub(crate) fn build(app: &mut bevy_app::App) {
         .init_resource::<DestructionRules>()
         .init_resource::<PendingBreaks>()
         .add_message::<PropDamage>()
+        .add_message::<PropStage>()
         .add_message::<DestructRest>()
         .add_message::<DestructChanged>()
         .add_message::<Destroyed>()
@@ -230,10 +249,50 @@ fn damage_key(d: &PropDamage) -> (PlacementId, TagId, Option<UserKey>, u32, [u32
     (d.placement, d.kind, d.culprit, d.amount.to_bits(), bits(d.point), bits(d.dir))
 }
 
-/// The tick's hits into health, queued breaks and one [`DestructChanged`] per changed placement.
+/// A total order over a tick's forced stages.
+fn stage_key(s: &PropStage) -> (PlacementId, u8, TagId, Option<UserKey>, [u32; 3]) {
+    (s.placement, s.stage, s.kind, s.culprit, [s.point.x.to_bits(), s.point.y.to_bits(), s.point.z.to_bits()])
+}
+
+/// One hit's crossed stages into the break queue, and the object's new state.
+#[allow(clippy::too_many_arguments)]
+fn land(
+    pending: &mut PendingBreaks,
+    d: &mut Destructible,
+    placement: PlacementId,
+    hit: &Hit,
+    now: Tick,
+    (point, dir): (Vec3, Vec3),
+    culprit: Option<UserKey>,
+    kind: TagId,
+) {
+    let Some(def) = d.def.destructible.as_ref() else { return };
+    let final_stage = hit.crossed.end;
+    for stage in hit.crossed.clone() {
+        let removes = def.stages[usize::from(stage)].model.is_none();
+        d.gone |= removes;
+        pending.0.push(sf_interaction::Destroyed {
+            tick: now,
+            placement,
+            stage,
+            point,
+            dir,
+            seed: break_seed(placement, now, stage),
+            culprit,
+            overkill: if stage + 1 == final_stage { hit.overkill } else { 0.0 },
+            removes,
+            kind,
+        });
+    }
+    d.state = hit.state;
+}
+
+/// The tick's hits, then its forced stages, into health, queued breaks and one [`DestructChanged`]
+/// per changed placement.
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn damage(
     mut hits: MessageReader<PropDamage>,
+    mut forced: MessageReader<PropStage>,
     rules: Res<DestructionRules>,
     tick: Res<InteractionTick>,
     mut registry: ResMut<Destructibles>,
@@ -241,10 +300,12 @@ pub(crate) fn damage(
     mut changed: MessageWriter<DestructChanged>,
 ) {
     let mut tick_hits: Vec<PropDamage> = hits.read().copied().collect();
-    if tick_hits.is_empty() {
+    let mut tick_stages: Vec<PropStage> = forced.read().copied().collect();
+    if tick_hits.is_empty() && tick_stages.is_empty() {
         return;
     }
     tick_hits.sort_by_key(damage_key);
+    tick_stages.sort_by_key(stage_key);
     let now = tick.0;
     let mut last: BTreeMap<PlacementId, DestructState> = BTreeMap::new();
     for h in tick_hits {
@@ -264,25 +325,18 @@ pub(crate) fn damage(
         if hit.state == d.state {
             continue;
         }
-        let final_stage = hit.crossed.end;
-        for stage in hit.crossed.clone() {
-            let removes = def.stages[usize::from(stage)].model.is_none();
-            d.gone |= removes;
-            pending.0.push(sf_interaction::Destroyed {
-                tick: now,
-                placement: h.placement,
-                stage,
-                point: h.point,
-                dir: h.dir,
-                seed: break_seed(h.placement, now, stage),
-                culprit: h.culprit,
-                overkill: if stage + 1 == final_stage { hit.overkill } else { 0.0 },
-                removes,
-                kind: h.kind,
-            });
-        }
-        d.state = hit.state;
+        land(&mut pending, d, h.placement, &hit, now, (h.point, h.dir), h.culprit, h.kind);
         last.insert(h.placement, hit.state);
+    }
+    for s in tick_stages {
+        let Some(d) = registry.0.get_mut(&s.placement) else { continue };
+        let Some(def) = d.def.destructible.as_ref() else { continue };
+        let hit = force_stage(def, d.state, s.stage, s.kind);
+        if hit.crossed.is_empty() {
+            continue;
+        }
+        land(&mut pending, d, s.placement, &hit, now, (s.point, Vec3::Y), s.culprit, s.kind);
+        last.insert(s.placement, hit.state);
     }
     changed.write_batch(last.into_iter().map(|(placement, state)| DestructChanged { placement, state }));
 }

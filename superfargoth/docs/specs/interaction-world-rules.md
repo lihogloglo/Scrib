@@ -168,6 +168,11 @@ dedups `host` too), `RuleEvent { .., culprit, source }` (expiries: `None`, empty
 core `force_stage` takes the hit's `kind` too (`force_stage(def, state, index, kind)`), so the `ignore_external` gate
 is the core's; "gone" = a reached stage has no model. Tests: `tests_rules.rs` deferred culprit/source, host-owned
 `Lit`; `tests_destroy.rs` a 37-health def where `37 - 33.3` leaves the fraction above 0.1 and `force_stage` reaches it.
+**As built (IN39a2, 2026-11-27).** `sf_interaction_bevy/src/rules.rs`: `gather -> step -> route` chained in `RuleSystems`
+(`HOST_OWNED = [LIT]`; door tags later), `InteractionRuleQueue` keeps deferred causes; the shell `LightChanged` gained a
+second field, the rule cause (`None` for a use), so `from_light` gets it; `PropStage` runs after the tick's `PropDamage`
+in `DestroySystems::Damage`; damage/stage kind = the source's first tag (`RULE_SOURCE` without one), rule noise =
+`NoiseCase::Impact` at the material's impact reach; `ChangeInbox` drained after doors, lights, breaks. 5 headless tests.
 
 **Order (review)**, one chain in `FixedUpdate`: `InteractionSystems::Apply` -> `RuleSystems` -> `FireSystems` ->
 `DestroySystems::Damage` (reads the tick's rule and fire `PropDamage` / `PropStage`) -> `Release` ->

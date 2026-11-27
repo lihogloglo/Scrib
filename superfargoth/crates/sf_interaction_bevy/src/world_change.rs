@@ -6,8 +6,8 @@
 //! - **Door** ([`DoorChanged`] of a registered door): `Opened` / `Closed` at the object
 //!   ([`from_door`]); the toggling user is the culprit and the verb the cause (a close-behind or a
 //!   script: neither). A door that left the registry before the step (its cell unloaded) is dropped.
-//! - **Light** ([`LightChanged`]): `Snuffed` / `Relit` at the flame ([`from_light`]); no rule cause yet
-//!   (water and fire snuffing are later rows).
+//! - **Light** ([`LightChanged`]): `Snuffed` / `Relit` at the flame ([`from_light`]); a rule's change
+//!   carries its cause tag (`IN39a2`).
 //! - **Break** ([`Destroyed`]): `Destroyed` on the def's final stage or a removing one
 //!   ([`from_destroyed`], the cause = the hit's damage kind), at the object. One whose placement left
 //!   meanwhile counts only if it removes, at the hit point (no def to count stages by).
@@ -15,7 +15,9 @@
 //!   unowned). The core never names crime; the host maps [`sf_interaction::ChangeOwner`] and the
 //!   culprit's `UserKey`.
 //!
-//! The tick's changes are gathered in send order (doors, lights, breaks), stably sorted by tick (a light
+//! - **Inbox** ([`ChangeInbox`]): the changes other systems built this tick (rules, `IN39a2`).
+//!
+//! The tick's changes are gathered in send order (doors, lights, breaks, inbox), stably sorted by tick (a light
 //! changed in `Update` is read by the next fixed step), folded, then written. Order: `FixedUpdate`, after
 //! `DoorSystems::Commit` and `DestroySystems::Release`; hosts read [`WorldChanged`]
 //! `.after(WorldChangeSystems)`.
@@ -61,9 +63,34 @@ impl ChangeOwners {
         self.0.get(&placement).copied().unwrap_or_default()
     }
 
-    fn site(&self, placement: PlacementId, at: glam::Vec3) -> ChangeSite {
+    /// `placement`'s site at `at` (its owner and home).
+    #[must_use]
+    pub fn site(&self, placement: PlacementId, at: glam::Vec3) -> ChangeSite {
         let o = self.get(placement);
         ChangeSite { at, owner: o.owner, home: o.home }
+    }
+}
+
+/// Changes other systems made this tick (rules `IN39a2`, later fire and bash), drained by the
+/// world-change step with the door, light and break ones: one stream sorted and folded per tick.
+#[derive(Resource, Clone, Debug, Default)]
+pub struct ChangeInbox(Vec<WorldChange>);
+
+impl ChangeInbox {
+    /// Queues `change` for this tick's [`WorldChangeSystems`].
+    pub fn push(&mut self, change: WorldChange) {
+        self.0.push(change);
+    }
+
+    /// Changes waiting.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
@@ -73,6 +100,7 @@ pub struct WorldChangeSystems;
 
 pub(crate) fn build(app: &mut App) {
     app.init_resource::<ChangeOwners>()
+        .init_resource::<ChangeInbox>()
         .add_message::<WorldChanged>()
         .configure_sets(
             FixedUpdate,
@@ -81,8 +109,8 @@ pub(crate) fn build(app: &mut App) {
         .add_systems(FixedUpdate, emit.in_set(WorldChangeSystems));
 }
 
-/// The tick's door, light and break events into folded [`WorldChanged`]s (module docs).
-#[allow(clippy::needless_pass_by_value)]
+/// The tick's door, light and break events and the inbox into folded [`WorldChanged`]s (module docs).
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 fn emit(
     doors: Res<Doors>,
     registry: Res<Destructibles>,
@@ -90,6 +118,7 @@ fn emit(
     mut door_changed: MessageReader<DoorChanged>,
     mut light_changed: MessageReader<LightChanged>,
     mut destroyed: MessageReader<Destroyed>,
+    mut inbox: ResMut<ChangeInbox>,
     mut out: MessageWriter<WorldChanged>,
 ) {
     let mut changes: Vec<WorldChange> = Vec::new();
@@ -98,7 +127,7 @@ fn emit(
         changes.push(from_door(&c.0, &owners.site(c.0.placement, door.object.translation)));
     }
     for c in light_changed.read() {
-        changes.push(from_light(&c.0, &owners.site(c.0.placement, c.0.at), None));
+        changes.push(from_light(&c.0, &owners.site(c.0.placement, c.0.at), c.1));
     }
     for d in destroyed.read() {
         let e = &d.0;
@@ -107,6 +136,7 @@ fn emit(
             .map_or((e.point, usize::MAX), |o| (o.object.translation, o.destructible().map_or(0, |def| def.stages.len())));
         changes.extend(from_destroyed(e, stages, &owners.site(e.placement, at)));
     }
+    changes.append(&mut inbox.0);
     if changes.is_empty() {
         return;
     }

@@ -105,7 +105,7 @@ fn a_snuff_is_snuffed_at_the_flame_with_the_verb() {
         lit: false,
         at: flame,
         culprit: Some(player()),
-    }));
+    }, None));
     assert_eq!(
         tick(&mut app),
         vec![WorldChange {

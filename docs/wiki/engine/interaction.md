@@ -112,7 +112,11 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   cause's `culprit` and sorted `source` (IN39a1, so a deferred cause still maps back); host-owned tags (`step_rules(..,
   host_owned)`, e.g. `LIT`) match from `Cause::host` and are never stored: `Removed(t)` iff the cause's host tags hold
   `t`, `Added(t)` iff not. `force_stage(def, state, index, kind)` (`destroy.rs`) reaches a forced stage exactly (no
-  `health - H x at` that can miss by one ulp). No shell system feeds it yet (IN39a2).
+  `health - H x at` that can miss by one ulp). Shell (IN39a2, `sf_interaction_bevy/src/rules.rs`): `RuleCause` ->
+  `RuleSystems` (after `Apply`, before `FireSystems` and `DestroySystems::Damage`) -> one `RuleApplied` per event; rule
+  tags mirror into `InteractionStateTags`, `LIT` goes through the light registry (`LightChanged(change, cause)`),
+  damage -> `PropDamage`, stage -> `PropStage` (core `force_stage`), change -> `ChangeInbox` (folded with the tick's
+  door/light/break changes), noise -> `NoiseInbox`, effect -> `RuleEffect`. No game system writes `RuleCause` yet.
 - **Fire (IN17c1, core only).** `step_fire` (`sf_interaction/src/fire.rs`): rain at `interact.fire.rain_douse` puts a
   burning body out (`Wet`), `fuel_s` after its first `Burning` tick it is `Charred` (`Burnt { stage }`), then flammable
   bodies not burning, `Wet` or `Charred` gain heat from burning spreaders within `interact.fire.spread_radius_m` (linear

@@ -3,6 +3,9 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-27 (interaction loop, IN39a2): world rules now run every tick: water on a burning object puts it out and
+  wets it, a rule can snuff a lamp, damage or char an object, and report a lasting change or a noise. Not visible yet:
+  nothing in the game sends rule causes until the fire and host rows land (IN39b, IN39e).
 - 2026-11-27 (interaction loop, IN39a1): world rules now remember who caused them (who threw the water, who lit the
   fire), can snuff or light a lamp through a rule, and can force an object to a given damage stage (a charred crate)
   exactly. Not visible yet: the systems that feed rules while playing come next (IN39a2).

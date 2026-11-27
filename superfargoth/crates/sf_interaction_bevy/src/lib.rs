@@ -78,6 +78,12 @@
 //!   thinned by the core's `NoiseMerge` into [`InteractionNoise`] in [`NoiseSystems::Emit`]; door
 //!   and break reaches scale by the material's ratio in [`InteractionMaterials`].
 //!
+//! - Rules (`IN39a2`, [`rules`] module docs): [`RuleCause`]s into the core's `step_rules` in
+//!   [`RuleSystems`] (after `Apply`, before [`FireSystems`] and `DestroySystems::Damage`); every
+//!   event one [`RuleApplied`], rule tags mirrored into [`InteractionStateTags`], `Lit` routed to the
+//!   light registry, damage / stage / change / noise / effect to [`PropDamage`], [`PropStage`],
+//!   [`ChangeInbox`], [`NoiseInbox`] and [`RuleEffect`].
+//!
 //! Not here: game wiring (`IN32`).
 
 use std::collections::BTreeMap;
@@ -107,6 +113,7 @@ pub mod impact;
 pub mod light;
 pub mod noise;
 pub mod rest;
+pub mod rules;
 pub mod seat;
 pub mod seat_clips;
 pub mod world_change;
@@ -131,6 +138,8 @@ mod tests_noise;
 #[cfg(test)]
 mod tests_rest;
 #[cfg(test)]
+mod tests_rules;
+#[cfg(test)]
 mod tests_seat;
 #[cfg(test)]
 mod tests_world_change;
@@ -143,7 +152,7 @@ pub use activate::{
 pub use debris::{DebrisFading, DebrisPiece, DebrisPieceDef, DebrisSets, DebrisSystems};
 pub use destroy::{
     DestroySystems, Destroyed, DestructChanged, DestructRest, Destructible, Destructibles, DestructionRules,
-    PendingBreaks, PropDamage,
+    PendingBreaks, PropDamage, PropStage,
 };
 pub use door::{Door, DoorChanged, DoorMoved, DoorRest, DoorSweep, DoorSweeps, DoorSystems, Doors};
 pub use focus::{FocusCandidates, FocusState, PlayerFocus};
@@ -154,11 +163,15 @@ pub use noise::{InteractionMaterials, InteractionNoise, NOISE_BREAK, NOISE_DOOR,
 #[cfg(feature = "physics")]
 pub use noise::NoiseCursor;
 pub use rest::{RestRequested, RestSystems};
+pub use rules::{
+    FireSystems, HOST_OWNED, InteractionObjectStates, InteractionRuleQueue, InteractionRules, RULE_SOURCE, RuleApplied,
+    RuleCause, RuleEffect, RuleSystems,
+};
 pub use seat::{
     EndPoseFree, EndPoseTest, InteractionUser, SeatClips, SeatLoss, SeatPhase, SeatReport, SeatStep, SeatSystems, SeatUse, SeatUses,
     seat_target,
 };
-pub use world_change::{ChangeOwners, ChangeOwnership, WorldChangeSystems, WorldChanged};
+pub use world_change::{ChangeInbox, ChangeOwners, ChangeOwnership, WorldChangeSystems, WorldChanged};
 pub use seat_clips::{SIT_APPROACH, SIT_ENTER, SIT_EXIT, SIT_LOOP, SeatClipSets, SeatClipSystems, SeatSet, bind_seat_clips};
 /// The Bevy-free core, for crates that read or write this shell's messages without their own
 /// dependency on it (`sf_interaction::DoorChanged`, `UserKey`).
@@ -734,6 +747,7 @@ fn bind_rules(app: &mut App) {
 
 /// What the shell reports to the host's AI and crime: noises ([`noise`]) and lasting changes ([`world_change`]).
 fn build_reports(app: &mut App) {
+    rules::build(app);
     noise::build(app);
     world_change::build(app);
 }
