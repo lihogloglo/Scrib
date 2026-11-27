@@ -3,6 +3,9 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-27 (interaction loop, IN39a1): world rules now remember who caused them (who threw the water, who lit the
+  fire), can snuff or light a lamp through a rule, and can force an object to a given damage stage (a charred crate)
+  exactly. Not visible yet: the systems that feed rules while playing come next (IN39a2).
 - 2026-11-27 (interaction loop, IN37a): the rules of bashing a lock are written: how much a blow by weapon or fists
   damages a lock (nothing under a sturdy lock's threshold), what it costs the basher (bruised fists or weapon wear)
   and the chance it breaks fragile things inside. Not playable yet: the swing itself (IN37b) and crime's locks come next.

@@ -163,6 +163,11 @@ and `Flammable::burnt_stage`): a new core `force_stage(def, state, index) -> Hit
 `health := min(health, def.health x stages[index].at)`, `crossed = from..to`, overkill 0; the shell queues the crossed
 stages as a hit's. Not `apply_damage` with `health - def.health x at`: `fraction <= at` after that float subtraction can
 miss the stage by one ulp (review). Already reached, gone, unknown, or `ignore_external` (but `DAMAGE_SCRIPT`): nothing.
+**As built (IN39a1, 2026-11-27).** `rules.rs`: `Cause { .., culprit, host }` (both in the sort key; `push` sorts and
+dedups `host` too), `RuleEvent { .., culprit, source }` (expiries: `None`, empty), `step_rules(.., host_owned)`; the
+core `force_stage` takes the hit's `kind` too (`force_stage(def, state, index, kind)`), so the `ignore_external` gate
+is the core's; "gone" = a reached stage has no model. Tests: `tests_rules.rs` deferred culprit/source, host-owned
+`Lit`; `tests_destroy.rs` a 37-health def where `37 - 33.3` leaves the fraction above 0.1 and `force_stage` reaches it.
 
 **Order (review)**, one chain in `FixedUpdate`: `InteractionSystems::Apply` -> `RuleSystems` -> `FireSystems` ->
 `DestroySystems::Damage` (reads the tick's rule and fire `PropDamage` / `PropStage`) -> `Release` ->

@@ -108,7 +108,11 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
 - **Rules (IN17b, core only).** `step_rules` (`sf_interaction/src/rules.rs`): expires TTLs, then evaluates up to
   `interact.rules.evals_per_tick` queued `Cause`s oldest first in a canonical order (arrival order never matters);
   the first `InteractionRule` in record order whose `source` passes the cause's tags and `target` the material +
-  states applies (remove, add, then damage/stage/effect/change/noise as `RuleEvent`s). No shell system feeds it yet.
+  states applies (remove, add, then damage/stage/effect/change/noise as `RuleEvent`s). Each `RuleEvent` carries the
+  cause's `culprit` and sorted `source` (IN39a1, so a deferred cause still maps back); host-owned tags (`step_rules(..,
+  host_owned)`, e.g. `LIT`) match from `Cause::host` and are never stored: `Removed(t)` iff the cause's host tags hold
+  `t`, `Added(t)` iff not. `force_stage(def, state, index, kind)` (`destroy.rs`) reaches a forced stage exactly (no
+  `health - H x at` that can miss by one ulp). No shell system feeds it yet (IN39a2).
 - **Fire (IN17c1, core only).** `step_fire` (`sf_interaction/src/fire.rs`): rain at `interact.fire.rain_douse` puts a
   burning body out (`Wet`), `fuel_s` after its first `Burning` tick it is `Charred` (`Burnt { stage }`), then flammable
   bodies not burning, `Wet` or `Charred` gain heat from burning spreaders within `interact.fire.spread_radius_m` (linear

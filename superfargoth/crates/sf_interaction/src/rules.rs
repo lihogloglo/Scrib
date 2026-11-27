@@ -14,6 +14,13 @@
 //!   real changes (a refresh is silent).
 //! - **Budget:** at most `interact.rules.evals_per_tick` causes are evaluated per tick (a cause that
 //!   matches nothing still costs its scan); the rest wait, oldest first.
+//! - **Culprit and source** (IN39a): a cause names who made it (`culprit`), and every event it gives
+//!   carries that culprit and the cause's sorted source tags, so a deferred cause still maps back.
+//! - **Host-owned tags** (IN39a): tags such as a light's `Lit` live in the host's registries, not in
+//!   [`ObjectStates`]. The cause carries the ones its placement has now ([`Cause::host`]), the target
+//!   filter sees them, and a rule's `remove` / `add` of a tag in `step_rules`'s `host_owned` list is
+//!   never stored: `Removed(t)` iff the cause's host tags hold `t`, `Added(t)` iff they do not. Two
+//!   causes on one placement in one tick see the same host snapshot (the host applies the events).
 //! - TTLs expire at the start of each step ([`ObjectStates::expire`]), before the tick's causes, so a
 //!   rule sees the states that are current that tick.
 //!
@@ -24,7 +31,7 @@ use sf_records::RecordId;
 use sf_world::PlacementId;
 use smallvec::SmallVec;
 
-use crate::claims::Tick;
+use crate::claims::{Tick, UserKey};
 use crate::def::{TagFilter, TagId};
 use crate::params::InteractParams;
 use crate::states::{ObjectStates, Ttl};
@@ -120,6 +127,11 @@ pub struct Cause {
     pub material: Option<TagId>,
     /// The cause's tags, sorted and deduplicated by [`RuleQueue::push`].
     pub source: SmallVec<[TagId; 4]>,
+    /// Who made the cause (a hit, a thrown bucket, a torch); `None` = the world (rain, a rule).
+    pub culprit: Option<UserKey>,
+    /// The placement's host-owned tags set now (module docs), sorted and deduplicated by
+    /// [`RuleQueue::push`].
+    pub host: SmallVec<[TagId; 4]>,
 }
 
 /// Causes waiting for evaluation, oldest first.
@@ -139,6 +151,8 @@ impl RuleQueue {
     pub fn push(&mut self, now: Tick, mut cause: Cause) {
         cause.source.sort_unstable();
         cause.source.dedup();
+        cause.host.sort_unstable();
+        cause.host.dedup();
         self.pending.push((now, cause));
     }
 
@@ -175,29 +189,39 @@ pub enum RuleOutput {
     Noise(TagId),
 }
 
-/// One output of [`step_rules`]: the placement, the rule that caused it (`None` for an expiry) and
-/// what happened.
+/// One output of [`step_rules`]: the placement, the rule that caused it (`None` for an expiry), the
+/// cause's culprit and sorted source tags (`None` and empty for an expiry) and what happened.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RuleEvent {
     pub placement: PlacementId,
     pub rule: Option<RecordId>,
+    pub culprit: Option<UserKey>,
+    pub source: SmallVec<[TagId; 4]>,
     pub output: RuleOutput,
 }
 
 /// One rules tick at `now`: expires the states whose time has come, then evaluates up to
 /// `interact.rules.evals_per_tick` queued causes, oldest first, applying each one's first matching
-/// rule. Returns the tick's events in order (expiries first, then per cause in queue order).
+/// rule. Returns the tick's events in order (expiries first, then per cause in queue order). Tags in
+/// `host_owned` are the host's (module docs): matched from [`Cause::host`], never stored.
 pub fn step_rules(
     states: &mut ObjectStates,
     queue: &mut RuleQueue,
     rules: &Rules,
     now: Tick,
     params: &InteractParams,
+    host_owned: &[TagId],
 ) -> Vec<RuleEvent> {
     let mut out: Vec<RuleEvent> = states
         .expire(now)
         .into_iter()
-        .map(|(placement, tag)| RuleEvent { placement, rule: None, output: RuleOutput::Expired(tag) })
+        .map(|(placement, tag)| RuleEvent {
+            placement,
+            rule: None,
+            culprit: None,
+            source: SmallVec::new(),
+            output: RuleOutput::Expired(tag),
+        })
         .collect();
 
     // Stable sort: equal keys are identical causes, so their order cannot matter.
@@ -208,19 +232,32 @@ pub fn step_rules(
         if let Some(m) = cause.material {
             target.push(m);
         }
+        target.extend(cause.host.iter().copied());
         let Some(rule) = rules.first_match(&cause.source, &target) else {
             continue;
         };
         let p = cause.placement;
-        let mut emit = |output| out.push(RuleEvent { placement: p, rule: Some(rule.id.clone()), output });
+        let mut emit = |output| {
+            out.push(RuleEvent {
+                placement: p,
+                rule: Some(rule.id.clone()),
+                culprit: cause.culprit,
+                source: cause.source.clone(),
+                output,
+            });
+        };
         let r = &rule.result;
         for &tag in &r.remove {
-            if states.remove(p, tag) {
+            let removed =
+                if host_owned.contains(&tag) { cause.host.contains(&tag) } else { states.remove(p, tag) };
+            if removed {
                 emit(RuleOutput::Removed(tag));
             }
         }
         for &(tag, ttl) in &r.add {
-            if states.add(p, tag, ttl, now, params) {
+            let added =
+                if host_owned.contains(&tag) { !cause.host.contains(&tag) } else { states.add(p, tag, ttl, now, params) };
+            if added {
                 emit(RuleOutput::Added(tag));
             }
         }

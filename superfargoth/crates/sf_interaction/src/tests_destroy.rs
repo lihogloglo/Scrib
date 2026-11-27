@@ -1,4 +1,4 @@
-//! `IN1a` destruction core: stage math (one stage, several per hit, never twice, no-op damage,
+//! `IN1a` destruction core (`IN39a1`: `force_stage` reaches the stage `apply_damage` misses by one ulp): stage math (one stage, several per hit, never twice, no-op damage,
 //! overkill), the debris distance gate, the break queue's overflow to the next tick and the rest
 //! state codec; `IN1b`: the break seed (splitmix64 reference value, fixed seeds, the u128 high word too).
 
@@ -158,4 +158,56 @@ fn break_seed_is_splitmix64_over_placement_tick_and_stage() {
     assert_eq!(break_seed(p, Tick(100), 1), 0xE62C_9292_0F82_8E90);
     assert_eq!(break_seed(p, Tick(101), 0), 0xA3CF_7A21_94EB_189C);
     assert_eq!(break_seed(PlacementId((1 << 64) | 7), Tick(100), 0), 0x279C_0320_C6CA_D5D9);
+}
+
+/// A 37-health post: cracked at half, splintered at a tenth, gone at zero.
+fn post_def(ignore_external: bool) -> DestructibleDef {
+    DestructibleDef {
+        health: 37.0,
+        stages: smallvec![
+            stage(0.5, Some("post_cracked"), BreakAction::None),
+            stage(0.1, Some("post_splintered"), BreakAction::None),
+            stage(0.0, None, BreakAction::None),
+        ],
+        ignore_external,
+        loot: None,
+        salvage: smallvec![],
+    }
+}
+
+#[test]
+fn force_stage_reaches_the_stage_a_subtraction_misses_by_one_ulp() {
+    let def = post_def(false);
+    let s0 = DestructState::intact(&def);
+    let target = def.health * def.stages[1].at;
+    // `health - H x at` as damage: 37 - 33.3 leaves 3.7000008, a fraction one ulp above 0.1.
+    let miss = apply_damage(&def, s0, s0.health - target);
+    assert_eq!(miss.crossed, 0..1, "the subtraction misses stage 1");
+    assert!(miss.state.health / def.health > def.stages[1].at);
+
+    let kick = DAMAGE_IMPACT;
+    let h = force_stage(&def, s0, 1, kick);
+    assert_eq!(h.state, DestructState { health: target, stage: 2 });
+    assert_eq!(h.crossed, 0..2);
+    assert!(h.overkill.abs() < f32::EPSILON);
+    // Health never rises: a lower health keeps its value.
+    let low = DestructState { health: 1.0, stage: 1 };
+    assert_eq!(force_stage(&def, low, 1, kick).state, DestructState { health: 1.0, stage: 2 });
+    // The last stage: health 0, gone.
+    assert_eq!(force_stage(&def, h.state, 2, kick), Hit { state: DestructState { health: 0.0, stage: 3 }, crossed: 2..3, overkill: 0.0 });
+
+    // Nothing: already reached, past the def's stages, gone, `ignore_external` unless scripted.
+    let none = |state: DestructState| Hit { state, crossed: state.stage..state.stage, overkill: 0.0 };
+    assert_eq!(force_stage(&def, h.state, 0, kick), none(h.state));
+    assert_eq!(force_stage(&def, h.state, 1, kick), none(h.state));
+    assert_eq!(force_stage(&def, s0, 3, kick), none(s0));
+    let gone_early = DestructibleDef {
+        stages: smallvec![stage(0.5, None, BreakAction::None), stage(0.0, Some("rubble"), BreakAction::None)],
+        ..post_def(false)
+    };
+    let removed = DestructState { health: 18.0, stage: 1 };
+    assert_eq!(force_stage(&gone_early, removed, 1, kick), none(removed));
+    let held = post_def(true);
+    assert_eq!(force_stage(&held, s0, 1, kick), none(s0));
+    assert_eq!(force_stage(&held, s0, 1, DAMAGE_SCRIPT).crossed, 0..2);
 }

@@ -68,7 +68,7 @@ pub use def::{
 pub use cook::cook;
 pub use destroy::{
     BreakQueue, DAMAGE_IMPACT, DAMAGE_SCRIPT, DESTRUCT_REST_VERSION, DESTRUCT_STATE_OWNER, DestructState, Destroyed, Hit,
-    apply_damage, break_seed, debris_lod, splitmix64,
+    apply_damage, break_seed, debris_lod, force_stage, splitmix64,
 };
 pub use door::{DOOR_OPEN, DOOR_REST_VERSION, DOOR_STATE_OWNER, DoorChanged, DoorState, VERB_CLOSE, VERB_OPEN, swing_sign};
 pub use fire::{

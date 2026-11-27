@@ -5,6 +5,8 @@
 //!
 //! - [`apply_damage`]: health after a hit, the stages it crossed (in order, several per hit) and the
 //!   overkill fraction the adapter's spill curve damages the contents by.
+//! - [`force_stage`]: a rule's or a fire's forced stage (`IN39a` `PropStage`): the stage reached exactly,
+//!   with no float subtraction that could miss it by one ulp.
 //! - [`debris_lod`]: whether a client spawns debris bodies for a break at a distance from its camera
 //!   (beyond `interact.debris.lod_m`: the stage swap and the effect only).
 //! - [`BreakQueue`]: breaks over `interact.debris.breaks_per_tick` wait for the next tick, in order.
@@ -158,6 +160,29 @@ pub fn apply_damage(def: &DestructibleDef, state: DestructState, damage: f32) ->
         to += 1;
     }
     Hit { state: DestructState { health, stage: to }, crossed: from.min(to)..to, overkill }
+}
+
+/// Forces an object of `def` in `state` to its stage `index` (into `def.stages`, as
+/// [`Destroyed::stage`]) with a hit of damage kind `kind`: `stage := max(state.stage, index + 1)`,
+/// `health := min(health, def.health x stages[index].at)`, `crossed = from..to`, no overkill. Not
+/// [`apply_damage`] with `health - def.health x at`: that subtraction can leave the fraction one ulp
+/// above `at` and miss the stage. Nothing changes (`crossed` empty) when the stage is already
+/// reached, `index` is past the def's stages, the object is gone (a reached stage removes it), or
+/// the def is `ignore_external` and `kind` is not [`DAMAGE_SCRIPT`].
+#[must_use]
+#[allow(clippy::cast_possible_truncation)]
+pub fn force_stage(def: &DestructibleDef, state: DestructState, index: u8, kind: TagId) -> Hit {
+    let from = state.stage;
+    let unchanged = Hit { state, crossed: from..from, overkill: 0.0 };
+    let total = def.stages.len().min(usize::from(u8::MAX)) as u8;
+    let reached = usize::from(from.min(total));
+    let gone = def.stages[..reached].iter().any(|s| s.model.is_none());
+    if index >= total || index < from || gone || (def.ignore_external && kind != DAMAGE_SCRIPT) {
+        return unchanged;
+    }
+    let at = def.stages[usize::from(index)].at;
+    let health = state.health.min((def.health * at).max(0.0));
+    Hit { state: DestructState { health, stage: index + 1 }, crossed: from..index + 1, overkill: 0.0 }
 }
 
 /// Whether a client spawns debris bodies for a break `distance_m` from its camera: within `lod_m`

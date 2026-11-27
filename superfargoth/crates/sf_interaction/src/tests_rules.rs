@@ -1,7 +1,9 @@
-//! `IN17b` rules evaluation: water on `Burning` gives `Wet` (and `Wet` expires), the required /
+//! `IN17b` rules evaluation (`IN39a1`: deferred causes keep their culprit and source; host-owned tags
+//! match and change without being stored): water on `Burning` gives `Wet` (and `Wet` expires), the required /
 //! forbidden state and material gate, record order wins, the per-tick budget carries causes over oldest
 //! first, and every arrival order of a tick's causes gives the same events and states.
 
+use sf_ids::{ActorKey, PlayerKey};
 use sf_records::RecordId;
 use sf_world::PlacementId;
 use smallvec::{SmallVec, smallvec};
@@ -55,11 +57,11 @@ fn ignite() -> InteractionRule {
 }
 
 fn cause(placement: PlacementId, material: Option<TagId>, source: &[TagId]) -> Cause {
-    Cause { placement, material, source: SmallVec::from_slice(source) }
+    Cause { placement, material, source: SmallVec::from_slice(source), culprit: None, host: SmallVec::new() }
 }
 
-fn ev(placement: PlacementId, rule: Option<&str>, output: RuleOutput) -> RuleEvent {
-    RuleEvent { placement, rule: rule.map(RecordId::new), output }
+fn ev(placement: PlacementId, rule: Option<&str>, source: &[TagId], output: RuleOutput) -> RuleEvent {
+    RuleEvent { placement, rule: rule.map(RecordId::new), culprit: None, source: SmallVec::from_slice(source), output }
 }
 
 #[test]
@@ -70,13 +72,13 @@ fn water_on_burning_turns_wet_then_wet_expires() {
     s.add(P1, BURNING, Ttl::UntilRemoved, Tick(0), &p);
     let mut q = RuleQueue::new();
     q.push(Tick(10), cause(P1, Some(WOOD), &[WATER]));
-    let out = step_rules(&mut s, &mut q, &rules, Tick(10), &p);
+    let out = step_rules(&mut s, &mut q, &rules, Tick(10), &p, &[]);
     assert_eq!(
         out,
         vec![
-            ev(P1, Some("douse"), RuleOutput::Removed(BURNING)),
-            ev(P1, Some("douse"), RuleOutput::Added(WET)),
-            ev(P1, Some("douse"), RuleOutput::Effect(SPLASH)),
+            ev(P1, Some("douse"), &[WATER], RuleOutput::Removed(BURNING)),
+            ev(P1, Some("douse"), &[WATER], RuleOutput::Added(WET)),
+            ev(P1, Some("douse"), &[WATER], RuleOutput::Effect(SPLASH)),
         ]
     );
     assert!(q.is_empty());
@@ -84,10 +86,10 @@ fn water_on_burning_turns_wet_then_wet_expires() {
 
     // Water again on a target no longer burning: no rule matches, nothing happens.
     q.push(Tick(11), cause(P1, Some(WOOD), &[WATER]));
-    assert!(step_rules(&mut s, &mut q, &rules, Tick(11), &p).is_empty());
+    assert!(step_rules(&mut s, &mut q, &rules, Tick(11), &p, &[]).is_empty());
     // 2 s at 60 Hz after tick 10: `Wet` expires exactly at tick 130, reported before any cause.
-    assert!(step_rules(&mut s, &mut q, &rules, Tick(129), &p).is_empty());
-    assert_eq!(step_rules(&mut s, &mut q, &rules, Tick(130), &p), vec![ev(P1, None, RuleOutput::Expired(WET))]);
+    assert!(step_rules(&mut s, &mut q, &rules, Tick(129), &p, &[]).is_empty());
+    assert_eq!(step_rules(&mut s, &mut q, &rules, Tick(130), &p, &[]), vec![ev(P1, None, &[], RuleOutput::Expired(WET))]);
     assert!(s.is_empty());
 
     // The record through serde, and a sparse record (mod data) with every result field defaulted.
@@ -110,12 +112,12 @@ fn required_and_forbidden_states_and_material_gate() {
     q.push(Tick(1), cause(P3, Some(STONE), &[FIRE])); // stone: not the required material
     q.push(Tick(1), cause(P0, None, &[FIRE])); // no material
     q.push(Tick(1), cause(P1, Some(WOOD), &[WATER])); // wrong source
-    let out = step_rules(&mut s, &mut q, &rules, Tick(1), &p);
+    let out = step_rules(&mut s, &mut q, &rules, Tick(1), &p, &[]);
     assert_eq!(
         out,
         vec![
-            ev(P1, Some("ignite"), RuleOutput::Added(BURNING)),
-            ev(P1, Some("ignite"), RuleOutput::Damage { kind: HEAT, amount: 5.0 }),
+            ev(P1, Some("ignite"), &[FIRE], RuleOutput::Added(BURNING)),
+            ev(P1, Some("ignite"), &[FIRE], RuleOutput::Damage { kind: HEAT, amount: 5.0 }),
         ]
     );
     assert!(s.has(P1, BURNING));
@@ -125,8 +127,8 @@ fn required_and_forbidden_states_and_material_gate() {
     // Fire again on a burning target: the add is a refresh (no state event), the damage repeats.
     q.push(Tick(2), cause(P1, Some(WOOD), &[FIRE]));
     assert_eq!(
-        step_rules(&mut s, &mut q, &rules, Tick(2), &p),
-        vec![ev(P1, Some("ignite"), RuleOutput::Damage { kind: HEAT, amount: 5.0 })]
+        step_rules(&mut s, &mut q, &rules, Tick(2), &p, &[]),
+        vec![ev(P1, Some("ignite"), &[FIRE], RuleOutput::Damage { kind: HEAT, amount: 5.0 })]
     );
 }
 
@@ -143,7 +145,7 @@ fn record_order_wins() {
         let mut s = ObjectStates::new();
         let mut q = RuleQueue::new();
         q.push(Tick(0), cause(P1, Some(WOOD), &[FIRE]));
-        let out = step_rules(&mut s, &mut q, &rules, Tick(0), &params);
+        let out = step_rules(&mut s, &mut q, &rules, Tick(0), &params, &[]);
         assert_eq!(out.len(), 1, "one match per cause");
         assert!(s.has(P1, won) && !s.has(P1, lost));
     }
@@ -161,19 +163,19 @@ fn budget_carries_causes_over_oldest_first() {
     }
     let placements = |out: &[RuleEvent]| out.iter().map(|e| e.placement).collect::<Vec<_>>();
     // Same tick: canonical order by placement, two evaluated, P3 waits.
-    assert_eq!(placements(&step_rules(&mut s, &mut q, &rules, Tick(1), &p)), vec![P1, P2]);
+    assert_eq!(placements(&step_rules(&mut s, &mut q, &rules, Tick(1), &p, &[])), vec![P1, P2]);
     assert_eq!(q.len(), 1);
     // A newer cause on a lower placement goes after the older one that waited.
     q.push(Tick(2), cause(P0, None, &[FIRE]));
-    assert_eq!(placements(&step_rules(&mut s, &mut q, &rules, Tick(2), &p)), vec![P3, P0]);
+    assert_eq!(placements(&step_rules(&mut s, &mut q, &rules, Tick(2), &p, &[])), vec![P3, P0]);
     assert!(q.is_empty());
 
     // A cause that matches nothing still uses the budget.
     q.push(Tick(3), cause(P0, None, &[WATER]));
     q.push(Tick(3), cause(P1, None, &[WATER]));
     q.push(Tick(3), cause(P2, None, &[FIRE]));
-    assert!(step_rules(&mut s, &mut q, &rules, Tick(3), &p).is_empty());
-    assert_eq!(placements(&step_rules(&mut s, &mut q, &rules, Tick(4), &p)), vec![P2]);
+    assert!(step_rules(&mut s, &mut q, &rules, Tick(3), &p, &[]).is_empty());
+    assert_eq!(placements(&step_rules(&mut s, &mut q, &rules, Tick(4), &p, &[])), vec![P2]);
 }
 
 /// Every permutation of `items` (Heap's algorithm).
@@ -215,8 +217,8 @@ fn permuted_causes_give_the_same_result() {
         for c in order {
             q.push(Tick(5), c.clone());
         }
-        let mut out = step_rules(&mut s, &mut q, &rules, Tick(5), &p);
-        out.extend(step_rules(&mut s, &mut q, &rules, Tick(6), &p));
+        let mut out = step_rules(&mut s, &mut q, &rules, Tick(5), &p, &[]);
+        out.extend(step_rules(&mut s, &mut q, &rules, Tick(6), &p, &[]));
         (out, s)
     };
     let all = permutations(&causes);
@@ -226,4 +228,85 @@ fn permuted_causes_give_the_same_result() {
     for order in &all[1..] {
         assert_eq!(run(order), first);
     }
+}
+
+#[test]
+fn deferred_causes_keep_their_culprit_and_source() {
+    let p = InteractParams { rules_evals_per_tick: 1, ..params() };
+    let rules = Rules::new(vec![ignite()]);
+    let mut s = ObjectStates::new();
+    let mut q = RuleQueue::new();
+    let (actor, player) = (UserKey::Actor(ActorKey(7)), UserKey::Player(PlayerKey(2)));
+    // Pushed out of order with duplicate source tags; the budget of 1 defers P2's cause a tick.
+    q.push(Tick(1), Cause { culprit: Some(player), ..cause(P2, Some(WOOD), &[HEAT, FIRE, HEAT]) });
+    q.push(Tick(1), Cause { culprit: Some(actor), ..cause(P1, Some(WOOD), &[FIRE]) });
+    let first = step_rules(&mut s, &mut q, &rules, Tick(1), &p, &[]);
+    assert_eq!(first.len(), 2);
+    assert!(first.iter().all(|e| e.placement == P1 && e.culprit == Some(actor) && e.source.as_slice() == [FIRE]));
+    assert_eq!(q.len(), 1);
+    let second = step_rules(&mut s, &mut q, &rules, Tick(2), &p, &[]);
+    let mut fire_heat = [FIRE, HEAT];
+    fire_heat.sort_unstable();
+    assert_eq!(
+        second,
+        vec![
+            RuleEvent {
+                placement: P2,
+                rule: Some(RecordId::new("ignite")),
+                culprit: Some(player),
+                source: SmallVec::from_slice(&fire_heat),
+                output: RuleOutput::Added(BURNING),
+            },
+            RuleEvent {
+                placement: P2,
+                rule: Some(RecordId::new("ignite")),
+                culprit: Some(player),
+                source: SmallVec::from_slice(&fire_heat),
+                output: RuleOutput::Damage { kind: HEAT, amount: 5.0 },
+            },
+        ]
+    );
+}
+
+#[test]
+fn host_owned_tags_match_and_change_without_being_stored() {
+    let p = params();
+    // Water snuffs a lit object; fire lights anything (no target filter).
+    let snuff = rule("snuff", filter(&[], &[WATER], &[]), filter(&[LIT], &[], &[]), RuleResult {
+        remove: smallvec![LIT],
+        ..RuleResult::default()
+    });
+    let kindle = rule("kindle", filter(&[FIRE], &[], &[]), TagFilter::default(), RuleResult {
+        add: smallvec![(LIT, Ttl::UntilRemoved)],
+        ..RuleResult::default()
+    });
+    let rules = Rules::new(vec![snuff, kindle]);
+    let host = |c: Cause, tags: &[TagId]| Cause { host: SmallVec::from_slice(tags), ..c };
+    let mut s = ObjectStates::new();
+    let mut q = RuleQueue::new();
+    q.push(Tick(1), host(cause(P1, None, &[WATER]), &[LIT])); // lit: snuffed
+    q.push(Tick(1), cause(P2, None, &[WATER])); // unlit: `all: [Lit]` fails, nothing
+    q.push(Tick(1), host(cause(P3, None, &[FIRE]), &[LIT])); // already lit: no Added
+    q.push(Tick(1), cause(P0, None, &[FIRE])); // unlit: Added(Lit)
+    assert_eq!(
+        step_rules(&mut s, &mut q, &rules, Tick(1), &p, &[LIT]),
+        vec![
+            ev(P0, Some("kindle"), &[FIRE], RuleOutput::Added(LIT)),
+            ev(P1, Some("snuff"), &[WATER], RuleOutput::Removed(LIT)),
+        ]
+    );
+    // Nothing stored: the host owns the tag.
+    assert!(s.is_empty());
+
+    // Without `host_owned` the same causes go through the stored states: `Lit` is stored on P0 and P3
+    // (P3's host tag does not stop a stored add), and P1's remove finds nothing stored.
+    q.push(Tick(2), host(cause(P1, None, &[WATER]), &[LIT]));
+    q.push(Tick(2), host(cause(P3, None, &[FIRE]), &[LIT]));
+    q.push(Tick(2), cause(P0, None, &[FIRE]));
+    let out = step_rules(&mut s, &mut q, &rules, Tick(2), &p, &[]);
+    assert_eq!(
+        out,
+        vec![ev(P0, Some("kindle"), &[FIRE], RuleOutput::Added(LIT)), ev(P3, Some("kindle"), &[FIRE], RuleOutput::Added(LIT))]
+    );
+    assert!(s.has(P0, LIT) && s.has(P3, LIT) && !s.has(P1, LIT));
 }
