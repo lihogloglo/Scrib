@@ -729,3 +729,11 @@ frame's hits equal the spec's from that frame's own contacts (3 m drop breaks 1 
 sleeps, is `HELD` again or is gone, cleared on a world change; a side's culprit is the other body's thrower, else its
 own. 2 headless exact tests: thrown -> every hit on both sides carries the thrower; rested -> forgotten, dropped again
 -> none; a holder with no `InteractionUser` -> none.
+
+## As built (IN37a, 2026-11-27)
+
+`sf_interaction/src/bash.rs`: `VERB_BASH`, `Blow`, `BashRules` (derived `Default` = neutral: factor 1, threshold 0, no
+costs), `BashResult`, `bash` (threshold `>=` passes; a non-finite product is no blow, `as u32` saturates), `Bashed`
+(culprit a `UserKey`, never none), `bash_seed` (words placement hi/lo, user kind 0 actor / 1 player, key hi/lo, tick).
+`world_change.rs`: `ChangeDetail::Force(u32)`, `from_bashed`. Tests `tests_bash.rs` (7 exact): thresholds, neutral
+default, fists vs armed costs, raw-force capped risk, NaN/inf/negative/zero, fixed seeds, mapper + fold to the first.

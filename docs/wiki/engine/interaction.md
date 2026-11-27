@@ -147,6 +147,11 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   `DoorSystems::Commit` + `DestroySystems::Release`) from registered doors (at the object), lights (at the flame) and
   breaks (a left placement only if it removes, at the hit point); owner/home from the host-filled `ChangeOwners`
   (the game fills nothing yet; fire changes wait for the fire shell IN39).
+- **Bashing (IN37a core).** `sf_interaction/src/bash.rs`: `bash(rules, blow, material)` gives `lock_damage` 0 when
+  `force x kind_factor` is under the material's `threshold`, else its floor; bare-handed blows cost `self_per_force`
+  health, armed ones `wear_per_force` weapon wear; `contents_risk` from the raw force, capped. Non-finite or negative
+  force = zero. `Bashed` + `bash_seed` (splitmix64 over placement, user, tick); `from_bashed` = `CHANGE_BASHED`, cause
+  the blow kind, `ChangeDetail::Force(floor(force))`. The shell (IN37b) and the game blow (IN37c) are not built yet.
 
 ## Bevy features used
 

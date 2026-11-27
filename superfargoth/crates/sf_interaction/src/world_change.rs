@@ -6,7 +6,8 @@
 //!   own the same way (`WorldChangeKinds` records carry severity and the concern fed, AI19).
 //! - The pure mappers turn the core's events into changes: [`from_door`] (`Opened` / `Closed`),
 //!   [`from_light`] (`Snuffed` / `Relit`), [`from_destroyed`] (`Destroyed`, final stage only) and
-//!   [`from_fire`] (`Ignited` / `Burnt`; `Doused` is not a change kind). What the core events do not know
+//!   [`from_fire`] (`Ignited` / `Burnt`; `Doused` is not a change kind), [`from_bashed`] (`Bashed`, the raw
+//!   blow's force as [`ChangeDetail::Force`]). What the core events do not know
 //!   (where the object is, its owner, its home placement, a rule's cause) comes from the host as a
 //!   [`ChangeSite`].
 //! - [`fold_tick`] keeps one event per transition: a paired kind (open/close, snuff/relight,
@@ -20,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use sf_ids::ActorKey;
 use sf_world::PlacementId;
 
+use crate::bash::Bashed;
 use crate::claims::{Tick, UserKey};
 use crate::def::TagId;
 use crate::destroy::Destroyed;
@@ -126,6 +128,9 @@ pub enum ChangeDetail {
     /// The damage or burnt stage shown (`Destroyed`, `Burnt`); `None` inside = the object is removed or
     /// keeps its model.
     Stage(Option<u8>),
+    /// A bash blow's raw force, `floor(force)` (`Bashed`): a blow under the lock's threshold is just as loud a
+    /// nuisance; crime reads the lock damage from `Bashed`, never from the change.
+    Force(u32),
 }
 
 /// One lasting change of one object (world-reactions.md "Pipeline" 1).
@@ -241,6 +246,21 @@ pub fn from_fire(
         detail,
         ..change(tick, kind, e.placement, site)
     })
+}
+
+/// `Bashed`, one per blow (two blows on one object in one tick fold to the first, [`fold_tick`]); the cause
+/// is the blow's kind, the detail its raw force.
+#[must_use]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+pub fn from_bashed(e: &Bashed, site: &ChangeSite) -> WorldChange {
+    // `as u32` saturates and maps NaN to 0.
+    let force = if e.force.is_finite() { e.force.floor().max(0.0) as u32 } else { 0 };
+    WorldChange {
+        culprit: Some(e.culprit),
+        cause: Some(e.kind),
+        detail: ChangeDetail::Force(force),
+        ..change(e.tick, CHANGE_BASHED, e.placement, site)
+    }
 }
 
 /// One event per transition, in place, keeping the order of what is left: within one `(tick, object)` the

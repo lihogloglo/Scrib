@@ -28,11 +28,14 @@
 //!   within its window heard only when louder, the per-tick cap, loudest first, any arrival order alike).
 //! - [`world_change`]: `WorldChange`, the lasting changes reactions read (kinds as `TagId` rows, pure
 //!   mappers from the door, light, destroy and fire events, `fold_tick`: one event per transition).
+//! - [`bash`]: one bash blow on a lock or door: `bash` (threshold by material, kind factor, self damage or
+//!   weapon wear, contents risk), the `Bashed` event and its `bash_seed`.
 //! - [`cook`]: `interact.cook`, the one-time def bake (stub).
 //! - [`params`]: the core's tunables as plain fields (`interact.*`, bound by `sf_interaction_bevy`).
 //!
 //! Never names a game, `sf_ai` or `sf_crime`.
 
+pub mod bash;
 pub mod claims;
 pub mod cook;
 pub mod def;
@@ -52,6 +55,7 @@ pub mod states;
 pub mod verbs;
 pub mod world_change;
 
+pub use bash::{BashResult, BashRules, Bashed, Blow, VERB_BASH, bash, bash_seed};
 pub use claims::{
     Claim, Claims, EventKind, Granted, Hold, InteractionEvent, InvalidReason, Op, Phase, Refusal, Request, SlotRef,
     SlotTerms, Subject, Ticket, Tick, UserKey,
@@ -91,9 +95,11 @@ pub use world_change::{
     CHANGE_BASHED, CHANGE_BURNT, CHANGE_CLOSED, CHANGE_DESTROYED, CHANGE_DISPLACED, CHANGE_DROPPED, CHANGE_IGNITED,
     CHANGE_KILLED, CHANGE_LANDED, CHANGE_LOCK_BROKEN, CHANGE_LOCKED, CHANGE_OCCUPIED, CHANGE_OPENED, CHANGE_RELIT,
     CHANGE_SNUFFED, CHANGE_SPILLED, CHANGE_SWITCHED, CHANGE_TAKEN, CHANGE_UNLOCKED, ChangeDetail, ChangeOwner,
-    ChangeSite, SHIPPED_KINDS, WorldChange, fold_tick, from_destroyed, from_door, from_fire, from_light,
+    ChangeSite, SHIPPED_KINDS, WorldChange, fold_tick, from_bashed, from_destroyed, from_door, from_fire, from_light,
 };
 
+#[cfg(test)]
+mod tests_bash;
 #[cfg(test)]
 mod tests_claims;
 #[cfg(test)]

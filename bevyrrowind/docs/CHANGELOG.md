@@ -3,6 +3,9 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-27 (interaction loop, IN37a): the rules of bashing a lock are written: how much a blow by weapon or fists
+  damages a lock (nothing under a sturdy lock's threshold), what it costs the basher (bruised fists or weapon wear)
+  and the chance it breaks fragile things inside. Not playable yet: the swing itself (IN37b) and crime's locks come next.
 - 2026-11-27 (interaction loop, IN14b): the lasting changes are now reported while playing: opening or closing a door,
   snuffing or relighting a lamp and smashing something each send one change message (with who did it and, for a
   break, what hit it), ready for NPC reactions to read. Who owns each object is not filled in by the game yet.
