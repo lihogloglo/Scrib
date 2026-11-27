@@ -188,6 +188,12 @@ takes its `RuleApplied` culprit and source tag; a heat ignition inherits the nea
 start within `interact.fire.spread_radius_m` (the ones that could heat it; distance, then placement; none in reach: no
 culprit). `Ignited` (heat, or `RuleApplied` Added(`BURNING`), built as a `FireEvent`) and `Burnt` -> `from_fire` (site from
 `ChangeOwners`, at the body) into the change inbox; Doused and Burnt forget the entry after their event.
+**As built (IN39b, 2026-11-27).** `sf_interaction_bevy/src/fire.rs`: `track -> rule_lit -> step` chained in `FireSystems`;
+`InteractionFire(Fire)`, `FireCandidates` (material + cached `sheltered` / `in_settlement`), `FireCulprits`; closures
+`SampleAt` / `ProbeAt` as `Option<Arc<..>>`. Shelter is asked only outdoors with a wetness closure set, the zone only for
+a `structure` material; `Wet` is refreshed only on a body not burning (a burning one is the core's `rain_douse`); the
+mirror rewrites `Burning` / `Wet` / `Charred` per touched placement; `Removed`/`Expired(Burning)` and an index removal
+forget the culprit. 4 headless tests `tests_fire.rs`. Uphill bias: industry-audit.md F1.
 
 **IN39c fire outputs.** Each burning destructible takes `PropDamage { kind: DAMAGE_FIRE ("fire", new core const),
 amount: interact.fire.damage_per_s / tick_hz, point: pos, dir: +Y, culprit }` (the adapter's `DestructionRules (fire,

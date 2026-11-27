@@ -464,3 +464,9 @@ the 3-slice fix plan: `bevyrrowind/docs/research/cloud-weather-edges-2026-11-06.
 | C2 | Far media undersampled: 8 far-weather steps up to 1.9 km, each opaque in a storm, so the edge is a per-pixel coin toss | weather/distant-weather.md §6-7 | **P1** (with WE-10) |
 | C3 | Region masks shape the far look: 256 m band cuts a solid deck, shafts fill the whole region at in-storm extinction; HZD/Nubis map coverage is noise-modulated, HFW blends regional influence masks, RDR2 puts rain fog under cloud-map density | weather/distant-weather.md | **P1** (with WE-10) |
 | C4 | Shape noise in height-fraction space (stretches with deck thickness, shears in the border band); Nubis samples world-space noise and lets the profile erode it | weather/clouds.md | P2 |
+
+## World interaction: fire spread (IN39b, 2026-11-27)
+
+| # | Gap | Spec | Priority |
+|---|---|---|---|
+| F1 | No uphill bias on fire spread: heat from a source is the same up and down a slope (only wind biases it); Far Cry 2's fire, per an unattributed write-up (original not found, U), spreads faster uphill. Fix: a `cos` term on the source -> target height difference in `wind_factor`'s product, a new `interact.fire.slope_bias` tunable | interaction-world-rules.md "Rules and fire shell (IN39)" | P2 |

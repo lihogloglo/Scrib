@@ -123,7 +123,14 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   falloff x `wind_factor` x seeded per-second jitter), cool without one, ignite at `ignite_heat`. Budgets (IN17c2):
   at most `interact.fire.burning_max` burning per `interact.fire.region_m` square (more ignitions queue, oldest first),
   at most `interact.fire.spread_checks_per_tick` heat checks per tick round-robin with elapsed time (slower, same
-  set); a `structure` material with `FireBody::in_settlement` never catches from spread. No shell system yet (IN39).
+  set); a `structure` material with `FireBody::in_settlement` never catches from spread. Shell (IN39b,
+  `sf_interaction_bevy/src/fire.rs`, `FireSystems` after `RuleSystems`): `FireCandidates` = indexed placements whose def
+  material is flammable (shelter/zone answers cached until the next `Insert`/`Move`); host closures `FireWetness`,
+  `FireShelter`, `FireZones` and `FireWeather { wind, indoors }` (unset = dry, open, wild); `Wet` refreshed at
+  `interact.rules.wet_threshold` on bodies not burning, then `step_fire` on the rules' `InteractionObjectStates`;
+  `Burning`/`Wet`/`Charred` mirrored into `InteractionStateTags`; `FireCulprits` from a rule's `Added(Burning)`, a heat
+  ignition inherits the nearest burning spreader's; rule and heat `Ignited` and `Burnt` -> `from_fire` -> `ChangeInbox`.
+  No fire damage, charred stage or fire lights yet (IN39c).
 - **Impacts (IN4a core, IN4b shell).** `impact_damage(impulse_ns, speed_mps, params)` (`sf_interaction/src/impact.rs`):
   0 under `interact.impact.speed_min_mps` or within the `interact.impact.impulse_min_ns` dead zone, else
   `interact.impact.damage_per_ns x (impulse - dead zone)`; non-finite in -> 0, overflow saturates. Kind `DAMAGE_IMPACT`

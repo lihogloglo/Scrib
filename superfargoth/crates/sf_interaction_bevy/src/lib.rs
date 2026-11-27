@@ -83,6 +83,10 @@
 //!   event one [`RuleApplied`], rule tags mirrored into [`InteractionStateTags`], `Lit` routed to the
 //!   light registry, damage / stage / change / noise / effect to [`PropDamage`], [`PropStage`],
 //!   [`ChangeInbox`], [`NoiseInbox`] and [`RuleEffect`].
+//! - Fire (`IN39b`, [`fire`] module docs): the core's `step_fire` in [`FireSystems`] over the resident
+//!   flammable placements ([`FireCandidates`]); host wetness, shelter and zones as optional closures,
+//!   `Wet` refreshed from wetness, tags mirrored, culprits kept along the spread ([`FireCulprits`]),
+//!   `Ignited` / `Burnt` into [`ChangeInbox`].
 //!
 //! Not here: game wiring (`IN32`).
 
@@ -108,6 +112,7 @@ pub mod bash;
 pub mod debris;
 pub mod destroy;
 pub mod door;
+pub mod fire;
 pub mod focus;
 #[cfg(feature = "physics")]
 pub mod impact;
@@ -130,6 +135,8 @@ mod tests_debris;
 mod tests_destroy;
 #[cfg(test)]
 mod tests_door;
+#[cfg(test)]
+mod tests_fire;
 #[cfg(test)]
 mod tests_focus;
 #[cfg(all(test, feature = "physics"))]
@@ -159,6 +166,10 @@ pub use destroy::{
     PendingBreaks, PropDamage, PropStage,
 };
 pub use door::{Door, DoorChanged, DoorMoved, DoorRest, DoorSweep, DoorSweeps, DoorSystems, Doors};
+pub use fire::{
+    FireCandidate, FireCandidates, FireCulprit, FireCulprits, FireShelter, FireWeather, FireWetness, FireZones,
+    InteractionFire, ProbeAt, SampleAt,
+};
 pub use focus::{FocusCandidates, FocusState, PlayerFocus};
 #[cfg(feature = "physics")]
 pub use impact::{ImpactCursor, ImpactSystems, Thrown, ThrownBy};
@@ -770,6 +781,7 @@ fn bind_rules(app: &mut App) {
 /// What the shell reports to the host's AI and crime: noises ([`noise`]) and lasting changes ([`world_change`]).
 fn build_reports(app: &mut App) {
     rules::build(app);
+    fire::build(app);
     bash::build(app);
     noise::build(app);
     world_change::build(app);

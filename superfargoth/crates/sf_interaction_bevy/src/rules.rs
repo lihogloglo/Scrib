@@ -24,7 +24,7 @@
 //!   for a cause without tags).
 //!
 //! **Order** (one chain in `FixedUpdate`): `InteractionSystems::Apply` -> [`RuleSystems`] ->
-//! [`FireSystems`] (empty until `IN39b`) -> `DestroySystems::Damage` (reads the tick's rule
+//! [`FireSystems`] (the fire step, `fire` module) -> `DestroySystems::Damage` (reads the tick's rule
 //! [`PropDamage`] and [`PropStage`]) -> `Release` -> `WorldChangeSystems` (drains [`ChangeInbox`]
 //! with the door, light and break changes, one stream folded per tick).
 //!
@@ -98,7 +98,7 @@ pub struct RuleEffect {
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RuleSystems;
 
-/// Where fire steps (`IN39b`), between [`RuleSystems`] and `DestroySystems::Damage`.
+/// Where fire steps (`IN39b`, `fire` module), between [`RuleSystems`] and `DestroySystems::Damage`.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FireSystems;
 
