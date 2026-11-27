@@ -299,6 +299,69 @@ spills into the overlay only.
 [5] https://git.cijber.net/mirror/openmw/commit/5a31320d8d3f7c71d4b71e54b41a4281d2403a05 (OpenMW mirror, "preserve
 refnum on drop"; U: search summary of the diff)
 
+## Static removal (IN38c; spec IN38c-S 2026-11-27)
+
+Decorative `STAT` urns and pots (IN38a's `Source::Static` breakables, counted at startup since IN38b1) are scriptless
+and unreferenced, so both batched paths take them: the static scene (default) draws them as instance slots with no
+entity, the near precombine (`--off scene`, the A/B arm) merges them into a cell mesh. Their collider is not batched:
+`PhysicsHook::activate` (`sf_physics_bevy` `stream.rs:395`) queues a `Fixed` body per placement on activation, which
+covered placements still get (`CellScene::covered` docs, `sf_world_bevy` `scene.rs`), and `deactivate` removes it.
+Persistence is solved: an overlay-removed placement is not drawn at the next fetch (scene B5b, `sf_scene_bevy`
+`residency.rs:986`; precombine `valid_members` drops the whole merge and spawns per placement). The live half is missing.
+
+**Industry: instance buffers remove an instance, merged meshes exclude what can change.** UE's instanced static meshes
+remove one instance (`UInstancedStaticMeshComponent`, `EInstanceDeletionReason`), and its Instanced Actors plugin turns
+an instance into its full actor on interaction (`UInstancedActorsData::ActorClass`, hydration internals U) [6]; our scene
+already has that swap (`PromoteToEntity`, scene-runtime-plan.md §7). Bethesda's precombined meshes cannot drop a member:
+editing or disabling a precombined reference breaks the cell's precombine, and the Creation Kit leaves references that
+may change out of the merge (disabled refs; scrap-recipe statics reportedly; community knowledge, U) [7]. So: hide the
+instance in the scene, keep breakables out of the precombine at bake time.
+
+**IN38c1, framework: hide a scene-drawn placement** (`sf_world_bevy` `stream.rs` + `scene.rs`, `sf_scene_bevy`
+`residency.rs`). `Streaming::hide_covered(&mut self, world: &mut World, ws, cell, id) -> bool`: true when the cell's
+near group draws `id` through its scene and has not promoted it: the id joins the group's `promoted` set (a later
+`PromoteToEntity` is refused as "already promoted"; one way, dies with the group like a promotion) and
+`CellScene::hidden(world, ws, cell, id)` runs; false and nothing changed otherwise (cell not resident or not at Near,
+a precombine member, not covered, already promoted or hidden). `CellScene::hidden` defaults to nothing; `SceneHook`
+writes the same `PromotePlacement` as `promoted` (every table instance of the placement inactive, all its LOD chains;
+`scene/promoted` counts both). Removal needs no model and no entity, so it is immediate, unlike a promotion. Test
+(headless exact, `sf_scene_bevy` `residency_tests.rs` with its fixture): hiding a covered placement queues one inactive
+write per instance and returns true; a second hide and a later promotion of it change nothing; a placement the scene
+does not draw, or a cell not resident, returns false with no write; release then re-acquire draws it again unless the
+overlay removed it (B5b).
+
+**IN38c2, game: live removal of a breakable static** (`mw_interaction_bevy` `breakable.rs`, `mw_scripts_bevy` `lib.rs`,
+`mw_rpg_bevy` `breakable.rs`, host `mw_exterior_bevy` `exterior.rs`). `BreakablesTable` lists the `Source::Static`
+breakables like `CONT`/`MISC` (the index hook already wraps `PlacementClass::Static`, `index.rs:134`, so the def attaches
+and the registry registers them). `mw_scripts_bevy` gains `LiveStatics(HashSet<record id>)` (a resource the host fills
+from the table; empty under Classic rules): a `Static` placement whose base is listed joins `ActivePlacements` and,
+when it spawns as an entity (scene off, a failed chain, the entity parts of a `Split`, a promotion), spawns under a
+`LiveRoot` like a container; no other static changes (thousands per active ring stay out of both). `remove_broken`'s
+`Live` arm for a static: `ActivePlacements::remove_live` (deactivation hooks: the collider goes; overlay removal; roots),
+then `Streaming::hide_covered` with the entry's worldspace and cell (false for an entity-drawn one, already despawned).
+A static breaks with its def's debris (IN1c) and spills nothing (IN38a: spill is for containers). Test (headless
+exact, `mw_rpg_bevy` `tests_breakable.rs`): a listed static, activated and scene-covered, broken -> its body gone,
+overlay-removed, `hide_covered` called once (a recording `CellScene`); the same static spawned as an entity -> its root
+despawned; an unlisted static is not in `ActivePlacements`.
+
+**IN38c3, game: breakables out of the precombine** (`mw_bake` `far.rs` `MwFarSource::precombine_exclude`): also true
+for a `Source::Static` breakable (`mw_interaction::breakable::classify` over the same facts the table uses; `mw_bake`
+already depends on `mw_interaction`), whatever the runtime rule switch (the bake is per install, not per save: under
+Classic rules they are plain per-placement statics in the A/B arm, a few entities a cell). The fingerprint takes a
+version bump so `lod.near` products re-bake once. The scene's `is_referenced` stays as is (it hides live). Test (exact,
+`mw_bake` tests): `build_near` over a synthetic cell with an urn and a wall keeps the wall a member and the urn out;
+the fingerprint differs from the previous version's.
+
+**Known limits.** The far field (L1 at the 400 m handoff) draws baked proxies: a removed urn may still show in its L1
+node once its cell drops to far, if the node kept an object that small (L1 policy and size cull, U: not measured);
+Bethesda's and UE's HLOD bakes have the same staleness (U). MWScript `Disable` on statics needs nothing here: referenced
+statics never enter either batch (`mw_bake` `scene.rs:261`, `far.rs:116`).
+
+[6] https://dev.epicgames.com/documentation/unreal-engine/API/Plugins/InstancedActors/UInstancedActorsData (U: API
+listing via search summary); https://dev.epicgames.com/documentation/unreal-engine/instanced-static-mesh-component-in-unreal-engine
+[7] https://falloutck.uesp.net/wiki/Precombined_References; https://forums.nexusmods.com/topic/5446017-precombined-meshes-what-destroys-them
+(U: search summaries, community knowledge)
+
 ## As built (IN1a, 2026-11-27)
 
 `sf_interaction::destroy` (`destroy.rs`): `DestructState { health, stage }` (stage = stages reached, 0 intact),
