@@ -79,16 +79,58 @@ first), canopy, understorey, ground flora. "Shared" = the rocks slice reuses it 
 3. **Stand mosaic** (vegetation). `D(x)` = value noise at `stand_wavelength_m` x the best canopy suitability, decoded by
    thresholds into clearing, sparse, edge, inner. Forced clearings = `Terrain::excluded` (stamps OR WG-V1b). Distance to
    the nearest clearing, on a tile-plus-halo grid at `field_step_m`, capped at `edge_band_m`, gives the edge band: the
-   regrowth fringe round every clearing.
+   regrowth fringe round every clearing. `D` keeps the suitability (E2o: clearings follow poor ground, the thresholds
+   keep their meaning); it is the one place canopy suitability enters the intensity (Design 4).
 4. **Candidates** (shared hashing). Truncated Thomas. Parents per parent tile: `n = floor(kappa_max A + u)` from
-   `hash(seed, species, parent tile, j)`, thinned at the parent by `kappa / kappa_max` (Lewis-Shedler), `kappa =
-   parent_per_ha x suitability x D x region_prior`. Offspring: Poisson(`offspring_mean x suitability`) by inversion,
-   Gaussian offset `cluster_sigma_m` by Box-Muller from the parent's stream, rejected beyond 3 sigma (exact reach). Plus
-   a uniform background stream per tile at `background_fraction`.
+   `hash(seed, species, parent tile, j)`, thinned at the parent by `kappa / kappa_max` (Lewis-Shedler). Offspring:
+   Poisson(`offspring_mean`) by inversion, Gaussian offset `cluster_sigma_m` by Box-Muller from the parent's stream,
+   rejected beyond 3 sigma (exact reach). Plus a uniform background stream per tile at `background_fraction`, thinned
+   by the same weight. **The weight enters once** (E2o; the standard inhomogeneous Neyman-Scott form: a covariate
+   thins parents or offspring, never both, research `scatter-target-density-2026-11-27.md` Finding 2; E2n measured
+   `E[su^2 D]` from three entries). Per layer:
+   - **Canopy: from the class target.** `w_s(x) = D(x) x share_s(x) x p_s(x)`, with `share_s = su_s / sum_c su_c` over
+     the canopy species (1 with one species; the species split the class target by suitability), `p_s` the region
+     prior clamped to `[0, region_prior_max]`, and `w = 0` in a mosaic clearing. Intensity before competition, stems
+     per ha: `lambda_s(x) = T(c) x w_s(x) / m(c) x g(c)`, `c = class(x)`, `T` = `class.<name>.stems_per_ha`, `m(c)` the
+     class mean of `sum_s w_s` (the census below), `g(c)` the competition scale (the calibration below). Parent
+     intensity `(1 - background_fraction) lambda_s / offspring_mean`, background `background_fraction x lambda_s`.
+     A point with no class, or a class with `T = 0` or `m = 0`, gets no canopy (bake log line per class with land).
+     The canopy rows' `parent_per_ha` is not read (lower layers only). Lewis-Shedler bound, one per species for the
+     whole world (exact for any class pattern): `kappa_max = max_c T(c) g(c) / m(c) x region_prior_max x (1 - b) /
+     offspring_mean`. Its rejection cost is bounded by `intensity_scale_max` (D: a 300/ha class at `g` 2, `m` 0.25,
+     prior bound 3, offspring 12 gives ~480 parent draws/ha, ~50 M on x10s's ~1,090 km2 before halo overlap, each one
+     field sample and a hash; E2o.m measures the bake); a bound per parent tile from the census is the later
+     optimisation if the bake leaves "a few minutes".
+   - **Lower layers: per species.** `kappa = parent_per_ha x su x p` at the parent, plain `offspring_mean`, light and
+     edge thinning as in Design 7. They have no class targets: their density is a cover under canopy light, the
+     per-layer, artist-set density of every shipped tool (UE PCG per graph, HZD per layer; research Finding 1). The
+     su-once form changes their counts (E2o.m measures them; their per-species values stay Guess).
+   - **Class census** (bake, deterministic). A grid at `census_step_m` over the guide's bounds, at cell centres: the
+     class, land only (not sea, lake, river or `Terrain::excluded`: a town or road cut neither counts as forest land
+     nor densifies the woods round it); a mosaic clearing counts as land with `w = 0` (the target is "class mean with
+     its mosaic"). Per class: area `A(c) = N(c) x census_step_m^2` and `m(c) = sum w / N(c)`, summed in row order
+     (bitwise across thread counts). Thomas offspring land up to 3 sigma from the parent, so the class mean is kept
+     inside a class and smeared over ~sigma at a class border (D).
+   - **Calibration** of `g(c)` (bake; research Finding 3: no closed form covers clustered + random radii + size
+     priority + k rounds, so the bake does the "artist iterates" loop of UE PCG and the Foliage Spawner). Per class
+     with `T > 0`: the parent tiles in decreasing census share of `c` (ties by tile key) until their `c` land reaches
+     `calib_area_ha`; the canopy layer only, with the full halo (exact winners). `W` = winners at class-`c` points per
+     ha of `c` land in those tiles. First guess the Matern II closed form `g0 = -ln(1 - x) / x`, `x = T pi R^2 / 10^4`,
+     `R = crown_k x 2 x (crown_a_m + crown_b x E[h])` over the class's species mix (`g0 = intensity_scale_max` when
+     `x >= 0.9`); then `g := clamp(g x T / W, 1, intensity_scale_max)` (fixed point; keep falls as intensity rises, so
+     one step undershoots), at most `calib_iters` steps, stop when `|W - T| <= calib_tol x T`. **Ceiling:** a raise of
+     `g` by a fraction f that raises `W` by less than `calib_saturation x f` means the crowns are packed (the target is
+     above what the class's sizes allow, research Finding 4); stop, keep the iterate with the largest `W` (ties: the
+     smaller `g`), bake warning `class <name>: target T above the crown ceiling, reached W`. Same inputs, same `g`.
+   - **Result file.** `A`, `m`, `g`, `W`, steps and the ceiling flag per class go to `<guide>/scatter/calibration.toml`
+     beside the product (diagnostics and tests read it). They are functions of hashed inputs (the species file with
+     its class targets, values, seed, fields), so the product hash needs no extra part; the new tunables are declared
+     values and are hashed with the others.
 5. **Size mark** (shared form). Per candidate, before competition: reverse-J (truncated exponential in height,
    `size_min_m..size_max_m`) or Weibull `size_shape`, by inversion; in the edge band the quantile is scaled by
    `edge_size_ratio` (big trees in the core). Crown radius `r = crown_a_m + crown_b h` (crown width linear in DBH for
-   open-grown trees, Brack and Wood, snippet V).
+   open-grown trees, Brack and Wood, snippet V). Canopy in a class with `class.<name>.size_max_m` set draws its
+   size up to `min(size_max_m, class cap)` (the ceiling rule, "Counts per biome class").
 6. **Competition** (shared). Conflict when `dist < R_ij = crown_k (r_i + r_j)`; priority (size mark, hash). Fixed-
    priority parallel maximal independent set for `competition_rounds` rounds (Luby 1986, U): round 1 keeps a candidate
    with no higher-priority conflict (Matern II); round r re-admits a loser free of earlier winners and of
@@ -103,7 +145,20 @@ first), canopy, understorey, ground flora. "Shared" = the rocks slice reuses it 
    (`scatter.rs:598`); height at the point plus `offset_m x scale`.
 10. **Rank and budget** (shared). Each kept instance has a hashed rank `u`; it is kept when `u < min(1, t_g size^p)`,
     one `t_g` per group by the v1 bisection: budgets nest exactly, smallest cut first, gaps left open (LOD-style; no
-    re-competition). Groups: canopy, understorey, ground, rocks (WG-E3).
+    re-competition). Groups: canopy, understorey, ground, rocks (WG-E3). All at load, none in the product hash:
+    - **Stand cap** (E2q, first): per product tile (`tile_m`, by position), canopy instances above
+      `canopy_stems_per_ha_max x tile area` are dropped in rank order (largest `u` first). It is the render cost lever
+      of `big-world-rendering.md`'s "stand" case and stays a live tunable (owner 2026-11-26); the bake warns for a class
+      target above it.
+    - **Full radius** (E2p, a named scaffold): with a focus point (the game's start position) and
+      `full_radius_m > 0`, every kept instance within `full_radius_m` of the focus is placed whatever its rank; the
+      bisection runs on the rest with `budget_g - inside_g` (floor 0), so the total stays `max(budget, inside)` and
+      budgets still nest. No focus or radius 0 = the whole-world cut above. Industry: UE5 PCG runtime generation
+      (full generation of grid cells within a generation radius of a source, U), Decima's tiles round the player (U),
+      research Finding 5. One radius for every group now; a radius per group (UE: per grid size) comes with the
+      removal path, `big-world-rendering.md` BW-3's `InstanceSource` per ring tile round the moving camera. Budget
+      arithmetic (D, E2m and E2n rates on x10s): 1 km round the focus holds ~25 k canopy at the 81/ha mean (~78 k
+      in a 250/ha class), ~18 k understorey, ~32 k ground: inside the 200 k budget. The load logs `inside_g` per group.
 
 **Determinism across tiles.** Tile T rebuilds every parent within `H` of its square from the parent's own stream, runs
 the passes on the grown square and keeps instances inside T (v1 membership). State after round r depends on points
@@ -117,9 +172,18 @@ at load (`--set scatter.budget=N` needs no rebuild).
 
 **Counts per biome class** (canopy stems/ha, class mean with its mosaic; Guess from `N = 10,000 f / (pi r^2)`, D):
 desert, cold desert, tundra 0-5; grassland 5; shrubland 10; savanna 20; woodland 60; taiga 250; temperate and
-seasonal forest 150; temperate rainforest 250; rainforest 300 (per km2: x 100). Inner stands are capped at
-`canopy_stems_per_ha_max` 400 per tile in rank order, the "stand" case of `big-world-rendering.md` "Cost model" (V).
-BW-2 measured that case over budget (13.97 ms GPU, "Tripped"): the cap and `scatter.budget` are the levers.
+seasonal forest 150; temperate rainforest 250; rainforest 300 (per km2: x 100). They are winners after competition,
+met by Design 4's canopy form plus calibration (E2o; before it they were parsed and never read, E2n). Inner stands
+are capped at `canopy_stems_per_ha_max` 400 per tile in rank order at load (Design 10), the "stand" case of
+`big-world-rendering.md` "Cost model" (V). BW-2 measured that case over budget (13.97 ms GPU, "Tripped"): the cap,
+`full_radius_m` and `scatter.budget` are the levers.
+**Ceiling.** Crowns bound the density: with today's canopy row (`crown_a_m` 0.75, `crown_b` 0.2, `crown_k` 0.8) two
+trees of height h conflict at `R = 1.2 + 0.32 h` m, a Matern II ceiling `1/(pi R^2)` of 164/ha at 10 m and 55/ha at
+20 m, ~2.2x that after several rounds (RSA jamming 0.547; research Finding 4, D). Dense stands are stands of small
+trees (Reineke's self-thinning rule `N = k d^-1.605`, U). Rule: the calibration detects a target above the ceiling
+and reports it (Design 4); the fix is data, an optional `class.<name>.size_max_m` (m, 1-40, unset = the species'
+size range) that caps the size mark of canopy in that class, set by the adapter only for a class E2o.m reports off by
+more than 25 %. The framework never shrinks trees by itself.
 
 **Groundcover border** ([groundcover.md](groundcover.md)): a scatter instance blocks, collides, casts far shadow, is
 interactive (harvestables) or is seen beyond groundcover's `Mid` range; blades and small near-camera flora are
@@ -205,7 +269,7 @@ do not cover. The mix is looked at again once the owner has seen generated rocks
 ## Slices
 
 One deliverable plus its test each. E2a-E2h need no climate product (neutral `Fields`). E2i and the owner look wait
-for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (they reuse E2d-E2e), E3e after E2i.
+for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.2, o.3, o.m, then p, q (E2n diagnosis, E2o research). Rocks: E3a-E3d after E2e (they reuse E2d-E2e), E3e after E2i.
 
 ## Build rows
 
@@ -222,6 +286,12 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
 | WG-E2i | adapter: species TOML, learned priors, four groups, product `Fields`; the v1 Bernoulli path deleted | Scrib `mw_worldgen` (`flora.rs`), `bevyrrowind/worldgen/scatter_species.toml` | E2h, WG-E1c3, WG-V1b | `tests_flora` tile alone; region prior exact | `test -p mw_worldgen` |
 | WG-E2j | hash-cached product in the guide folder, read at load | Scrib `sf_worldgen` (`scatter_product.rs`), `mw_worldgen` | E2i | same hash twice; seed change rebuilds; read == computed | same |
 | WG-E2m | measurement: stems/ha and cover per class, counts, seconds | Scrib `mw_worldgen` (test only) | E2j | `#[ignore = "measurement: scatter v2 counts and seconds"]` | ledger line |
+| WG-E2o.1 | Design 4 weight-once form: canopy `lambda = T w / m x g` from a `CanopyTargets` input (per class id: `T`, `m`, `g`), world `kappa_max`; lower layers `su` once; 7 new declared values | Scrib `sf_worldgen` (`scatter.rs`, `scatter_species.rs`) | E2n | neutral fields, two classes side by side (T 50 and 200, `m` from a fine grid mean in the test, `g` 1): candidates/ha of each class's land within 5 % of `T` on >= 1 km2 each; halving `su` halves the candidates (not quarters) of a lower-layer species, and of canopy with `m` held and no mosaic clearings; tile alone bitwise | `test -p sf_worldgen` + clippy dependents |
+| WG-E2o.2 | class census + calibration (Design 4), `calibration.toml` write/read | Scrib `sf_worldgen` (new `scatter_calib.rs`, `tests_scatter_calib.rs`) | E2o.1 | census: two-class fixture, `A` exact, `m` == brute mean, same on 1 and N threads; calibration: a target below the ceiling reaches `W` within `calib_tol`; a target above it is flagged within `calib_iters`; same inputs same `g` | same |
+| WG-E2o.3 | adapter wiring: `mw_worldgen::flora` runs census + calibration before the passes, class names to ids, warnings to the bake log, `calibration.toml` beside the product | Scrib `mw_worldgen` (`flora.rs`, `tests_flora.rs`) | E2o.2, E2j | fixture guide: class means exact; a target change makes the product stale; a read product has its calibration file | `test -p mw_worldgen` + clippy `bevyrrowind` |
+| WG-E2o.m | measurement: winners/ha per class vs target, lower-layer counts, bake s, product size | `mw_worldgen` (test only) | E2o.3 | re-run `canopy_density_trace_on_x10s`, `scatter_v2_counts_and_seconds_on_x10s` | ledger line; a class off > 25 % sets its `size_max_m` row or parks the look |
+| WG-E2p | full radius round a focus at load (Design 10) | Scrib `mw_worldgen` (`flora.rs` `place`, `extra`), app `world.rs:291` (the one line passing the start position) | E2o.3 | inside the radius == unbudgeted set; outside nests with the budget; no focus == today's cut | `test -p mw_worldgen` + clippy `bevyrrowind` |
+| WG-E2q | stand cap per tile at load (`canopy_stems_per_ha_max`, Design 10) | Scrib `mw_worldgen` (`flora.rs` `place`) | E2p | no tile above the cap; the cap's survivors are the lowest ranks; cap 2000 == uncapped on a 400/ha fixture | same |
 | WG-E3a | rock columns, `[rock_units]` table (entries: library class or pack model) | Scrib `sf_worldgen` (`scatter_species.rs`) | E2a | round trip; bad weight or unknown entry kind rejected | `test -p sf_worldgen` |
 | WG-E3b | talus candidates, Pareto sizes | Scrib `sf_worldgen` (`scatter_rocks.rs`) | E2e, E3a | size slope within 10 % of D; size-distance Spearman > 0.08 (beta 0.4; was 0.3, unreachable with the exponential run-out, see As built), rising with beta, ~0 (beta 0); none above the shadow line; tile alone | same |
 | WG-E3c | outcrop clusters, field stones | same file | E3b | children <= ratio x parent; g(r) > 1.5 at sigma; tile alone | same |
@@ -341,6 +411,9 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
   noise (mean 0.5) x the clearing cut (35-68 % of land), so shrubland (target 10) gets 11.4/ha and taiga (250) 4.3.
   Competition then keeps 63-73 %; the learned canopy size range is 1-40 m (the column's max), crowns up to 8.75 m.
   The targets ask 8.89 M canopy on x10s (81/ha); the world-total budget (200 k) cuts it evenly to 0.2 %. Fix: WG-E2o.
+- **WG-E2o SPEC** (2026-11-27, docs): Design 3, 4, 10, Counts "Ceiling", Tunables, build rows E2o.1-E2q. `D` keeps
+  `su` and the weight enters once; canopy from the class target over a census mean, the competition scale by bake
+  calibration with a ceiling flag; at load a stand cap per tile and a full radius round the start position.
 
 ## Tunables
 
@@ -357,8 +430,14 @@ Prefix `scatter.`; source Guess unless noted. Species columns go in the file's `
 | `canopy_stems_per_ha_max` | 1/ha | 50-2000 | 400 | big-world-rendering.md "stand" (V) |
 | `region_prior_max` | ratio | 1-10 | 3 | Guess |
 | `class.<name>.stems_per_ha` | 1/ha | 0-2000 | table above | Guess |
+| `class.<name>.size_max_m` | m | 1-40 | unset | Reineke (U); set only after E2o.m (Counts "Ceiling") |
+| `census_step_m` | m | 4-128 | 16 | Guess (~15 samples per 250 m stand wavelength) |
+| `calib_area_ha` | ha | 10-2000 | 200 | Guess (~2000 winners at 10/ha: ~8 % clustered sampling error, D) |
+| `calib_iters` / `calib_tol` / `calib_saturation` | count / ratio / ratio | 1-8 / 0.01-0.25 / 0-1 | 4 / 0.05 / 0.25 | research Finding 3 (2-4 steps, D); tol and saturation Guess |
+| `intensity_scale_max` | ratio | 1-20 | 8 | Guess (bounds candidates at 8 T and the parent rejection cost) |
+| `full_radius_m` | m | 0-8000 | 1000 | Guess (UE PCG generation radius, U; Design 10 arithmetic); 0 = off. Load only, not hashed |
 | `tile_m`, `seed`, `water_margin_m`, `budget`, `size_priority` | | | v1 | kept (`scatter.rs:49-73`) |
-| species `parent_per_ha` | 1/ha | 0-500 | 4 | Guess |
+| species `parent_per_ha` | 1/ha | 0-500 | 4 | Guess (lower layers only since E2o; canopy follows the class target) |
 | species `cluster_sigma_m` / `offspring_mean` | m / count | 2-40 / 1-60 | 12 / 12 | Guess (Thomas, U) |
 | species `background_fraction` | ratio | 0-0.5 | 0.2 | Guess |
 | species `size_law`, `size_shape` | enum, ratio | 0.5-6 | reverse-J, 1.2 | Guess (Weibull, de Liocourt U) |
