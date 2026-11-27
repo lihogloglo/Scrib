@@ -24,6 +24,16 @@
 //! `W` on mixed tiles moves with its neighbours' `g`, E2o.d); at most `scatter.calib_iters` checks, the last one
 //! reopens nothing. The file reports the last check's `g` and `W`: one consistent snapshot.
 //!
+//! **Sample size** (WG-E2o.h, two-stage sampling, Cochran 1977 ch. 4 and 6): the `calib_area_ha` prefix is the pilot,
+//! at least `scatter.calib_tiles_min` tiles holding the class. When the per-class iteration first finishes, each
+//! converged class is sized once from its last pilot run: per tile `x` = its class land, `y` = winners at class
+//! points, `CV_r` = the ratio estimator's residual SD over `R x_mean` ([`ratio_cv`]), `n = (calib_z CV_r /
+//! calib_tol)^2` with the finite-population correction over `N(c)`, the tiles holding the class, at most
+//! `min(N(c), calib_tiles_max)` and at least the pilot ([`sized_tiles`]); the sample becomes the first `n` tiles of
+//! the same order ([`first_tiles`]; the pilot is its prefix) and the joint checks run on it. Ceiling, out-of-steps
+//! and `R = 0` classes keep the pilot. `rse = CV_r sqrt((1 - n / N) / n)` on the final sample is reported; a class
+//! `calib_tiles_max` cut with `calib_z rse > calib_tol` warns.
+//!
 //! Industry: the bake does the "artist iterates the density" loop of UE PCG and the Foliage Spawner (research
 //! `scatter-target-density-2026-11-27.md` Finding 3); Matern II thinning (Matern 1960, U) gives the first guess.
 //! Nothing here names a game.
@@ -212,8 +222,20 @@ pub struct ClassCalibration {
     pub reached_per_ha: f64,
     /// Class land of the sample's tiles, ha.
     pub calib_area_ha: f64,
-    /// Tiles in the sample.
+    /// Tiles in the sample (the sized one: the first `calib_tiles` of the world order holding the class).
     pub calib_tiles: u32,
+    /// Tiles in the pilot (the `calib_area_ha` prefix, at least `calib_tiles_min`); a prefix of the sample.
+    pub pilot_tiles: u32,
+    /// `N(c)`, the census tiles holding the class.
+    pub class_tiles: u32,
+    /// `CV_r` of the pilot's last run, which sized the sample (0 when not sized: ceiling, out of steps, `R = 0`).
+    pub pilot_cv_r: f64,
+    /// `CV_r`, the ratio estimator's unit CV over the final sample at the last joint check (0 below two tiles).
+    pub cv_r: f64,
+    /// `rse`, the relative SE of `reached` on the final sample.
+    pub rse: f64,
+    /// `calib_tiles_max` cut the sample size the pilot asked for.
+    pub capped: bool,
     /// `m_t`, the census weight mean over the sample's class land (reported, not applied).
     pub calib_weight_mean: f64,
     /// Updates of `g` after the first guess (a reopened class's included).
@@ -335,14 +357,26 @@ pub fn tile_order(census: &Census, seed: u64) -> Vec<(i32, i32)> {
     keyed.into_iter().map(|(_, k)| k).collect()
 }
 
-/// Class `c`'s sample (module docs): the tiles of `order` ([`tile_order`]) holding `c` land, in that order, until
-/// their `c` land reaches `area_ha` (all of them when the class has less).
+/// Class `c`'s pilot sample (module docs): the tiles of `order` ([`tile_order`]) holding `c` land, in that order,
+/// until their `c` land reaches `area_ha` and they are at least `min_tiles` (all of them when the class has fewer).
 #[must_use]
-pub fn calib_tiles(census: &Census, order: &[(i32, i32)], c: usize, area_ha: f64) -> Sample {
+pub fn calib_tiles(census: &Census, order: &[(i32, i32)], c: usize, area_ha: f64, min_tiles: usize) -> Sample {
+    let cell_ha = census.step_m * census.step_m / M2_PER_HA;
+    prefix(census, order, c, |land, n| land.cells as f64 * cell_ha >= area_ha && n >= min_tiles)
+}
+
+/// The first `n` tiles of `order` holding class `c` land (all of them when the class has fewer): a sized sample.
+#[must_use]
+pub fn first_tiles(census: &Census, order: &[(i32, i32)], c: usize, n: usize) -> Sample {
+    prefix(census, order, c, |_, k| k >= n)
+}
+
+/// The tiles of `order` holding `c` land, in that order, until `full(land so far, tiles so far)`.
+fn prefix(census: &Census, order: &[(i32, i32)], c: usize, full: impl Fn(&ClassCount, usize) -> bool) -> Sample {
     let cell_ha = census.step_m * census.step_m / M2_PER_HA;
     let (mut tiles, mut land) = (Vec::new(), ClassCount::default());
     for k in order {
-        if land.cells as f64 * cell_ha >= area_ha {
+        if full(&land, tiles.len()) {
             break;
         }
         let cc = &census.tiles[k].1[c];
@@ -352,6 +386,45 @@ pub fn calib_tiles(census: &Census, order: &[(i32, i32)], c: usize, area_ha: f64
         }
     }
     Sample { tiles, land_ha: land.cells as f64 * cell_ha, weight_mean: land.mean() }
+}
+
+/// The tiles holding class `c` land, `N(c)`.
+#[must_use]
+pub fn class_tiles(census: &Census, c: usize) -> usize {
+    census.tiles.values().filter(|(_, per)| per[c].cells > 0).count()
+}
+
+/// `CV_r` of the ratio estimator `R = sum y / sum x` over a sample's tiles (module docs "Sample size"): the residual
+/// SD `s_d = sqrt(sum (y - R x)^2 / (n - 1))` over `R x_mean`. `None` below two tiles or at `R = 0`.
+#[must_use]
+pub fn ratio_cv(x: &[f64], y: &[f64]) -> Option<f64> {
+    let n = x.len();
+    let (sx, sy): (f64, f64) = (x.iter().sum(), y.iter().sum());
+    if n < 2 || sx <= 0.0 || sy <= 0.0 {
+        return None;
+    }
+    let r = sy / sx;
+    let ss: f64 = x.iter().zip(y).map(|(&xi, &yi)| (yi - r * xi).powi(2)).sum();
+    Some((ss / (n - 1) as f64).sqrt() / (r * sx / n as f64))
+}
+
+/// The sized sample's tiles (module docs "Sample size"): `n_inf = (z CV_r / tol)^2`, `n = n_inf / (1 + n_inf / N)`
+/// rounded up, then at most `min(N, max)` and at least the pilot's `n0`. Also whether `max` cut the formula's `n`.
+#[must_use]
+pub fn sized_tiles(n0: usize, cv_r: f64, z: f64, tol: f64, class_tiles: usize, max: usize) -> (usize, bool) {
+    let n_inf = (z * cv_r / tol).powi(2);
+    let n_fpc = n_inf / (1.0 + n_inf / class_tiles as f64);
+    // A count of tiles (at most `class_tiles`, a usize).
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let n = n_fpc.ceil().max(0.0) as usize;
+    let capped = n > max;
+    (n.min(class_tiles.min(max)).max(n0), capped)
+}
+
+/// `rse = CV_r sqrt((1 - n / N) / n)`, the relative SE of `reached` on `n` of the class's `N` tiles (0 at `n = N`).
+#[must_use]
+pub fn relative_se(cv_r: f64, n: usize, class_tiles: usize) -> f64 {
+    if n == 0 { 0.0 } else { cv_r * ((1.0 - n as f64 / class_tiles.max(n) as f64) / n as f64).sqrt() }
 }
 
 /// The Matern II first guess of class `c` (module docs), before the clamp.
@@ -420,10 +493,9 @@ pub fn calibrate(
                 row.low_weight = true;
                 out.warnings.push(format!("class {name}: weight mean m too low ({m:.3})"));
             }
-            let sample = calib_tiles(census, &order, c, v.calib_area_ha);
-            row.calib_area_ha = sample.land_ha;
-            row.calib_tiles = u32::try_from(sample.tiles.len()).unwrap_or(u32::MAX);
-            row.calib_weight_mean = sample.weight_mean;
+            let sample = calib_tiles(census, &order, c, v.calib_area_ha, v.calib_tiles_min as usize);
+            row.pilot_tiles = u32::try_from(sample.tiles.len()).unwrap_or(u32::MAX);
+            row.class_tiles = u32::try_from(class_tiles(census, c)).unwrap_or(u32::MAX);
             let g = first_guess(rules, census, c, target, hi).clamp(lo, hi);
             row.scale = g;
             its.push(Iterate::new(target, lo, hi, g));
@@ -431,27 +503,33 @@ pub fn calibrate(
         }
         out.classes.push(row);
     }
-    let mut targets = out.targets();
-    let mut measure = |gs: &[f64], ask: &[usize]| -> Vec<f64> {
-        for (&(c, _), &g) in samples.iter().zip(gs) {
-            targets.classes[c].scale = g;
+    let targets = out.targets();
+    let (last_y, pilot) = (vec![Vec::new(); samples.len()], vec![(0.0, false); samples.len()]);
+    let mut runs = SampleRuns { rules, stand, fields, excluded, census, order: &order, targets, samples, last_y, pilot };
+    let checks = drive(&mut its, v.calib_tol, v.calib_saturation, v.calib_iters, &mut runs);
+    let SampleRuns { samples, last_y, pilot, .. } = runs;
+    let cell_ha = census.step_m * census.step_m / M2_PER_HA;
+    for (((it, (c, sample)), y), &(pilot_cv, capped)) in its.iter().zip(&samples).zip(&last_y).zip(&pilot) {
+        let row = &mut out.classes[*c];
+        // The final sample, `CV_r` over its last run (the last joint check measured every class on it).
+        let x: Vec<f64> = sample.tiles.iter().map(|k| census.tiles[k].1[*c].cells as f64 * cell_ha).collect();
+        let y: Vec<f64> = y.iter().map(|&n| n as f64).collect();
+        let n = sample.tiles.len();
+        row.calib_area_ha = sample.land_ha;
+        row.calib_tiles = u32::try_from(n).unwrap_or(u32::MAX);
+        row.calib_weight_mean = sample.weight_mean;
+        row.cv_r = ratio_cv(&x, &y).unwrap_or(0.0);
+        row.rse = relative_se(row.cv_r, n, row.class_tiles as usize);
+        row.pilot_cv_r = pilot_cv;
+        row.capped = capped;
+        if row.capped && v.calib_z * row.rse > v.calib_tol {
+            out.warnings.push(format!(
+                "class {}: sample capped at {n} tiles, reached {:.1} +-{:.1} %",
+                row.name,
+                it.joint.map_or(0.0, |j| j.1),
+                100.0 * v.calib_z * row.rse
+            ));
         }
-        let step_rules = CandidateRules { canopy: &targets, ..*rules };
-        let mut tiles: Vec<(i32, i32)> = ask.iter().flat_map(|&i| samples[i].1.tiles.iter().copied()).collect();
-        tiles.sort_unstable();
-        tiles.dedup();
-        let won = winners_per_tile(&step_rules, stand, fields, excluded, &tiles, names.len());
-        ask.iter()
-            .map(|&i| {
-                let (c, s) = &samples[i];
-                let n: u64 = s.tiles.iter().map(|k| won[k][*c]).sum();
-                if s.land_ha > 0.0 { n as f64 / s.land_ha } else { 0.0 }
-            })
-            .collect()
-    };
-    let checks = drive(&mut its, v.calib_tol, v.calib_saturation, v.calib_iters, &mut measure);
-    for (it, &(c, _)) in its.iter().zip(&samples) {
-        let row = &mut out.classes[c];
         let (g, w) = it.joint.unwrap_or_else(|| kept(it));
         row.scale = g;
         row.reached_per_ha = w;
@@ -472,18 +550,88 @@ pub fn calibrate(
     out
 }
 
-/// `measure(g per iterate, the iterates asked)`: `W` of the asked ones, in order.
-type Measure<'a> = dyn FnMut(&[f64], &[usize]) -> Vec<f64> + 'a;
+/// The runs [`drive`] asks for.
+trait Runs {
+    /// `W` of the asked iterates, in order, each class at its `g` of `gs` (one per iterate).
+    fn measure(&mut self, gs: &[f64], ask: &[usize]) -> Vec<f64>;
 
-/// The classes' iteration, then the joint checks (module docs): `measure(g per iterate, the iterates asked)` returns
-/// `W` of the asked ones, in order; a finished class is measured at its kept `g`. Returns the joint checks run.
-fn drive(
-    its: &mut [Iterate],
-    tol: f64,
-    saturation: f64,
-    iters: u32,
-    measure: &mut Measure<'_>,
-) -> u32 {
+    /// Once, when the per-class iteration first finishes, before the first joint check: the converged classes'
+    /// samples may grow (module docs "Sample size").
+    fn size(&mut self, _converged: &[bool]) {}
+}
+
+/// A plain measurement closure: the samples never grow.
+impl<F: FnMut(&[f64], &[usize]) -> Vec<f64>> Runs for F {
+    fn measure(&mut self, gs: &[f64], ask: &[usize]) -> Vec<f64> {
+        self(gs, ask)
+    }
+}
+
+/// The calibration's runs: canopy winners on the classes' samples, each class's winners per tile of its last run
+/// kept for the sample size.
+struct SampleRuns<'a, 'r> {
+    rules: &'a CandidateRules<'r>,
+    stand: &'a StandRules<'r>,
+    fields: &'a dyn Fields,
+    excluded: &'a (dyn Fn(f64, f64) -> bool + Sync),
+    census: &'a Census,
+    order: &'a [(i32, i32)],
+    targets: CanopyTargets,
+    /// Per iterate: its class id and sample.
+    samples: Vec<(usize, Sample)>,
+    /// Per iterate: its class's winners per sample tile in its last run.
+    last_y: Vec<Vec<u64>>,
+    /// Per iterate, set by the sizing: the pilot's `CV_r` (0 when not sized) and whether `calib_tiles_max` cut `n`.
+    pilot: Vec<(f64, bool)>,
+}
+
+impl Runs for SampleRuns<'_, '_> {
+    fn measure(&mut self, gs: &[f64], ask: &[usize]) -> Vec<f64> {
+        for (&(c, _), &g) in self.samples.iter().zip(gs) {
+            self.targets.classes[c].scale = g;
+        }
+        let step_rules = CandidateRules { canopy: &self.targets, ..*self.rules };
+        let mut tiles: Vec<(i32, i32)> = ask.iter().flat_map(|&i| self.samples[i].1.tiles.iter().copied()).collect();
+        tiles.sort_unstable();
+        tiles.dedup();
+        let n_class = self.fields.class_names().len();
+        let won = winners_per_tile(&step_rules, self.stand, self.fields, self.excluded, &tiles, n_class);
+        ask.iter()
+            .map(|&i| {
+                let (c, s) = &self.samples[i];
+                let y: Vec<u64> = s.tiles.iter().map(|k| won[k][*c]).collect();
+                let n: u64 = y.iter().sum();
+                let w = if s.land_ha > 0.0 { n as f64 / s.land_ha } else { 0.0 };
+                self.last_y[i] = y;
+                w
+            })
+            .collect()
+    }
+
+    fn size(&mut self, converged: &[bool]) {
+        let v = &self.rules.file.values;
+        let cell_ha = self.census.step_m * self.census.step_m / M2_PER_HA;
+        for (i, &conv) in converged.iter().enumerate() {
+            let (c, pilot) = &self.samples[i];
+            let (c, n0) = (*c, pilot.tiles.len());
+            let x: Vec<f64> = pilot.tiles.iter().map(|k| self.census.tiles[k].1[c].cells as f64 * cell_ha).collect();
+            let y: Vec<f64> = self.last_y[i].iter().map(|&n| n as f64).collect();
+            // Ceiling, out-of-steps and `R = 0` classes keep the pilot.
+            let Some(cv) = ratio_cv(&x, &y).filter(|_| conv) else { continue };
+            let big = class_tiles(self.census, c);
+            let (n, cut) = sized_tiles(n0, cv, v.calib_z, v.calib_tol, big, v.calib_tiles_max as usize);
+            self.pilot[i] = (cv, cut);
+            if n > n0 {
+                self.samples[i].1 = first_tiles(self.census, self.order, c, n);
+            }
+        }
+    }
+}
+
+/// The classes' iteration, then the joint checks (module docs): `runs.measure(g per iterate, the iterates asked)`
+/// returns `W` of the asked ones, in order, a finished class measured at its kept `g`; `runs.size` once before the
+/// first joint check (the sample size). Returns the joint checks run.
+fn drive(its: &mut [Iterate], tol: f64, saturation: f64, iters: u32, runs: &mut dyn Runs) -> u32 {
     let mut checks = 0;
     while !its.is_empty() {
         loop {
@@ -492,13 +640,16 @@ fn drive(
                 break;
             }
             let gs: Vec<f64> = its.iter().map(Iterate::run_g).collect();
-            for (&i, w) in ask.iter().zip(measure(&gs, &ask)) {
+            for (&i, w) in ask.iter().zip(runs.measure(&gs, &ask)) {
                 step(&mut its[i], w, tol, saturation, iters);
             }
         }
+        if checks == 0 {
+            runs.size(&its.iter().map(|it| it.converged).collect::<Vec<_>>());
+        }
         let gs: Vec<f64> = its.iter().map(Iterate::run_g).collect();
         let all: Vec<usize> = (0..its.len()).collect();
-        let ws = measure(&gs, &all);
+        let ws = runs.measure(&gs, &all);
         checks += 1;
         let mut reopened = false;
         for ((it, &g), w) in its.iter_mut().zip(&gs).zip(ws) {

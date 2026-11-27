@@ -537,6 +537,12 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
   tiles); converged classes are sized once from its ratio-estimator residuals, `n = (calib_z CV_r / calib_tol)^2` with
   the finite-population correction, capped by `calib_tiles_max`, extended along the same order; `rse` reported, a capped
   class out of tol warns. Whole-land joint check rejected on cost (one world canopy pass per check). E2o.h builds it.
+- **WG-E2o.h** (2026-11-27, `scatter_calib.rs` `calib_tiles(.., min_tiles)`, `first_tiles`, `ratio_cv`, `sized_tiles`,
+  `relative_se`, `drive` over a `Runs` trait whose `size` runs once before the first joint check; 3 declared values;
+  `calibration.toml` adds `pilot_tiles`, `class_tiles`, `pilot_cv_r`, `cv_r`, `rse`, `capped`; product `FORMAT` 3): as
+  E2o.g. x10s: 19.5 s (was 14.1), 2 checks; tundra 37 -> 400 tiles (capped, CV_r 0.96, rse 2.9 %) reached/world 0.99
+  (was 0.88), shrubland 51 -> 400 (capped, rse 4.6 %) 1.01, grassland whole (130 = N) 1.00; the four ceiling classes
+  keep their pilot (38-103 tiles, rse 6-10 %: taiga 1.14, rainforest 0.91).
 
 ## Tunables
 

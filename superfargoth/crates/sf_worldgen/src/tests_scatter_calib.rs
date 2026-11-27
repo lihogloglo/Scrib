@@ -17,6 +17,7 @@ const FILE_TEXT: &str = r#"
 [params]
 "scatter.stand_clearing_threshold" = { v = 0.0, unit = "ratio", min = 0, max = 1, source = "Guess" }
 "scatter.calib_area_ha" = { v = {area}, unit = "ha", min = 10, max = 2000, source = "Guess" }
+{extra}
 
 [columns]
 hat_temperature_c = { unit = "C", min = -40, max = 40, source = "Guess" }
@@ -39,17 +40,18 @@ size_law = "reverse_j"
 hat_temperature_c = [0, 10, 30, 40]
 "#;
 
-/// Class 0 west of x = 2000 m, class 1 east of it. With `gradient`, the east warms from 30 C at x = 2000 to 36 C at
+/// Class 0 west of x = 2000 m, class 1 east of it. With `span_c` 6, the east warms from 30 C at x = 2000 to 36 C at
 /// x = 4000 (the hat's shoulder: weight 1 to 0.4), so tiles differ in weight inside the dense class.
 struct TwoClasses {
     names: Vec<String>,
-    gradient: bool,
+    /// The east's warming across it, C (0: none).
+    span_c: f64,
 }
 
 impl Fields for TwoClasses {
     fn sample(&self, x: f64, _: f64) -> FieldSample {
         FieldSample {
-            temperature_c: if self.gradient && x >= 2000.0 { 30.0 + 6.0 * (x - 2000.0) / 2000.0 } else { 10.0 },
+            temperature_c: if self.span_c > 0.0 && x >= 2000.0 { 30.0 + self.span_c * (x - 2000.0) / 2000.0 } else { 10.0 },
             precipitation_mm: 800.0,
             moisture: 0.5,
             class: Some(u8::from(x >= 2000.0)),
@@ -99,9 +101,17 @@ impl Fixture {
 
     /// `dense`'s target, `scatter.calib_area_ha`, the east's temperature gradient.
     fn build(dense: f64, area_ha: f64, gradient: bool) -> Self {
-        let text = FILE_TEXT.replace("{dense}", &dense.to_string()).replace("{area}", &format!("{area_ha:.1}"));
+        Self::build_with(dense, area_ha, if gradient { 6.0 } else { 0.0 }, "")
+    }
+
+    /// [`Self::build`] with the east's warming `span_c` (C) and `extra` lines in `[params]`.
+    fn build_with(dense: f64, area_ha: f64, span_c: f64, extra: &str) -> Self {
+        let text = FILE_TEXT
+            .replace("{dense}", &dense.to_string())
+            .replace("{area}", &format!("{area_ha:.1}"))
+            .replace("{extra}", extra);
         let file = SpeciesFile::parse_toml(&text).expect("fixture parses");
-        let fields = TwoClasses { names: vec!["sparse".to_owned(), "dense".to_owned()], gradient };
+        let fields = TwoClasses { names: vec!["sparse".to_owned(), "dense".to_owned()], span_c };
         let suit: Vec<Suitability> = file.species.iter().map(|s| Suitability::new(s, fields.class_names())).collect();
         let canopy = vec![suit[0].clone()];
         let targets = CanopyTargets::uncalibrated(&file, fields.class_names());
@@ -204,7 +214,9 @@ fn calibration_meets_reachable_targets_and_flags_the_ceiling() {
         assert!(!c.ceiling && !c.low_weight, "{}: flagged", c.name);
         assert!((c.reached_per_ha - c.stems_per_ha).abs() <= v.calib_tol * c.stems_per_ha, "{}: W off", c.name);
         assert!(c.steps <= v.calib_iters);
-        assert!(c.calib_area_ha >= 100.0 && c.calib_area_ha < 110.0, "{}: {} ha", c.name, c.calib_area_ha);
+        // The pilot: 100 ha of class land but at least `calib_tiles_min` 30 tiles (~6.5 ha each); sized from it.
+        assert!(c.pilot_tiles >= v.calib_tiles_min && c.calib_tiles >= c.pilot_tiles, "{c:?}");
+        assert!(c.calib_tiles <= c.class_tiles && c.calib_area_ha >= 100.0, "{c:?}");
         assert!(c.scale >= 1.0 && c.scale <= v.intensity_scale_max * c.weight_mean);
         assert_eq!(c.weight_mean, census.classes[usize::from(c.name == "dense")].mean());
     }
@@ -298,11 +310,14 @@ fn the_sample_reads_the_whole_class_where_the_purest_tiles_do_not() {
         assert!(!row.ceiling && !row.low_weight, "{}: flagged", row.name);
         assert!((row.reached_per_ha - world).abs() <= v.calib_tol * world, "{}: reached vs the whole class", row.name);
         assert!(row.joint_checks >= 1 && row.joint_checks <= v.calib_iters);
-        // The sample: the classes' tiles of the one world order, until 200 ha of class land.
-        let s = calib_tiles(&census, &order, c, 200.0);
-        assert_eq!(s.tiles.len(), row.calib_tiles as usize);
+        // The pilot: the classes' tiles of the one world order, until 200 ha of class land (32 tiles, above 30);
+        // the sample its sized extension.
+        let pilot = calib_tiles(&census, &order, c, 200.0, 30);
+        assert_eq!(pilot.tiles.len(), row.pilot_tiles as usize);
+        assert!(pilot.land_ha >= 200.0 && pilot.land_ha < 200.0 + 6.25 + 1e-9, "{}: {} ha", row.name, pilot.land_ha);
+        let s = first_tiles(&census, &order, c, row.calib_tiles as usize);
         assert_eq!((s.land_ha, s.weight_mean), (row.calib_area_ha, row.calib_weight_mean));
-        assert!(s.land_ha >= 200.0 && s.land_ha < 200.0 + 6.25 + 1e-9, "{}: {} ha", row.name, s.land_ha);
+        assert_eq!(s.tiles[..pilot.tiles.len()], pilot.tiles[..], "{}: the pilot is a prefix", row.name);
         let last = order.iter().position(|k| k == s.tiles.last().expect("tiles")).expect("in the order");
         let holding: Vec<(i32, i32)> = order[..=last].iter().copied().filter(|k| census.tiles[k].1[c].cells > 0).collect();
         assert_eq!(holding, s.tiles, "{}: a prefix of the world order", row.name);
@@ -324,7 +339,7 @@ fn a_joint_check_reopens_a_class_its_neighbour_moved() {
     let run = |iters: u32| {
         let mut its = vec![Iterate::new(100.0, 1.0, 16.0, 2.0), Iterate::new(400.0, 1.0, 16.0, 1.0)];
         let mut asked = Vec::new();
-        let checks = drive(&mut its, 0.05, 0.25, iters, &mut |gs, ask| {
+        let checks = drive(&mut its, 0.05, 0.25, iters, &mut |gs: &[f64], ask: &[usize]| -> Vec<f64> {
             asked.push(ask.to_vec());
             ask.iter().map(|&i| w(gs, i)).collect()
         });
@@ -352,4 +367,112 @@ fn a_joint_check_reopens_a_class_its_neighbour_moved() {
     assert_eq!(its[0].reopened, 0);
     assert_eq!(its[0].joint, Some((2.0, 108.0)));
     assert!(!its[1].converged && !its[1].ceiling);
+}
+
+#[test]
+fn the_sample_size_formula() {
+    // x = 1 ha each, y = 1, 2, 3, 2: R = 2, residuals -1, 0, 1, 0, s_d = sqrt(2 / 3), CV_r = s_d / 2.
+    let cv = ratio_cv(&[1.0; 4], &[1.0, 2.0, 3.0, 2.0]).expect("two tiles and R > 0");
+    assert!((cv - (2.0f64 / 3.0).sqrt() / 2.0).abs() < 1e-12, "{cv}");
+    assert_eq!(ratio_cv(&[1.0], &[1.0]), None, "one tile");
+    assert_eq!(ratio_cv(&[1.0, 1.0], &[0.0, 0.0]), None, "R = 0");
+    // n_inf = (2 x 0.4 / 0.05)^2 = 256; N 1000: 256 / 1.256 = 203.8 -> 204; N 100: 256 / 3.56 = 71.9 -> 72.
+    assert_eq!(sized_tiles(30, 0.4, 2.0, 0.05, 1000, 400), (204, false));
+    assert_eq!(sized_tiles(30, 0.4, 2.0, 0.05, 100, 400), (72, false));
+    assert_eq!(sized_tiles(30, 0.4, 2.0, 0.05, 1000, 50), (50, true), "the cap");
+    assert_eq!(sized_tiles(300, 0.4, 2.0, 0.05, 1000, 400), (300, false), "never below the pilot");
+    assert_eq!(sized_tiles(30, 0.0, 2.0, 0.05, 1000, 400), (30, false), "no spread: the pilot");
+    assert_eq!(relative_se(0.4, 100, 100), 0.0, "the whole class");
+    assert!((relative_se(0.4, 50, 200) - 0.4 * (0.75f64 / 50.0).sqrt()).abs() < 1e-12);
+}
+
+/// Prints and checks one calibration's sized samples (module docs "Sample size"): the pilot, `n` from its `CV_r`,
+/// the sample the first `n` tiles of the order with the pilot its prefix, `reached` within `calib_tol` of the whole
+/// class for a class not capped.
+fn check_sized(fx: &Fixture, census: &Census, cal: &Calibration) {
+    let v = fx.file.values;
+    let order = tile_order(census, 55);
+    for (c, row) in cal.classes.iter().enumerate() {
+        let world = world_per_ha(fx, census, cal, c);
+        println!(
+            "{}: T {} g {:.3} reached {:.1} world {world:.1} pilot {} n {} of N {} CV_r pilot {:.3} final {:.3} \
+             rse {:.4} capped {} steps {} checks {} reopened {}",
+            row.name,
+            row.stems_per_ha,
+            row.scale,
+            row.reached_per_ha,
+            row.pilot_tiles,
+            row.calib_tiles,
+            row.class_tiles,
+            row.pilot_cv_r,
+            row.cv_r,
+            row.rse,
+            row.capped,
+            row.steps,
+            row.joint_checks,
+            row.reopened
+        );
+        assert!(!row.ceiling && !row.low_weight, "{}: flagged", row.name);
+        let pilot = calib_tiles(census, &order, c, v.calib_area_ha, v.calib_tiles_min as usize);
+        assert_eq!(pilot.tiles.len(), row.pilot_tiles as usize, "{}: the pilot", row.name);
+        assert!(row.pilot_cv_r > 0.0, "{}: sized", row.name);
+        let (n, cut) = sized_tiles(
+            pilot.tiles.len(),
+            row.pilot_cv_r,
+            v.calib_z,
+            v.calib_tol,
+            row.class_tiles as usize,
+            v.calib_tiles_max as usize,
+        );
+        assert_eq!((n, cut), (row.calib_tiles as usize, row.capped), "{}: n from the pilot's CV_r", row.name);
+        let s = first_tiles(census, &order, c, n);
+        assert_eq!(s.tiles[..pilot.tiles.len()], pilot.tiles[..], "{}: the pilot is a prefix", row.name);
+        assert_eq!((s.land_ha, s.weight_mean), (row.calib_area_ha, row.calib_weight_mean));
+        assert!((row.rse - relative_se(row.cv_r, n, row.class_tiles as usize)).abs() < 1e-15);
+        if !row.capped {
+            assert!((row.reached_per_ha - world).abs() <= v.calib_tol * world, "{}: reached vs the whole class", row.name);
+        }
+    }
+}
+
+#[test]
+fn a_spread_class_gets_more_tiles_than_a_uniform_one() {
+    // 250 m tiles (64 per class); a 50 ha pilot is the 30-tile minimum. The dense class's weight falls from 1 to
+    // 0.05 across it (30 to 39.5 C on the hat's shoulder: its tiles differ), the sparse class is uniform.
+    let build = |extra: &str| {
+        let mut fx = Fixture::build_with(400.0, 50.0, 9.5, extra);
+        fx.tile_m = 250.0;
+        fx
+    };
+    let fx = build("");
+    let census = fx.census();
+    let cal = fx.calibrate(&census);
+    for w in &cal.warnings {
+        println!("warning: {w}");
+    }
+    check_sized(&fx, &census, &cal);
+    let (sparse, dense) = (&cal.classes[0], &cal.classes[1]);
+    assert!(dense.pilot_cv_r > sparse.pilot_cv_r, "the gradient spreads the dense tiles");
+    assert!(dense.calib_tiles > sparse.calib_tiles, "{} vs {} tiles", dense.calib_tiles, sparse.calib_tiles);
+    assert!(!dense.capped && !sparse.capped);
+    assert!(cal.warnings.is_empty(), "{:?}", cal.warnings);
+    let one_thread = rayon::ThreadPoolBuilder::new().num_threads(1).build().expect("pool").install(|| fx.calibrate(&census));
+    assert_eq!(one_thread.classes, cal.classes, "1 thread and the default pool");
+
+    // `calib_tol` 0.03 asks the dense class for ~55 tiles; `calib_tiles_max` 50 cuts there, flagged, warned when 2 SE
+    // pass `calib_tol`.
+    let fx = build(
+        r#""scatter.calib_tiles_max" = { v = 50, unit = "count", min = 50, max = 4000, source = "Guess" }
+"scatter.calib_tol" = { v = 0.03, unit = "ratio", min = 0.01, max = 0.25, source = "Guess" }"#,
+    );
+    let capped = fx.calibrate(&census);
+    for w in &capped.warnings {
+        println!("warning: {w}");
+    }
+    check_sized(&fx, &census, &capped);
+    let d = &capped.classes[1];
+    assert!(d.capped && d.calib_tiles == 50, "{d:?}");
+    let v = fx.file.values;
+    let warned = capped.warnings.iter().any(|w| w.contains("dense") && w.contains("capped at 50 tiles"));
+    assert_eq!(warned, v.calib_z * d.rse > v.calib_tol, "the cap warning iff 2 SE pass tol: {:?}", capped.warnings);
 }

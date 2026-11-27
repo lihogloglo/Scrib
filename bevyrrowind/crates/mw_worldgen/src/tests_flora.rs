@@ -918,8 +918,9 @@ fn canopy_density_trace_on_x10s() {
 }
 
 /// WG-E2o.d diagnosis, WG-E2o.f check: the calibration's `reached` against the world's canopy winners at the same
-/// `g`. Per class with a target: its calibration sample (`scatter_calib::calib_tiles` on the same census and world
-/// order), its tiles, land, share and weight mean `m_t` beside `m`; `reached` (the last joint check's `W`); the
+/// `g`. Per class with a target: its calibration sample (WG-E2o.h: `scatter_calib::first_tiles` of the calibration's
+/// sized `n` on the same census and world order; the pilot's tiles, `N(c)`, `CV_r` and `rse` beside it), its tiles,
+/// land, share and weight mean `m_t` beside `m`; `reached` (the last joint check's `W`); the
 /// passes' class winners on the same tiles (built alone, [`flora::winners`]) and the world run's (after pose), per ha
 /// of that land; the world's class winners per ha of the census land (every tile; E2o.f: `reached` == this within
 /// `calib_tol` for a class not flagged) and of the guide land (`run.area`, the E2m table's denominator, which keeps
@@ -960,20 +961,22 @@ fn calibration_gap(
         world_won.entry(tile_of(p.pos[0], p.pos[1])).or_insert_with(|| vec![0; n + 1])[c] += 1;
     }
     println!(
-        "WG-E2o.f calibration vs world (scatter.calib_area_ha {}, census step {} m; W per ha; reached = the last joint \
-         check; alone = the passes on the sample built alone; world = the full run after pose)",
-        lf.values.calib_area_ha, census.step_m
+        "WG-E2o.h calibration vs world (scatter.calib_area_ha {}, calib_tiles_min {}, calib_tiles_max {}, calib_z {}, \
+         census step {} m; W per ha; reached = the last joint check; alone = the passes on the sample built alone; \
+         world = the full run after pose)",
+        lf.values.calib_area_ha, lf.values.calib_tiles_min, lf.values.calib_tiles_max, lf.values.calib_z, census.step_m
     );
     println!(
-        "| class | T | g | tiles | calib land ha | class share | m | m_t | reached | alone | world on tiles | \
-         world, census land | reached / world | world, guide land | steps | reopened | ceiling |"
+        "| class | T | g | pilot | tiles | N | CV_r pilot | CV_r | rse | capped | calib land ha | class share | m | m_t | \
+         reached | alone | world on tiles | world, census land | reached / world | world, guide land | steps | reopened | \
+         ceiling |"
     );
-    println!("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|");
+    println!("|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|");
     for (c, row) in cal.classes.iter().enumerate() {
         if row.stems_per_ha <= 0.0 || row.weight_mean <= 0.0 || row.area_ha <= 0.0 {
             continue;
         }
-        let s = scatter_calib::calib_tiles(&census, &order, c, lf.values.calib_area_ha);
+        let s = scatter_calib::first_tiles(&census, &order, c, row.calib_tiles as usize);
         assert!((census.area_ha(c) - row.area_ha).abs() < 1e-6, "{}: the replayed census is the calibration's", row.name);
         assert!((s.land_ha - row.calib_area_ha).abs() < 1e-6, "{}: the replayed sample is the calibration's", row.name);
         assert_eq!(s.tiles.len(), row.calib_tiles as usize, "{}: the replayed sample's tiles", row.name);
@@ -992,11 +995,18 @@ fn calibration_gap(
         let per = |k: f64| if s.land_ha > 0.0 { k / s.land_ha } else { f64::NAN };
         let world_census = world_class[c] as f64 / row.area_ha;
         println!(
-            "| {} | {:.0} | {:.2} | {} | {:.0} | {:.0} % | {:.3} | {:.3} | {:.1} | {:.1} | {:.1} | {:.1} | {:.2} | {:.1} | {} | {} | {} |",
+            "| {} | {:.0} | {:.2} | {} | {} | {} | {:.3} | {:.3} | {:.4} | {} | {:.0} | {:.0} % | {:.3} | {:.3} | {:.1} | {:.1} | \
+             {:.1} | {:.1} | {:.2} | {:.1} | {} | {} | {} |",
             row.name,
             row.stems_per_ha,
             row.scale,
+            row.pilot_tiles,
             s.tiles.len(),
+            row.class_tiles,
+            row.pilot_cv_r,
+            row.cv_r,
+            row.rse,
+            row.capped,
             s.land_ha,
             100.0 * share,
             row.weight_mean,

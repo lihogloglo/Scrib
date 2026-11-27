@@ -30,9 +30,9 @@ use crate::{Error, Result};
 mod tests;
 
 /// Product format version (part of the inputs hash: a new format rebuilds). 2: WG-E2o.f sampled calibration (same
-/// inputs, other `g`).
+/// inputs, other `g`). 3: WG-E2o.h sized calibration samples.
 // tunables: const (format)
-pub const FORMAT: u32 = 2;
+pub const FORMAT: u32 = 3;
 
 /// The product's folder inside the guide folder.
 // tunables: const (format)

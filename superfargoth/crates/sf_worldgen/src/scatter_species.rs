@@ -109,13 +109,20 @@ fn vegetation_declared() -> Vec<Declared> {
         d("scatter.census_step_m", 16.0, "m", 4.0, 128.0, "Guess",
           "grid step of the class census (class land area and canopy weight mean)"),
         d("scatter.calib_area_ha", 200.0, "ha", 10.0, 2000.0, "Guess",
-          "class land the canopy calibration runs on, purest parent tiles first"),
+          "class land of the canopy calibration's pilot sample, tiles in one hashed world order"),
         d("scatter.calib_iters", 4.0, "count", 1.0, 8.0, "Guess",
           "most fixed-point steps of the canopy calibration per class"),
         d("scatter.calib_tol", 0.05, "ratio", 0.01, 0.25, "Guess",
           "calibration stops when winners per ha are this close to the class target"),
         d("scatter.calib_saturation", 0.25, "ratio", 0.0, 1.0, "Guess",
           "a raise of the competition scale by f that raises winners by less than this x f is the crown ceiling"),
+        d("scatter.calib_z", 2.0, "ratio", 1.0, 3.0, "Reference(Cochran 1977 Sampling Techniques, t = 2)",
+          "standard errors of the calibration's winners per ha that the sample size keeps within calib_tol"),
+        d("scatter.calib_tiles_min", 30.0, "count", 10.0, 100.0,
+          "Reference(Cochran 1977 Sampling Techniques, large-sample ratio variance)",
+          "fewest parent tiles holding the class in the calibration's pilot sample"),
+        d("scatter.calib_tiles_max", 400.0, "count", 50.0, 4000.0, "Guess",
+          "most parent tiles of a class's sized calibration sample (cost bound)"),
         d("scatter.intensity_scale_max", 16.0, "ratio", 1.0, 40.0, "Guess",
           "bound of the canopy class multiplier g / m"),
     ]
@@ -311,6 +318,9 @@ pub struct ScatterValues {
     pub calib_iters: u32,
     pub calib_tol: f64,
     pub calib_saturation: f64,
+    pub calib_z: f64,
+    pub calib_tiles_min: u32,
+    pub calib_tiles_max: u32,
     pub intensity_scale_max: f64,
 }
 
@@ -344,6 +354,12 @@ impl ScatterValues {
         };
         let rounds = whole("scatter.competition_rounds")?;
         let iters = whole("scatter.calib_iters")?;
+        let (tiles_min, tiles_max) = (whole("scatter.calib_tiles_min")?, whole("scatter.calib_tiles_max")?);
+        if tiles_min > tiles_max {
+            return Err(Error::Invalid(format!(
+                "scatter species: calib_tiles_min {tiles_min} above calib_tiles_max {tiles_max}"
+            )));
+        }
         Ok(Self {
             stand_wavelength_m: get("scatter.stand_wavelength_m")?,
             stand_clearing_threshold: c,
@@ -366,6 +382,12 @@ impl ScatterValues {
             calib_iters: iters as u32,
             calib_tol: get("scatter.calib_tol")?,
             calib_saturation: get("scatter.calib_saturation")?,
+            calib_z: get("scatter.calib_z")?,
+            // Whole and inside 10..=100 / 50..=4000 (checked above).
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            calib_tiles_min: tiles_min as u32,
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            calib_tiles_max: tiles_max as u32,
             intensity_scale_max: get("scatter.intensity_scale_max")?,
         })
     }
