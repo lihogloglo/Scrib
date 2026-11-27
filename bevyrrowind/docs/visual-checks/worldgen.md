@@ -233,18 +233,23 @@ Known: the climate makes most of Bitter Coast (76 %) and Ascadian Isles (84 %) s
 4. Is there understorey in gaps and at edges, thinner under closed canopy?
 5. Does Grazelands read as open land with scattered trees, not a thin spray?
 
-### WG-E3: scatter v2 rocks on x10s (planned 2026-11-26, after WG-E3f and WG-E2j; spec `worldgen-scatter.md` Rocks)
-Not built yet: nothing to launch. Launch then: as WG-E2 (same arm folder). Places: a placed fault scarp (LF-2) with
-its talus, a basalt outcrop, an open plain of field stones, a road through rocky ground. Live: `--set
-scatter.budget=N`, `scatter.rock.sort_beta`, `scatter.rock.size_dim`, `scatter.rock.pack_model_share` (0 = generated
-rocks only, 1 = the source's rock models wherever one fits).
+### WG-E3: scatter v2 rocks on x10s (built 2026-11-27 on `wt/ecosystems`, rows E3a-E3m + RG-P1..P6; specs `worldgen-scatter.md` Rocks, `rockgen.md` "(f)")
+Status: **awaiting owner** (launch after `wt/ecosystems` merges to main and `bevyrrowind bake` has written the rockgen
+libraries; log `worldgen rocks library: N classes baked`). Arm: the WG-E2 folder `x10hs-b2w-e2` (its `scatter/` product
+serves both checks). It has no `geology/` product: no placed fault scarps, talus only from faces >= 50 deg, each region's
+largest unit share (West Gash capped sediment, Red Mountain basalt flow). Pack rock models and library rocks mix at the
+default `scatter.rock.pack_model_share` 0.5. Library rocks are not solid yet (RG-P5b parked).
+Launch: `owner_launch.sh view "world:C:/cargo-target/scrib/worldgen/x10hs-b2w-e2" --hour 12 --camera -2950,+20,-1300,-2700,+5,-1050`
+(West Gash: foot of a steep face, its talus). Other places (`--camera`): densest library-rock km2 (RG-P6)
+`-2650,+25,-2650,-2500,+3,-2500`; Red Mountain basalt face `1680,+20,-5600,1760,+5,-5900`; Grazelands open ground
+`13000,+15,-18500,13149,+2,-18635`; West Gash road beside steep ground `-2281,+6,-4693,-2044,+2,-4128`.
+Not in this check: comparing pack models against generated rocks (share and `--off rocklibrary` are restart-only; a live
+toggle comes first if question 5 is no).
 1. Do rocks show a clear spread of sizes, many small and few big, not one size?
-2. Do rocks gather below scarps in a fan, thinning away from the foot, rather than a spray?
-3. Do the biggest blocks sit toward the outer edge of the talus fan?
-4. Do outcrop blocks have smaller debris around them?
-5. Do rocks sit in the ground (partly buried, tilted with the slope), with none on roads or in water?
-6. Do the source game's rock models and the generated rocks sit together without one kind looking out of place? (If no:
-   which kind should go, at share 0 or 1?)
+2. Below steep faces, do rocks gather in a fan that thins away from the foot, rather than a spray?
+3. On the Red Mountain face, do the big blocks have smaller debris around them?
+4. Do rocks sit in the ground (partly buried, tilted with the slope), with none on the road or in water?
+5. Do the source game's rock models and the generated rocks sit together without one kind looking out of place?
 
 ### WG-P-look: generated wilderness sites (planned 2026-11-26, after WG-P3b; spec `sites.md`)
 Not built yet: nothing to launch. Launch then: `bash bevyrrowind/tools/owner_launch.sh view "world:target/worldgen/x10s"`
