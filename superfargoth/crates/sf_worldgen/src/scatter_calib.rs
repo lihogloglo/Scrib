@@ -5,17 +5,24 @@
 //! land only (not sea, lake, river or the caller's exclusion), a mosaic clearing counting as land with `w = 0`:
 //! area `A` and the mean `m` of the canopy weight `sum_s w_s` ([`CandidateRules::canopy_weight`]). Rows are summed
 //! in parallel, each row in order, then the rows in order: bitwise the same on any thread count. The census keeps
-//! the same counts per parent tile (the calibration's tile choice).
+//! the same counts per parent tile (the calibration's sample).
 //!
 //! **Calibration** ([`calibrate`]): the competition scale `g` per class with `T > 0`, so the canopy winners per
-//! hectare `W` meet `T` on the class's purest parent tiles (up to `scatter.calib_area_ha` of its land), rocks and
-//! canopy with the full halo ([`CandidateRules::square_canopy`]); `W` is rescaled by `m / m_t` (the tiles' own
-//! weight mean). First guess the Matern II closed form `g0 = -ln(1 - x) / x`, `x = T pi R^2 / 10^4`, then the fixed
+//! hectare `W` meet `T` on a sample of the class's parent tiles ([`calib_tiles`], WG-E2o.e/f: one world order of the
+//! census tiles by `hash(seed, tile key)` ([`tile_order`]), shared by every class; each class takes, in that order,
+//! the tiles holding its land until `scatter.calib_area_ha` of it), rocks and canopy with the full halo
+//! ([`CandidateRules::square_canopy`]). `W` = winners at class points / class land on those tiles, no rescale (the
+//! forest-inventory ratio-of-means; the tiles' weight mean `m_t` is reported, not applied). First guess the Matern
+//! II closed form `g0 = -ln(1 - x) / x`, `x = T pi R^2 / 10^4`, then the fixed
 //! point `g := g T / W`, then the secant in log-log through the last two measurements; every iterate clamped to
 //! `[1, intensity_scale_max x m]`, at most `scatter.calib_iters` updates, stop within `scatter.calib_tol`. A raise of `g` by a fraction `f` that raises `W` by less than
 //! `scatter.calib_saturation x f`, or `g` at the upper end short of the target, is the crown ceiling: the iterate
 //! with the largest `W` is kept and the class flagged. The classes iterate together (one run per step over every
-//! active class's tiles, each class at its current `g`), so the result is one function of the inputs.
+//! active class's tiles, each class at its current `g`, a finished one at its kept `g`), so the result is one
+//! function of the inputs. **Joint check**: once no class is active, one run over every class's sample at every
+//! class's kept `g`; a converged class now outside `scatter.calib_tol` is reopened from that measurement (a class's
+//! `W` on mixed tiles moves with its neighbours' `g`, E2o.d); at most `scatter.calib_iters` checks, the last one
+//! reopens nothing. The file reports the last check's `g` and `W`: one consistent snapshot.
 //!
 //! Industry: the bake does the "artist iterates the density" loop of UE PCG and the Foliage Spawner (research
 //! `scatter-target-density-2026-11-27.md` Finding 3); Matern II thinning (Matern 1960, U) gives the first guess.
@@ -27,7 +34,7 @@ use std::path::Path;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::scatter::{CandidateRules, CanopyTargets, ClassTarget, M2_PER_HA, size_mark};
+use crate::scatter::{CandidateRules, CanopyTargets, ClassTarget, M2_PER_HA, mix, size_mark};
 use crate::scatter_fields::Fields;
 use crate::scatter_species::Layer;
 use crate::scatter_stand::{StandClass, StandMap, StandRules};
@@ -51,6 +58,10 @@ const MATERN_X_MAX: f64 = 0.9;
 /// Floor of the secant's exponent `b` (a guard: `1 / b` scales the step).
 // tunables: const (maths guard)
 const SECANT_B_MIN: f64 = 0.05;
+
+/// Salt of the calibration's tile order (a hash domain, not a value).
+// tunables: const (hash salt)
+const ORDER_SALT: u64 = 0xca1b_0a7e_5a3b_1e00;
 
 /// The census counts of one class (or one class in one parent tile).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -185,6 +196,7 @@ pub fn census(
 
 /// One class's calibration, as written to [`FILE`].
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ClassCalibration {
     /// The class name ([`Fields::class_names`]).
     pub name: String,
@@ -196,12 +208,20 @@ pub struct ClassCalibration {
     pub weight_mean: f64,
     /// `g`, the competition scale kept.
     pub scale: f64,
-    /// `W` at the kept `g`, winners per ha (rescaled by `m / m_t`); 0 when not calibrated.
+    /// `W` at the kept `g` in the last joint check, winners per ha of the sample's class land; 0 when not calibrated.
     pub reached_per_ha: f64,
-    /// Land of the calibration tiles, ha.
+    /// Class land of the sample's tiles, ha.
     pub calib_area_ha: f64,
-    /// Updates of `g` after the first guess.
+    /// Tiles in the sample.
+    pub calib_tiles: u32,
+    /// `m_t`, the census weight mean over the sample's class land (reported, not applied).
+    pub calib_weight_mean: f64,
+    /// Updates of `g` after the first guess (a reopened class's included).
     pub steps: u32,
+    /// Joint checks run (the same for every calibrated class).
+    pub joint_checks: u32,
+    /// Times a joint check reopened this class.
+    pub reopened: u32,
     /// The target is above the crown ceiling (or the multiplier clamp): `W` stays short of `T`.
     pub ceiling: bool,
     /// `intensity_scale_max x m < 1`: the class's weight mean is too low for its target.
@@ -216,6 +236,9 @@ pub struct Calibration {
     /// Bake log lines (not written).
     #[serde(skip)]
     pub warnings: Vec<String>,
+    /// Wall seconds of [`calibrate`] (not written; 0 when read).
+    #[serde(skip)]
+    pub seconds: f64,
 }
 
 impl Calibration {
@@ -248,8 +271,8 @@ impl Calibration {
 }
 
 /// A class's iteration state.
+#[derive(Clone, Debug)]
 struct Iterate {
-    class: usize,
     target: f64,
     lo: f64,
     hi: f64,
@@ -257,35 +280,78 @@ struct Iterate {
     /// `(g, W)` per measurement.
     seen: Vec<(f64, f64)>,
     steps: u32,
-    tiles: Vec<(i32, i32)>,
-    land_ha: f64,
-    /// `m / m_t`.
-    bias: f64,
     done: bool,
     ceiling: bool,
     converged: bool,
+    reopened: u32,
+    /// `(g, W)` of the last joint check.
+    joint: Option<(f64, f64)>,
 }
 
-/// The parent tiles of class `c` in decreasing census share (ties by tile key) until their `c` land reaches
-/// `area_ha` (all of them when the class has less), with that land, ha, and its weight mean `m_t`.
-fn calib_tiles(census: &Census, c: usize, area_ha: f64) -> (Vec<(i32, i32)>, f64, f64) {
-    let cell_ha = census.step_m * census.step_m / M2_PER_HA;
-    let mut ranked: Vec<(f64, (i32, i32))> = census
+impl Iterate {
+    fn new(target: f64, lo: f64, hi: f64, g: f64) -> Self {
+        Self {
+            target,
+            lo,
+            hi,
+            g,
+            seen: Vec::new(),
+            steps: 0,
+            done: false,
+            ceiling: false,
+            converged: false,
+            reopened: 0,
+            joint: None,
+        }
+    }
+
+    /// The `g` a run measures this class at: its current one while active, its kept one once finished.
+    fn run_g(&self) -> f64 {
+        if self.done { kept(self).0 } else { self.g }
+    }
+}
+
+/// A class's calibration sample ([`calib_tiles`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Sample {
+    /// The tiles, in the world order.
+    pub tiles: Vec<(i32, i32)>,
+    /// Their class land, ha.
+    pub land_ha: f64,
+    /// `m_t`, the census weight mean over that land.
+    pub weight_mean: f64,
+}
+
+/// The census's parent tiles in the calibration's world order: by `hash(seed, tile key)`, ties by tile key.
+#[must_use]
+pub fn tile_order(census: &Census, seed: u64) -> Vec<(i32, i32)> {
+    let base = mix(seed ^ ORDER_SALT);
+    let mut keyed: Vec<(u64, (i32, i32))> = census
         .tiles
-        .iter()
-        .filter(|(_, (_, per))| per[c].cells > 0)
-        .map(|(&k, (all, per))| (per[c].cells as f64 / *all as f64, k))
+        .keys()
+        .map(|&(x, y)| (mix(base ^ (u64::from(x.cast_unsigned()) << 32 | u64::from(y.cast_unsigned()))), (x, y)))
         .collect();
-    ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+    keyed.sort_unstable();
+    keyed.into_iter().map(|(_, k)| k).collect()
+}
+
+/// Class `c`'s sample (module docs): the tiles of `order` ([`tile_order`]) holding `c` land, in that order, until
+/// their `c` land reaches `area_ha` (all of them when the class has less).
+#[must_use]
+pub fn calib_tiles(census: &Census, order: &[(i32, i32)], c: usize, area_ha: f64) -> Sample {
+    let cell_ha = census.step_m * census.step_m / M2_PER_HA;
     let (mut tiles, mut land) = (Vec::new(), ClassCount::default());
-    for (_, k) in ranked {
+    for k in order {
         if land.cells as f64 * cell_ha >= area_ha {
             break;
         }
-        land.merge(&census.tiles[&k].1[c]);
-        tiles.push(k);
+        let cc = &census.tiles[k].1[c];
+        if cc.cells > 0 {
+            land.merge(cc);
+            tiles.push(*k);
+        }
     }
-    (tiles, land.cells as f64 * cell_ha, land.mean())
+    Sample { tiles, land_ha: land.cells as f64 * cell_ha, weight_mean: land.mean() }
 }
 
 /// The Matern II first guess of class `c` (module docs), before the clamp.
@@ -325,10 +391,13 @@ pub fn calibrate(
     excluded: &(dyn Fn(f64, f64) -> bool + Sync),
     census: &Census,
 ) -> Calibration {
+    let start = std::time::Instant::now();
     let v = &rules.file.values;
     let names = fields.class_names();
+    let order = tile_order(census, rules.seed);
     let mut out = Calibration::default();
     let mut its: Vec<Iterate> = Vec::new();
+    let mut samples: Vec<(usize, Sample)> = Vec::new();
     for (c, name) in names.iter().enumerate() {
         let target = rules.file.classes.get(name).map_or(0.0, |e| e.v);
         let count = &census.classes[c];
@@ -351,57 +420,108 @@ pub fn calibrate(
                 row.low_weight = true;
                 out.warnings.push(format!("class {name}: weight mean m too low ({m:.3})"));
             }
-            let (tiles, land_ha, m_t) = calib_tiles(census, c, v.calib_area_ha);
-            row.calib_area_ha = land_ha;
+            let sample = calib_tiles(census, &order, c, v.calib_area_ha);
+            row.calib_area_ha = sample.land_ha;
+            row.calib_tiles = u32::try_from(sample.tiles.len()).unwrap_or(u32::MAX);
+            row.calib_weight_mean = sample.weight_mean;
             let g = first_guess(rules, census, c, target, hi).clamp(lo, hi);
             row.scale = g;
-            its.push(Iterate {
-                class: c,
-                target,
-                lo,
-                hi,
-                g,
-                seen: Vec::new(),
-                steps: 0,
-                tiles,
-                land_ha,
-                bias: if m_t > 0.0 { m / m_t } else { 0.0 },
-                done: false,
-                ceiling: false,
-                converged: false,
-            });
+            its.push(Iterate::new(target, lo, hi, g));
+            samples.push((c, sample));
         }
         out.classes.push(row);
     }
-    while its.iter().any(|it| !it.done) {
-        for it in &its {
-            out.classes[it.class].scale = it.g;
+    let mut targets = out.targets();
+    let mut measure = |gs: &[f64], ask: &[usize]| -> Vec<f64> {
+        for (&(c, _), &g) in samples.iter().zip(gs) {
+            targets.classes[c].scale = g;
         }
-        let targets = out.targets();
         let step_rules = CandidateRules { canopy: &targets, ..*rules };
-        let mut tiles: Vec<(i32, i32)> = its.iter().filter(|it| !it.done).flat_map(|it| it.tiles.iter().copied()).collect();
+        let mut tiles: Vec<(i32, i32)> = ask.iter().flat_map(|&i| samples[i].1.tiles.iter().copied()).collect();
         tiles.sort_unstable();
         tiles.dedup();
         let won = winners_per_tile(&step_rules, stand, fields, excluded, &tiles, names.len());
-        for it in its.iter_mut().filter(|it| !it.done) {
-            let n: u64 = it.tiles.iter().map(|k| won[k][it.class]).sum();
-            let w = if it.land_ha > 0.0 { n as f64 / it.land_ha * it.bias } else { 0.0 };
-            step(it, w, v.calib_tol, v.calib_saturation, v.calib_iters);
-        }
-    }
-    for it in &its {
-        let row = &mut out.classes[it.class];
-        let kept = kept(it);
-        row.scale = kept.0;
-        row.reached_per_ha = kept.1;
+        ask.iter()
+            .map(|&i| {
+                let (c, s) = &samples[i];
+                let n: u64 = s.tiles.iter().map(|k| won[k][*c]).sum();
+                if s.land_ha > 0.0 { n as f64 / s.land_ha } else { 0.0 }
+            })
+            .collect()
+    };
+    let checks = drive(&mut its, v.calib_tol, v.calib_saturation, v.calib_iters, &mut measure);
+    for (it, &(c, _)) in its.iter().zip(&samples) {
+        let row = &mut out.classes[c];
+        let (g, w) = it.joint.unwrap_or_else(|| kept(it));
+        row.scale = g;
+        row.reached_per_ha = w;
         row.steps = it.steps;
         row.ceiling = it.ceiling;
+        row.joint_checks = checks;
+        row.reopened = it.reopened;
         if it.ceiling {
-            out.warnings
-                .push(format!("class {}: target {} above the crown ceiling, reached {:.1}", row.name, it.target, kept.1));
+            out.warnings.push(format!("class {}: target {} above the crown ceiling, reached {w:.1}", row.name, it.target));
+        } else if it.converged && (w - it.target).abs() > v.calib_tol * it.target {
+            out.warnings.push(format!(
+                "class {}: target {} off at the last joint check ({checks} checks), reached {w:.1}",
+                row.name, it.target
+            ));
         }
     }
+    out.seconds = start.elapsed().as_secs_f64();
     out
+}
+
+/// `measure(g per iterate, the iterates asked)`: `W` of the asked ones, in order.
+type Measure<'a> = dyn FnMut(&[f64], &[usize]) -> Vec<f64> + 'a;
+
+/// The classes' iteration, then the joint checks (module docs): `measure(g per iterate, the iterates asked)` returns
+/// `W` of the asked ones, in order; a finished class is measured at its kept `g`. Returns the joint checks run.
+fn drive(
+    its: &mut [Iterate],
+    tol: f64,
+    saturation: f64,
+    iters: u32,
+    measure: &mut Measure<'_>,
+) -> u32 {
+    let mut checks = 0;
+    while !its.is_empty() {
+        loop {
+            let ask: Vec<usize> = (0..its.len()).filter(|&i| !its[i].done).collect();
+            if ask.is_empty() {
+                break;
+            }
+            let gs: Vec<f64> = its.iter().map(Iterate::run_g).collect();
+            for (&i, w) in ask.iter().zip(measure(&gs, &ask)) {
+                step(&mut its[i], w, tol, saturation, iters);
+            }
+        }
+        let gs: Vec<f64> = its.iter().map(Iterate::run_g).collect();
+        let all: Vec<usize> = (0..its.len()).collect();
+        let ws = measure(&gs, &all);
+        checks += 1;
+        let mut reopened = false;
+        for ((it, &g), w) in its.iter_mut().zip(&gs).zip(ws) {
+            it.joint = Some((g, w));
+            if !it.converged {
+                continue; // ceiling and out-of-steps classes keep their `g`
+            }
+            if (w - it.target).abs() <= tol * it.target || checks >= iters {
+                it.seen.push((g, w)); // the converged class's last (kept) measurement, at the same `g`
+                continue;
+            }
+            it.g = g;
+            it.converged = false;
+            it.done = false;
+            it.reopened += 1;
+            step(it, w, tol, saturation, iters);
+            reopened = true;
+        }
+        if !reopened {
+            break;
+        }
+    }
+    checks
 }
 
 /// The iterate a finished class keeps: converged, its last; at the ceiling, the largest `W` (ties: the smaller
@@ -433,8 +553,11 @@ fn step(it: &mut Iterate, w: f64, tol: f64, saturation: f64, iters: u32) {
     }
     // The secant in log-log (`W ~ a g^b` through the last two measurements; `b` = 1, the plain fixed point
     // `g T / W`, on the first): `W` flattens as crowns pack, so the fixed point alone crawls (E2o.2).
-    let b = match it.seen.len().checked_sub(2).map(|i| it.seen[i]) {
-        Some((g0, w0)) if g0 != it.g && w0 > 0.0 => ((w / w0).ln() / (it.g / g0).ln()).clamp(saturation.max(SECANT_B_MIN), 1.0),
+    // The other point is the latest earlier measurement at another `g`: the one before, but for a class a joint
+    // check reopened, whose previous measurement was at the same `g`.
+    let before = &it.seen[..it.seen.len() - 1];
+    let b = match before.iter().rev().find(|&&(g0, _)| g0 != it.g) {
+        Some(&(g0, w0)) if w0 > 0.0 => ((w / w0).ln() / (it.g / g0).ln()).clamp(saturation.max(SECANT_B_MIN), 1.0),
         _ => 1.0,
     };
     let next = if w <= 0.0 { it.hi } else { (it.g * (t / w).powf(1.0 / b)).clamp(it.lo, it.hi) };

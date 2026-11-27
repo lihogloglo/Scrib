@@ -917,13 +917,13 @@ fn canopy_density_trace_on_x10s() {
     calibration_gap(&run, &world, &f, &water, &rules, &canopy, &excluded, &land);
 }
 
-/// WG-E2o.d diagnosis: the calibration's `reached` against the world's canopy winners at the same `g`, split into
-/// its terms. Per class with a target: its calibration tiles (`scatter_calib` `calib_tiles`, replayed here on the
-/// same census: the class's parent tiles by census share until `scatter.calib_area_ha` of its land), their land and
-/// weight mean `m_t`, `bias = m / m_t`; the raw `W` the calibration measured (`reached / bias`); the passes' class
-/// winners on the same tiles (built alone, [`flora::winners`]) and the world run's (after pose), per ha of that
-/// land; the world's class winners per ha of the census land (every tile) and of the guide land (`run.area`, the
-/// E2m table's denominator, which keeps rivers, lakes and the excluded land).
+/// WG-E2o.d diagnosis, WG-E2o.f check: the calibration's `reached` against the world's canopy winners at the same
+/// `g`. Per class with a target: its calibration sample (`scatter_calib::calib_tiles` on the same census and world
+/// order), its tiles, land, share and weight mean `m_t` beside `m`; `reached` (the last joint check's `W`); the
+/// passes' class winners on the same tiles (built alone, [`flora::winners`]) and the world run's (after pose), per ha
+/// of that land; the world's class winners per ha of the census land (every tile; E2o.f: `reached` == this within
+/// `calib_tol` for a class not flagged) and of the guide land (`run.area`, the E2m table's denominator, which keeps
+/// rivers, lakes and the excluded land). Last, the calibration's seconds and joint checks.
 #[allow(clippy::too_many_arguments, clippy::cast_precision_loss)]
 fn calibration_gap(
     run: &FloraRun,
@@ -937,6 +937,7 @@ fn calibration_gap(
 ) {
     use std::collections::{BTreeMap, BTreeSet};
 
+    use sf_worldgen::scatter_calib;
     use sf_worldgen::scatter_fields::Fields;
     use sf_worldgen::scatter_stand::StandRules;
 
@@ -944,33 +945,12 @@ fn calibration_gap(
     let cal = run.calibration.as_ref().expect("the passes' calibration");
     let targets = cal.targets();
     let stand = StandRules { values: &lf.values, seed: run.prm.seed, canopy };
-    let census = sf_worldgen::scatter_calib::census(rules, &stand, f, excluded, world.rect());
+    let census = scatter_calib::census(rules, &stand, f, excluded, world.rect());
+    let order = scatter_calib::tile_order(&census, rules.seed);
     let n = f.class_names().len();
     let t = run.prm.tile_m;
     let tile_of = |x: f64, y: f64| ((x / t).floor() as i32, (y / t).floor() as i32);
     let class_of = |x: f64, y: f64| f.sample(x, y).class.map_or(n, |k| usize::from(k).min(n));
-    let cell_ha = census.step_m * census.step_m / 1e4;
-    let calib_tiles = |c: usize| {
-        let mut ranked: Vec<(f64, (i32, i32))> = census
-            .tiles
-            .iter()
-            .filter(|(_, (_, per))| per[c].cells > 0)
-            .map(|(&k, (all, per))| (per[c].cells as f64 / *all as f64, k))
-            .collect();
-        ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
-        let (mut tiles, mut cells, mut wsum) = (Vec::new(), 0u64, 0.0f64);
-        for (_, k) in ranked {
-            if cells as f64 * cell_ha >= lf.values.calib_area_ha {
-                break;
-            }
-            let cc = &census.tiles[&k].1[c];
-            cells += cc.cells;
-            wsum += cc.weight_sum;
-            tiles.push(k);
-        }
-        let share = if cells == 0 { 0.0 } else { cells as f64 / tiles.iter().map(|k| census.tiles[k].0).sum::<u64>() as f64 };
-        (tiles, cells as f64 * cell_ha, if cells == 0 { 0.0 } else { wsum / cells as f64 }, share)
-    };
     // The world run's canopy winners (after pose) per tile and class.
     let mut world_won: BTreeMap<(i32, i32), Vec<u64>> = BTreeMap::new();
     let mut world_class = vec![0u64; n + 1];
@@ -980,52 +960,58 @@ fn calibration_gap(
         world_won.entry(tile_of(p.pos[0], p.pos[1])).or_insert_with(|| vec![0; n + 1])[c] += 1;
     }
     println!(
-        "WG-E2o.d calibration gap (scatter.calib_area_ha {}, census step {} m; W per ha; raw = reached / bias; \
-         alone = the passes on the calibration tiles built alone; world = the full run after pose)",
+        "WG-E2o.f calibration vs world (scatter.calib_area_ha {}, census step {} m; W per ha; reached = the last joint \
+         check; alone = the passes on the sample built alone; world = the full run after pose)",
         lf.values.calib_area_ha, census.step_m
     );
     println!(
-        "| class | T | g | tiles | calib land ha (file) | class share | m | m_t | bias m/m_t | reached | raw | alone | \
-         world on tiles | world x bias | world, census land | world, guide land |"
+        "| class | T | g | tiles | calib land ha | class share | m | m_t | reached | alone | world on tiles | \
+         world, census land | reached / world | world, guide land | steps | reopened | ceiling |"
     );
-    println!("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+    println!("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|");
     for (c, row) in cal.classes.iter().enumerate() {
         if row.stems_per_ha <= 0.0 || row.weight_mean <= 0.0 || row.area_ha <= 0.0 {
             continue;
         }
-        let (tiles, land_ha, m_t, share) = calib_tiles(c);
+        let s = scatter_calib::calib_tiles(&census, &order, c, lf.values.calib_area_ha);
         assert!((census.area_ha(c) - row.area_ha).abs() < 1e-6, "{}: the replayed census is the calibration's", row.name);
-        assert!((land_ha - row.calib_area_ha).abs() < 1e-6, "{}: the replayed tiles are the calibration's", row.name);
-        let bias = if m_t > 0.0 { row.weight_mean / m_t } else { 0.0 };
-        let set: BTreeSet<(i32, i32)> = tiles.iter().copied().collect();
-        let alone = flora::winners(&run.learned, world, f, water, &run.prior, &run.prm, &targets, Some(&tiles));
+        assert!((s.land_ha - row.calib_area_ha).abs() < 1e-6, "{}: the replayed sample is the calibration's", row.name);
+        assert_eq!(s.tiles.len(), row.calib_tiles as usize, "{}: the replayed sample's tiles", row.name);
+        let all: u64 = s.tiles.iter().map(|k| census.tiles[k].0).sum();
+        let share = if all == 0 { 0.0 } else { s.land_ha / (all as f64 * census.step_m * census.step_m / 1e4) };
+        let set: BTreeSet<(i32, i32)> = s.tiles.iter().copied().collect();
+        let alone = flora::winners(&run.learned, world, f, water, &run.prior, &run.prm, &targets, Some(&s.tiles));
         let alone_n = alone
             .plants
             .iter()
             .filter(|p| p.key.layer == Layer::Canopy && class_of(p.pos[0], p.pos[1]) == c)
             .filter(|p| set.contains(&tile_of(p.pos[0], p.pos[1])))
             .count();
-        let on_tiles: u64 = tiles.iter().filter_map(|k| world_won.get(k)).map(|v| v[c]).sum();
+        let on_tiles: u64 = s.tiles.iter().filter_map(|k| world_won.get(k)).map(|v| v[c]).sum();
         let guide_ha = guide_land[c] as f64 * run.sample_m2 / 1e4;
-        let per = |k: f64| if land_ha > 0.0 { k / land_ha } else { f64::NAN };
+        let per = |k: f64| if s.land_ha > 0.0 { k / s.land_ha } else { f64::NAN };
+        let world_census = world_class[c] as f64 / row.area_ha;
         println!(
-            "| {} | {:.0} | {:.2} | {} | {:.0} | {:.0} % | {:.3} | {:.3} | {:.3} | {:.1} | {:.1} | {:.1} | {:.1} | {:.1} | {:.1} | {:.1} |",
+            "| {} | {:.0} | {:.2} | {} | {:.0} | {:.0} % | {:.3} | {:.3} | {:.1} | {:.1} | {:.1} | {:.1} | {:.2} | {:.1} | {} | {} | {} |",
             row.name,
             row.stems_per_ha,
             row.scale,
-            tiles.len(),
-            land_ha,
+            s.tiles.len(),
+            s.land_ha,
             100.0 * share,
             row.weight_mean,
-            m_t,
-            bias,
+            s.weight_mean,
             row.reached_per_ha,
-            if bias > 0.0 { row.reached_per_ha / bias } else { f64::NAN },
             per(alone_n as f64),
             per(on_tiles as f64),
-            per(on_tiles as f64) * bias,
-            world_class[c] as f64 / row.area_ha,
+            world_census,
+            row.reached_per_ha / world_census,
             world_class[c] as f64 / guide_ha,
+            row.steps,
+            row.reopened,
+            row.ceiling,
         );
     }
+    let checks = cal.classes.iter().map(|c| c.joint_checks).max().unwrap_or(0);
+    println!("calibration: {:.1} s, {checks} joint checks", cal.seconds);
 }

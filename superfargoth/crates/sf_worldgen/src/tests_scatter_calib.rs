@@ -2,7 +2,9 @@
 #![allow(clippy::cast_precision_loss)] // counts of test fixtures
 //! WG-E2o.2: the class census (land only, exact areas, the weight mean of a brute loop, the same on any thread
 //! count) and the calibration (a target under the crown ceiling is met within `calib_tol`, one above it is flagged
-//! within `calib_iters`, the same inputs give the same `g`, the file round-trips).
+//! within `calib_iters`, the same inputs give the same `g`, the file round-trips). WG-E2o.f: the hash-ordered sample
+//! reads the class over its whole land where the purest tiles do not; a joint check reopens a class its neighbour
+//! moved, at most `calib_iters` checks.
 
 use super::*;
 use crate::scatter::WaterMask;
@@ -14,7 +16,7 @@ use crate::scatter_species::SpeciesFile;
 const FILE_TEXT: &str = r#"
 [params]
 "scatter.stand_clearing_threshold" = { v = 0.0, unit = "ratio", min = 0, max = 1, source = "Guess" }
-"scatter.calib_area_ha" = { v = 100.0, unit = "ha", min = 10, max = 2000, source = "Guess" }
+"scatter.calib_area_ha" = { v = {area}, unit = "ha", min = 10, max = 2000, source = "Guess" }
 
 [columns]
 hat_temperature_c = { unit = "C", min = -40, max = 40, source = "Guess" }
@@ -37,15 +39,17 @@ size_law = "reverse_j"
 hat_temperature_c = [0, 10, 30, 40]
 "#;
 
-/// Class 0 west of x = 2000 m, class 1 east of it.
+/// Class 0 west of x = 2000 m, class 1 east of it. With `gradient`, the east warms from 30 C at x = 2000 to 36 C at
+/// x = 4000 (the hat's shoulder: weight 1 to 0.4), so tiles differ in weight inside the dense class.
 struct TwoClasses {
     names: Vec<String>,
+    gradient: bool,
 }
 
 impl Fields for TwoClasses {
     fn sample(&self, x: f64, _: f64) -> FieldSample {
         FieldSample {
-            temperature_c: 10.0,
+            temperature_c: if self.gradient && x >= 2000.0 { 30.0 + 6.0 * (x - 2000.0) / 2000.0 } else { 10.0 },
             precipitation_mm: 800.0,
             moisture: 0.5,
             class: Some(u8::from(x >= 2000.0)),
@@ -85,16 +89,23 @@ struct Fixture {
     canopy: Vec<Suitability>,
     water: WaterMask,
     targets: CanopyTargets,
+    tile_m: f64,
 }
 
 impl Fixture {
     fn new(dense: f64) -> Self {
-        let file = SpeciesFile::parse_toml(&FILE_TEXT.replace("{dense}", &dense.to_string())).expect("fixture parses");
-        let fields = TwoClasses { names: vec!["sparse".to_owned(), "dense".to_owned()] };
+        Self::build(dense, 100.0, false)
+    }
+
+    /// `dense`'s target, `scatter.calib_area_ha`, the east's temperature gradient.
+    fn build(dense: f64, area_ha: f64, gradient: bool) -> Self {
+        let text = FILE_TEXT.replace("{dense}", &dense.to_string()).replace("{area}", &format!("{area_ha:.1}"));
+        let file = SpeciesFile::parse_toml(&text).expect("fixture parses");
+        let fields = TwoClasses { names: vec!["sparse".to_owned(), "dense".to_owned()], gradient };
         let suit: Vec<Suitability> = file.species.iter().map(|s| Suitability::new(s, fields.class_names())).collect();
         let canopy = vec![suit[0].clone()];
         let targets = CanopyTargets::uncalibrated(&file, fields.class_names());
-        Self { file, fields, suit, canopy, water: WaterMask::default(), targets }
+        Self { file, fields, suit, canopy, water: WaterMask::default(), targets, tile_m: 256.0 }
     }
 
     fn rules(&self) -> CandidateRules<'_> {
@@ -102,7 +113,7 @@ impl Fixture {
             file: &self.file,
             suitability: &self.suit,
             seed: 55,
-            tile_m: 256.0,
+            tile_m: self.tile_m,
             prior: &one,
             water: &self.water,
             height: &flat,
@@ -218,4 +229,127 @@ fn calibration_meets_reachable_targets_and_flags_the_ceiling() {
     assert_eq!(back.classes, cal.classes);
     assert!(back.warnings.is_empty());
     assert_eq!(back.targets(), cal.targets());
+}
+
+/// Class `c`'s canopy winners per ha of its census land over every census tile, at `cal`'s kept `g` (exact winners).
+fn world_per_ha(fx: &Fixture, census: &Census, cal: &Calibration, c: usize) -> f64 {
+    let targets = cal.targets();
+    let rules = CandidateRules { canopy: &targets, ..fx.rules() };
+    let tiles: Vec<(i32, i32)> = census.tiles.keys().copied().collect();
+    let won = winners_per_tile(&rules, &fx.stand(), &fx.fields, &excluded, &tiles, 2);
+    won.values().map(|n| n[c]).sum::<u64>() as f64 / census.area_ha(c)
+}
+
+/// The v1 estimate at `cal`'s kept `g`: class `c`'s purest tiles (census share, ties by key) until
+/// `calib_area_ha` of its land, `W` there rescaled by `m / m_t`.
+fn purest_estimate(fx: &Fixture, census: &Census, cal: &Calibration, c: usize) -> f64 {
+    let cell_ha = census.step_m * census.step_m / M2_PER_HA;
+    let mut ranked: Vec<(f64, (i32, i32))> = census
+        .tiles
+        .iter()
+        .filter(|(_, (_, per))| per[c].cells > 0)
+        .map(|(&k, (all, per))| (per[c].cells as f64 / *all as f64, k))
+        .collect();
+    ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+    let (mut tiles, mut land) = (Vec::new(), ClassCount::default());
+    for (_, k) in ranked {
+        if land.cells as f64 * cell_ha >= fx.file.values.calib_area_ha {
+            break;
+        }
+        land.merge(&census.tiles[&k].1[c]);
+        tiles.push(k);
+    }
+    let targets = cal.targets();
+    let rules = CandidateRules { canopy: &targets, ..fx.rules() };
+    let won = winners_per_tile(&rules, &fx.stand(), &fx.fields, &excluded, &tiles, 2);
+    let n: u64 = tiles.iter().map(|k| won[k][c]).sum();
+    n as f64 / (land.cells as f64 * cell_ha) * census.classes[c].mean() / land.mean()
+}
+
+#[test]
+fn the_sample_reads_the_whole_class_where_the_purest_tiles_do_not() {
+    // 250 m tiles: every tile inside the bounds, the class border on a tile border; the dense class's weight falls
+    // from 1 (west) to 0.4 (east), so its purest tiles by key (the west columns) are its heaviest.
+    let mut fx = Fixture::build(400.0, 200.0, true);
+    fx.tile_m = 250.0;
+    let v = fx.file.values;
+    let census = fx.census();
+    let cal = fx.calibrate(&census);
+    let order = tile_order(&census, 55);
+    assert_eq!(order.len(), census.tiles.len());
+    for (c, row) in cal.classes.iter().enumerate() {
+        let world = world_per_ha(&fx, &census, &cal, c);
+        let old = purest_estimate(&fx, &census, &cal, c);
+        println!(
+            "{}: T {} m {:.3} m_t {:.3} g {:.3} reached {:.1} world {world:.1} purest x m/m_t {old:.1} tiles {} land {:.0} ha \
+             steps {} checks {} reopened {}",
+            row.name,
+            row.stems_per_ha,
+            row.weight_mean,
+            row.calib_weight_mean,
+            row.scale,
+            row.reached_per_ha,
+            row.calib_tiles,
+            row.calib_area_ha,
+            row.steps,
+            row.joint_checks,
+            row.reopened
+        );
+        assert!(!row.ceiling && !row.low_weight, "{}: flagged", row.name);
+        assert!((row.reached_per_ha - world).abs() <= v.calib_tol * world, "{}: reached vs the whole class", row.name);
+        assert!(row.joint_checks >= 1 && row.joint_checks <= v.calib_iters);
+        // The sample: the classes' tiles of the one world order, until 200 ha of class land.
+        let s = calib_tiles(&census, &order, c, 200.0);
+        assert_eq!(s.tiles.len(), row.calib_tiles as usize);
+        assert_eq!((s.land_ha, s.weight_mean), (row.calib_area_ha, row.calib_weight_mean));
+        assert!(s.land_ha >= 200.0 && s.land_ha < 200.0 + 6.25 + 1e-9, "{}: {} ha", row.name, s.land_ha);
+        let last = order.iter().position(|k| k == s.tiles.last().expect("tiles")).expect("in the order");
+        let holding: Vec<(i32, i32)> = order[..=last].iter().copied().filter(|k| census.tiles[k].1[c].cells > 0).collect();
+        assert_eq!(holding, s.tiles, "{}: a prefix of the world order", row.name);
+    }
+    let dense = &cal.classes[1];
+    let world = world_per_ha(&fx, &census, &cal, 1);
+    let old = purest_estimate(&fx, &census, &cal, 1);
+    assert!((old - world).abs() > v.calib_tol * world, "the fixture tells the purest tiles ({old:.1}) from the class ({world:.1})");
+    assert!((dense.calib_weight_mean - dense.weight_mean).abs() < 0.1, "the sample's m_t {} near m {}", dense.calib_weight_mean, dense.weight_mean);
+    let one_thread = rayon::ThreadPoolBuilder::new().num_threads(1).build().expect("pool").install(|| fx.calibrate(&census));
+    assert_eq!(one_thread.classes, cal.classes, "1 thread and the default pool");
+    assert_eq!(fx.calibrate(&census).classes, cal.classes, "same inputs, same g");
+}
+
+#[test]
+fn a_joint_check_reopens_a_class_its_neighbour_moved() {
+    // Class a's land takes class b's offspring: `W_a = 50 g_a + 2 g_b`, T 100; `W_b = 100 g_b^0.7`, T 400.
+    let w = |gs: &[f64], i: usize| if i == 0 { 50.0 * gs[0] + 2.0 * gs[1] } else { 100.0 * gs[1].powf(0.7) };
+    let run = |iters: u32| {
+        let mut its = vec![Iterate::new(100.0, 1.0, 16.0, 2.0), Iterate::new(400.0, 1.0, 16.0, 1.0)];
+        let mut asked = Vec::new();
+        let checks = drive(&mut its, 0.05, 0.25, iters, &mut |gs, ask| {
+            asked.push(ask.to_vec());
+            ask.iter().map(|&i| w(gs, i)).collect()
+        });
+        (its, checks, asked)
+    };
+    // a meets 100 at once (g_b 1, W 102); b in 2 steps (g 4, then the secant: 7.25, W 400); the check at
+    // b's g reads a at 114.5: reopened, one step (g 1.75, W 101.8); the second check reopens nothing.
+    let (its, checks, asked) = run(4);
+    for (i, it) in its.iter().enumerate() {
+        println!("class {i}: joint {:?} steps {} reopened {} seen {:?}", it.joint, it.steps, it.reopened, it.seen);
+    }
+    assert_eq!(checks, 2);
+    assert_eq!((its[0].reopened, its[1].reopened), (1, 0));
+    assert_eq!(asked, vec![vec![0, 1], vec![1], vec![1], vec![0, 1], vec![0], vec![0, 1]]);
+    let gs = [its[0].joint.expect("checked").0, its[1].joint.expect("checked").0];
+    for (i, it) in its.iter().enumerate() {
+        let (_, wj) = it.joint.expect("checked");
+        assert!(it.converged && (wj - it.target).abs() <= 0.05 * it.target, "class {i}: {wj}");
+        assert_eq!(wj, w(&gs, i), "class {i}: the reported W is the last check's, at the reported g");
+    }
+    assert!(its[0].seen.iter().any(|&(_, w)| (w - 100.0).abs() > 5.0), "a was re-measured out of tol");
+    // At most `calib_iters` checks: with 1, b runs out of steps (kept g 4, W 264) and a stays off at the check.
+    let (its, checks, _) = run(1);
+    assert_eq!(checks, 1);
+    assert_eq!(its[0].reopened, 0);
+    assert_eq!(its[0].joint, Some((2.0, 108.0)));
+    assert!(!its[1].converged && !its[1].ceiling);
 }

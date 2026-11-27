@@ -29,9 +29,10 @@ use crate::{Error, Result};
 #[path = "tests_scatter_product.rs"]
 mod tests;
 
-/// Product format version (part of the inputs hash: a new format rebuilds).
+/// Product format version (part of the inputs hash: a new format rebuilds). 2: WG-E2o.f sampled calibration (same
+/// inputs, other `g`).
 // tunables: const (format)
-pub const FORMAT: u32 = 1;
+pub const FORMAT: u32 = 2;
 
 /// The product's folder inside the guide folder.
 // tunables: const (format)
