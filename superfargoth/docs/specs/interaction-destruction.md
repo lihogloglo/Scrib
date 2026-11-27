@@ -223,7 +223,81 @@ placement per tick. IN1c (headless, `--features physics`): same seed same piece 
 (oldest fades first); beyond LOD no bodies; all despawned after fade + shrink; sanity: no NaN, pieces rest. IN38b1
 (headless exact): a breakable placement registers, rest bytes round trip through the overlay, the dev key damages the
 focused placement. IN38b2 (headless exact): the hook removes a container once, spill count and owners, an unloaded
-placement's break removes it from the overlay; owner scene IN-38. IN38b3 (headless exact): spill count and owners.
+placement's break removes it from the overlay; owner scene IN-38. IN38b3a-c: see "Spill".
+
+## Spill (IN38b3; spec IN38b3-S 2026-11-27)
+
+Owner 2026-11-11 (interaction.md "Owner answers" 1): contents spill on the floor and take damage scaled by the hit's
+strength, "a vaporised crate leaves little". The Morrowind table has no `loot` and no `salvage` (IN38a: the contents
+are the loot) and the break effect is IN1c's debris, so IN38b3 is the spill only: three rows, one deliverable each.
+
+**IN38b3a, framework: a queued spawn that waits for its model** (`sf_world_bevy` `stream.rs`, additive: the NPC-AI
+lane's `spawn_into` (AI10c3c1, `stream.rs:727`, used by `mw_walkers_bevy` `bodiless.rs`) keeps its signature and
+refusals). `Streaming::spawn_when_ready(ws, cell, placement) -> Queued | Refused`: refused like `spawn_into` (cell
+not resident, id already covered or listed, no spawner for the class) except for a model that is not loaded; queued
+otherwise, taking one model user at once (`acquire_model`, so the load starts now). `drive_streaming` drains the
+queue in order, at most `stream.pending_spawns_per_frame` spawns a frame (count, 8, 1-64, Guess; standard: spawn work
+time-sliced per frame, U for engine numbers): an entry whose cell is in flight waits; one whose model is ready spawns
+through `spawn_into`'s path, its queued user becoming the near group's (one user per spawned placement, released with
+the group); one whose cell left residency, whose model failed (warn) or whose id the cell's own fetch already spawned
+is dropped and releases its user. The queue is never saved: the overlay is the truth and the cell's next load spawns
+what was dropped. Textures load behind the spawn (`prepare` is not waited on), as for any late Bevy entity. Industry:
+data first, 3D when loaded: UE spawns an actor after an async load of its soft-referenced assets
+(`FStreamableManager`); Bethesda creates the reference at once and attaches its 3D when the model is in (`PlaceAtMe`,
+engine internals U); OpenMW's `placeObject` loads the model on the calling frame (a hitch its resource cache keeps
+small). Test (headless exact, new `tests_pending.rs`, not `tests.rs`: the NPC-AI lane edits it): a model not loaded ->
+`Queued`, no entity, the model's users +1; once it settles -> exactly one entity, listed in an Active cell; the cell
+unloads first -> dropped, users back; the fetch got it first -> dropped, one entity; the per-frame cap holds.
+
+**IN38b3b, framework: an item starts moving when its overlay says so** (`sf_physics_bevy` `stream.rs`). The `physics`
+state blob (`STATE_VERSION` 1: asleep flag + linear and angular velocity, `stream.rs:112`) is written on deactivation
+(`stream.rs:415`) and read by nobody: an item that left a cell mid-flight comes back asleep where it was. The blob gets
+a public encoder/decoder (`ItemMotion { asleep, linear, angular }`, used by that writer) and item activation reads it:
+`asleep == false` inserts the body awake with those velocities and never held (`ItemBody::hold` is for resting items);
+no blob, or asleep -> as now. Industry: a moving reference's motion state is saved with it (Bethesda/Havok: U); UE
+restores a saved actor's velocity only through game code. Test (headless exact): an awake blob with a downward
+velocity -> an awake body with that velocity; no blob -> asleep (unchanged); the writer's blob decodes to its values.
+
+**IN38b3c, game: the spill** (`mw_rpg_bevy` `breakable.rs` `apply_breaks`; the pure maths in `mw_interaction`
+`breakable.rs`, tunables in its `BreakParams`). On a removing `Destroyed` whose def's `on_break` is `SpillContents`:
+1. Capture the container's live placement (record, transform, worldspace, cell) before `remove_broken`, seed the store
+   if never opened (`container_store` at the player's level: an unopened crate spills its seeded roll), and take it out
+   of `RpgState::inventories` (nothing stays keyed by a gone placement). `Gone` spills nothing; `Unloaded` spills into
+   the overlay only (its next load spawns the items); no transform found -> the store stays keyed by the dead id
+   (nothing lost, one warn).
+2. Per stack, in store order, draws in [0, 1) from `splitmix64(seed, stack index, k)` (seed = the event's): `r =
+   overkill / def.health`; lost fraction `f = loss_max * clamp((r - loss_knee) / loss_span, 0, 1)`; kept `= count -
+   floor(count * f + u)` (stochastic rounding: a single item is lost iff `u < f`); gold never loses count (coins
+   scatter, they do not break). Items with a health (`WEAP` with `weapon_has_health`, `ARMO`: the `mw_rpg` `barter.rs`
+   rule) lose `ceil(min(r * health_per_overkill, health_max) * max)` from `item_health`, down to 0 (broken, still
+   repairable, as in Morrowind), written as `ATTR_HEALTH`. A restocking stack spills its magnitude once and drops
+   `ATTR_RESTOCK` (a loose item does not restock).
+3. One spawned placement per kept stack (`PlacementOverlay::spawn`: a fresh `sf.spawned` id, saved with the overlay):
+   base, model and class from `mw_world::resolve_base`, at the container's position plus a scatter inside its former
+   footprint (`radius_m * sqrt(u2)` at angle `2π u3`, lifted `lift_m + i * layer_m` so stacks do not overlap; the crate
+   is gone, so its volume is free), random yaw; each item's stream cell from its own position. Its blobs: `physics`
+   (IN38b3b) awake with zero velocity, so it falls and settles; `mw.loose` v1 = `[1, count u32 LE, owned u8, health
+   i32 LE (-1 = full)]`, owned = the container's `RefOwners` flag (owner identity comes with crime, IN28, for every
+   reference at once, as blob v2). Live: `spawn_when_ready` into the item's cell.
+4. Take (`apply_takes`): a loose item with a `mw.loose` blob gives its count and health attr instead of `RefCounts` and
+   empty attrs; the overlay forgets the blob with the spawned placement (`PlacementOverlay::remove`).
+
+Tunables (adapter, `mw.rules.interaction.break_spill_*`, all Guess, set from the owner's "a vaporised crate leaves
+little"): `loss_knee` (ratio, 0.5, 0-4: an ordinary smash loses nothing), `loss_span` (ratio, 2.0, 0.1-8), `loss_max`
+(fraction, 0.9, 0-1), `health_per_overkill` (fraction per ratio, 0.5, 0-2), `health_max` (fraction, 0.75, 0-1),
+`radius_m` (m, 0.25, 0-1), `lift_m` (m, 0.3, 0-1), `layer_m` (m, 0.05, 0-0.3). Industry: BG3 drops a broken
+container's contents on the ground (community reports, no official doc: U) [4]; OpenMW `dropObjectOnGround` copies the
+object into the cell, and its drop path clears the owner because the item was the player's [5]; ours keeps the
+container's owner: the items were someone's, so taking them is theft (crime IN28). Classic rules: no destructible defs,
+nothing spills. Test (headless exact, `tests_breakable.rs`): a seeded crate with gold, a counted stack and a weapon,
+broken at overkill 0 -> every stack spilled whole, health full, owned flag copied, one spawned placement each in the
+overlay and live once the model settles; at a vaporising overkill -> the kept counts and the weapon's health the
+formula gives for the fixed seed, gold whole; taking a spilled stack gives its count and health; an unloaded container
+spills into the overlay only.
+
+[4] https://steamcommunity.com/app/1086940/discussions/0/3812913197997418205 (U: forum, search summary)
+[5] https://git.cijber.net/mirror/openmw/commit/5a31320d8d3f7c71d4b71e54b41a4281d2403a05 (OpenMW mirror, "preserve
+refnum on drop"; U: search summary of the diff)
 
 ## As built (IN1a, 2026-11-27)
 
