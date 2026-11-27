@@ -123,7 +123,9 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   after `PhysicsSystems::Step`, before `DestroySystems::Damage`, reads this step's `PhysicsEvent::Contact`s
   (`ImpactCursor` into `PhysicsEvents`, reset in `First`), maps bodies to live `Destructibles` through
   `PhysicsStreaming::body`, skips pairs with a `DebrisPiece`, `PROJECTILE` or `HELD` body (loose `DEBRIS`-layer items
-  count) and sends the same raw `PropDamage` to each registered side, `dir` into that side, `culprit: None` (IN4c).
+  count) and sends the same raw `PropDamage` to each registered side, `dir` into that side; `culprit` the user who threw either body
+  (`Thrown`, fed from `CarryOutcome::Thrown { body }` of an `InteractionUser` holder, kept until the body sleeps, is held
+  again or leaves; the other body's thrower first), else `None` (IN4c, `impact.rs`).
 
 ## Bevy features used
 

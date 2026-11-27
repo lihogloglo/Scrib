@@ -73,6 +73,7 @@
 //!   `shrink_s`, despawned. Never saved, never gameplay.
 //! - Impacts (`IN4b`, `physics` feature, `impact` module docs): a gated physics contact
 //!   (`interact.impact.*`) is a [`PropDamage`] of kind `impact` on each registered side it touches.
+//!   Its culprit (`IN4c`) is the user who threw either body, while it flies (`impact::Thrown`).
 //!
 //! Not here: game wiring (`IN32`).
 
@@ -138,7 +139,7 @@ pub use destroy::{
 pub use door::{Door, DoorChanged, DoorMoved, DoorRest, DoorSweep, DoorSweeps, DoorSystems, Doors};
 pub use focus::{FocusCandidates, FocusState, PlayerFocus};
 #[cfg(feature = "physics")]
-pub use impact::{ImpactCursor, ImpactSystems};
+pub use impact::{ImpactCursor, ImpactSystems, Thrown, ThrownBy};
 pub use light::{GameplayLight, GameplayLights, Light, LightChanged, LightRest, LightSystems, Lights};
 pub use rest::{RestRequested, RestSystems};
 pub use seat::{

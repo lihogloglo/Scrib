@@ -4,13 +4,19 @@
 //! 0.2 m drop gives none; a body falling on a registered fixed placement damages that placement
 //! only; a light `DEBRIS`-layer item counts; unregistered pairs, debris-shell pieces, projectiles
 //! and held bodies give none.
+//!
+//! `IN4c`: a body thrown by a user carries that user as the culprit on both sides of its hits (its
+//! own and what it lands on) until it rests; dropped again after resting, or thrown by a holder
+//! that is no user, it has none.
 
 use bevy_app::First;
 use glam::Vec3;
 use sf_coords::{WorldPos, WorldTransform};
-use sf_interaction::{BreakAction, DAMAGE_IMPACT, DestructibleDef, Stage, impact_damage};
+use sf_ids::PlayerKey;
+use sf_interaction::{BreakAction, DAMAGE_IMPACT, DestructibleDef, Stage, UserKey, impact_damage};
 use sf_physics_bevy::sf_physics::{BodyDesc, BodyId, BodyKind, Layer, PhysicsEvent, ShapeRef};
-use sf_physics_bevy::{Physics, PhysicsBody, PhysicsEvents, PhysicsStreaming, PhysicsSystems};
+use sf_physics_bevy::{CarryFeedback, CarryOutcome, Physics, PhysicsBody, PhysicsEvents, PhysicsStreaming, PhysicsSystems};
+use sf_script_bevy::PLAYER;
 use sf_records::RecordId;
 use sf_tunables_bevy::TunablesPlugin;
 use sf_world::WorldspaceId;
@@ -156,8 +162,19 @@ fn expected(app: &App, sides: &[(BodyId, PlacementId)]) -> Vec<Key> {
 }
 
 /// Runs `frames` frames of `steps` ticks; each frame's hits must be exactly [`expected`] for the
-/// sides still live at its start. Returns every hit.
+/// sides still live at its start, none with a culprit. Returns every hit.
 fn run_checked(app: &mut App, frames: usize, steps: usize, sides: &[(BodyId, PlacementId)]) -> Vec<PropDamage> {
+    run_checked_by(app, frames, steps, sides, None)
+}
+
+/// [`run_checked`] with every hit's culprit `culprit`.
+fn run_checked_by(
+    app: &mut App,
+    frames: usize,
+    steps: usize,
+    sides: &[(BodyId, PlacementId)],
+    culprit: Option<UserKey>,
+) -> Vec<PropDamage> {
     let mut all = Vec::new();
     for f in 0..frames {
         let alive: Vec<(BodyId, PlacementId)> = sides.iter().copied().filter(|s| live(app, s.1)).collect();
@@ -168,7 +185,7 @@ fn run_checked(app: &mut App, frames: usize, steps: usize, sides: &[(BodyId, Pla
         got.sort_unstable();
         assert_eq!(got, expected(app, &alive), "frame {f}");
         for h in &seen {
-            assert_eq!((h.kind, h.culprit), (DAMAGE_IMPACT, None));
+            assert_eq!((h.kind, h.culprit), (DAMAGE_IMPACT, culprit), "frame {f}");
             assert!(h.amount.is_finite() && h.amount > 0.0 && h.point.is_finite() && h.dir.is_finite());
         }
         all.extend(seen);
@@ -268,4 +285,66 @@ fn no_damage_from_unregistered_pairs_debris_pieces_projectiles_or_held_bodies() 
     }
     let health = app.world().resource::<Destructibles>().get(PlacementId(2)).map(|d| d.state.health);
     assert_eq!(health, Some(15.0));
+}
+
+fn player() -> UserKey {
+    UserKey::Player(PlayerKey(7))
+}
+
+/// A holder's throw of `body`, as the carry plugin reports it.
+fn throw(app: &mut App, holder: Entity, body: BodyId) {
+    app.world_mut().write_message(CarryFeedback { holder, outcome: CarryOutcome::Thrown { body, speed: 8.0 } });
+}
+
+/// A registered jar above a registered fixed crate (both too tough to break).
+fn jar_over_crate(app: &mut App) -> (BodyId, BodyId) {
+    register(app, PlacementId(1), 1000.0);
+    register(app, PlacementId(2), 1000.0);
+    let crate_ = body(app, BodyDesc::fixed(at(Vec3::new(0.0, 0.25, 0.0)), ShapeRef::Box(Vec3::splat(0.25)), Layer::STATIC));
+    place(app, PlacementId(2), crate_);
+    let jar = body(app, dynamic(Vec3::new(0.0, 3.1, 0.0), ShapeRef::Box(Vec3::splat(0.1)), Layer::PROP, 1.0));
+    place(app, PlacementId(1), jar);
+    (jar, crate_)
+}
+
+#[test]
+fn a_thrown_body_carries_its_thrower_until_it_rests_then_a_drop_has_none() {
+    let mut app = app();
+    let (jar, crate_) = jar_over_crate(&mut app);
+    let sides = [(jar, PlacementId(1)), (crate_, PlacementId(2))];
+    let holder = app.world_mut().spawn(InteractionUser { user: player(), actor: PLAYER, priority: 30, tags: SmallVec::new() }).id();
+    throw(&mut app, holder, jar);
+    let mut hits = run_checked_by(&mut app, 1, 1, &sides, Some(player()));
+    let by = app.world().resource::<Thrown>().get(&ws(), jar);
+    assert_eq!(by.map(|t| t.user), Some(player()), "recorded on the throw's step");
+    hits.extend(run_checked_by(&mut app, 89, 1, &sides, Some(player())));
+    for p in [PlacementId(1), PlacementId(2)] {
+        assert!(hits.iter().any(|h| h.placement == p), "{p:?} hit by the thrown jar");
+    }
+    // Rests: it leaves the table (then no hit is the thrower's).
+    for _ in 0..600 {
+        if app.world().resource::<Thrown>().is_empty() {
+            break;
+        }
+        frame(&mut app, 1);
+    }
+    assert!(app.world().resource::<Thrown>().is_empty(), "the jar fell asleep and was forgotten");
+    // Dropped again from the same height: the same hits, no culprit.
+    let mut physics = app.world_mut().resource_mut::<Physics>();
+    let w = physics.worlds.active_world_mut().expect("active");
+    assert!(w.set_pose(jar, at(Vec3::new(0.0, 3.1, 0.0))) && w.set_velocity(jar, Vec3::ZERO, Vec3::ZERO));
+    w.wake(jar);
+    let hits = run_checked(&mut app, 90, 1, &sides);
+    assert!(hits.iter().any(|h| h.placement == PlacementId(2)), "the dropped jar lands on the crate");
+}
+
+#[test]
+fn a_throw_by_a_holder_that_is_no_user_or_none_at_all_has_no_culprit() {
+    let mut app = app();
+    let (jar, crate_) = jar_over_crate(&mut app);
+    let camera = app.world_mut().spawn_empty().id();
+    throw(&mut app, camera, jar);
+    let hits = run_checked(&mut app, 90, 1, &[(jar, PlacementId(1)), (crate_, PlacementId(2))]);
+    assert!(hits.iter().any(|h| h.placement == PlacementId(2)), "the jar lands on the crate");
+    assert!(app.world().resource::<Thrown>().is_empty());
 }

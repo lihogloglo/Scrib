@@ -87,7 +87,8 @@ pub enum CarryOutcome {
     TooHeavy { mass: f32 },
     Nothing,
     Dropped,
-    Thrown { speed: f32 },
+    /// The thrown body (in the holder's world) and its launch speed.
+    Thrown { body: BodyId, speed: f32 },
     /// Lagged past the break distance (too heavy for the grip, snagged).
     Broke,
     /// The body left the world.
@@ -166,7 +167,7 @@ fn apply_inputs(
                 GrabResult::Busy => None,
             },
             CarryInput::Drop(_) => h.carrier.drop(w).map(|_| CarryOutcome::Dropped),
-            CarryInput::Throw(_) => h.carrier.throw(w).map(|(_, speed)| CarryOutcome::Thrown { speed }),
+            CarryInput::Throw(_) => h.carrier.throw(w).map(|(body, speed)| CarryOutcome::Thrown { body, speed }),
             CarryInput::Rotate { yaw, pitch, .. } => {
                 h.carrier.rotate(w, yaw, pitch);
                 None

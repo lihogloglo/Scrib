@@ -3,6 +3,7 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-27 (interaction loop, IN4c): a thrown object that breaks something now remembers who threw it: the break is blamed on the player who threw it (for both the thrown thing and what it hit) until it comes to rest; a dropped or knocked object blames no one.
 - 2026-11-27 (interaction loop, IN4b): hard physics hits now damage breakable objects: a jar dropped from a shelf height or thrown onto a wall loses health and can break, and a heavy thing falling on a breakable crate chips it; gentle drops, cosmetic shards, projectiles and the carried item never count. Who threw it is not tracked yet (IN4c).
 - 2026-11-27 (interaction loop, IN4a): the interaction core can turn a physics hit into prop damage: `impact_damage` from the contact's impulse past a dead zone, nothing under a speed floor (a resting or sliding object never chips); three `interact.impact.*` tunables. Not yet wired to physics (IN4b).
 - 2026-11-27 (interaction loop, IN17c2): fire now keeps to a budget: only so many objects burn at once in an area (the next ones wait their turn), the spread work per frame is capped so a big blaze slows down instead of costing frame time, and town buildings never catch from spreading fire (only from a quest or script); crates, hay and furniture in towns still burn. Nothing in the game feeds it yet (IN39).

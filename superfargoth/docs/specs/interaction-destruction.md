@@ -423,7 +423,7 @@ not needed (a light body's impulse is small already).
   point, dir, culprit: None }`, `point` the event's `WorldPos` in interaction frames (`point.to_f64().as_vec3()`, the
   inverse of `debris.rs:143` `world_pos`), `dir` the contact normal into that side (`normal` for `b`, `-normal` for `a`); zero
   amounts are not sent. The damage step's total-key sort (above, "Order") makes the result independent of event order.
-- **Culprit: `None` in IN4b (gap).** `CarryFeedback { holder, outcome: Thrown }` (`sf_physics_bevy` `carry.rs:99`)
+- **Culprit (IN4c, built; was `None` in IN4b).** `CarryFeedback { holder, outcome: Thrown }` (`sf_physics_bevy` `carry.rs:99`)
   names no body, so a thrown body's thrower is unknown; IN18's "Thrown landing" noise needs the same link. Row IN4c
   (later, with the carry owner): the thrown `BodyId` in the feedback, a `Thrown(BodyId -> (UserKey, tick))` table in the
   shell kept until the body sleeps, its key as the culprit (vandalism reads `Destroyed.culprit`).
@@ -592,3 +592,12 @@ step with a nonzero hit. New seam `PhysicsStreaming::insert_placed(ws, placement
 `stream.rs`): a host-spawned body `body()` finds (tests use it). Tests `tests_impact.rs` (6 headless exact): every
 frame's hits equal the spec's from that frame's own contacts (3 m drop breaks 1 hp, 0.2 m none, fixed target only, a
 `DEBRIS` bottle counts, two steps a frame each event once), no hit from unregistered/`DebrisPiece`/`PROJECTILE`/`HELD`.
+
+## As built (IN4c, 2026-11-27)
+
+`sf_physics_bevy` `CarryOutcome::Thrown { body, speed }` (the thrown body). `sf_interaction_bevy` `impact.rs`: `Thrown`
+(body -> `ThrownBy { user, tick }` in the throw's world) fed in `ImpactSystems` from `CarryFeedback` of a holder with an
+`InteractionUser` (the game's player body has one, `mw_interaction_bevy` `input.rs`), pruned after the step when the body
+sleeps, is `HELD` again or is gone, cleared on a world change; a side's culprit is the other body's thrower, else its
+own. 2 headless exact tests: thrown -> every hit on both sides carries the thrower; rested -> forgotten, dropped again
+-> none; a holder with no `InteractionUser` -> none.
