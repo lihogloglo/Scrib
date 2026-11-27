@@ -454,6 +454,10 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
   sums in order, per class and per parent tile) and `calibrate` (classes iterate together, one canopy run per step
   over the active classes' purest tiles; fixed point then log-log secant), `Calibration::write`/`read`
   `<dir>/scatter/calibration.toml`, warnings returned. Fixture: T 100 met at the first guess, T 400 in 4 steps, 2000 flagged.
+- **WG-E2o.3** (2026-11-27, `flora.rs` `calibration`, `with_rules`; `winners`/`scatter_tiles` take the targets): the
+  adapter runs census (over `World::rect`) + calibration before the passes; class ids = the fields' class order;
+  `scatter_cached` writes `calibration.toml` before the product and reads it back with a read product
+  (`FloraRun::calibration`); warnings go to the `worldgen flora:` log and the census table. `canopy_weight` is pub.
 
 ## Tunables
 

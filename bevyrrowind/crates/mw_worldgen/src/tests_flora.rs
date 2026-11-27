@@ -8,7 +8,8 @@ use glam::Vec3;
 use sf_world::{PlacementClass, PlacementFlags, RecordRef};
 use sf_worldgen::filter::FilterParams;
 use sf_worldgen::guide::Guide;
-use sf_worldgen::scatter::{Params, WaterMask};
+use sf_worldgen::scatter::{CanopyTargets, Params, WaterMask};
+use sf_worldgen::scatter_calib::Calibration;
 use sf_worldgen::scatter_fields::{FieldSample, GridFields};
 use sf_worldgen::scatter_product;
 use sf_worldgen::scatter_species::{Layer, SpeciesFile};
@@ -182,12 +183,26 @@ fn fields(world: &World<'_>) -> GridFields {
     f
 }
 
-/// The pass over `tiles` (all when `None`) with one region of woodland land (prior 1 where the row lives).
-fn run_on(l: &Learned, world: &World<'_>, f: &GridFields, prm: &Params, tiles: Option<&[(i32, i32)]>) -> (Vec<flora::Plant>, [usize; 4]) {
-    let area = vec![vec![0u64; 3], vec![1, 0, 0]];
-    let prior = flora::region_prior(&l.density, &area);
-    let water = WaterMask::sea(0.0, prm.water_margin_m);
-    flora::scatter_tiles(l, world, f, &water, &prior, prm, tiles)
+/// The fixture's region prior (one region of woodland land, prior 1 where the row lives) and sea.
+fn prior_water(l: &Learned, prm: &Params) -> (Vec<Vec<Vec<f64>>>, WaterMask) {
+    (flora::region_prior(&l.density, &[vec![0u64; 3], vec![1, 0, 0]]), WaterMask::sea(0.0, prm.water_margin_m))
+}
+
+/// The canopy calibration of the fixture pass on `world`.
+fn cal_on(l: &Learned, world: &World<'_>, f: &GridFields, prm: &Params) -> Calibration {
+    let (prior, water) = prior_water(l, prm);
+    flora::calibration(l, world, f, &water, &prior, prm)
+}
+
+/// The pass over `tiles` (all when `None`) at `targets`.
+fn run_at(l: &Learned, world: &World<'_>, f: &GridFields, prm: &Params, targets: &CanopyTargets, tiles: Option<&[(i32, i32)]>) -> (Vec<flora::Plant>, [usize; 4]) {
+    let (prior, water) = prior_water(l, prm);
+    flora::scatter_tiles(l, world, f, &water, &prior, prm, targets, tiles)
+}
+
+/// The pass over every tile at `world`'s own calibration.
+fn run_on(l: &Learned, world: &World<'_>, f: &GridFields, prm: &Params) -> (Vec<flora::Plant>, [usize; 4]) {
+    run_at(l, world, f, prm, &cal_on(l, world, f, prm).targets(), None)
 }
 
 /// WG-E2i.3: the v2 pass on the fixture's 10× guide. Every tile alone (reversed order) gives the whole run's plants;
@@ -203,7 +218,8 @@ fn scatter_v2_on_the_ten_times_guide_tile_alone_and_placements() {
     let world = World::new(&m, &regions, &t, None, &towns);
     let f = fields(&world);
     let prm = Params::default();
-    let (plants, full) = run_on(&l, &world, &f, &prm, None);
+    let targets = cal_on(&l, &world, &f, &prm).targets();
+    let (plants, full) = run_at(&l, &world, &f, &prm, &targets, None);
     assert_eq!(full[0], 0, "no rock rows yet (WG-E3f)");
     assert!(full[1] > 50 && full[3] > 50, "trees and flora: {full:?}");
     assert_eq!(full[2], 0, "no shrub row learned");
@@ -216,7 +232,7 @@ fn scatter_v2_on_the_ten_times_guide_tile_alone_and_placements() {
     let tiles: Vec<(i32, i32)> = (y0..y1).flat_map(|y| (x0..x1).map(move |x| (x, y))).collect();
     let mut alone: Vec<flora::Plant> = Vec::new();
     for &tile in tiles.iter().rev() {
-        alone.extend(run_on(&l, &world, &f, &prm, Some(&[tile])).0);
+        alone.extend(run_at(&l, &world, &f, &prm, &targets, Some(&[tile])).0);
     }
     let key = |p: &flora::Plant| (p.key, p.pos[0].to_bits(), p.pos[1].to_bits());
     let mut w = plants.clone();
@@ -252,6 +268,7 @@ fn scatter_v2_on_the_ten_times_guide_tile_alone_and_placements() {
         towns: flora::towns::TownCensus::default(),
         clearings: flora::ClearingCensus::default(),
         product: flora::ProductUse::Off,
+        calibration: None,
         seconds: [0.0; 4],
     };
     let placements = flora::placements(&run);
@@ -320,9 +337,9 @@ fn scatter_v2_keeps_out_of_towns_and_clearings() {
     let plain = World::new(&m, &regions, &t, None, &plain_towns);
     let f = fields(&plain);
     let prm = Params::default();
-    let before = run_on(&l, &plain, &f, &prm, None).0;
+    let before = run_on(&l, &plain, &f, &prm).0;
     let with = World::new(&m, &regions, &t, Some(&c), &mask);
-    let after = run_on(&l, &with, &f, &prm, None).0;
+    let after = run_on(&l, &with, &f, &prm).0;
     let inside = |p: &flora::Plant| c.contains(p.pos[0], p.pos[1]) || mask.contains(p.pos[0], p.pos[1]);
     let held = before.iter().filter(|p| inside(p)).count();
     assert!(held >= 10, "the town and road held {held} plants before");
@@ -364,8 +381,12 @@ fn the_scatter_product_is_written_once_read_at_load_and_rebuilt_when_stale() {
     let water = WaterMask::sea(0.0, prm.water_margin_m);
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
-    let run = |prm: &Params| flora::scatter_cached(d, &l, &world, &f, &water, &prior, prm).unwrap();
-    let computed = flora::scatter_tiles(&l, &world, &f, &water, &prior, &prm, None);
+    let run = |prm: &Params| {
+        let (plants, full, used, _) = flora::scatter_cached(d, &l, &world, &f, &water, &prior, prm).unwrap();
+        (plants, full, used)
+    };
+    let cal = flora::calibration(&l, &world, &f, &water, &prior, &prm);
+    let computed = flora::scatter_tiles(&l, &world, &f, &water, &prior, &prm, &cal.targets(), None);
     let (plants, full, used) = run(&prm);
     assert_eq!(used, ProductUse::Wrote, "no product yet");
     assert_eq!((plants.clone(), full), computed, "written: the passes' plants");
@@ -375,7 +396,7 @@ fn the_scatter_product_is_written_once_read_at_load_and_rebuilt_when_stale() {
     let inputs = flora::product_inputs(d, &world, &f, &l, &prior, &prm).unwrap();
     let (stored, won) = scatter_product::read(d).unwrap();
     assert_eq!(stored, inputs);
-    assert_eq!(won, flora::winners(&l, &world, &f, &water, &prior, &prm, None), "the product is the kept set");
+    assert_eq!(won, flora::winners(&l, &world, &f, &water, &prior, &prm, &cal.targets(), None), "the product is the kept set");
     // The budget cut stays at load.
     let half = Params { budget: (plants.len() / 2) as f64, ..prm };
     let (cut, _, used) = run(&half);
@@ -398,6 +419,101 @@ fn the_scatter_product_is_written_once_read_at_load_and_rebuilt_when_stale() {
     std::fs::write(&bin, bytes).unwrap();
     assert!(matches!(run(&prm).2, ProductUse::Rebuilt(_)), "damaged: rebuilt");
     assert_eq!(run(&prm), (computed.0, computed.1, ProductUse::Read));
+}
+
+/// WG-E2o.3: the adapter's calibration is the class census of the guide's land rect (one row per class id in the
+/// fields' order; area exact and mean equal to a brute pass over the same cells), it is written beside the product
+/// and read back with it, and a class target change makes the product stale.
+#[test]
+fn the_calibration_is_the_guide_census_and_sits_beside_the_product() {
+    use flora::ProductUse;
+    use sf_worldgen::scatter::CandidateRules;
+    use sf_worldgen::scatter_calib;
+    use sf_worldgen::scatter_fields::{Fields, Suitability};
+    use sf_worldgen::scatter_stand::{StandClass, StandRules};
+    let m = mosaic();
+    let regions = regions();
+    let l = learned(&m);
+    let t = tiles(&m);
+    let towns = TownMask::default();
+    let world = World::new(&m, &regions, &t, None, &towns);
+    let f = fields(&world);
+    let prm = Params::default();
+    let (prior, water) = prior_water(&l, &prm);
+    let cal = flora::calibration(&l, &world, &f, &water, &prior, &prm);
+    // Brute census: the cell centres of `census_step_m` over the land rect, land only, a mosaic clearing w = 0.
+    let file = &l.file;
+    let names = f.class_names();
+    let suit: Vec<Suitability> = file.species.iter().map(|s| Suitability::new(s, names)).collect();
+    let canopy: Vec<Suitability> =
+        file.species.iter().filter(|s| s.layer == Layer::Canopy).map(|s| Suitability::new(s, names)).collect();
+    let n = names.len();
+    let prior_at = |s: usize, x: f64, y: f64| {
+        let Some(r) = world.region(x, y) else { return 0.0 };
+        let c = f.sample(x, y).class.map_or(n, |k| usize::from(k).min(n));
+        prior.get(s).and_then(|p| p.get(usize::from(r))).and_then(|p| p.get(c)).copied().unwrap_or(0.0)
+    };
+    let height = |x: f64, y: f64| world.height(x, y);
+    let targets = cal.targets();
+    let rules = CandidateRules {
+        file,
+        suitability: &suit,
+        seed: prm.seed,
+        tile_m: prm.tile_m,
+        prior: &prior_at,
+        water: &water,
+        height: &height,
+        rocks: None,
+        canopy: &targets,
+    };
+    let stand = StandRules { values: &file.values, seed: prm.seed, canopy: &canopy };
+    let step = file.values.census_step_m;
+    let r = world.rect();
+    let (nx, ny) = (((r[2] - r[0]) / step).floor() as usize, ((r[3] - r[1]) / step).floor() as usize);
+    let (mut cells, mut sum, mut ws) = (vec![0u64; n], vec![0.0f64; n], vec![0.0; file.species.len()]);
+    for j in 0..ny {
+        for i in 0..nx {
+            let (x, y) = (r[0] + (i as f64 + 0.5) * step, r[1] + (j as f64 + 0.5) * step);
+            let Some(c) = f.sample(x, y).class.map(usize::from) else { continue };
+            if world.excluded(x, y) || water.wet(x, y, world.height(x, y)) {
+                continue;
+            }
+            cells[c] += 1;
+            let d = stand.density(&f, x, y);
+            if stand.class_of(d) != StandClass::Clearing {
+                sum[c] += rules.canopy_weight(&f, x, y, d, &mut ws);
+            }
+        }
+    }
+    assert!(cells[0] > 0 && cells[1] > 0 && sum[0] > 0.0, "woodland and desert land, woodland canopy: {cells:?} {sum:?}");
+    assert_eq!(cal.classes.len(), n, "one row per class id");
+    for (c, row) in cal.classes.iter().enumerate() {
+        assert_eq!(row.name, names[c], "class ids in the fields' order");
+        assert_eq!(row.stems_per_ha.to_bits(), file.classes.get(&row.name).map_or(0.0, |e| e.v).to_bits(), "{}: T", row.name);
+        assert_eq!(row.area_ha.to_bits(), (cells[c] as f64 * step * step / 10_000.0).to_bits(), "{}: A exact", row.name);
+        let mean = if cells[c] == 0 { 0.0 } else { sum[c] / cells[c] as f64 };
+        assert!((row.weight_mean - mean).abs() <= 1e-12 * mean.max(1.0), "{}: m {} vs brute {mean}", row.name, row.weight_mean);
+    }
+    // Written beside the product, read with it.
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let (_, _, used, wrote) = flora::scatter_cached(d, &l, &world, &f, &water, &prior, &prm).unwrap();
+    assert_eq!(used, ProductUse::Wrote, "no product yet");
+    assert_eq!(wrote.map(|c| c.classes), Some(cal.classes.clone()), "the passes' calibration");
+    assert!(d.join(scatter_product::DIR).join(scatter_calib::FILE).is_file(), "calibration.toml beside the product");
+    let (_, _, used, read) = flora::scatter_cached(d, &l, &world, &f, &water, &prior, &prm).unwrap();
+    assert_eq!(used, ProductUse::Read, "same inputs: read");
+    assert_eq!(read.map(|c| c.classes), Some(cal.classes.clone()), "a read product has its calibration file");
+    // A class target change: stale, recalibrated, rewritten.
+    let mut moved = l.clone();
+    moved.file.classes.get_mut("woodland").expect("a woodland target").v *= 2.0;
+    let inputs = flora::product_inputs(d, &world, &f, &l, &prior, &prm).unwrap();
+    assert_ne!(flora::product_inputs(d, &world, &f, &moved, &prior, &prm).unwrap(), inputs, "the target is hashed");
+    let (_, _, used, again) = flora::scatter_cached(d, &moved, &world, &f, &water, &prior, &prm).unwrap();
+    assert_eq!(used, ProductUse::Wrote, "a target change: stale");
+    let again = again.expect("the passes' calibration");
+    assert_eq!(again.classes[0].stems_per_ha.to_bits(), (2.0 * cal.classes[0].stems_per_ha).to_bits(), "the new target");
+    assert_eq!(Calibration::read(d).unwrap().classes, again.classes, "the file follows the product");
 }
 
 /// WG-E2i.2: the shipped species file parses, has its one canopy tree plus understorey and ground rows, and names
@@ -577,7 +693,7 @@ fn canopy_density_trace_on_x10s() {
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
 
-    use sf_worldgen::scatter::{CandidateRules, CanopyTargets, Cover, compete};
+    use sf_worldgen::scatter::{CandidateRules, Cover, compete};
     use sf_worldgen::scatter_fields::{Fields, Suitability};
     use sf_worldgen::scatter_stand::{StandClass, StandMap, StandRules};
 
@@ -637,7 +753,7 @@ fn canopy_density_trace_on_x10s() {
         run.prior.get(s).and_then(|p| p.get(usize::from(r))).and_then(|p| p.get(c)).copied().unwrap_or(0.0)
     };
     let height = |x: f64, y: f64| world.height(x, y);
-    let targets = CanopyTargets::uncalibrated(lf, &names);
+    let targets = run.calibration.as_ref().expect("the passes' calibration").targets();
     let rules = CandidateRules {
         file: lf,
         suitability: &suit,

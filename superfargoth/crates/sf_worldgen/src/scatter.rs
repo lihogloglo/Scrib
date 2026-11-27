@@ -534,7 +534,7 @@ impl CandidateRules<'_> {
     /// The canopy weight `sum_s w_s = D sum_s share_s p_s` at `(x, y)` over the canopy species (`d` = the stand
     /// density `D` there, `p_s` the region prior clamped to `[0, region_prior_max]`), and each species' `w_s` in
     /// `per_species` (indexed like the file's species, 0 off the canopy; spec "Design" 4, the class census).
-    pub(crate) fn canopy_weight(&self, fields: &dyn Fields, x: f64, y: f64, d: f64, per_species: &mut [f64]) -> f64 {
+    pub fn canopy_weight(&self, fields: &dyn Fields, x: f64, y: f64, d: f64, per_species: &mut [f64]) -> f64 {
         let pmax = self.file.values.region_prior_max;
         let mut su_sum = 0.0;
         for (s, sp) in self.file.species.iter().enumerate() {

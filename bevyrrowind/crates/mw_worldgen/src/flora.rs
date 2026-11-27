@@ -56,6 +56,7 @@ use sf_worldgen::guide::Guide;
 use sf_worldgen::reach::VALID_FILE;
 use sf_worldgen::roads::RoadNetwork;
 use sf_worldgen::scatter::{CandidateKey, CandidateRules, CanopyTargets, LayerWinners, Params, WaterMask, budget_cut_layers};
+use sf_worldgen::scatter_calib::{self, Calibration};
 use sf_worldgen::scatter_product::{self, InputsHash};
 use sf_worldgen::scatter_fields::{Fields, GridFields, Suitability};
 use sf_worldgen::scatter_species::{Hat, Layer, SpeciesFile, species_declared};
@@ -726,6 +727,9 @@ pub struct FloraRun {
     pub clearings: ClearingCensus,
     /// Where the kept set came from (WG-E2j.2).
     pub product: ProductUse,
+    /// The canopy calibration (WG-E2o.3): the passes' own, or the product's `calibration.toml` when the kept set was
+    /// read (`None` when that file is missing or unreadable; a read one has no warnings).
+    pub calibration: Option<Calibration>,
     /// Seconds: source (mosaic, regions, references), learning, area census, scatter (the product read or the passes).
     pub seconds: [f64; 4],
 }
@@ -854,17 +858,18 @@ fn pose(run: &Learned, world: &World<'_>, seed: u64, c: &sf_worldgen::scatter::C
     })
 }
 
-/// The passes over `tiles` (every guide tile when `None`) on `world`: candidates, competition, layers; the kept set
-/// before the budget (what the `scatter/` product holds).
-pub fn winners(
+/// Calls `f` with the passes' rules on `world` (canopy at `targets`), the stand rules and the exclusion.
+#[allow(clippy::too_many_arguments)] // the pass's inputs, each its own product
+fn with_rules<R>(
     learned: &Learned,
     world: &World<'_>,
     fields: &dyn Fields,
     water: &WaterMask,
     prior: &[Vec<Vec<f64>>],
     prm: &Params,
-    tiles: Option<&[(i32, i32)]>,
-) -> LayerWinners {
+    targets: &CanopyTargets,
+    f: impl FnOnce(&CandidateRules<'_>, &StandRules<'_>, &(dyn Fn(f64, f64) -> bool + Sync)) -> R,
+) -> R {
     let file = &learned.file;
     let names = fields.class_names();
     let suit: Vec<Suitability> = file.species.iter().map(|s| Suitability::new(s, names)).collect();
@@ -877,8 +882,6 @@ pub fn winners(
         prior.get(s).and_then(|p| p.get(usize::from(r))).and_then(|p| p.get(c)).copied().unwrap_or(0.0)
     };
     let height = |x: f64, y: f64| world.height(x, y);
-    // Uncalibrated (m = g = 1) until the class census and calibration are wired (WG-E2o.3).
-    let targets = CanopyTargets::uncalibrated(file, names);
     let rules = CandidateRules {
         file,
         suitability: &suit,
@@ -888,18 +891,57 @@ pub fn winners(
         water,
         height: &height,
         rocks: None,
-        canopy: &targets,
+        canopy: targets,
     };
     let stand = StandRules { values: &file.values, seed: prm.seed, canopy: &canopy };
     let excluded = |x: f64, y: f64| world.excluded(x, y);
-    let all;
-    let tiles = if let Some(t) = tiles {
-        t
-    } else {
-        all = rules.tiles(world.rect());
-        &all
-    };
-    rules.run_tiles(fields, &stand, &excluded, tiles)
+    f(&rules, &stand, &excluded)
+}
+
+/// The canopy calibration of a pass on `world` (spec `worldgen-scatter.md` Design 4, WG-E2o.3): the class census over
+/// the guide's land rect ([`World::rect`]), then the competition scale per class. The class ids are the fields'
+/// class order, so [`Calibration::targets`] is the passes' [`CanopyTargets`]; its warnings go to the bake log.
+#[must_use]
+pub fn calibration(
+    learned: &Learned,
+    world: &World<'_>,
+    fields: &dyn Fields,
+    water: &WaterMask,
+    prior: &[Vec<Vec<f64>>],
+    prm: &Params,
+) -> Calibration {
+    // `calibrate` builds its own targets per step; the census does not read them.
+    let none = CanopyTargets::uncalibrated(&learned.file, fields.class_names());
+    with_rules(learned, world, fields, water, prior, prm, &none, |rules, stand, excluded| {
+        let census = scatter_calib::census(rules, stand, fields, excluded, world.rect());
+        scatter_calib::calibrate(rules, stand, fields, excluded, &census)
+    })
+}
+
+/// The passes over `tiles` (every guide tile when `None`) on `world` with the canopy at `targets` (a
+/// [`calibration`]'s): candidates, competition, layers; the kept set before the budget (what the `scatter/` product
+/// holds).
+#[allow(clippy::too_many_arguments)] // the pass's inputs, each its own product
+pub fn winners(
+    learned: &Learned,
+    world: &World<'_>,
+    fields: &dyn Fields,
+    water: &WaterMask,
+    prior: &[Vec<Vec<f64>>],
+    prm: &Params,
+    targets: &CanopyTargets,
+    tiles: Option<&[(i32, i32)]>,
+) -> LayerWinners {
+    with_rules(learned, world, fields, water, prior, prm, targets, |rules, stand, excluded| {
+        let all;
+        let tiles = if let Some(t) = tiles {
+            t
+        } else {
+            all = rules.tiles(world.rect());
+            &all
+        };
+        rules.run_tiles(fields, stand, excluded, tiles)
+    })
 }
 
 /// The load half of a pass on a kept set: the budget (four groups), then the pose. Returns (plants, full count per
@@ -915,7 +957,8 @@ pub fn place(learned: &Learned, world: &World<'_>, prm: &Params, won: &LayerWinn
     (plants, full)
 }
 
-/// The passes over `tiles` (every guide tile when `None`) on `world`: [`winners`], then [`place`].
+/// The passes over `tiles` (every guide tile when `None`) on `world` at `targets`: [`winners`], then [`place`].
+#[allow(clippy::too_many_arguments)] // the pass's inputs, each its own product
 pub fn scatter_tiles(
     learned: &Learned,
     world: &World<'_>,
@@ -923,9 +966,10 @@ pub fn scatter_tiles(
     water: &WaterMask,
     prior: &[Vec<Vec<f64>>],
     prm: &Params,
+    targets: &CanopyTargets,
     tiles: Option<&[(i32, i32)]>,
 ) -> (Vec<Plant>, [usize; 4]) {
-    place(learned, world, prm, &winners(learned, world, fields, water, prior, prm, tiles))
+    place(learned, world, prm, &winners(learned, world, fields, water, prior, prm, targets, tiles))
 }
 
 /// Version of the flora adapter's part of the product's inputs: bump it when the adapter feeds the passes
@@ -997,9 +1041,14 @@ pub fn product_inputs(
     Ok(h.finish())
 }
 
+/// What [`scatter_cached`] returns: plants, full count per budget group, where the kept set came from, the calibration.
+pub type Cached = (Vec<Plant>, [usize; 4], ProductUse, Option<Calibration>);
+
 /// A pass on `dir`'s guide through its `scatter/` product (WG-E2j.2): the kept set read when the product is of these
-/// inputs ([`product_inputs`]), else the passes over every tile and the product (re)written; then [`place`]. Returns
-/// (plants, full count per budget group, where the kept set came from).
+/// inputs ([`product_inputs`]), else the [`calibration`] and the passes over every tile, the calibration written
+/// beside the product (`scatter/calibration.toml`, WG-E2o.3) and the product (re)written; then [`place`]. Returns
+/// (plants, full count per budget group, where the kept set came from, the calibration: the passes' own, or the file's
+/// on a read).
 ///
 /// # Errors
 /// A product file that exists but cannot be read.
@@ -1011,22 +1060,25 @@ pub fn scatter_cached(
     water: &WaterMask,
     prior: &[Vec<Vec<f64>>],
     prm: &Params,
-) -> Result<(Vec<Plant>, [usize; 4], ProductUse), DumpError> {
+) -> Result<Cached, DumpError> {
     let inputs = product_inputs(dir, world, fields, learned, prior, prm)?;
-    let (won, used) = match scatter_product::cached(dir, &inputs) {
-        Ok(Some(won)) => (won, ProductUse::Read),
+    let (won, used, cal) = match scatter_product::cached(dir, &inputs) {
+        Ok(Some(won)) => (won, ProductUse::Read, Calibration::read(dir).ok()),
         cached => {
-            let won = winners(learned, world, fields, water, prior, prm, None);
-            let used = match (scatter_product::write(dir, &inputs, &won), cached) {
+            let cal = calibration(learned, world, fields, water, prior, prm);
+            let won = winners(learned, world, fields, water, prior, prm, &cal.targets(), None);
+            // The calibration first: a product on disk always has its calibration beside it.
+            let wrote = cal.write(dir).and_then(|()| scatter_product::write(dir, &inputs, &won).map(|_| ()));
+            let used = match (wrote, cached) {
                 (Err(e), _) => ProductUse::Unwritten(e.to_string()),
-                (Ok(_), Err(e)) => ProductUse::Rebuilt(e.to_string()),
-                (Ok(_), Ok(_)) => ProductUse::Wrote,
+                (Ok(()), Err(e)) => ProductUse::Rebuilt(e.to_string()),
+                (Ok(()), Ok(_)) => ProductUse::Wrote,
             };
-            (won, used)
+            (won, used, Some(cal))
         }
     };
     let (plants, full) = place(learned, world, prm, &won);
-    Ok((plants, full, used))
+    Ok((plants, full, used, cal))
 }
 
 /// Learns from `db`'s exterior and scatters on `tiles`' guide with `fields` and `water`, outside the stamps,
@@ -1060,11 +1112,12 @@ pub fn scatter_world(
     let (area, cleared, in_towns) = guide_census(&world, fields, g.sea_level_m);
     let prior = region_prior(&learned.density, &area);
     let t3 = Instant::now();
-    let (plants, full, product) = if let Some(dir) = product {
+    let (plants, full, product, calibration) = if let Some(dir) = product {
         scatter_cached(dir, &learned, &world, fields, water, &prior, &prm)?
     } else {
-        let (plants, full) = scatter_tiles(&learned, &world, fields, water, &prior, &prm, None);
-        (plants, full, ProductUse::Off)
+        let cal = calibration(&learned, &world, fields, water, &prior, &prm);
+        let (plants, full) = scatter_tiles(&learned, &world, fields, water, &prior, &prm, &cal.targets(), None);
+        (plants, full, ProductUse::Off, Some(cal))
     };
     let t4 = Instant::now();
     let region_names = regions
@@ -1091,6 +1144,7 @@ pub fn scatter_world(
             excluded: cleared,
         },
         product,
+        calibration,
         seconds: [s(t0, t1), s(t1, t2), s(t2, t3), s(t3, t4)],
     })
 }
@@ -1168,6 +1222,9 @@ pub fn extra(
     match run {
         Ok(run) => {
             println!("worldgen flora: {}", summary_line(&run));
+            for w in calibration_warnings(&run) {
+                println!("worldgen flora: calibration: {w}");
+            }
             vec![("flora".into(), placements(&run))]
         }
         Err(e) => {
@@ -1184,6 +1241,12 @@ fn placed_per_group(run: &FloraRun) -> [usize; 4] {
         n[1 + p.key.layer as usize] += 1;
     }
     n
+}
+
+/// The run's calibration warnings (none when the kept set and its calibration were read).
+#[must_use]
+pub fn calibration_warnings(run: &FloraRun) -> &[String] {
+    run.calibration.as_ref().map_or(&[], |c| &c.warnings)
 }
 
 /// `212345 placements (rocks 0 of 0, canopy 1200 of 1500, ...), 3 rows / 312 models, budget 200000, stamps,
@@ -1254,6 +1317,25 @@ pub fn census_md(run: &FloraRun, guide: &Path, top: usize) -> String {
         let e = sp.hats.slope_deg.map_or(f64::NAN, |h| h.e_max);
         let refs: usize = sl.iter().map(Slot::count).sum();
         let _ = writeln!(md, "| {} | {:?} | {} | {refs} | {:.1}-{:.1} | {e:.0} |", sp.name, sp.layer, sl.len(), sp.size_min_m, sp.size_max_m);
+    }
+    if let Some(cal) = &run.calibration {
+        let _ = writeln!(
+            md,
+            "
+| class | target /ha | land ha | weight mean | scale g | reached /ha | steps | ceiling |
+|---|---:|---:|---:|---:|---:|---:|---|"
+        );
+        for c in cal.classes.iter().filter(|c| c.area_ha > 0.0) {
+            let _ = writeln!(
+                md,
+                "| {} | {:.0} | {:.0} | {:.3} | {:.2} | {:.0} | {} | {} |",
+                c.name, c.stems_per_ha, c.area_ha, c.weight_mean, c.scale, c.reached_per_ha, c.steps, c.ceiling
+            );
+        }
+        for w in &cal.warnings {
+            let _ = writeln!(md, "
+Calibration: {w}.");
+        }
     }
     let mut placed: BTreeMap<(u16, u32, u32), usize> = BTreeMap::new();
     for p in &run.plants {
