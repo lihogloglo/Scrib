@@ -191,8 +191,13 @@ deep, big blocks high. Loose rocks above `loose_slope_max_deg` drop; outcrop par
 
 **Adapter data (Bevyrrowind).** Rock rows and `[rock_units]` in `scatter_species.toml` for the six units of
 `worldgen/geology.toml`. **Learned** from the 33,017 rock references (`flora.rs:86-113`): a field-stone region prior,
-pose `align`, `offset_m`. **Authored:** classes per unit and context (basalt_flow: block, columnar, talus; tephra:
-scoria; capped_sediment: platy, slab), `rockfall`, size ranges. **The source's rock models stay** (owner 2026-11-26):
+pose `align`, `offset_m`. **Authored:** classes per unit and context, from the
+typology table (`rockgen.md` "(e) Typology", RG-9; talus / outcrop / field): basalt_flow `talus`, `jagged` /
+`columnar`, `block` / `jagged`, `crust_plate`; tuff `soft_block`, `block` / `soft_block` / `soft_block`, `cobble`;
+tephra `scoria` / none / `scoria`, `bomb`; capped_sediment `slab`, `platy` / `slab` / `platy`; coastal_basalt
+`column_segment`, `talus` / `columnar` / `beach_column`, `cobble`; alluvium `river_cobble` / none / `river_cobble`,
+`cobble` (classes that need RG-9c-g join as those rows land). Per weathering regime (frost, arid, semi-arid,
+temperate, wet; RG-9j) the entry lists and `field_stone_per_ha` may be overridden. `rockfall`, size ranges. **The source's rock models stay** (owner 2026-11-26):
 each learned model (`terrain_rock*`, rocks and menhirs of 14 m or more, `classify.rs:118-131`) is a pack-model entry
 with its bounds axis, learned scale range and learned count per region as weight; the library fills the sizes they
 do not cover. The mix is looked at again once the owner has seen generated rocks (WG-E3 check).
@@ -213,17 +218,84 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
 | WG-E2e | bounded-round competition, bucket grid | Scrib `sf_worldgen` (`scatter.rs`) | E2d | no winners closer than `R_ij`; g(r) ~0 below 0.8 R; tile alone; threads | same |
 | WG-E2f | lower layers by light, footprint obstacles | Scrib `sf_worldgen` (`scatter.rs`) | E2e | none in a trunk footprint; mean L higher than at uniform points | same |
 | WG-E2g | inland water exclusion, shore hat | Scrib `sf_worldgen` (`scatter.rs`) | E2f | nothing in lake, river, footprint, excluded cell | same |
-| WG-E2h | rank budget by group; v1 Bernoulli path deleted | Scrib `sf_worldgen` (`scatter.rs`) | E2g | budgets nest exactly; group shares; v1 tests ported | same + clippy dependents |
-| WG-E2i | adapter: species TOML, learned priors, four groups, product `Fields` | Scrib `mw_worldgen` (`flora.rs`), `bevyrrowind/worldgen/scatter_species.toml` | E2h, WG-E1c3, WG-V1b | `tests_flora` tile alone; region prior exact | `test -p mw_worldgen` |
+| WG-E2h | rank budget by group (v1 deletion moved to E2i) | Scrib `sf_worldgen` (`scatter.rs`) | E2g | budgets nest exactly; group shares; v1 tests ported | same + clippy dependents |
+| WG-E2i | adapter: species TOML, learned priors, four groups, product `Fields`; the v1 Bernoulli path deleted | Scrib `mw_worldgen` (`flora.rs`), `bevyrrowind/worldgen/scatter_species.toml` | E2h, WG-E1c3, WG-V1b | `tests_flora` tile alone; region prior exact | `test -p mw_worldgen` |
 | WG-E2j | hash-cached product in the guide folder, read at load | Scrib `sf_worldgen` (`scatter_product.rs`), `mw_worldgen` | E2i | same hash twice; seed change rebuilds; read == computed | same |
 | WG-E2m | measurement: stems/ha and cover per class, counts, seconds | Scrib `mw_worldgen` (test only) | E2j | `#[ignore = "measurement: scatter v2 counts and seconds"]` | ledger line |
 | WG-E3a | rock columns, `[rock_units]` table (entries: library class or pack model) | Scrib `sf_worldgen` (`scatter_species.rs`) | E2a | round trip; bad weight or unknown entry kind rejected | `test -p sf_worldgen` |
-| WG-E3b | talus candidates, Pareto sizes | Scrib `sf_worldgen` (`scatter_rocks.rs`) | E2e, E3a | size slope within 10 % of D; size-distance Spearman > 0.3 (beta 0.4), ~0 (beta 0); none above the shadow line; tile alone | same |
+| WG-E3b | talus candidates, Pareto sizes | Scrib `sf_worldgen` (`scatter_rocks.rs`) | E2e, E3a | size slope within 10 % of D; size-distance Spearman > 0.08 (beta 0.4; was 0.3, unreachable with the exponential run-out, see As built), rising with beta, ~0 (beta 0); none above the shadow line; tile alone | same |
 | WG-E3c | outcrop clusters, field stones | same file | E3b | children <= ratio x parent; g(r) > 1.5 at sigma; tile alone | same |
 | WG-E3d | rock layer first in the passes | Scrib `sf_worldgen` (`scatter.rs`) | E3c | no pair under `R_ij`; none on water, roads, footprints; no tree in a rock | same |
 | WG-E3e | mesh pick (both entry kinds) and pose | `scatter_rocks.rs` | E3d | entry shares within 3 sigma; no pack model outside its scale range; share 0 = library only; sink exact | same + clippy dependents |
 | WG-E3f | adapter rock rows, pack-model entries from the learned rock models, field-stone prior | Scrib `mw_worldgen` (`flora.rs`), `scatter_species.toml` | E3e, E2i, RG-2b | `tests_flora` tile alone; prior exact; every learned rock model is an entry with axis and scale range | `test -p mw_worldgen` |
 | WG-E3m | measurement: rocks/ha, size slope, share, seconds | `mw_worldgen` (test only) | E3f, E2j | `#[ignore = "measurement: rocks"]` | ledger line |
+
+## As built
+
+- **WG-E2a** (2026-11-26, `scatter_species.rs`): `SpeciesFile::parse_toml` / `to_toml` (exact round trip); `[params]`
+  = 12 declared `scatter.` values (a name left out keeps its default; stand thresholds strictly ordered, whole round
+  count), `[columns]` = 14 numeric columns (range inside the declared one, `species_declared`) + 6 `hat_*` columns,
+  `[classes."<name>"] stems_per_ha` over the 12 shipped class defaults, `[[species]]` rows (a value only in a declared
+  column; a left-out value takes the declared default, checked against the file's column range). 6 tests.
+- **WG-E2b** (2026-11-27, `scatter_fields.rs`): trait `Fields` (`sample(x, y) -> FieldSample`, `class_names`);
+  `NeutralFields` (one sample) and `GridFields` (f32 rasters in the guide frame, row 0 north, `check()`; bilinear, the
+  class by nearest sample, the aspect blended as a unit vector across north). `hat` (NaN -> 0, step hats exact);
+  `Suitability::new(species, class_names)` = minimum of the hats, 0 outside the class list. 6 tests.
+- **WG-E2c** (2026-11-27, `scatter_stand.rs`): `StandRules` (`density` = value noise mapped to [0, 1] x the best
+  canopy suitability, 0 with none; `class_of` by the three thresholds) and `StandMap::build(rules, fields, excluded,
+  rect)`: clearing nodes (mosaic or forced) on a world-aligned `field_step_m` grid grown by the band + one step,
+  `measure::distance_transform`, capped at `edge_band_m`, bilinear; `at` -> `StandPoint` (D, class, forced, distance,
+  edge band). 3 tests (partition on 1 km2; disc band: nodes exact vs brute force, width within one step on 64 rays; tile alone bitwise).
+- **WG-E2d** (2026-11-27, `scatter.rs` v2 section): `CandidateRules::candidates(fields, stand, rect)` per species and
+  parent tile (`scatter.tile_m`): `floor(kappa_max A + u)` parents thinned by suitability x stand x prior (canopy stand
+  = D, 0 in a clearing; lower layers 1 until E2f), Poisson offspring by inversion, Box-Muller offsets cut at 3 sigma,
+  background share `b` (suitability squared); `size_mark` (reverse J of rate `size_shape / range`; Weibull of scale
+  the range, truncated), canopy edge quantile x `edge_size_ratio`; `tile_rect` = tile + `(2k-1) R_max`, `halo_m`. 4 tests.
+- **WG-E2e** (2026-11-27, `scatter.rs` v2 competition): `compete(file, cands, rounds)` per layer; conflict when
+  `dist < R_ij = k_i r_i + k_j r_j` (`crown_k (r_i + r_j)` for one species, never past `R_max`); priority size, hash,
+  key; each round a rayon map (eligible and no higher eligible conflict wins; a winner's neighbours are out); CSR
+  bucket grid of cell `max(R_max, sqrt(area / n))`. `CandidateRules::tile_winners` = candidates over `tile_rect`,
+  compete, membership. 4 tests (grid == brute force; no pair under `R_ij`; rounds only add; g(<0.8 R) = 0; tile alone; threads).
+- **WG-E2f** (2026-11-27, `scatter.rs` v2 lower layers): `square_winners` / `tile_winners` run the layers in pass
+  order (candidates per layer over the square grown by `layer_grows`: `grow_l = max_m (grow_m + max(foot_l + foot_m,
+  crown_l)) + (2k - 1) R_max(l)`), each layer's winners added to a `Cover` (canopy crowns: `L = exp(-shade_per_crown
+  n)`; every stem `footprint_ratio x size`, new species column, Guess 0.01). Lower candidates: dominating intensity x
+  `(1 + edge_boost)`, kept at the point with `lerp(stol, 1, L) x (1 + edge_boost in band) / (1 + edge_boost)`; dropped
+  when their footprint overlaps an earlier stem. One CSR `Buckets` grid shared with the competition. 3 tests.
+- **WG-E2g** (2026-11-27, `scatter.rs` v2 water): `WaterMask::new(&GuideWater, water_margin_m)` / `sea` / dry
+  `Default`; `CandidateRules` gains `water` and `height`. Each instance is dropped at its own point in a forced clearing
+  (now every layer), on the sea, in a lake (holes are dry) or within the margin of a lake shore or river bank (the
+  river the swept discs of its interpolated half width, exact); offspring also by region prior 0 and the slope and shore
+  hats at the point. The shore hat reads `min(fields, exact inland distance)`. The margin also rings lakes. 2 tests.
+
+- **WG-E2h** (2026-11-27, `scatter.rs` v2 budget): `budget_rank(seed, key)` (its own hash stream) and
+  `budget_cut(seed, instances, budget, size_priority)`: per layer the `round(budget x n_l / n)` instances of smallest
+  `u / max(size mark, 0.1)^p`, ties by key (`select_nth`), all when `budget >= n`. v1 is kept until E2i: deleting it
+  breaks `mw_worldgen::flora` (it calls `Scatter`, `Learner`, `budget_keep`), which only E2i may rewrite. 4 tests
+  (v1's tile-alone, order and threads, slope, region and sea tests ported to four halo tiles; nest, shares, order).
+- **WG-E3a** (2026-11-27, `scatter_species.rs`): `[rocks.talus|outcrop|field]` rows (`size_min_m`, `size_max_m`
+  required, in the species columns; `sink_small`, `sink_large`, `align`) and `[rock_units."<unit>"]` (`field_stone_per_ha`,
+  `rockfall`; per context a list of `RockEntry`: `kind = "class"` (library class by name, resolved at E3e) or `"model"`
+  (`axis_m`, `scale_min..scale_max`); weight finite > 0, no repeat). Four rock columns in `rock_declared`. The scatter-wide
+  `rock.*` values are declared by the rows that use them (E3b-E3e). 2 tests (round trip; 23 refusals).
+- **WG-E3b** (2026-11-27, `scatter_rocks.rs`): `RockValues` (10 `scatter.rock.*` values in the file's `[params]`, new
+  `talus_child_mean` 4), trait `RockGround` (height, slope + aspect, cliff, unit name), `pareto_size`, `RockRules::
+  talus_candidates(ground, rect)`: parents per tile thinned to scarp cells x unit `rockfall`, Poisson blocks, run-out,
+  shadow line + loose slope; `RockKey` order, `source` kept. On a 60 m 80 deg scarp, 23k blocks: slope of N(>s) 1.64 /
+  2.06 / 3.03 for D 1.6 / 2 / 3; Spearman 0.014 / 0.120 / 0.214 at beta 0 / 0.4 / 1. The row's > 0.3 is not reachable
+  with exponential run-out (var ln E = pi^2/6 swamps beta^2 var ln s; simulated 0.12-0.24 over D 1-2), so the bar is
+  0.08 and rising with beta (field sorting is weak, V). 4 tests.
+- **WG-E3c** (2026-11-27, `scatter_rocks.rs`): `outcrop_candidates`, `field_candidates` (shared `for_parents`, Gaussian
+  offset truncated at 3 sigma). "Units with `outcrop`" = units whose `[rock_units]` table lists `outcrop` entries (the
+  adapter maps the geology flag). Parent = offspring 0, no loose-slope drop; debris cut at `ratio x s_parent` (none if
+  below `size_min_m`). Field: three new values (sigma 2 m, 5 stones a clump, slope hat full to 15 deg, 0 at the loose
+  limit). Plain fixture: 1334 parents, 7955 children all <= 0.4 x parent; g(0.5-1 sigma) outcrop 3.06, field 9.83;
+  6420 stones on 6400 expected. 3 tests.
+- **WG-E3d** (2026-11-27, `scatter.rs`): `CandidateRules.rocks: Option<RockLayer { rules, ground }>`; `square_layers` /
+  `tile_layers` -> `LayerWinners { rocks, plants }` (`square_winners` = the plants). Rocks run first over the square grown by
+  `rock_grow_m` = max over plant layers (`grow_l + s_max / 2 + foot_l`) + `(2k - 1) rock_k s_max`; dropped at their point in a
+  forced clearing or on water, one competition over the contexts (`scatter.rock.rock_k`, declared here), footprints `s / 2`
+  into `Cover` as obstacles. The rock budget group is not wired (`budget_cut` takes plants). 2 tests.
 
 ## Tunables
 
@@ -248,18 +320,20 @@ Prefix `scatter.`; source Guess unless noted. Species columns go in the file's `
 | species `crown_a_m`, `crown_b` | m, ratio | 0-5, 0-0.5 | 0.75, 0.2 | Brack and Wood form (V snippet) |
 | species `crown_k` | ratio | 0.3-1.2 | 0.8 | Guess (zone of influence, U) |
 | species `shade_tolerance` | ratio | 0-1 | 0.3 | Makowski `stol` form (V) |
+| species `footprint_ratio` | ratio | 0-0.5 | 0.01 | Guess (stem radius per metre of size; slenderness H/D 25-100, U) |
 | species hats (T, P, moisture, slope, altitude, water distance) | per driver | 4 values | open | Guess |
 | `rock.size_dim` D / `scarp_slope_deg` / `loose_slope_max_deg` | ratio / deg / deg | 1-3.5 / 40-75 / 30-60 | 2.0 / 50 / 45 | Turcotte, WG-R §4 (U) |
 | `rock.shadow_angle_deg` | deg | 15-35 | 27.5 | Evans and Hungr abstract (V) |
 | `rock.reach_max_m` / `fall_ell_m` / `sort_beta` | m / m / ratio | 20-400 / 2-100 / 0-1 | 150 / 15 / 0.4 | Guess |
-| `rock.talus_parent_per_ha` / `talus_spread_deg` | 1/ha / deg | 0-500 / 0-60 | 40 / 20 | Guess |
+| `rock.talus_parent_per_ha` / `talus_spread_deg` / `talus_child_mean` | 1/ha / deg / count | 0-500 / 0-60 / 0-40 | 40 / 20 / 4 | Guess (child mean added at E3b: the process needs it) |
 | `rock.outcrop_parent_per_ha`, `_parent_min_m`, `cluster_sigma_m`, `child_mean`, `child_size_ratio` | | 0-50, 1-40, 2-30, 0-40, 0.05-1 | 2, 4, 6, 8, 0.4 | Guess (WG-R sigma 3-15) |
+| `rock.field_cluster_sigma_m` / `field_child_mean` / `field_slope_full_deg` | m / count / deg | 0.5-20 / 1-40 / 0-45 | 2 / 5 / 15 | Guess (added at E3c: the clumps and the slope hat need them) |
 | `rock.rock_k` / `tilt_jitter_deg` | ratio / deg | 0.5-1.2 / 0-30 | 0.9 / 15 | WG-R (U) |
 | `rock.pack_model_share` | ratio | 0-1 | 0.5 | Guess; owner check WG-E3 (0 and 1 are the A/B arms) |
 | row `size_min_m`, `size_max_m`; `sink_small`, `sink_large` | m; ratio | 0.2-40; 0-0.6 | talus 0.4-12, outcrop 1-20, field 0.3-2; 0.35, 0.15 | Guess |
 | unit `field_stone_per_ha` / `rockfall` | 1/ha / ratio | 0-500 / 0-4 | 20 / 1 | Guess |
 
-Removed in E2h: `clump_wavelength_m`, `clump_strength`, `occupancy_prior`, `occupancy_max`, slope classes, bands.
+Removed with the v1 path (E2i): `clump_wavelength_m`, `clump_strength`, `occupancy_prior`, `occupancy_max`, slope classes, bands.
 
 ## Performance
 
