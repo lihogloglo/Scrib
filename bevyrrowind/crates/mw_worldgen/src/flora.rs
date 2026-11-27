@@ -6,7 +6,8 @@
 //! **What scatters:** the references [`crate::classify`] calls nature (the ones the 10× world drops): flora
 //! (`/flora_`, `/f/flora` meshes, harvestable plants included) and rocks (`terrain_rock*` and large rocks). Flora
 //! base records become the **models** of the species file's rows ([`SPECIES_FILE`]: one canopy tree, understorey,
-//! ground); rocks are learned and counted, and scatter with the rock layer's adapter rows (WG-E3f).
+//! ground); rock base records become learned rock models ([`Learned::rocks`]), pack-model entries of the rock units
+//! next to the library classes ([`rocks`], WG-E3f.1; the passes run the rock layer from WG-E3f.4).
 //!
 //! **Learning, on the source's own terrain** ([`learn`]): land samples are the `LAND` mosaic's dry samples with a
 //! region (one per 1.83 m vertex); references by their position (bilinear), slope by central differences, their up
@@ -70,6 +71,8 @@ use crate::classify::{Class, RefInfo, classify};
 
 #[path = "flora_towns.rs"]
 pub mod towns;
+#[path = "flora_rocks.rs"]
+pub mod rocks;
 use towns::{TownCensus, TownMask, TownParams};
 use crate::{DumpError, Mosaic, RegionMap, assemble, region_map};
 
@@ -274,8 +277,13 @@ pub struct Learned {
     pub wet_species: BTreeMap<String, usize>,
     pub skipped_outside: usize,
     pub skipped_no_region: usize,
-    /// Source references learned, per group (rocks: counted; the rock layer's adapter places them, WG-E3f).
+    /// Source references learned, per group.
     pub learned: [usize; 2],
+    /// The learned rock models (WG-E3f.1): one per rock base record, its reference in [`Self::reps`] (after the
+    /// rows' models); [`rocks::rock_entries`] makes them pack-model entries of the rock units.
+    pub rocks: Vec<Slot>,
+    /// Per region: rock references per m² of the region's dry source land ([`rocks::rock_prior`]).
+    pub rock_density: Vec<f64>,
 }
 
 /// One source reference on dry land in a region.
@@ -287,6 +295,9 @@ struct Obs {
     normal: [f32; 3],
     offset_m: f32,
 }
+
+/// A base record's first reference and its observations.
+type Seen<'a> = (&'a SourceRef, Vec<Obs>);
 
 fn median(v: &mut [f32]) -> f32 {
     if v.is_empty() {
@@ -420,8 +431,9 @@ pub fn learn(m: &Mosaic, regions: &RegionMap, refs: &[SourceRef], authored: &Spe
             }
         }
     }
-    let mut index: BTreeMap<&str, usize> = BTreeMap::new();
-    let mut seen: Vec<(&SourceRef, Vec<Obs>)> = Vec::new();
+    // Flora and rock base records, each in first-seen order.
+    let (mut index, mut rock_index): (BTreeMap<&str, usize>, BTreeMap<&str, usize>) = (BTreeMap::new(), BTreeMap::new());
+    let (mut seen, mut rock_seen): (Vec<Seen<'_>>, Vec<Seen<'_>>) = (Vec::new(), Vec::new());
     let (mut wet, mut outside, mut no_region, mut learned) = ([0usize; 2], 0, 0, [0usize; 2]);
     let mut wet_species = BTreeMap::new();
     for s in refs {
@@ -444,9 +456,7 @@ pub fn learn(m: &Mosaic, regions: &RegionMap, refs: &[SourceRef], authored: &Spe
             continue;
         }
         learned[group] += 1;
-        if s.group != GROUP_FLORA {
-            continue;
-        }
+        let (index, seen) = if s.group == GROUP_FLORA { (&mut index, &mut seen) } else { (&mut rock_index, &mut rock_seen) };
         let next = seen.len();
         let id = *index.entry(s.key.as_str()).or_insert(next);
         if id == next {
@@ -471,15 +481,22 @@ pub fn learn(m: &Mosaic, regions: &RegionMap, refs: &[SourceRef], authored: &Spe
     let mut k = kept.iter();
     file.species.retain(|_| *k.next().unwrap_or(&false));
     slots.retain(|s| !s.is_empty());
+    let rocks: Vec<Slot> = rock_seen
+        .iter()
+        .map(|(rep, obs)| {
+            let s = slot(reps.len(), rep.extent_m.unwrap_or(UNKNOWN_SIZE_M), obs, nreg, prm);
+            reps.push((*rep).clone());
+            s
+        })
+        .collect();
     let sample_m2 = g.spacing * g.spacing;
+    let per_land = |n: usize, r: usize| if land[r] == 0 { 0.0 } else { n as f64 / (land[r] as f64 * sample_m2) };
+    let rock_density = (0..nreg).map(|r| per_land(rocks.iter().map(|s| s.per_region[r]).sum(), r)).collect();
     let density = slots
         .iter()
         .map(|sl| {
             (0..nreg)
-                .map(|r| {
-                    let n: usize = sl.iter().map(|s| s.per_region[r]).sum();
-                    if land[r] == 0 { 0.0 } else { n as f64 / (land[r] as f64 * sample_m2) }
-                })
+                .map(|r| per_land(sl.iter().map(|s| s.per_region[r]).sum(), r))
                 .collect()
         })
         .collect();
@@ -493,6 +510,8 @@ pub fn learn(m: &Mosaic, regions: &RegionMap, refs: &[SourceRef], authored: &Spe
         skipped_outside: outside,
         skipped_no_region: no_region,
         learned,
+        rocks,
+        rock_density,
     }
 }
 

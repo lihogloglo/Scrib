@@ -117,3 +117,62 @@ crown_k = 0.8
 shade_tolerance = 0.8
 footprint_ratio = 0.0
 hat_slope_deg = [0, 0, 40, 50]
+
+# ---------------------------------------------------------------- rocks (WG-E3f.1)
+# The rock layer's rows (spec worldgen-scatter.md "Rocks (WG-E3)", sizes = longest axis, its Tunables Guesses) and
+# one [rock_units] table per unit of geology.toml. Classes per unit and context follow rockgen.md "(e) Typology"
+# (RG-9; talus / outcrop / field), today's nine library classes only (sf_rockgen classes.rs): a class that needs
+# RG-9b (soft_block, crust_plate, bomb, column_segment, beach_column, river_cobble) or a parameter row (RG-9c-f:
+# tafoni, bedded, entablature, spatter) is named in the comment and stood in by its nearest built class until it
+# lands. Units with `outcrop = false` (tephra, alluvium) have no outcrop context. `field_stone_per_ha` and
+# `rockfall` keep their declared defaults (Guess). At run time the adapter adds the source's learned rock models
+# (`terrain_rock*`, rocks of 14 m or more) to every context a unit lists, as pack-model entries weighted by their
+# learned count in the unit's regions (mw_worldgen::flora::rock_entries; owner 2026-11-26: the pack's rocks stay).
+
+[rocks.talus]
+size_min_m = 0.4
+size_max_m = 12
+
+[rocks.outcrop]
+size_min_m = 1
+size_max_m = 20
+
+[rocks.field]
+size_min_m = 0.3
+size_max_m = 2
+
+[rock_units.basalt_flow]
+# talus: talus, jagged; outcrop: columnar parent, block; field: jagged (clinker), crust_plate (RG-9b -> slab).
+talus = [{ kind = "class", class = "talus", weight = 1 }, { kind = "class", class = "jagged", weight = 1 }]
+outcrop = [{ kind = "class", class = "columnar", weight = 1 }, { kind = "class", class = "block", weight = 1 }]
+field = [{ kind = "class", class = "jagged", weight = 1 }, { kind = "class", class = "slab", weight = 1 }]
+
+[rock_units.tuff]
+# talus: soft_block (RG-9b -> block), block; outcrop: soft_block (-> block; tafoni RG-9c); field: soft_block
+# (-> block), cobble.
+talus = [{ kind = "class", class = "block", weight = 1 }]
+outcrop = [{ kind = "class", class = "block", weight = 1 }]
+field = [{ kind = "class", class = "block", weight = 1 }, { kind = "class", class = "cobble", weight = 1 }]
+
+[rock_units.tephra]
+# talus: scoria; no outcrop; field: scoria, bomb (RG-9b -> cobble), spatter (RG-9f, none yet).
+talus = [{ kind = "class", class = "scoria", weight = 1 }]
+field = [{ kind = "class", class = "scoria", weight = 1 }, { kind = "class", class = "cobble", weight = 1 }]
+
+[rock_units.capped_sediment]
+# talus: slab, platy; outcrop: slab parent, bedded (RG-9d, none yet); field: platy.
+talus = [{ kind = "class", class = "slab", weight = 1 }, { kind = "class", class = "platy", weight = 1 }]
+outcrop = [{ kind = "class", class = "slab", weight = 1 }]
+field = [{ kind = "class", class = "platy", weight = 1 }]
+
+[rock_units.coastal_basalt]
+# talus: column_segment (RG-9b -> columnar), talus; outcrop: columnar, entablature (RG-9e, none yet); field:
+# beach_column (RG-9b -> cobble), cobble.
+talus = [{ kind = "class", class = "columnar", weight = 1 }, { kind = "class", class = "talus", weight = 1 }]
+outcrop = [{ kind = "class", class = "columnar", weight = 1 }]
+field = [{ kind = "class", class = "cobble", weight = 1 }]
+
+[rock_units.alluvium]
+# talus: river_cobble (RG-9b -> cobble); no outcrop; field: river_cobble (-> cobble), cobble.
+talus = [{ kind = "class", class = "cobble", weight = 1 }]
+field = [{ kind = "class", class = "cobble", weight = 1 }]

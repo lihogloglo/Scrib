@@ -119,11 +119,14 @@ fn learning_fills_the_rows_models_sizes_pose_and_slope() {
     let prm = Params::default();
     let l = learned(&m);
     assert_eq!((l.skipped_wet, l.skipped_outside, l.skipped_no_region), ([2, 0], 1, 0));
-    assert_eq!(l.learned, [50, 5], "rocks are counted, not slotted");
+    assert_eq!(l.learned, [50, 5]);
     let names: Vec<&str> = l.file.species.iter().map(|s| s.name.as_str()).collect();
     assert_eq!(names, ["tree", "flora"], "flora_a (3-3.9 m) is a tree, flora_b (0.5 m) ground flora, no shrub");
     assert_eq!(l.slots.iter().map(Vec::len).collect::<Vec<_>>(), [1, 1]);
-    assert_eq!(l.reps.len(), 2, "kelp and rocks never reached a row");
+    assert_eq!(l.reps.len(), 3, "kelp never reached a row; the rock model's reference comes after the rows'");
+    assert_eq!(l.rocks.len(), 1, "one rock base record, one learned rock model (WG-E3f.1)");
+    assert_eq!(l.reps[l.rocks[0].rep].key, "terrain_rock_b");
+    assert_eq!((l.rocks[0].count(), l.rocks[0].scale, l.rocks[0].extent_m), (5, [2.0, 2.0], 6.0));
     let (tree, fl) = (&l.file.species[0], &l.file.species[1]);
     assert!((tree.size_min_m - 3.0).abs() < 1e-5 && (tree.size_max_m - 3.0 * 1.29).abs() < 1e-5, "{tree:?}");
     // flora_b's 0.5 m stays inside the row's column range [0.2, 40]; min = max is a fixed size.
@@ -139,6 +142,93 @@ fn learning_fills_the_rows_models_sizes_pose_and_slope() {
     let land = f64::from(61 * 65) * sp * sp;
     assert!((l.density[0][1] - 30.0 / land).abs() < 1e-12 && (l.density[1][1] - 20.0 / land).abs() < 1e-12);
     assert!(l.density[0][0].abs() < f64::EPSILON, "region 0 is none");
+    assert!((l.rock_density[1] - 5.0 / land).abs() < 1e-12 && l.rock_density[0].abs() < f64::EPSILON);
+}
+
+/// Library classes built today (`sf_rockgen` `classes.rs` `CLASSES`; `mw_worldgen` does not depend on `sf_rockgen`).
+const BUILT_CLASSES: [&str; 9] = ["block", "platy", "cobble", "chipped", "talus", "jagged", "columnar", "scoria", "slab"];
+
+fn geology_table() -> sf_worldgen::geology::GeologyTable {
+    crate::geology::AdapterGeology::from_toml(include_str!("../../../worldgen/geology.toml")).unwrap().table
+}
+
+/// WG-E3f.1: the shipped rock units are geology.toml's units, name only built library classes, and have an outcrop
+/// context exactly when their geology unit has outcrops.
+#[test]
+fn shipped_rock_units_are_the_geology_units_with_built_classes() {
+    use sf_worldgen::scatter_species::{RockContext, RockEntry};
+    let f = shipped();
+    let geo = geology_table();
+    let units: Vec<&str> = f.rock_units.keys().map(String::as_str).collect();
+    let mut names: Vec<&str> = geo.units.iter().map(|u| u.name.as_str()).collect();
+    names.sort_unstable();
+    assert_eq!(units, names);
+    assert_eq!(f.rocks.len(), 3, "talus, outcrop and field rows");
+    for u in &geo.units {
+        let ru = &f.rock_units[&u.name];
+        assert_eq!(!ru.entries(RockContext::Outcrop).is_empty(), u.outcrop, "{}: outcrop context", u.name);
+        assert!(!ru.entries(RockContext::Talus).is_empty() && !ru.entries(RockContext::Field).is_empty(), "{}", u.name);
+        for e in ru.entries.values().flatten() {
+            let RockEntry::Class { class, .. } = e else { panic!("{}: the shipped file names no model", u.name) };
+            assert!(BUILT_CLASSES.contains(&class.as_str()), "{}: class {class:?} is not built", u.name);
+        }
+    }
+}
+
+/// WG-E3f.1: every learned rock model becomes a pack-model entry with its bounds axis and learned scale range in
+/// every context its units list, weighted by its count x the region's geology unit share; the file stays valid.
+#[test]
+fn learned_rock_models_become_entries_weighted_by_unit_share() {
+    use sf_worldgen::scatter_species::{RockContext, RockEntry};
+    let m = mosaic();
+    let geo = geology_table();
+    let models = |l: &Learned, unit: &str| -> Vec<(RockContext, RockEntry)> {
+        l.file.rock_units[unit]
+            .entries
+            .iter()
+            .flat_map(|(c, v)| v.iter().filter(|e| matches!(e, RockEntry::Model { .. })).map(|e| (*c, e.clone())))
+            .collect()
+    };
+    let entry = |weight: f64| RockEntry::Model { model: "terrain_rock_b".into(), axis_m: 6.0, scale_min: 2.0, scale_max: 2.0, weight };
+    // A named region: Bitter Coast = alluvium 0.85, coastal_basalt 0.15; 5 references.
+    let mut named = regions();
+    named.legend[1].name = "Bitter Coast Region".into();
+    let mut l = learned(&m);
+    let before = l.file.rock_units.clone();
+    assert_eq!(flora::rocks::rock_entries(&mut l, &named, &geo), 2 + 3);
+    let (t, o, fl) = (RockContext::Talus, RockContext::Outcrop, RockContext::Field);
+    let near = |got: Vec<(RockContext, RockEntry)>, want: Vec<(RockContext, f64)>| {
+        assert_eq!(got.len(), want.len(), "{got:?}");
+        for ((gc, ge), (wc, w)) in got.iter().zip(&want) {
+            let RockEntry::Model { weight, .. } = ge else { unreachable!() };
+            assert_eq!(*gc, *wc);
+            assert!((weight - w).abs() < 1e-12, "{weight} vs {w}");
+            assert_eq!(*ge, entry(*weight));
+        }
+    };
+    near(models(&l, "alluvium"), vec![(t, 5.0 * 0.85), (fl, 5.0 * 0.85)]);
+    near(models(&l, "coastal_basalt"), vec![(t, 5.0 * 0.15), (o, 5.0 * 0.15), (fl, 5.0 * 0.15)]);
+    for u in ["basalt_flow", "tuff", "tephra", "capped_sediment"] {
+        assert_eq!(l.file.rock_units[u], before[u], "{u}: no share in the region, no entry");
+    }
+    let back = SpeciesFile::parse_toml(&l.file.to_toml().unwrap()).unwrap();
+    assert_eq!(back.rock_units, l.file.rock_units, "the entries pass the file's checks");
+    // No region row: the default shares (tuff 0.5, alluvium 0.5).
+    let mut l = learned(&m);
+    assert_eq!(flora::rocks::rock_entries(&mut l, &regions(), &geo), 3 + 2);
+    near(models(&l, "tuff"), vec![(t, 2.5), (o, 2.5), (fl, 2.5)]);
+    near(models(&l, "alluvium"), vec![(t, 2.5), (fl, 2.5)]);
+}
+
+/// WG-E3f.1: the field-stone prior on a hand table: D = (0, 2, 6), land a = (0, 3, 1) -> M = 12 / 4 = 3.
+#[test]
+fn rock_prior_is_the_density_over_its_land_mean() {
+    let land = [0, 3, 1];
+    let p = flora::rocks::rock_prior(&[0.0, 2.0, 6.0], &land);
+    assert_eq!(p, vec![0.0, 2.0 / 3.0, 2.0]);
+    let mean = p.iter().zip(land).map(|(v, a)| v * a as f64).sum::<f64>() / 4.0;
+    assert!((mean - 1.0).abs() < 1e-12, "{mean}");
+    assert_eq!(flora::rocks::rock_prior(&[0.0, 0.0], &[0, 5]), vec![0.0, 0.0], "no rocks anywhere: prior 0");
 }
 
 /// The region prior on a hand table: two regions, two classes plus none. Row densities D = (0, 2, 6) per region;

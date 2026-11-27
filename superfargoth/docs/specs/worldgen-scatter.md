@@ -343,8 +343,9 @@ tephra `scoria` / none / `scoria`, `bomb`; capped_sediment `slab`, `platy` / `sl
 `cobble` (classes that need RG-9c-g join as those rows land). Per weathering regime (frost, arid, semi-arid,
 temperate, wet; RG-9j) the entry lists and `field_stone_per_ha` may be overridden. `rockfall`, size ranges. **The source's rock models stay** (owner 2026-11-26):
 each learned model (`terrain_rock*`, rocks and menhirs of 14 m or more, `classify.rs:118-131`) is a pack-model entry
-with its bounds axis, learned scale range and learned count per region as weight; the library fills the sizes they
-do not cover. The mix is looked at again once the owner has seen generated rocks (WG-E3 check).
+with its bounds axis, learned scale range and learned count as weight; entries are per unit, so a region's count
+reaches a unit through its `geology.toml` unit shares, `w(u) = sum_r count(r) share(r, u)` (the shares the geology map
+draws its units from; E3f.1, `flora_rocks.rs`); the library fills the sizes they do not cover. The mix is looked at again once the owner has seen generated rocks (WG-E3 check).
 
 ## Slices
 
@@ -382,8 +383,11 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
 | WG-E3c | outcrop clusters, field stones | same file | E3b | children <= ratio x parent; g(r) > 1.5 at sigma; tile alone | same |
 | WG-E3d | rock layer first in the passes | Scrib `sf_worldgen` (`scatter.rs`) | E3c | no pair under `R_ij`; none on water, roads, footprints; no tree in a rock | same |
 | WG-E3e | mesh pick (both entry kinds) and pose | `scatter_rocks.rs` | E3d | entry shares within 3 sigma; no pack model outside its scale range; share 0 = library only; sink exact | same + clippy dependents |
-| WG-E3f | adapter rock rows, pack-model entries from the learned rock models, field-stone prior | Scrib `mw_worldgen` (`flora.rs`), `scatter_species.toml` | E3e, E2i, RG-2b | `tests_flora` tile alone; prior exact; every learned rock model is an entry with axis and scale range | `test -p mw_worldgen` |
-| WG-E3m | measurement: rocks/ha, size slope, share, seconds | `mw_worldgen` (test only) | E3f, E2j | `#[ignore = "measurement: rocks"]` | ledger line |
+| WG-E3f.1 | adapter rock rows and units, learned rock models as pack-model entries (weight by unit share), field-stone prior | Scrib `mw_worldgen` (`flora.rs` `learn`, `flora_rocks.rs`), `scatter_species.toml` | E3e, E2i | shipped units == geology units, built classes only; every learned rock model an entry with axis, scale range, exact weight; prior exact, mean 1 | `test -p mw_worldgen` |
+| WG-E3f.2 | field-stone prior hook on the parent intensity (`None` == today) | Scrib `sf_worldgen` (`scatter_rocks.rs`) | E3f.1 | tile alone; prior 0.5 halves within 3 sigma; `None` bitwise | `test -p sf_worldgen` + clippy dependents |
+| WG-E3f.3 | game `RockGround`: `geology/` product, else the region's largest unit share | Scrib `mw_worldgen` (`flora_rocks.rs`) | E3f.1 | product unit and cliff exact; region default without it; tile alone | `test -p mw_worldgen` |
+| WG-E3f.4 | wiring: rock layer in the passes, `pick` at load, Model rocks to `extra`, library rocks kept in `FloraRun`, product inputs | Scrib `mw_worldgen` (`flora.rs`) | E3f.2, E3f.3 | tile alone; share 0 no Model placement; rocks counted per group | `test -p mw_worldgen` + clippy `bevyrrowind` |
+| WG-E3m | measurement: rocks/ha, size slope, share, seconds | `mw_worldgen` (test only) | E3f.4, E2j | `#[ignore = "measurement: rocks"]` | ledger line |
 
 ## As built
 
@@ -423,6 +427,11 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
   `rock_pack_model_share`, declared `scatter.rock.*` load values out of the product hash): pick + pose at load, a pure
   function of seed, key, size and ground; unit read at the parent (as the candidates); entry kind first, then weight;
   variant raw hash (reader mod N); `sink` a share of the mesh's short axis (the reader knows the axis). Not yet called.
+- **WG-E3f.1** (2026-11-27, `scatter_species.toml` rock rows + six `[rock_units]`; `mw_worldgen` `flora.rs` `learn` ->
+  `Learned::rocks` (a `Slot` per rock base record, its rep after the rows') and `rock_density`; `flora_rocks.rs`
+  `unit_shares`, `rock_entries`, `rock_prior`): RG-9b names stood in by the nearest built class (TOML comments); model
+  entry name = base record id (two records may share a mesh); weight by unit share as "Adapter data". Not called by
+  the passes yet (E3f.4); the shipped file's rock rows change the product hash, so a product rebuilds once.
 
 ## Tunables
 
