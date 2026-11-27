@@ -277,3 +277,56 @@ fn the_budget_keeps_smallest_entry_first_so_large_instances_first() {
     let mean_u = won.iter().map(|c| budget_rank(SEED, &c.key)).sum::<f64>() / won.len() as f64;
     assert!((mean_u - 0.5).abs() < 0.02, "mean rank {mean_u}");
 }
+
+/// WG-E2i.3: the four groups of pass 10. Synthetic rocks beside the fixture's plants: each group (rocks, canopy,
+/// understorey, ground) keeps `round(budget x n_g / n)`, budgets nest, the rocks' cut is the same on reversed input,
+/// and with no rocks the plants' cut is [`budget_cut`]'s.
+#[test]
+fn the_rock_group_keeps_its_share_beside_the_plant_layers() {
+    use crate::scatter_rocks::{RockCandidate, RockKey};
+    use crate::scatter_species::RockContext;
+    let fx = Fixture::new();
+    let plants = fx.whole();
+    let contexts = [RockContext::Talus, RockContext::Outcrop, RockContext::Field];
+    let rocks: Vec<RockCandidate> = (0..3000u32)
+        .map(|i| RockCandidate {
+            key: RockKey { context: contexts[(i % 3) as usize], tile: ((i % 7) as i32, 0), parent: i / 21, offspring: i % 21 },
+            pos: [f64::from(i % 50), f64::from(i / 50)],
+            size_m: 0.3 + f64::from(i % 17),
+            tiebreak: u64::from(i),
+            source: [0.0, 0.0],
+        })
+        .collect();
+    let w = LayerWinners { rocks, plants };
+    let n = w.rocks.len() + w.plants.len();
+    let mut previous: Option<(Vec<bool>, Vec<bool>)> = None;
+    for b in [0.0, 10.0, 500.0, (n / 4) as f64, (n / 2) as f64, (n - 1) as f64, n as f64] {
+        let (rk, pk) = budget_cut_layers(SEED, &w, b, 1.0);
+        assert_eq!((rk.len(), pk.len()), (w.rocks.len(), w.plants.len()));
+        let want = |n_g: usize| if b >= n as f64 { n_g } else { ((b * n_g as f64 / n as f64).round() as usize).min(n_g) };
+        assert_eq!(rk.iter().filter(|&&k| k).count(), want(w.rocks.len()), "rocks at budget {b}");
+        for l in [Layer::Canopy, Layer::Understorey, Layer::Ground] {
+            let n_l = w.plants.iter().filter(|c| c.key.layer == l).count();
+            let got = w.plants.iter().zip(&pk).filter(|(c, k)| **k && c.key.layer == l).count();
+            assert_eq!(got, want(n_l), "{l:?} at budget {b}");
+        }
+        if let Some((pr, pp)) = &previous {
+            assert!(pr.iter().zip(&rk).chain(pp.iter().zip(&pk)).all(|(a, b)| !a || *b), "budget {b} nests");
+        }
+        previous = Some((rk, pk));
+    }
+    // Order independent: the reversed rocks keep the same keys.
+    let b = (n / 3) as f64;
+    let kept = |w: &LayerWinners| {
+        let (rk, _) = budget_cut_layers(SEED, w, b, 1.0);
+        let mut k: Vec<RockKey> = w.rocks.iter().zip(rk).filter(|x| x.1).map(|x| x.0.key).collect();
+        k.sort_unstable();
+        k
+    };
+    let mut rev = w.clone();
+    rev.rocks.reverse();
+    assert_eq!(kept(&w), kept(&rev));
+    // No rocks: the plants' cut alone.
+    let only = LayerWinners { rocks: Vec::new(), plants: w.plants.clone() };
+    assert_eq!(budget_cut_layers(SEED, &only, b, 1.0).1, budget_cut(SEED, &w.plants, b, 1.0));
+}

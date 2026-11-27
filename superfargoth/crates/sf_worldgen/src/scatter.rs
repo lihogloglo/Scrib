@@ -34,9 +34,9 @@ use rayon::prelude::*;
 use crate::filter::Declared;
 use crate::perturb::value_noise;
 use crate::scatter_fields::{FieldSample, Fields, Suitability, hat};
-use crate::scatter_rocks::{RockCandidate, RockGround, RockRules};
+use crate::scatter_rocks::{RockCandidate, RockGround, RockKey, RockRules};
 use crate::scatter_species::{Layer, SizeLaw, Species as SpeciesRow, SpeciesFile};
-use crate::scatter_stand::{StandClass, StandMap};
+use crate::scatter_stand::{StandClass, StandMap, StandRules};
 use crate::water::GuideWater;
 
 #[cfg(test)]
@@ -1302,6 +1302,44 @@ impl CandidateRules<'_> {
     pub fn tile_winners(&self, fields: &dyn Fields, stand: &StandMap, tile: (i32, i32)) -> Vec<Candidate> {
         self.square_winners(fields, stand, self.tile_square(tile))
     }
+
+    /// The tiles whose squares meet `rect = [x0, y0, x1, y1]`, row by row (south first).
+    // Tile indices of world metres.
+    #[allow(clippy::cast_possible_truncation)]
+    #[must_use]
+    pub fn tiles(&self, rect: [f64; 4]) -> Vec<(i32, i32)> {
+        let t = self.tile_m;
+        let (tx0, ty0) = ((rect[0] / t).floor() as i32, (rect[1] / t).floor() as i32);
+        let (tx1, ty1) = ((rect[2] / t).ceil() as i32, (rect[3] / t).ceil() as i32);
+        (ty0..ty1.max(ty0 + 1)).flat_map(|ty| (tx0..tx1.max(tx0 + 1)).map(move |tx| (tx, ty))).collect()
+    }
+
+    /// Every layer's winners over the whole tiles of `tiles` (tiles in parallel, each with its own stand map over
+    /// [`Self::tile_rect`], `excluded` the forced clearings), concatenated in `tiles` order: the same on any thread
+    /// count, and each tile the same as built alone.
+    #[must_use]
+    pub fn run_tiles(
+        &self,
+        fields: &dyn Fields,
+        stand: &StandRules<'_>,
+        excluded: &(dyn Fn(f64, f64) -> bool + Sync),
+        tiles: &[(i32, i32)],
+    ) -> LayerWinners {
+        let per: Vec<LayerWinners> = tiles
+            .par_iter()
+            .map(|&tile| {
+                let rules = StandRules { values: stand.values, seed: stand.seed, canopy: stand.canopy };
+                let map = StandMap::build(rules, fields, excluded, self.tile_rect(tile));
+                self.tile_layers(fields, &map, tile)
+            })
+            .collect();
+        let mut out = LayerWinners::default();
+        for w in per {
+            out.rocks.extend(w.rocks);
+            out.plants.extend(w.plants);
+        }
+        out
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1744,8 +1782,8 @@ impl WaterMask {
 // Scatter v2 rank budget (spec `worldgen-scatter.md` "Design" 10; slice WG-E2h). Every kept instance has a hashed
 // rank `u` in [0, 1), a pure function of the seed and its key ([`budget_rank`]). It is kept when
 // `u < min(1, t_g size^p)` (`p = scatter.size_priority`, size = its size mark), one threshold `t_g` per group (the
-// layer: canopy, understorey, ground; rocks join with WG-E3). An instance enters at `t = u / size^p`, so the cut
-// keeps, per group, the `round(budget x n_g / n)` instances of smallest entry (ties by key): each group keeps its
+// layer: canopy, understorey, ground; and rocks, [`budget_cut_layers`], WG-E2i.3). An instance enters at
+// `t = u / size^p`, so the cut keeps, per group, the `round(budget x n_g / n)` instances of smallest entry (ties by key): each group keeps its
 // share of the full set, large instances first, and a larger budget keeps a superset (the budgets nest exactly,
 // the smallest cut first; gaps are left open, nothing re-competes, LOD-style). Above the full count every instance
 // is kept. The cut runs at load on the kept set (`--set scatter.budget=N` needs no rebuild).
@@ -1766,21 +1804,43 @@ pub fn budget_rank(seed: u64, key: &CandidateKey) -> f64 {
     unit(hash_k(base, (u64::from(key.parent) << 32) | u64::from(key.offspring), 0))
 }
 
-/// Which of `instances` the budget keeps, in input order ([module section](self): one cut per layer, each layer
-/// `round(budget x n_layer / n)` instances of smallest `budget_rank / max(size, 0.1)^size_priority`, ties by key).
-/// Every instance when `budget >= n`. Exact: a larger budget keeps a superset, on any input order.
+/// Salt of the rock budget rank stream (its own, beside the plants').
+// tunables: const (hash salt, not a value)
+const ROCK_RANK_SALT: u64 = 0x5c1d_2d00_0000_3e2d;
+
+/// The budget rank of a rock instance, in `[0, 1)`: a hash of (seed, parent tile, context, parent, offspring), its
+/// own stream (WG-E2i.3: the rock group of pass 10).
+#[must_use]
+pub fn rock_budget_rank(seed: u64, key: &RockKey) -> f64 {
+    let base = stream(seed ^ ROCK_RANK_SALT, key.tile.0, key.tile.1, key.context as u32);
+    unit(hash_k(base, (u64::from(key.parent) << 32) | u64::from(key.offspring), 0))
+}
+
+/// The budget group of a plant layer (the rock group is 0).
+fn layer_group(layer: Layer) -> u8 {
+    match layer {
+        Layer::Canopy => 1,
+        Layer::Understorey => 2,
+        Layer::Ground => 3,
+    }
+}
+
+/// The cut over `entries` = (group, entry, index) of `n` instances: per group the `round(budget x n_g / n)` of
+/// smallest entry, ties by `tie` on the indices (the keys: order independent).
 // Counts of instances: far under 2^52.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
-#[must_use]
-pub fn budget_cut(seed: u64, instances: &[Candidate], budget: f64, size_priority: f64) -> Vec<bool> {
-    let n = instances.len();
+fn cut_groups(
+    n: usize,
+    budget: f64,
+    entries: Vec<(u8, f64, usize)>,
+    tie: &dyn Fn(usize, usize) -> std::cmp::Ordering,
+) -> Vec<bool> {
     if budget >= n as f64 {
         return vec![true; n];
     }
-    let mut groups: BTreeMap<Layer, Vec<(f64, usize)>> = BTreeMap::new();
-    for (i, c) in instances.iter().enumerate() {
-        let entry = budget_rank(seed, &c.key) / c.size_m.max(BUDGET_SIZE_FLOOR_M).powf(size_priority);
-        groups.entry(c.key.layer).or_default().push((entry, i));
+    let mut groups: BTreeMap<u8, Vec<(f64, usize)>> = BTreeMap::new();
+    for (g, e, i) in entries {
+        groups.entry(g).or_default().push((e, i));
     }
     let mut keep = vec![false; n];
     for members in groups.values_mut() {
@@ -1788,9 +1848,7 @@ pub fn budget_cut(seed: u64, instances: &[Candidate], budget: f64, size_priority
         if k == 0 {
             continue;
         }
-        let order = |a: &(f64, usize), b: &(f64, usize)| {
-            a.0.total_cmp(&b.0).then(instances[a.1].key.cmp(&instances[b.1].key))
-        };
+        let order = |a: &(f64, usize), b: &(f64, usize)| a.0.total_cmp(&b.0).then(tie(a.1, b.1));
         if k < members.len() {
             members.select_nth_unstable_by(k - 1, order);
         }
@@ -1799,4 +1857,42 @@ pub fn budget_cut(seed: u64, instances: &[Candidate], budget: f64, size_priority
         }
     }
     keep
+}
+
+/// The budget entry `rank / max(size, 0.1)^p`.
+fn budget_entry(rank: f64, size_m: f64, size_priority: f64) -> f64 {
+    rank / size_m.max(BUDGET_SIZE_FLOOR_M).powf(size_priority)
+}
+
+/// Which of `instances` the budget keeps, in input order ([module section](self): one cut per layer, each layer
+/// `round(budget x n_layer / n)` instances of smallest `budget_rank / max(size, 0.1)^size_priority`, ties by key).
+/// Every instance when `budget >= n`. Exact: a larger budget keeps a superset, on any input order.
+#[must_use]
+pub fn budget_cut(seed: u64, instances: &[Candidate], budget: f64, size_priority: f64) -> Vec<bool> {
+    let entries = instances
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (layer_group(c.key.layer), budget_entry(budget_rank(seed, &c.key), c.size_m, size_priority), i))
+        .collect();
+    cut_groups(instances.len(), budget, entries, &|a, b| instances[a].key.cmp(&instances[b].key))
+}
+
+/// The budget over the four groups of pass 10 (WG-E2i.3): rocks (their own rank stream, [`rock_budget_rank`]),
+/// canopy, understorey, ground; each keeps `round(budget x n_g / n)` of `n = rocks + plants`, smallest entry first,
+/// ties by key. Returns (rocks kept, plants kept), in input order; the plants alone give [`budget_cut`].
+#[must_use]
+pub fn budget_cut_layers(seed: u64, w: &LayerWinners, budget: f64, size_priority: f64) -> (Vec<bool>, Vec<bool>) {
+    let nr = w.rocks.len();
+    let rocks = w.rocks.iter().enumerate().map(|(i, c)| {
+        (0, budget_entry(rock_budget_rank(seed, &c.key), c.size_m, size_priority), i)
+    });
+    let plants = w.plants.iter().enumerate().map(|(i, c)| {
+        (layer_group(c.key.layer), budget_entry(budget_rank(seed, &c.key), c.size_m, size_priority), nr + i)
+    });
+    let tie = |a: usize, b: usize| {
+        if a < nr { w.rocks[a].key.cmp(&w.rocks[b].key) } else { w.plants[a - nr].key.cmp(&w.plants[b - nr].key) }
+    };
+    let mut keep = cut_groups(nr + w.plants.len(), budget, rocks.chain(plants).collect(), &tie);
+    let plants = keep.split_off(nr);
+    (keep, plants)
 }

@@ -305,6 +305,15 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
   `tree` (reverse-J 3-20 m, every class with canopy stems), `shrub` (understorey, stol 0.5) and `flora` (ground,
   Weibull 0.2-1 m, stol 0.8); no model named (filled from learned refs at E2i.3); the 12 class stems stated over the
   shipped Whittaker names; `[params]` on defaults. 1 test (parses; 1 canopy row; every named class in the table).
+- **WG-E2i.3** (2026-11-27, `mw_worldgen::flora`, `scatter.rs`): flora base records become models (`Slot`) of the row
+  nearest their size (log distance to the range's geometric centre); learned size bounds, count-weighted pose, slope
+  `e_max` replace the authored columns, rows without a model dropped; `region_prior` = `D(r) / M(c)`, `M` the
+  area-weighted class mean on the guide (each class keeps its authored intensity; rocks counted, placed from E3f).
+  Fields from the guide's `climate/` (none: the pass logs the `scrib-worldgen climate` command and places nothing).
+  New in `scatter.rs`: `CandidateRules::tiles` / `run_tiles` (tiles in parallel) and `budget_cut_layers` (four
+  groups, rocks on their own rank stream). Model pick: slots whose size range holds the mark, weighted by region refs.
+  Fixture: 1379 trees + 14707 ground plants; with a town and road, 864 fewer stood in them yet the total rose
+  (16784: cleared canopy lets the lower layers in). 6 tests + 1 sf_worldgen budget test.
 
 ## Tunables
 

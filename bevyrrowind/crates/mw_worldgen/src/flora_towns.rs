@@ -25,12 +25,10 @@
 #![allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use glam::Vec3;
 use sf_world::Placement;
 use sf_worldgen::filter::Declared;
-use sf_worldgen::scatter::{Site, Terrain};
 
 use super::Bounds;
 
@@ -155,7 +153,7 @@ pub struct TownCensus {
     pub unbounded: usize,
     /// Area of the masks, m².
     pub area_m2: f64,
-    /// Scatter candidates the towns excluded (outside every stamp; set by the pass).
+    /// Guide land samples only the towns exclude (outside every stamp; set by the pass's census).
     pub excluded: usize,
 }
 
@@ -193,54 +191,6 @@ impl TownMask {
     #[must_use]
     pub fn contains(&self, x: f64, y: f64) -> bool {
         self.rasters.iter().any(|r| r.contains(x, y))
-    }
-}
-
-/// A terrain with the towns excluded too, counting the points only the towns exclude.
-pub struct WithTowns<'a> {
-    pub terrain: &'a dyn Terrain,
-    pub towns: &'a TownMask,
-    pub hits: AtomicUsize,
-}
-
-impl<'a> WithTowns<'a> {
-    #[must_use]
-    pub fn new(terrain: &'a dyn Terrain, towns: &'a TownMask) -> Self {
-        Self { terrain, towns, hits: AtomicUsize::new(0) }
-    }
-
-    /// The count so far, reset to 0.
-    pub fn take_hits(&self) -> usize {
-        self.hits.swap(0, Ordering::Relaxed)
-    }
-}
-
-impl Terrain for WithTowns<'_> {
-    fn regions_in(&self, rect: [f64; 4], out: &mut Vec<u16>) {
-        self.terrain.regions_in(rect, out);
-    }
-
-    fn region(&self, x: f64, y: f64) -> Option<u16> {
-        self.terrain.region(x, y)
-    }
-
-    fn site(&self, x: f64, y: f64) -> Option<Site> {
-        self.terrain.site(x, y)
-    }
-
-    fn excluded(&self, x: f64, y: f64) -> bool {
-        if self.terrain.excluded(x, y) {
-            return true;
-        }
-        let hit = self.towns.contains(x, y);
-        if hit {
-            self.hits.fetch_add(1, Ordering::Relaxed);
-        }
-        hit
-    }
-
-    fn height(&self, x: f64, y: f64) -> f64 {
-        self.terrain.height(x, y)
     }
 }
 
