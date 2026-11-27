@@ -161,7 +161,8 @@ pub enum SlotKind {
 
 ### Slot kinds
 
-- **Pose** (seat, bed, lean, counter, idle): "Using a slot" below; beds also fire the adapter's rest hook (IN3).
+- **Pose** (seat, bed, lean, counter, idle): "Using a slot" below; beds also offer `sleep`, the host's rest hook
+  ("Beds, lean spots and rest (IN3)").
 - **Door** (IN33): a **kinematic hinged leaf**, no physics joint (UE: a movable mesh on a timeline; Bethesda and
   OpenMW `worldimp.cpp` rotateDoor turn the reference and undo the step when an actor is hit [M]; a rapier revolute
   joint with a motor was not taken: a dynamic leaf pushes characters into geometry and needs per-door tuning; Bevy
@@ -396,7 +397,7 @@ IN27-IN30 and TV0b are stage 0). IN5 is folded into IN9 (owner 2026-11-11). The 
 | IN31 | Shell: index on cell load, claims on `FixedUpdate`, focus best verb + hold list with stable focus (switch margin + dwell, frozen while held), `Activate` → `Activated` (+ verb) → gates → default | `sf_interaction_bevy` | IN0 | headless: handled suppresses the default; gate refusal; script `Activate` runs gates + default once |
 | IN32 | Adapter defs (MG4 census) + each existing class's activation as a default verb, Classic switches | `mw_interaction` | IN31, IN29 | exact per class, behaviour unchanged; def counts |
 | IN2 | Player sits and stands: Interaction move, `Seated` owner, side entrances, Kimodo sit clips | `sf_interaction`, `sf_action` | IN31 | exact: claim/occupy/release via `step`; sanity: pelvis on the seat, no capsule through it; owner IN-2 |
-| IN3 | Beds and lean spots (lie down, the adapter's rest hook), hand IK on armrests/tables | `sf_interaction_bevy`, `mw_interaction` | IN2 | exact: rest hook fires once; owner IN-3 |
+| IN3 (IN3a-d) | Beds and lean spots (lie down, the host's rest hook), hand IK on armrests/tables: "Beds, lean spots and rest (IN3)" | `sf_interaction(_bevy)`, `mw_interaction(_bevy)` | IN2 | exact: rest hook fires once; owner IN-3 |
 | IN33 | Swing doors (doors, containers): Open/Closed, kinematic hinge, doorway claim + queue, close behind, "Locked" from crime's `LockState`, `WorldChange` | `sf_interaction(_bevy)`, `mw_interaction` | IN31 | exact transitions; blocked swing pauses; owner IN-33 |
 | IN35 | Player third-person `HeldProp`: attach, grip IK, carry class gates (speed, sprint, roll), one thing held; first-person spring kept | `sf_interaction_bevy`, `sf_physics` | IN0, MG7b | exact gates; link survives a camera switch; owner IN-35 |
 | IN6 | Player moves furniture: promotion + carry/drag, slots follow, persistence | `sf_interaction_bevy` | IN2, IN35, static-scene B5a-2 | exact: overlay round trip moves slots; sanity: comes to rest; owner IN-6 |
@@ -612,6 +613,60 @@ the enter starting 69 / 114 / 116 ticks after the press, feet error 0; rule numb
 21 end `Entered`, with an approach from every stance but the one already on the clip's start pose. Open (ledger
 IN2c4b): the turn starts where the latch fires (a look question), the timeout margin near `max_m` and for the sneak
 gait is not measured, the enter gate's ratio counts position only.
+
+## Beds, lean spots and rest (IN3, designed 2026-11-27)
+
+Research: `docs/research/interaction-in3-beds-lean.md` (OpenMW `ca5e2576` bed path, Skyrim, KCD2, RDR2, GTA V,
+Cyberpunk workspots, UE Smart Objects). A bed is a set of pose slots (`lie`, edge `sit`) plus a slotless `sleep` verb;
+a lean spot is a pose slot. Neither needs a new slot kind or a second use path.
+
+**The rest hook (IN3a).** `sleep` is an ordinary verb through the activation contract (scripts, gates, default):
+- The verb tag is the framework's `VERB_SLEEP = TagId::of("sleep")` in `sf_interaction` (beside `VERB_OPEN` /
+  `VERB_CLOSE`, so the Bevy-free adapter shares it). A def offers it as a slotless `VerbDef` (`requires` empty).
+- Its default handler (`sf_interaction_bevy` `rest.rs`, `Update`, `.after(ActivationSystems::Default)`) writes one
+  `RestRequested { tick, user, actor, placement, slot }` per `UseApproved` whose verb is `VERB_SLEEP` (`tick` =
+  `InteractionTick` at the write, `user` from the actor's `InteractionUser`, `slot` = the approval's, `None` for the
+  slotless verb). A handled (script) use or a gate refusal writes none (contract steps 4-5); no other verb writes one.
+  The seat handler already skips it: `resolve_slot` finds no pose slot with verb `sleep` (`seat.rs:321-347`).
+- **No `owned` field** (planned in 2026-11-25, dropped): ownership is crime's (game) data on the placement; the host's
+  gates read it. The framework knows nothing of werewolves, enemies or owners.
+- **The host gates and opens the UI.** Refusals are gates in `ActivationSystems::Gates` with a reason tag for the prompt
+  (no rest UI opens); the request means "open the rest UI for this user at this bed". The UI, its own refusals
+  (underwater, in the air) and the time skip are the host's (ai.md `fast_forward`). Every engine read splits it so
+  (Skyrim, OpenMW `OpShowRestMenu` -> `GM_Rest`, Cyberpunk, UE: the slot is the object, the menu is the game's).
+- **Lie first, then the menu** (Skyrim, KCD2, RDR2) is the host's sequencing, not a second hook (IN3b): on
+  `RestRequested`, when the bed has a free `lie` slot with clips, the host writes an `ActivateCommand { verb: lie,
+  slot }` for the same user and opens the menu on that use's `SeatReport` `Entered` (any other end: at once);
+  without lie clips it opens at once. Leaving the menu exits the slot like any exit input.
+- **Players only.** NPCs sleep through AI activities on the `lie` slot (AI14 / IN8), never a `RestRequested`.
+- **Co-op (rule, nothing built):** the request carries its `user`; the host decides the skip (all players or a share
+  in bed, Valheim / Minecraft pattern). Single player: the request is the skip.
+
+**Lie and lean use (IN3b, IN3c).** Through "Using a slot" unchanged: `bed.lie` (the cooked `lie` slot, entrances Left
+and Right) and the `counter.*` stations (`counter.table`, `counter.bar`, entered from Back). IN3b needs anim AN30c (bed
+bake slots + the lift / yaw fix of AN30a's bodies), IN3c needs AN30d/e (lean clips). Wall leans (RDR2 "lean with hand
+on post", GTA `WORLD_HUMAN_LEANING`, Cyberpunk rail workspots) need spots on walls that no data authors: a later cook
+row (vertical faces beside the navmesh), not IN3.
+
+**Hand IK (IN3d).** Contact points are cooked into the slot's `IkTargets.hands` (object frame, `[left, right]`, empty
+= none): armrest tops (seat collision above the seat band within the seat's width, per side) and, for stations, the
+top edge in front of the user at shoulder width. At run time each hand with a target gets a two-bone `LimbIk`
+(`sf_anim`; not `FullBodyIk`: the body pose is the clip's, two arms cost less), weight ramping in over the enter
+clip's last part and out over the exit's first part (tunables `interact.ik.hand_in_s`, `interact.ik.hand_out_s`,
+`Guess`). Armrests need no grip table; held props do (MG7b, IN35), so IN3d does not wait on MG7b.
+
+| Slice | Deliverable | Crates | Depends on | Verify |
+|---|---|---|---|---|
+| IN3a | `VERB_SLEEP`, `RestRequested` + its default handler; adapter: bed defs carry slotless `sleep` (static beds), the row Offered; game logs it | `sf_interaction(_bevy)`, `mw_interaction(_bevy)` | IN31, IN32 | exact: one press -> one request; handled or refused -> none; Classic row `RestMenu` |
+| IN3b | Lie use + lie-then-menu sequencing in the host | `mw_interaction_bevy` | IN3a, AN30c | exact sequencing; owner IN-3 |
+| IN3c | Lean use at stations | `mw_interaction` | AN30d/e | owner IN-3 |
+| IN3d | Hand contact points in the cook + `LimbIk` on seats/stations | `mw_interaction`, `sf_interaction_bevy`, `sf_anim_bevy` | IN2 | exact cooked points; sanity: hands on the armrest; owner IN-3 |
+
+Reuse check: Bevy 0.20 has nothing for slots, beds, rest or lean; crates.io (2026-11-27, "bevy smart object", "bevy
+interaction", "bevy furniture") has no maintained crate; IK is ours (`sf_anim`). Industry comparison: bed = slot +
+verb with the menu outside it (all engines read); owned bed = the game's crime rule (OpenMW kept, below); lean = an
+authored marker / scenario / workspot per spot (Bethesda, GTA, Cyberpunk), ours cooked from collision; hand contact
+= UE Control Rig / Motion Warping style IK onto object points [M], ours `LimbIk` onto cooked points.
 
 ## As built (IN33a, 2026-11-26)
 

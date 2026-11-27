@@ -47,7 +47,7 @@ to `pick` (`probe`), IN33. Rows in focus order (files in `mwclass/` unless named
 | `ACTI` with `OnActivate` | use | none | the script (DQ-6) | scripting-adapter.md | same |
 | `ACTI` without | use (as today) | none | none | `activator.cpp:116-123` | same |
 | Census furniture | sit / lie / lean | `Pose` | "Using a slot" | none | off |
-| Beds | sleep; sit on the edge | `Pose` | lie-down clip, rest hook (IN3) | crime-adapter.md "Sleeping in a bed" | rest menu |
+| Beds | lie; sit on the edge; sleep (static beds; scripted beds: the script) | `Pose` + slotless `sleep` | `RestRequested` -> rest UI (IN3a), lie first (IN3b) | `guiextensions.cpp:50-59`, crime-adapter.md A3, "Beds and resting" | scripted: rest menu; static: inert |
 | Locked `DOOR`/`CONT` | bash (hold list, after pick) | none | IN37 blow → crime `LockRequest::Force` | none | off |
 
 - **Scripts win.** A script containing `OnActivate` suppresses the default and calls `Activate` to run it
@@ -377,13 +377,28 @@ noise: crime emits it, `sf_crime_bevy`, crime-locks.md).
 
 ## Beds and resting
 
-- Beds that are `ACTI` with a rest script (vanilla `Bed_Standard`-style scripts; the census lists `active_*` beds;
-  verify the script set at IN3) keep their behaviour: activation opens the rest menu, now after a lie-down clip.
-  Sleeping in an owned bed is `OT_SleepingInOwnedBed` (crime-adapter.md "Offences"), unchanged.
-- Static `furn_*` beds: lie down only; resting follows the normal "can rest here" rules (`GetPCSleep`, illegal-rest
-  cells), not the bed.
-- NPCs: `AIWander` idles become slot activities when slots are near (ai-adapter.md mapping table); the `home` anchor
-  is an owned bed (AI14); NPCs sleep in their own or their faction's beds (ownership on the placement).
+Framework contract: interaction.md "Beds, lean spots and rest (IN3)". Rules from OpenMW `ca5e2576`
+(`mwscript/guiextensions.cpp:50-59`, `mwmechanics/mechanicsmanagerimp.cpp:902, 927-952`, `mwgui/waitdialog.cpp:88-117`).
+
+- **Scripted beds** (`ACTI` whose script calls `ShowRestMenu`, vanilla `BedStandard` / `CharGenBed`; the census
+  classifies `active_*` beds as `Kind::Bed`): the class verb `use` stays first and runs the script, which owns the
+  sleep (no separate `sleep` verb: one path, no second menu). `ShowRestMenu` is scripting's (`functions.txt` `later`):
+  it opens the rest UI with this bed, so OpenMW's bed rules apply there: `sleepInBed` first (werewolf
+  `sWerewolfRefusal`, enemies near `sNotifyMessage2`, owned or faction-owned: `commitCrime(SleepingInOwnedBed)`, seen
+  -> `sNotifyMessage64` and no sleep, unseen -> sleep; crime-adapter.md A3), then the UI with the bed: in the air and
+  the cell's no-sleep flag do not refuse, underwater and enemies do. Classic: the same (vanilla behaviour).
+- **Static beds** (`furn_*`, inert in vanilla; modern only): a slotless `sleep` (`VERB_SLEEP`) beside `lie` and the
+  edge `sit`s; its approval is a `RestRequested` and the rest UI opens **without** the bed override (the rest key's
+  rules: where the cell forbids sleep, Wait only), owner Q (IN3) below. The A3 owned-bed gate runs in
+  `ActivationSystems::Gates` on an owned placement (refusal reason = `sNotifyMessage64`) once crime A3 exists.
+  Classic: no def (furniture inert).
+- **Lie first** (IN3b): the host chains the bed's `lie` use before the UI when lie clips exist (AN30c).
+- **NPCs**: `AIWander` idles become slot activities when slots are near (ai-adapter.md mapping table); the `home` anchor
+  is an owned bed (AI14); NPCs sleep in their own or their faction's beds (ownership on the placement); never a
+  `RestRequested` (players only).
+- **Sleep interruption and level-up** (`waitdialog.cpp:197-217, 279`) belong to the rest UI, not the bed.
+- Owner Q (IN3): should a static bed count as a bed (sleep where the cell only allows Wait, like Skyrim / KCD2)?
+  Recommended: no, keep vanilla's rest rules for statics; only scripted beds override.
 
 ## Moving furniture (IN9, IN6)
 
