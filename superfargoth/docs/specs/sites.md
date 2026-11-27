@@ -236,6 +236,12 @@ back to the region map.
   (travel, distance moved, index), the site moves rigidly (centre + ring; `access` stays, `ground_m` cleared,
   `buildings[]`/`installations[]` untouched); row rules come in as `SiteRule` per `row` (`SiteRule::NONE` = none),
   a non-kept site with no rule is an error. Kept sites are never moved or dropped. Writes via `SitesFile::write`.
+- **WG-V1.3 (2026-11-27)** `reach::run` (`reach_run.rs`, tests `tests_reach_run.rs`) + `scrib-worldgen reach --guide
+  --sites --roads [--out] [--set reach.*]`: ground = `GuideTiles` height at the coarsest level with spacing <= `cell_m`
+  (level 5 at 18.288 m); water = `WaterMask` with no margin, surface = sea level / lake level (`WaterMask::lake_level`)
+  / ground in a river band; anchor footprints moved to the guide frame. Census: per row (kept sites per kind) placed /
+  reseated / dropped / unreached, travel p50/p95, land share reached on foot / only swimming. Rules: none yet (the
+  site-table reader is WG-V1.4), so non-kept sites error. x10s-b2w: 4 s for 10.2 M cells (ledger).
 
 ## Tunables
 

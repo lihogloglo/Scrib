@@ -60,6 +60,9 @@ use crate::{Error, Result};
 #[path = "tests_reach.rs"]
 mod tests;
 
+#[path = "reach_run.rs"]
+pub mod run;
+
 /// Cost of a cell no path reaches.
 // tunables: const (sentinel, not a value)
 pub const UNREACHED: u64 = u64::MAX;

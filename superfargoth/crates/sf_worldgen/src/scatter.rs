@@ -1617,6 +1617,8 @@ pub struct WaterMask {
     bank_index: CellIndex,
     /// Per lake its rings (outline, then holes).
     lakes: Vec<Vec<Vec<[f64; 2]>>>,
+    /// Per lake its surface level, m.
+    lake_levels: Vec<f64>,
     lake_index: CellIndex,
 }
 
@@ -1636,6 +1638,7 @@ impl WaterMask {
             banks: Vec::new(),
             bank_index: CellIndex::new(&[]),
             lakes: Vec::new(),
+            lake_levels: Vec::new(),
             lake_index: CellIndex::new(&[]),
         }
     }
@@ -1654,6 +1657,7 @@ impl WaterMask {
             }
         }
         let mut lakes = Vec::with_capacity(water.lakes.len());
+        let mut lake_levels = Vec::with_capacity(water.lakes.len());
         let mut lake_boxes = Vec::with_capacity(water.lakes.len());
         for l in &water.lakes {
             let rings: Vec<Vec<[f64; 2]>> =
@@ -1669,6 +1673,7 @@ impl WaterMask {
                 }
             }
             lakes.push(rings);
+            lake_levels.push(l.level_m);
             lake_boxes.push(bb);
         }
         let boxes: Vec<[f64; 4]> = banks.iter().map(|b| b.bbox(margin_m.max(0.0))).collect();
@@ -1679,6 +1684,7 @@ impl WaterMask {
             banks,
             lake_index: CellIndex::new(&lake_boxes),
             lakes,
+            lake_levels,
         }
     }
 
@@ -1689,6 +1695,19 @@ impl WaterMask {
             .at([x, y])
             .iter()
             .any(|&l| self.lakes[l as usize].iter().fold(false, |odd, ring| odd ^ ring_crosses(ring, [x, y])))
+    }
+
+    /// The surface level of the lake holding `(x, y)` (outline minus holes; the first lake in file order when
+    /// several do), `None` off every lake.
+    #[must_use]
+    pub fn lake_level(&self, x: f64, y: f64) -> Option<f64> {
+        self.lake_index
+            .at([x, y])
+            .iter()
+            .copied()
+            .filter(|&l| self.lakes[l as usize].iter().fold(false, |odd, ring| odd ^ ring_crosses(ring, [x, y])))
+            .min()
+            .map(|l| self.lake_levels[l as usize])
     }
 
     /// Nothing may stand at `(x, y)` on ground of height `height_m`: the sea, a lake, or closer than the margin to
