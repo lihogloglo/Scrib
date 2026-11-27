@@ -18,16 +18,37 @@
 //! its largest [`unit_shares`] unit (ties: the first name); slope and aspect from the guide heights (central
 //! differences one sample apart, [`Grid::gradient`]); height the final ground ([`World::height`]), which the rocks
 //! stand on.
+//!
+//! **Wiring** (WG-E3f.4, [`Rocks`], [`place_rock`]): with a [`RockSource`] the passes run the rock layer first
+//! (`RockLayer` in the candidate rules; the field-stone prior per region where the source learned any rock density,
+//! else none: the authored `field_stone_per_ha`), the budget cuts rocks as its group 0, and each kept rock takes its
+//! mesh and pose at load (`scatter_rocks::pick`). A pack model becomes a [`Placement`] copying its learned reference
+//! (group `rocks` of the content's extra passes), seated by its learned origin offset (`offset_m x scale`, as the
+//! plants: a pack mesh's origin is its own, so a share of its short axis would not seat it); a library class stays a
+//! [`RockPlacement`] in the run (class, variant hash, size mark, transform, sink share), which the streamer reads
+//! once RG-P lands.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use glam::{DVec3, Quat, Vec3};
+use sf_coords::{WorldPos, WorldTransform};
+use sf_world::{Placement, PlacementId};
 use sf_worldgen::geology::{GeologyGrid, GeologyTable};
-use sf_worldgen::scatter_rocks::RockGround;
-use sf_worldgen::scatter_species::{RockContext, RockEntry};
+use sf_worldgen::scatter::Params;
+use sf_worldgen::scatter_rocks::{RockCandidate, RockGround, RockKey, RockValues, pick};
+use sf_worldgen::scatter_species::{RockContext, RockEntry, SpeciesFile};
 
-use super::{Grid, Learned, World};
+use super::{FloraRun, Grid, Learned, World};
 use crate::{DumpError, RegionMap};
+
+/// The shipped geology table (`bevyrrowind/worldgen/geology.toml`); a guide folder's own copy wins
+/// ([`RockSource::read`]).
+pub const SHIPPED_GEOLOGY: &str = include_str!("../../../worldgen/geology.toml");
+
+/// Namespace of the scattered rocks' placement ids (never a content key).
+// tunables: const (format: an id namespace)
+const ROCK_ID_NAMESPACE: &str = "mw_worldgen.flora.rocks";
 
 /// Per legend index of `regions`: the unit shares of its `[region."<name>"]` row (by the legend's `name`), else the
 /// table's default `[shares]`, normalised to sum 1 (no share at all when they sum to 0).
@@ -188,4 +209,207 @@ impl RockGround for Ground<'_> {
             None => self.defaults.get(usize::from(self.world.region(x, y)?))?.as_deref(),
         }
     }
+}
+
+/// What the rock layer of a guide reads besides the world: the geology table (unit shares) and the guide's
+/// `geology/` product, when it has one.
+#[derive(Debug, Clone)]
+pub struct RockSource {
+    pub table: GeologyTable,
+    pub grid: Option<GeologyGrid>,
+}
+
+impl RockSource {
+    /// The rock source of a guide folder: its own `geology.toml` when it has one, else the shipped table; its
+    /// `geology/` product ([`guide_geology`]).
+    ///
+    /// # Errors
+    /// An unreadable or invalid table, or a present but unreadable product.
+    pub fn read(dir: &Path) -> Result<Self, DumpError> {
+        let own = dir.join(crate::geology::TABLE_FILE);
+        let (text, what) = if own.exists() {
+            (std::fs::read_to_string(&own)?, own.display().to_string())
+        } else {
+            (SHIPPED_GEOLOGY.to_owned(), format!("shipped {}", crate::geology::TABLE_FILE))
+        };
+        let table =
+            crate::geology::AdapterGeology::from_toml(&text).map_err(|e| DumpError::Invalid(format!("{what}: {e}")))?.table;
+        Ok(Self { table, grid: guide_geology(dir)? })
+    }
+}
+
+/// The rock layer's inputs of a pass ([module docs](self) "Wiring").
+pub struct Rocks<'a> {
+    pub ground: &'a Ground<'a>,
+    /// The file's `scatter.rock.*` values ([`values_of`]).
+    pub values: RockValues,
+    /// The field-stone prior per region legend index ([`rock_prior`]); `None`: 1 everywhere.
+    pub prior: Option<&'a [f64]>,
+    /// The geology table (hashed into the product inputs).
+    pub table: &'a GeologyTable,
+}
+
+/// The `scatter.rock.*` values of `file`, checked.
+///
+/// # Errors
+/// A value missing or out of range.
+pub fn values_of(file: &SpeciesFile) -> Result<RockValues, DumpError> {
+    RockValues::from_declared(&file.declared).map_err(|e| DumpError::Invalid(e.to_string()))
+}
+
+/// The field-stone prior a pass uses: [`rock_prior`] over the guide land per region, `None` (1 everywhere, the
+/// authored density) when the source learned no rock density at all.
+#[must_use]
+pub fn pass_prior(learned: &Learned, area: &[Vec<u64>]) -> Option<Vec<f64>> {
+    let land: Vec<u64> = area.iter().map(|a| a.iter().sum()).collect();
+    let p = rock_prior(&learned.rock_density, &land);
+    p.iter().any(|&v| v > 0.0).then_some(p)
+}
+
+/// The mesh of a placed rock.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RockMesh {
+    /// A learned pack model: its index in [`Learned::rocks`].
+    Model(u32),
+    /// A library class and its variant hash (the reader takes it modulo the class's variant count).
+    Class { class: String, variant: u64 },
+}
+
+/// One placed rock, in the guide frame (x east, y north, z up, m).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Rock {
+    pub key: RockKey,
+    pub mesh: RockMesh,
+    /// Size mark (longest axis), m.
+    pub size_m: f64,
+    /// A model: the ground plus its learned origin offset; a class: the ground (the reader sinks it by `sink`).
+    pub pos: [f64; 3],
+    pub yaw: f32,
+    /// Up axis (unit).
+    pub up: [f32; 3],
+    /// A model: its uniform scale; a class: the size mark, m (the reader divides by the class size).
+    pub scale: f32,
+    /// Share of a class mesh's short axis sunk below the ground (unused by a model).
+    pub sink: f32,
+    /// The weathering regime id at the parent (RG-9j).
+    pub regime: Option<u8>,
+}
+
+/// The learned rock model index of each pack-model entry name (its base record id).
+// Learned rock models: a few hundred.
+#[allow(clippy::cast_possible_truncation)]
+#[must_use]
+pub fn model_index(learned: &Learned) -> BTreeMap<&str, u32> {
+    learned.rocks.iter().enumerate().map(|(i, s)| (learned.reps[s.rep].key.as_str(), i as u32)).collect()
+}
+
+/// The mesh and pose of the kept rock `c` at load (`scatter_rocks::pick` on `learned`'s file, `models` its
+/// [`model_index`]): `None` when its unit has no fitting entry, or a pack model that is not one of `learned`'s.
+// Poses are f32 in the placement.
+#[allow(clippy::cast_possible_truncation)]
+#[must_use]
+pub fn place_rock(learned: &Learned, models: &BTreeMap<&str, u32>, rocks: &Rocks<'_>, prm: &Params, c: &RockCandidate) -> Option<Rock> {
+    let p = pick(&learned.file, prm, rocks.ground, c)?;
+    let ground = rocks.ground.height_m(c.pos[0], c.pos[1]);
+    let (mesh, z) = match p.entry {
+        RockEntry::Model { model, .. } => {
+            let i = *models.get(model.as_str())?;
+            (RockMesh::Model(i), ground + f64::from(learned.rocks[i as usize].offset_m) * p.scale)
+        }
+        RockEntry::Class { class, .. } => (RockMesh::Class { class: class.clone(), variant: p.variant }, ground),
+    };
+    Some(Rock {
+        key: c.key,
+        mesh,
+        size_m: c.size_m,
+        pos: [c.pos[0], c.pos[1], z],
+        yaw: p.yaw_rad as f32,
+        up: p.up.map(|v| v as f32),
+        scale: p.scale as f32,
+        sink: p.sink as f32,
+        regime: c.regime,
+    })
+}
+
+/// A rock's id key bytes (context, tile, parent, offspring).
+fn key_bytes(k: &RockKey) -> Vec<u8> {
+    let mut key = Vec::with_capacity(17);
+    key.push(k.context as u8);
+    for v in [k.tile.0.to_le_bytes(), k.tile.1.to_le_bytes(), k.parent.to_le_bytes(), k.offspring.to_le_bytes()] {
+        key.extend_from_slice(&v);
+    }
+    key
+}
+
+/// A rock's transform in the engine frame (Y up, -Z north).
+fn transform(r: &Rock) -> WorldTransform {
+    let up = Vec3::new(r.up[0], r.up[2], -r.up[1]);
+    WorldTransform {
+        pos: WorldPos::from_f64(DVec3::new(r.pos[0], r.pos[2], -r.pos[1])),
+        rotation: Quat::from_rotation_arc(Vec3::Y, up) * Quat::from_rotation_y(r.yaw),
+        scale: Vec3::splat(r.scale),
+    }
+}
+
+/// The run's pack-model rocks as placements in the engine frame, each a copy of its model's source reference (base,
+/// model, class, flags); the id is the rock key's.
+#[must_use]
+pub fn rock_placements(run: &FloraRun) -> Vec<Placement> {
+    run.rocks
+        .iter()
+        .filter_map(|r| {
+            let RockMesh::Model(i) = r.mesh else { return None };
+            let rep = &run.learned.reps[run.learned.rocks[i as usize].rep];
+            Some(Placement {
+                id: PlacementId::from_key(ROCK_ID_NAMESPACE, &key_bytes(&r.key)),
+                base: rep.base.clone(),
+                model: rep.model.clone(),
+                transform: transform(r),
+                class: rep.class,
+                flags: rep.flags,
+            })
+        })
+        .collect()
+}
+
+/// One library rock for the streamer (spec `rockgen.md` "Placement in the game (RG-P)", once it lands).
+#[derive(Clone, Debug, PartialEq)]
+pub struct RockPlacement {
+    pub id: PlacementId,
+    /// The library class name.
+    pub class: String,
+    /// The variant hash (modulo the class's variant count).
+    pub variant: u64,
+    /// Engine frame; its uniform scale is the size mark, m (the reader divides by the class size); its position on
+    /// the ground.
+    pub transform: WorldTransform,
+    /// Share of the mesh's short axis sunk below the ground.
+    pub sink: f32,
+    pub regime: Option<u8>,
+}
+
+/// The run's library rocks in the engine frame (no consumer until RG-P).
+#[must_use]
+pub fn library_rocks(run: &FloraRun) -> Vec<RockPlacement> {
+    run.rocks
+        .iter()
+        .filter_map(|r| {
+            let RockMesh::Class { class, variant } = &r.mesh else { return None };
+            Some(RockPlacement {
+                id: PlacementId::from_key(ROCK_ID_NAMESPACE, &key_bytes(&r.key)),
+                class: class.clone(),
+                variant: *variant,
+                transform: transform(r),
+                sink: r.sink,
+                regime: r.regime,
+            })
+        })
+        .collect()
+}
+
+/// (pack-model rocks, library rocks) of a run.
+#[must_use]
+pub fn rock_kinds(run: &FloraRun) -> [usize; 2] {
+    let models = run.rocks.iter().filter(|r| matches!(r.mesh, RockMesh::Model(_))).count();
+    [models, run.rocks.len() - models]
 }

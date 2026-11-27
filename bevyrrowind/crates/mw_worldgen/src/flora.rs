@@ -56,7 +56,8 @@ use sf_worldgen::climate_map::ClimateMap;
 use sf_worldgen::guide::Guide;
 use sf_worldgen::reach::VALID_FILE;
 use sf_worldgen::roads::RoadNetwork;
-use sf_worldgen::scatter::{CandidateKey, CandidateRules, CanopyTargets, LayerWinners, Params, WaterMask, budget_cut_load};
+use sf_worldgen::scatter::{CandidateKey, CandidateRules, CanopyTargets, LayerWinners, Params, RockLayer, WaterMask, budget_cut_load};
+use sf_worldgen::scatter_rocks::RockRules;
 use sf_worldgen::scatter_calib::{self, Calibration};
 use sf_worldgen::scatter_product::{self, InputsHash};
 use sf_worldgen::scatter_fields::{Fields, GridFields, Suitability};
@@ -737,6 +738,8 @@ pub struct FloraRun {
     /// Instances before the budget, per budget group ([`BUDGET_GROUPS`]).
     pub full: [usize; 4],
     pub plants: Vec<Plant>,
+    /// The placed rocks (WG-E3f.4): pack models and library classes, in rock key order.
+    pub rocks: Vec<rocks::Rock>,
     pub region_names: Vec<String>,
     pub scale: f64,
     pub stamped: bool,
@@ -877,7 +880,8 @@ fn pose(run: &Learned, world: &World<'_>, seed: u64, c: &sf_worldgen::scatter::C
     })
 }
 
-/// Calls `f` with the passes' rules on `world` (canopy at `targets`), the stand rules and the exclusion.
+/// Calls `f` with the passes' rules on `world` (canopy at `targets`; the rock layer first with `rock`), the stand
+/// rules and the exclusion.
 #[allow(clippy::too_many_arguments)] // the pass's inputs, each its own product
 fn with_rules<R>(
     learned: &Learned,
@@ -885,6 +889,7 @@ fn with_rules<R>(
     fields: &dyn Fields,
     water: &WaterMask,
     prior: &[Vec<Vec<f64>>],
+    rock: Option<&rocks::Rocks<'_>>,
     prm: &Params,
     targets: &CanopyTargets,
     f: impl FnOnce(&CandidateRules<'_>, &StandRules<'_>, &(dyn Fn(f64, f64) -> bool + Sync)) -> R,
@@ -901,6 +906,15 @@ fn with_rules<R>(
         prior.get(s).and_then(|p| p.get(usize::from(r))).and_then(|p| p.get(c)).copied().unwrap_or(0.0)
     };
     let height = |x: f64, y: f64| world.height(x, y);
+    let rock_prior = rock.and_then(|r| r.prior).unwrap_or(&[]);
+    let rock_prior_at = |x: f64, y: f64| world.region(x, y).and_then(|r| rock_prior.get(usize::from(r))).copied().unwrap_or(0.0);
+    let rock_rules = rock.map(|r| RockRules {
+        file,
+        values: r.values,
+        seed: prm.seed,
+        tile_m: prm.tile_m,
+        prior: r.prior.map(|_| &rock_prior_at as &(dyn Fn(f64, f64) -> f64 + Sync)),
+    });
     let rules = CandidateRules {
         file,
         suitability: &suit,
@@ -909,7 +923,7 @@ fn with_rules<R>(
         prior: &prior_at,
         water,
         height: &height,
-        rocks: None,
+        rocks: rock_rules.as_ref().zip(rock).map(|(rules, r)| RockLayer { rules, ground: r.ground }),
         canopy: targets,
     };
     let stand = StandRules { values: &file.values, seed: prm.seed, canopy: &canopy };
@@ -921,17 +935,19 @@ fn with_rules<R>(
 /// the guide's land rect ([`World::rect`]), then the competition scale per class. The class ids are the fields'
 /// class order, so [`Calibration::targets`] is the passes' [`CanopyTargets`]; its warnings go to the bake log.
 #[must_use]
+#[allow(clippy::too_many_arguments)] // the pass's inputs, each its own product
 pub fn calibration(
     learned: &Learned,
     world: &World<'_>,
     fields: &dyn Fields,
     water: &WaterMask,
     prior: &[Vec<Vec<f64>>],
+    rock: Option<&rocks::Rocks<'_>>,
     prm: &Params,
 ) -> Calibration {
     // `calibrate` builds its own targets per step; the census does not read them.
     let none = CanopyTargets::uncalibrated(&learned.file, fields.class_names());
-    with_rules(learned, world, fields, water, prior, prm, &none, |rules, stand, excluded| {
+    with_rules(learned, world, fields, water, prior, rock, prm, &none, |rules, stand, excluded| {
         let census = scatter_calib::census(rules, stand, fields, excluded, world.rect());
         scatter_calib::calibrate(rules, stand, fields, excluded, &census)
     })
@@ -947,11 +963,12 @@ pub fn winners(
     fields: &dyn Fields,
     water: &WaterMask,
     prior: &[Vec<Vec<f64>>],
+    rock: Option<&rocks::Rocks<'_>>,
     prm: &Params,
     targets: &CanopyTargets,
     tiles: Option<&[(i32, i32)]>,
 ) -> LayerWinners {
-    with_rules(learned, world, fields, water, prior, prm, targets, |rules, stand, excluded| {
+    with_rules(learned, world, fields, water, prior, rock, prm, targets, |rules, stand, excluded| {
         let all;
         let tiles = if let Some(t) = tiles {
             t
@@ -965,18 +982,31 @@ pub fn winners(
 
 /// The load half of a pass on a kept set ([`budget_cut_load`]): the stand cap per tile (`prm.canopy_stems_per_ha_max`,
 /// WG-E2q), then the budget (four groups; with `prm.focus`, every survivor within `prm.full_radius_m` of it placed and
-/// one remainder outside, WG-E2p), then the pose. Returns
-/// (plants, full count per budget group).
+/// one remainder outside, WG-E2p), then the pose; the kept rocks' mesh and pose with `rock` ([`rocks::place_rock`];
+/// without it a kept set's rocks place nothing). Returns (plants, rocks, full count per budget group).
 #[must_use]
-pub fn place(learned: &Learned, world: &World<'_>, prm: &Params, won: &LayerWinners) -> (Vec<Plant>, [usize; 4]) {
+pub fn place(learned: &Learned, world: &World<'_>, rock: Option<&rocks::Rocks<'_>>, prm: &Params, won: &LayerWinners) -> Placed {
     let mut full = [won.rocks.len(), 0, 0, 0];
     for c in &won.plants {
         full[1 + c.key.layer as usize] += 1;
     }
-    let keep = budget_cut_load(won, prm).plants;
-    let plants = won.plants.iter().zip(keep).filter(|(_, k)| *k).filter_map(|(c, _)| pose(learned, world, prm.seed, c)).collect();
-    (plants, full)
+    let cut = budget_cut_load(won, prm);
+    let plants =
+        won.plants.iter().zip(cut.plants).filter(|(_, k)| *k).filter_map(|(c, _)| pose(learned, world, prm.seed, c)).collect();
+    let placed_rocks = rock.map_or_else(Vec::new, |r| {
+        let models = rocks::model_index(learned);
+        won.rocks
+            .iter()
+            .zip(cut.rocks)
+            .filter(|(_, k)| *k)
+            .filter_map(|(c, _)| rocks::place_rock(learned, &models, r, prm, c))
+            .collect()
+    });
+    (plants, placed_rocks, full)
 }
+
+/// What [`place`] returns: plants, rocks, full count per budget group.
+pub type Placed = (Vec<Plant>, Vec<rocks::Rock>, [usize; 4]);
 
 /// The passes over `tiles` (every guide tile when `None`) on `world` at `targets`: [`winners`], then [`place`].
 #[allow(clippy::too_many_arguments)] // the pass's inputs, each its own product
@@ -986,22 +1016,24 @@ pub fn scatter_tiles(
     fields: &dyn Fields,
     water: &WaterMask,
     prior: &[Vec<Vec<f64>>],
+    rock: Option<&rocks::Rocks<'_>>,
     prm: &Params,
     targets: &CanopyTargets,
     tiles: Option<&[(i32, i32)]>,
-) -> (Vec<Plant>, [usize; 4]) {
-    place(learned, world, prm, &winners(learned, world, fields, water, prior, prm, targets, tiles))
+) -> Placed {
+    place(learned, world, rock, prm, &winners(learned, world, fields, water, prior, rock, prm, targets, tiles))
 }
 
 /// Version of the flora adapter's part of the product's inputs: bump it when the adapter feeds the passes
 /// differently (changes to the passes' own output bump `scatter_product::FORMAT`).
 // tunables: const (format)
-pub const PRODUCT_VERSION: u32 = 1;
+pub const PRODUCT_VERSION: u32 = 2;
 
 /// The guide files the pass reads besides the guide and its climate (stamps and layers: the ground height; the
-/// filter; water; the clearings' sites and roads), hashed as bytes (absent and empty differ).
+/// filter; water; the clearings' sites and roads; the rock layer's geology product), hashed as bytes (absent and
+/// empty differ).
 // tunables: const (file names)
-pub const PRODUCT_FILES: [&str; 10] = [
+pub const PRODUCT_FILES: [&str; 14] = [
     "stamps.json",
     "stamps.f32",
     "layers.json",
@@ -1012,12 +1044,18 @@ pub const PRODUCT_FILES: [&str; 10] = [
     VALID_FILE,
     SITES_FILE,
     "roads.json",
+    "geology/meta.json",
+    "geology/geology.json",
+    "geology/unit.u8",
+    "geology/cliff.u8",
 ];
 
 /// The inputs hash of a pass on `dir`'s guide (spec `worldgen-scatter.md` "Product"): the adapter version, the guide,
 /// the product fields, seed, tile size and water margin, the tile filter and settings, the learned rows and models,
-/// the region prior, the source mosaic's land mask and region grid, the clearing values, the towns' mask, and the
-/// [`PRODUCT_FILES`] of `dir` (so the clearings must be `dir`'s, [`guide_clearings`]).
+/// the region prior, the source mosaic's land mask and region grid, the clearing values, the towns' mask, the rock
+/// layer (on or off; its geology table and field-stone prior), and the [`PRODUCT_FILES`] of `dir` (so the clearings
+/// must be `dir`'s, [`guide_clearings`]).
+#[allow(clippy::too_many_arguments)] // the pass's inputs, each its own product
 ///
 /// # Errors
 /// A product file that exists but cannot be read.
@@ -1027,6 +1065,7 @@ pub fn product_inputs(
     fields: &GridFields,
     learned: &Learned,
     prior: &[Vec<Vec<f64>>],
+    rock: Option<&rocks::Rocks<'_>>,
     prm: &Params,
 ) -> Result<String, DumpError> {
     let mut h = InputsHash::new();
@@ -1043,6 +1082,10 @@ pub fn product_inputs(
         .bytes("prior", format!("{prior:?}").as_bytes())
         .bytes("clearing.values", format!("{:?}", ClearingValues::default()).as_bytes())
         .bytes("towns", &world.towns.digest());
+    match rock {
+        Some(r) => h.bytes("rocks.table", format!("{:?}", r.table).as_bytes()).bytes("rocks.prior", format!("{:?}", r.prior).as_bytes()),
+        None => h.bytes("rocks.off", &[]),
+    };
     let (m, r) = (world.source, world.regions);
     let mut head = Vec::with_capacity(48);
     for v in [m.cells_min.0, m.cells_min.1, r.cells_min.0, r.cells_min.1] {
@@ -1062,17 +1105,18 @@ pub fn product_inputs(
     Ok(h.finish())
 }
 
-/// What [`scatter_cached`] returns: plants, full count per budget group, where the kept set came from, the calibration.
-pub type Cached = (Vec<Plant>, [usize; 4], ProductUse, Option<Calibration>);
+/// What [`scatter_cached`] returns: plants, rocks, full count per budget group, where the kept set came from, the calibration.
+pub type Cached = (Vec<Plant>, Vec<rocks::Rock>, [usize; 4], ProductUse, Option<Calibration>);
 
 /// A pass on `dir`'s guide through its `scatter/` product (WG-E2j.2): the kept set read when the product is of these
 /// inputs ([`product_inputs`]), else the [`calibration`] and the passes over every tile, the calibration written
 /// beside the product (`scatter/calibration.toml`, WG-E2o.3) and the product (re)written; then [`place`]. Returns
-/// (plants, full count per budget group, where the kept set came from, the calibration: the passes' own, or the file's
+/// (plants, rocks, full count per budget group, where the kept set came from, the calibration: the passes' own, or the file's
 /// on a read).
 ///
 /// # Errors
 /// A product file that exists but cannot be read.
+#[allow(clippy::too_many_arguments)] // the pass's inputs, each its own product
 pub fn scatter_cached(
     dir: &Path,
     learned: &Learned,
@@ -1080,14 +1124,15 @@ pub fn scatter_cached(
     fields: &GridFields,
     water: &WaterMask,
     prior: &[Vec<Vec<f64>>],
+    rock: Option<&rocks::Rocks<'_>>,
     prm: &Params,
 ) -> Result<Cached, DumpError> {
-    let inputs = product_inputs(dir, world, fields, learned, prior, prm)?;
+    let inputs = product_inputs(dir, world, fields, learned, prior, rock, prm)?;
     let (won, used, cal) = match scatter_product::cached(dir, &inputs) {
         Ok(Some(won)) => (won, ProductUse::Read, Calibration::read(dir).ok()),
         cached => {
-            let cal = calibration(learned, world, fields, water, prior, prm);
-            let won = winners(learned, world, fields, water, prior, prm, &cal.targets(), None);
+            let cal = calibration(learned, world, fields, water, prior, rock, prm);
+            let won = winners(learned, world, fields, water, prior, rock, prm, &cal.targets(), None);
             // The calibration first: a product on disk always has its calibration beside it.
             let wrote = cal.write(dir).and_then(|()| scatter_product::write(dir, &inputs, &won).map(|_| ()));
             let used = match (wrote, cached) {
@@ -1098,13 +1143,15 @@ pub fn scatter_cached(
             (won, used, Some(cal))
         }
     };
-    let (plants, full) = place(learned, world, prm, &won);
-    Ok((plants, full, used, cal))
+    let (plants, placed_rocks, full) = place(learned, world, rock, prm, &won);
+    Ok((plants, placed_rocks, full, used, cal))
 }
 
 /// Learns from `db`'s exterior and scatters on `tiles`' guide with `fields` and `water`, outside the stamps,
 /// `clearings` and `towns`; through the guide folder `product`'s `scatter/` product when given ([`scatter_cached`];
-/// `clearings` must then be its [`guide_clearings`]).
+/// `clearings` must then be its [`guide_clearings`]). With `rock_source` the rock layer runs first (WG-E3f.4): the
+/// learned rock models join the rock units ([`rocks::rock_entries`]), on the source's ground ([`rocks::Ground`]) with
+/// the field-stone prior ([`rocks::pass_prior`]).
 #[allow(clippy::too_many_arguments)] // the run's inputs, each its own product
 pub fn scatter_world(
     db: &RecordDb,
@@ -1118,6 +1165,7 @@ pub fn scatter_world(
     towns: &TownMask,
     prm: Params,
     product: Option<&Path>,
+    rock_source: Option<&rocks::RockSource>,
 ) -> Result<FloraRun, DumpError> {
     let t0 = Instant::now();
     let m = assemble(db)?;
@@ -1127,18 +1175,33 @@ pub fn scatter_world(
     let scale = guide_scale(g, &m)?;
     let prm = Params { sea_level_m: g.sea_level_m, ..prm };
     let t1 = Instant::now();
-    let learned = learn(&m, &regions, &refs, file, &prm, crate::anchor::SEA_LEVEL_M);
+    let mut learned = learn(&m, &regions, &refs, file, &prm, crate::anchor::SEA_LEVEL_M);
+    if let Some(rs) = rock_source {
+        rocks::rock_entries(&mut learned, &regions, &rs.table);
+    }
     let t2 = Instant::now();
     let world = World::new(&m, &regions, tiles, clearings, towns);
     let (area, cleared, in_towns) = guide_census(&world, fields, g.sea_level_m);
     let prior = region_prior(&learned.density, &area);
+    let rock_prior = rocks::pass_prior(&learned, &area);
+    let ground = rock_source.map(|rs| rocks::Ground::new(&world, rs.grid.as_ref(), &rs.table)).transpose()?;
+    let rock = match (rock_source, &ground) {
+        (Some(rs), Some(ground)) => Some(rocks::Rocks {
+            ground,
+            values: rocks::values_of(&learned.file)?,
+            prior: rock_prior.as_deref(),
+            table: &rs.table,
+        }),
+        _ => None,
+    };
     let t3 = Instant::now();
-    let (plants, full, product, calibration) = if let Some(dir) = product {
-        scatter_cached(dir, &learned, &world, fields, water, &prior, &prm)?
+    let (plants, placed_rocks, full, product, calibration) = if let Some(dir) = product {
+        scatter_cached(dir, &learned, &world, fields, water, &prior, rock.as_ref(), &prm)?
     } else {
-        let cal = calibration(&learned, &world, fields, water, &prior, &prm);
-        let (plants, full) = scatter_tiles(&learned, &world, fields, water, &prior, &prm, &cal.targets(), None);
-        (plants, full, ProductUse::Off, Some(cal))
+        let cal = calibration(&learned, &world, fields, water, &prior, rock.as_ref(), &prm);
+        let (plants, placed_rocks, full) =
+            scatter_tiles(&learned, &world, fields, water, &prior, rock.as_ref(), &prm, &cal.targets(), None);
+        (plants, placed_rocks, full, ProductUse::Off, Some(cal))
     };
     let t4 = Instant::now();
     let region_names = regions
@@ -1155,6 +1218,7 @@ pub fn scatter_world(
         sample_m2: g.spacing_m * g.spacing_m,
         full,
         plants,
+        rocks: placed_rocks,
         region_names,
         scale,
         stamped: tiles.stamps().is_some(),
@@ -1236,7 +1300,8 @@ pub fn extra(
 ) -> Vec<(String, Vec<Placement>)> {
     let towns = TownMask::new(towns, bounds, &TownParams::default());
     let run = guide_inputs(guide, tiles, &prm).and_then(|(file, fields, water, clearings)| {
-        scatter_world(db, source, bounds, tiles, &fields, &water, &file, clearings.as_ref(), &towns, prm, Some(guide))
+        let rs = rocks::RockSource::read(guide)?;
+        scatter_world(db, source, bounds, tiles, &fields, &water, &file, clearings.as_ref(), &towns, prm, Some(guide), Some(&rs))
     });
     match run {
         Ok(run) => {
@@ -1247,7 +1312,7 @@ pub fn extra(
             for w in calibration_warnings(&run) {
                 println!("worldgen flora: calibration: {w}");
             }
-            vec![("flora".into(), placements(&run))]
+            vec![("flora".into(), placements(&run)), ("rocks".into(), rocks::rock_placements(&run))]
         }
         Err(e) => {
             eprintln!("worldgen flora: {e}");
@@ -1256,9 +1321,9 @@ pub fn extra(
     }
 }
 
-/// Placed plants per budget group ([`BUDGET_GROUPS`]; rocks 0 until the rock layer's adapter, WG-E3f).
+/// Placed instances per budget group ([`BUDGET_GROUPS`]: the rocks, then the plants by layer).
 fn placed_per_group(run: &FloraRun) -> [usize; 4] {
-    let mut n = [0usize; 4];
+    let mut n = [run.rocks.len(), 0, 0, 0];
     for p in &run.plants {
         n[1 + p.key.layer as usize] += 1;
     }
@@ -1275,7 +1340,8 @@ pub fn full_radius_line(run: &FloraRun) -> Option<String> {
     for p in run.plants.iter().filter(|p| (p.pos[0] - at[0]).powi(2) + (p.pos[1] - at[1]).powi(2) <= r2) {
         n[1 + p.key.layer as usize] += 1;
     }
-    let groups: Vec<String> = (1..4).map(|g| format!("{} {}", BUDGET_GROUPS[g], n[g])).collect();
+    n[0] = run.rocks.iter().filter(|p| (p.pos[0] - at[0]).powi(2) + (p.pos[1] - at[1]).powi(2) <= r2).count();
+    let groups: Vec<String> = (0..4).map(|g| format!("{} {}", BUDGET_GROUPS[g], n[g])).collect();
     // Counts of instances: far under 2^52.
     #[allow(clippy::cast_precision_loss)]
     let remainder = (run.prm.budget - n.iter().sum::<usize>() as f64).max(0.0);
@@ -1295,11 +1361,12 @@ pub fn calibration_warnings(run: &FloraRun) -> &[String] {
     run.calibration.as_ref().map_or(&[], |c| &c.warnings)
 }
 
-/// `212345 placements (rocks 0 of 0, canopy 1200 of 1500, ...), 3 rows / 312 models, budget 200000, stamps,
-/// clearings (...), 1 towns (...), 4.2 s`.
+/// `212345 placements (rocks 900 of 1000, canopy 1200 of 1500, ...), rocks 300 pack models / 600 library, 3 rows /
+/// 312 models, budget 200000, stamps, clearings (...), 1 towns (...), 4.2 s`.
 #[must_use]
 pub fn summary_line(run: &FloraRun) -> String {
     let n = placed_per_group(run);
+    let kinds = rocks::rock_kinds(run);
     let groups: Vec<String> = (0..4).map(|g| format!("{} {} of {}", BUDGET_GROUPS[g], n[g], run.full[g])).collect();
     let t = &run.towns;
     let towns = if t.towns == 0 {
@@ -1317,10 +1384,12 @@ pub fn summary_line(run: &FloraRun) -> String {
         format!("clearings ({} sites, {} road segments, {:.0} m² excluded)", c.sites, c.roads, c.excluded as f64 * run.sample_m2)
     };
     format!(
-        "{} placements ({}), {} rows / {} models, budget {:.0}, {}stamps, {clearings}, {towns}, {}, {:.1} s (source {:.1}, \
+        "{} placements ({}), rocks {} pack models / {} library, {} rows / {} models, budget {:.0}, {}stamps, {clearings}, {towns}, {}, {:.1} s (source {:.1}, \
          learn {:.1}, census {:.1}, scatter {:.1})",
-        run.plants.len(),
+        run.plants.len() + run.rocks.len(),
         groups.join(", "),
+        kinds[0],
+        kinds[1],
         run.learned.file.species.len(),
         run.learned.slots.iter().map(Vec::len).sum::<usize>(),
         run.prm.budget,
@@ -1436,7 +1505,9 @@ pub fn run_census(db: &RecordDb, bounds: Bounds<'_>, guide: &Path, budget: Optio
         prm.budget = b;
     }
     let (file, fields, water, clearings) = guide_inputs(guide, &tiles, &prm)?;
-    let run = scatter_world(db, &source, bounds, &tiles, &fields, &water, &file, clearings.as_ref(), &TownMask::default(), prm, None)?;
+    let rs = rocks::RockSource::read(guide)?;
+    let run =
+        scatter_world(db, &source, bounds, &tiles, &fields, &water, &file, clearings.as_ref(), &TownMask::default(), prm, None, Some(&rs))?;
     let md = census_md(&run, guide, 8);
     std::fs::write(guide.join("flora-census.md"), &md)?;
     Ok(md)

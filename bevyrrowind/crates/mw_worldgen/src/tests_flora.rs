@@ -281,13 +281,14 @@ fn prior_water(l: &Learned, prm: &Params) -> (Vec<Vec<Vec<f64>>>, WaterMask) {
 /// The canopy calibration of the fixture pass on `world`.
 fn cal_on(l: &Learned, world: &World<'_>, f: &GridFields, prm: &Params) -> Calibration {
     let (prior, water) = prior_water(l, prm);
-    flora::calibration(l, world, f, &water, &prior, prm)
+    flora::calibration(l, world, f, &water, &prior, None, prm)
 }
 
 /// The pass over `tiles` (all when `None`) at `targets`.
 fn run_at(l: &Learned, world: &World<'_>, f: &GridFields, prm: &Params, targets: &CanopyTargets, tiles: Option<&[(i32, i32)]>) -> (Vec<flora::Plant>, [usize; 4]) {
     let (prior, water) = prior_water(l, prm);
-    flora::scatter_tiles(l, world, f, &water, &prior, prm, targets, tiles)
+    let (plants, _, full) = flora::scatter_tiles(l, world, f, &water, &prior, None, prm, targets, tiles);
+    (plants, full)
 }
 
 /// The pass over every tile at `world`'s own calibration.
@@ -310,7 +311,7 @@ fn scatter_v2_on_the_ten_times_guide_tile_alone_and_placements() {
     let prm = Params::default();
     let targets = cal_on(&l, &world, &f, &prm).targets();
     let (plants, full) = run_at(&l, &world, &f, &prm, &targets, None);
-    assert_eq!(full[0], 0, "no rock rows yet (WG-E3f)");
+    assert_eq!(full[0], 0, "no rock layer in this pass");
     assert!(full[1] > 50 && full[3] > 50, "trees and flora: {full:?}");
     assert_eq!(full[2], 0, "no shrub row learned");
     assert_eq!(plants.len(), full.iter().sum::<usize>(), "the default budget keeps everything");
@@ -352,6 +353,7 @@ fn scatter_v2_on_the_ten_times_guide_tile_alone_and_placements() {
         sample_m2: 1.0,
         full,
         plants: plants.clone(),
+        rocks: Vec::new(),
         region_names: vec![String::new(), "Test Region".into()],
         scale: 10.0,
         stamped: false,
@@ -472,21 +474,22 @@ fn the_scatter_product_is_written_once_read_at_load_and_rebuilt_when_stale() {
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
     let run = |prm: &Params| {
-        let (plants, full, used, _) = flora::scatter_cached(d, &l, &world, &f, &water, &prior, prm).unwrap();
+        let (plants, _, full, used, _) = flora::scatter_cached(d, &l, &world, &f, &water, &prior, None, prm).unwrap();
         (plants, full, used)
     };
-    let cal = flora::calibration(&l, &world, &f, &water, &prior, &prm);
-    let computed = flora::scatter_tiles(&l, &world, &f, &water, &prior, &prm, &cal.targets(), None);
+    let cal = flora::calibration(&l, &world, &f, &water, &prior, None, &prm);
+    let (cp, _, cf) = flora::scatter_tiles(&l, &world, &f, &water, &prior, None, &prm, &cal.targets(), None);
+    let computed = (cp, cf);
     let (plants, full, used) = run(&prm);
     assert_eq!(used, ProductUse::Wrote, "no product yet");
     assert_eq!((plants.clone(), full), computed, "written: the passes' plants");
     let (again, full2, used) = run(&prm);
     assert_eq!(used, ProductUse::Read, "same inputs: read");
     assert_eq!((again, full2), computed, "read == computed");
-    let inputs = flora::product_inputs(d, &world, &f, &l, &prior, &prm).unwrap();
+    let inputs = flora::product_inputs(d, &world, &f, &l, &prior, None, &prm).unwrap();
     let (stored, won) = scatter_product::read(d).unwrap();
     assert_eq!(stored, inputs);
-    assert_eq!(won, flora::winners(&l, &world, &f, &water, &prior, &prm, &cal.targets(), None), "the product is the kept set");
+    assert_eq!(won, flora::winners(&l, &world, &f, &water, &prior, None, &prm, &cal.targets(), None), "the product is the kept set");
     // The budget cut stays at load.
     let half = Params { budget: (plants.len() / 2) as f64, ..prm };
     let (cut, _, used) = run(&half);
@@ -499,9 +502,9 @@ fn the_scatter_product_is_written_once_read_at_load_and_rebuilt_when_stale() {
     assert_eq!(run(&prm).2, ProductUse::Wrote, "back to the first seed: stale again");
     // Stale: a guide file the pass reads.
     std::fs::write(d.join("roads.json"), b"{}").unwrap();
-    assert_ne!(flora::product_inputs(d, &world, &f, &l, &prior, &prm).unwrap(), inputs, "a guide file");
+    assert_ne!(flora::product_inputs(d, &world, &f, &l, &prior, None, &prm).unwrap(), inputs, "a guide file");
     std::fs::remove_file(d.join("roads.json")).unwrap();
-    assert_eq!(flora::product_inputs(d, &world, &f, &l, &prior, &prm).unwrap(), inputs);
+    assert_eq!(flora::product_inputs(d, &world, &f, &l, &prior, None, &prm).unwrap(), inputs);
     // A damaged product of these inputs is rebuilt.
     let bin = d.join(scatter_product::DIR).join("plants.bin");
     let mut bytes = std::fs::read(&bin).unwrap();
@@ -530,7 +533,7 @@ fn the_full_radius_places_everything_round_the_focus_at_load() {
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
     let run = |prm: &Params| {
-        let (plants, _, used, _) = flora::scatter_cached(d, &l, &world, &f, &water, &prior, prm).unwrap();
+        let (plants, _, _, used, _) = flora::scatter_cached(d, &l, &world, &f, &water, &prior, None, prm).unwrap();
         (plants, used)
     };
     let unbudgeted = Params { budget: f64::from(u32::MAX), ..prm };
@@ -581,7 +584,7 @@ fn the_calibration_is_the_guide_census_and_sits_beside_the_product() {
     let f = fields(&world);
     let prm = Params::default();
     let (prior, water) = prior_water(&l, &prm);
-    let cal = flora::calibration(&l, &world, &f, &water, &prior, &prm);
+    let cal = flora::calibration(&l, &world, &f, &water, &prior, None, &prm);
     // Brute census: the cell centres of `census_step_m` over the land rect, land only, a mosaic clearing w = 0.
     let file = &l.file;
     let names = f.class_names();
@@ -638,19 +641,19 @@ fn the_calibration_is_the_guide_census_and_sits_beside_the_product() {
     // Written beside the product, read with it.
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
-    let (_, _, used, wrote) = flora::scatter_cached(d, &l, &world, &f, &water, &prior, &prm).unwrap();
+    let (_, _, _, used, wrote) = flora::scatter_cached(d, &l, &world, &f, &water, &prior, None, &prm).unwrap();
     assert_eq!(used, ProductUse::Wrote, "no product yet");
     assert_eq!(wrote.map(|c| c.classes), Some(cal.classes.clone()), "the passes' calibration");
     assert!(d.join(scatter_product::DIR).join(scatter_calib::FILE).is_file(), "calibration.toml beside the product");
-    let (_, _, used, read) = flora::scatter_cached(d, &l, &world, &f, &water, &prior, &prm).unwrap();
+    let (_, _, _, used, read) = flora::scatter_cached(d, &l, &world, &f, &water, &prior, None, &prm).unwrap();
     assert_eq!(used, ProductUse::Read, "same inputs: read");
     assert_eq!(read.map(|c| c.classes), Some(cal.classes.clone()), "a read product has its calibration file");
     // A class target change: stale, recalibrated, rewritten.
     let mut moved = l.clone();
     moved.file.classes.get_mut("woodland").expect("a woodland target").v *= 2.0;
-    let inputs = flora::product_inputs(d, &world, &f, &l, &prior, &prm).unwrap();
-    assert_ne!(flora::product_inputs(d, &world, &f, &moved, &prior, &prm).unwrap(), inputs, "the target is hashed");
-    let (_, _, used, again) = flora::scatter_cached(d, &moved, &world, &f, &water, &prior, &prm).unwrap();
+    let inputs = flora::product_inputs(d, &world, &f, &l, &prior, None, &prm).unwrap();
+    assert_ne!(flora::product_inputs(d, &world, &f, &moved, &prior, None, &prm).unwrap(), inputs, "the target is hashed");
+    let (_, _, _, used, again) = flora::scatter_cached(d, &moved, &world, &f, &water, &prior, None, &prm).unwrap();
     assert_eq!(used, ProductUse::Wrote, "a target change: stale");
     let again = again.expect("the passes' calibration");
     assert_eq!(again.classes[0].stems_per_ha.to_bits(), (2.0 * cal.classes[0].stems_per_ha).to_bits(), "the new target");
@@ -724,10 +727,11 @@ fn scatter_v2_counts_and_seconds_on_x10s() {
     let source = mw_world::MwWorldSource::build(&content.db, &mw_world::SourceOptions::default());
     let prm = Params::default();
     let (file, f, water, clearings) = flora::guide_inputs(dir, &tiles, &prm).unwrap();
+    let rock_source = flora::rocks::RockSource::read(dir).unwrap();
     let towns = TownMask::default();
     let pass = |prm: Params| {
         let t = Instant::now();
-        let run = flora::scatter_world(&content.db, &source, &bounds, &tiles, &f, &water, &file, clearings.as_ref(), &towns, prm, Some(dir))
+        let run = flora::scatter_world(&content.db, &source, &bounds, &tiles, &f, &water, &file, clearings.as_ref(), &towns, prm, Some(dir), Some(&rock_source))
             .unwrap();
         (run, t.elapsed().as_secs_f64())
     };
@@ -892,7 +896,7 @@ fn canopy_density_trace_on_x10s() {
     // The learned rows, region prior and calibration of the run (the passes as the game runs them), with no budget:
     // its plants are the whole kept set (WG-E2o.d).
     let unbudgeted = Params { budget: f64::from(u32::MAX), ..prm };
-    let run = flora::scatter_world(&content.db, &source, &bounds, &tiles, &f, &water, &file, clearings.as_ref(), &towns, unbudgeted, None)
+    let run = flora::scatter_world(&content.db, &source, &bounds, &tiles, &f, &water, &file, clearings.as_ref(), &towns, unbudgeted, None, None)
         .unwrap();
     let m = crate::assemble(&content.db).unwrap();
     let regions = crate::region_map(&content.db, m.cells_min, m.cells_max).unwrap();
@@ -1124,7 +1128,7 @@ fn calibration_gap(
         let all: u64 = s.tiles.iter().map(|k| census.tiles[k].0).sum();
         let share = if all == 0 { 0.0 } else { s.land_ha / (all as f64 * census.step_m * census.step_m / 1e4) };
         let set: BTreeSet<(i32, i32)> = s.tiles.iter().copied().collect();
-        let alone = flora::winners(&run.learned, world, f, water, &run.prior, &run.prm, &targets, Some(&s.tiles));
+        let alone = flora::winners(&run.learned, world, f, water, &run.prior, None, &run.prm, &targets, Some(&s.tiles));
         let alone_n = alone
             .plants
             .iter()
@@ -1187,7 +1191,7 @@ fn the_stand_cap_thins_the_densest_tiles_at_load() {
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
     let run = |prm: &Params| {
-        let (plants, _, used, _) = flora::scatter_cached(d, &l, &world, &f, &water, &prior, prm).unwrap();
+        let (plants, _, _, used, _) = flora::scatter_cached(d, &l, &world, &f, &water, &prior, None, prm).unwrap();
         (plants, used)
     };
     let (open, used) = run(&Params { canopy_stems_per_ha_max: f64::MAX, ..prm });
@@ -1386,5 +1390,116 @@ fn rock_ground_candidates_tile_alone() {
             assert_eq!(run(name, rect), inside, "{name} {rect:?}");
         }
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// WG-E3f.4: the rock layer in the passes on the fixture's geology product (tuff west of col 32, `basalt_flow` from it,
+/// a mapped cliff column), with the learned rock model widened to fit field stones (axis 6 m at 0.05-0.4: 0.3-2.4 m).
+/// Every tile alone gives the whole run's kept rocks and the same placed rocks; the rocks are budget group 0 and
+/// counted there; a pack-model share of 0 places no pack model (the default share places some); a model rock copies
+/// its learned reference and sits at its learned offset; a library rock stands on the ground.
+#[test]
+fn rock_layer_in_the_passes_tile_alone_share_zero_and_groups() {
+    use flora::rocks::{Ground, RockMesh, Rocks, guide_geology, pass_prior, rock_placements, values_of};
+    use sf_worldgen::scatter::LayerWinners;
+    use sf_worldgen::scatter_species::RockContext;
+    let (m, regions) = (mosaic(), regions());
+    let mut l = learned(&m);
+    l.rocks[0].scale = [0.05, 0.4];
+    let table = geology_table();
+    assert!(flora::rocks::rock_entries(&mut l, &regions, &table) > 0);
+    let t = tiles(&m);
+    let towns = TownMask::default();
+    let world = World::new(&m, &regions, &t, None, &towns);
+    let dir = rock_scratch("wired");
+    write_geology(&world, &dir);
+    let geo = guide_geology(&dir).unwrap().unwrap();
+    let ground = Ground::new(&world, Some(&geo), &table).unwrap();
+    let area = vec![vec![0u64; 3], vec![1, 0, 0]];
+    let rock_prior = pass_prior(&l, &area);
+    assert_eq!(rock_prior.as_deref(), Some(&[0.0, 1.0][..]), "one region: prior 1 where the rocks were learned");
+    let rocks = Rocks { ground: &ground, values: values_of(&l.file).unwrap(), prior: rock_prior.as_deref(), table: &table };
+    let f = fields(&world);
+    let prm = Params::default();
+    let (prior, water) = prior_water(&l, &prm);
+    let targets = flora::calibration(&l, &world, &f, &water, &prior, Some(&rocks), &prm).targets();
+    let won = flora::winners(&l, &world, &f, &water, &prior, Some(&rocks), &prm, &targets, None);
+    let (plants, placed, full) = flora::place(&l, &world, Some(&rocks), &prm, &won);
+    let ctx = |c: RockContext| won.rocks.iter().filter(|r| r.key.context == c).count();
+    let (talus, field) = (ctx(RockContext::Talus), ctx(RockContext::Field));
+    println!("kept rocks {} (talus {talus}, outcrop {}, field {field}), placed {}", won.rocks.len(), ctx(RockContext::Outcrop), placed.len());
+    assert!(talus > 0 && field > 0, "talus below the mapped cliff and field stones on the flat");
+    assert_eq!(full[0], won.rocks.len(), "the kept rocks are budget group 0");
+    assert_eq!(placed.len(), full[0], "the default budget keeps every rock, and every unit has an entry per context");
+    // Tile alone == whole, in any order: the kept rocks and their placed mesh and pose.
+    let rect = world.rect();
+    let tm = prm.tile_m;
+    let (x0, y0) = ((rect[0] / tm).floor() as i32, (rect[1] / tm).floor() as i32);
+    let (x1, y1) = ((rect[2] / tm).ceil() as i32, (rect[3] / tm).ceil() as i32);
+    let mut alone = Vec::new();
+    for y in (y0..y1).rev() {
+        for x in (x0..x1).rev() {
+            alone.extend(flora::winners(&l, &world, &f, &water, &prior, Some(&rocks), &prm, &targets, Some(&[(x, y)])).rocks);
+        }
+    }
+    // The run concatenates its tiles (a talus block may land outside its parent's tile): compare by key.
+    let mut whole = won.rocks.clone();
+    whole.sort_unstable_by_key(|c| c.key);
+    alone.sort_unstable_by_key(|c| c.key);
+    assert_eq!(alone, whole, "every tile alone == the whole run's rocks");
+    let only = |rocks: Vec<_>| LayerWinners { rocks, plants: Vec::new() };
+    let mut by_key = placed.clone();
+    by_key.sort_unstable_by_key(|r| r.key);
+    assert_eq!(flora::place(&l, &world, Some(&rocks), &prm, &only(alone)).1, by_key, "the same placed rocks");
+    // Pack-model share: some models at the default, none at 0.
+    let models = |p: &[flora::rocks::Rock]| p.iter().filter(|r| matches!(r.mesh, RockMesh::Model(_))).count();
+    assert!(models(&placed) > 0 && models(&placed) < placed.len(), "both kinds at share {}", prm.rock_pack_model_share);
+    let none = Params { rock_pack_model_share: 0.0, ..prm };
+    let library = flora::place(&l, &world, Some(&rocks), &none, &won).1;
+    assert_eq!(library.len(), placed.len());
+    assert_eq!(models(&library), 0, "share 0: library only");
+    for r in &placed {
+        let h = world.height(r.pos[0], r.pos[1]);
+        match r.mesh {
+            RockMesh::Model(i) => {
+                assert_eq!(i, 0);
+                assert!(r.scale >= 0.05 - 1e-6 && r.scale <= 0.4 + 1e-6, "{r:?}");
+                let want = h + f64::from(l.rocks[0].offset_m) * f64::from(r.scale);
+                assert!((r.pos[2] - want).abs() < 1e-6, "a model at its learned offset: {r:?}");
+            }
+            RockMesh::Class { .. } => assert!((r.pos[2] - h).abs() < 1e-9 && r.sink >= 0.0, "{r:?}"),
+        }
+    }
+    // Counted per group: the run's summary and placements.
+    let run = FloraRun {
+        prm,
+        learned: l.clone(),
+        prior: prior.clone(),
+        area,
+        sample_m2: 1.0,
+        full,
+        plants: plants.clone(),
+        rocks: placed.clone(),
+        region_names: vec![String::new(), "Test Region".into()],
+        scale: 10.0,
+        stamped: false,
+        towns: flora::towns::TownCensus::default(),
+        clearings: flora::ClearingCensus::default(),
+        product: flora::ProductUse::Off,
+        calibration: None,
+        seconds: [0.0; 4],
+    };
+    let line = flora::summary_line(&run);
+    let n = models(&placed);
+    assert!(line.starts_with(&format!("{} placements (rocks {} of {}, ", plants.len() + placed.len(), placed.len(), full[0])), "{line}");
+    assert!(line.contains(&format!("rocks {n} pack models / {} library", placed.len() - n)), "{line}");
+    let p = rock_placements(&run);
+    assert_eq!(p.len(), n, "one placement per pack-model rock");
+    let rep = &l.reps[l.rocks[0].rep];
+    assert!(p.iter().all(|q| q.base == rep.base && q.model == rep.model && q.class == rep.class), "copies of the reference");
+    let mut ids: Vec<_> = p.iter().map(|q| q.id).chain(flora::rocks::library_rocks(&run).iter().map(|q| q.id)).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), placed.len(), "rock ids are unique");
     let _ = std::fs::remove_dir_all(&dir);
 }

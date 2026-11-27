@@ -440,6 +440,14 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
   size and blake3 against `meta.json`); `mw_worldgen` `flora_rocks.rs` `guide_geology`, `Ground`): the product's
   nearest-sample unit and cliff (its frame must be the guide's), else no cliff and per region its largest unit share
   (ties: first name); slope/aspect from the guide heights, height the final ground. Not used by the passes yet (E3f.4).
+- **WG-E3f.4** (2026-11-27, `mw_worldgen` `flora.rs` `scatter_world(.., rock_source)`; `with_rules`, `calibration`, `winners`,
+  `place`, `scatter_cached` take `Option<&rocks::Rocks>`; `flora_rocks.rs` `RockSource` (the guide's `geology.toml` else the
+  shipped one, its `geology/` product), `pass_prior`, `place_rock`, `Rock`, `rock_placements`, `library_rocks`): the rock layer
+  runs first in the game's passes (in the calibration census too); `pass_prior` is `None` (authored density) when the source
+  learned no rock density. Rocks are budget group 0 and pick at load; a pack model becomes a `Placement` in extra group
+  `rocks`, seated at its learned `offset_m x scale` (a pack mesh's origin is its own, so `sink` serves library classes only); a
+  library rock stays in `FloraRun::rocks` (no consumer until RG-P). `PRODUCT_VERSION` 2, four geology files in
+  `PRODUCT_FILES`, table and prior hashed. Summary line: `rocks N of M`, `rocks a pack models / b library`.
 
 ## Tunables
 

@@ -3,6 +3,7 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-27 (ecosystems loop, WG-E3f.4): rocks are back in the 10x world. Boulder fields below cliffs, outcrops and scattered field stones are placed by rock type from the geology map, using Morrowind's own rock models where one fits the size. Generated library rocks are chosen but not drawn yet (RG-P). A saved scatter product rebuilds once. Branch `wt/ecosystems`.
 - 2026-11-27 (ecosystems loop, WG-V1b.2): in generated worlds, plants and rocks no longer grow on the roads or right beside them (6 m beyond the road edge), and they will keep out of the clearings of generated wilderness sites (camps, shrines, ruins) once those are placed. Branch `wt/ecosystems`, awaiting the owner's merge.
 - 2026-11-27 (ecosystems loop, WG-E2i.4): the old plant-scatter code (before the forest placement) is removed; nothing changes in the game. Branch `wt/ecosystems`.
 - 2026-11-27 (ecosystems loop, WG-E2i.3): the 10x world's plants now use the new forest placement: Morrowind's own trees, shrubs and small plants are the models, sized and tilted the way the original map places them, and each region keeps its own density relative to its climate. A generated world needs its climate map first (`scrib-worldgen climate`); without one it logs the command and grows no plants. Rocks return with the rock adapter (WG-E3f). Branch `wt/ecosystems`.
