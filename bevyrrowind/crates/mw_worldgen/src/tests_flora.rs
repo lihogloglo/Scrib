@@ -773,7 +773,7 @@ fn scatter_v2_counts_and_seconds_on_x10s() {
 
 /// Copies the guide files of `src` into `dir`, with its climate product when it has one, else makes it there;
 /// returns how and the seconds it took.
-fn x10s_copy(src: &std::path::Path, dir: &std::path::Path) -> (&'static str, f64) {
+pub(crate) fn x10s_copy(src: &std::path::Path, dir: &std::path::Path) -> (&'static str, f64) {
     use sf_worldgen::climate_map::{ClimateRequest, run_climate};
     use std::time::Instant;
     for e in std::fs::read_dir(src).unwrap() {

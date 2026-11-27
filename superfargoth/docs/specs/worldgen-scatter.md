@@ -448,6 +448,10 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
   `rocks`, seated at its learned `offset_m x scale` (a pack mesh's origin is its own, so `sink` serves library classes only); a
   library rock stays in `FloraRun::rocks` (no consumer until RG-P). `PRODUCT_VERSION` 2, four geology files in
   `PRODUCT_FILES`, table and prior hashed. Summary line: `rocks N of M`, `rocks a pack models / b library`.
+- **WG-E3m** (2026-11-27, `mw_worldgen` `tests_rocks_x10.rs` `rocks_on_x10s`, ignored; geology product made from the shipped
+  table): x10s 2.21 M rocks (talus 0.13 M, outcrop 0.90 M, field 1.19 M), 9-26 /ha per unit, pack models 25 % (outcrop 50 %,
+  field 7 %); fitted D talus 1.51, outcrop 1.81, field 1.99 (declared 2); rock layer +44 s on the first load (296 vs 252 s),
+  `rocks.bin` 159 MB; at budget 200k rocks keep 8 % (16,286). Numbers: ledger.
 
 ## Tunables
 

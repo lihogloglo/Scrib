@@ -39,6 +39,8 @@ mod tests_geology;
 #[cfg(test)]
 mod tests_kit;
 #[cfg(test)]
+mod tests_rocks_x10;
+#[cfg(test)]
 mod tests_site;
 #[cfg(test)]
 mod tests_town;
