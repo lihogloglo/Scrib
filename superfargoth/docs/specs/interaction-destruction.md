@@ -583,3 +583,12 @@ hashed into the fingerprint and `RULES_VERSION` 3 -> 4, so `lod.near` re-bakes o
 impulse whose damage overflows f32 saturates at `f32::MAX` (it still breaks), a NaN tunable gives 0. `DAMAGE_IMPACT` in
 `destroy.rs`; `impact_{speed_min_mps, impulse_min_ns, damage_per_ns}` on `InteractParams`, bound in `sf_interaction_bevy`
 (`bind_rules`). Tests `tests_impact.rs` (4 exact): speed gate, dead zone + two linear points, non-finite, same bits.
+
+## As built (IN4b, 2026-11-27)
+
+`sf_interaction_bevy` `impact.rs` (`physics` feature): `ImpactCursor` (reset in `First`), `ImpactSystems` as "Shell",
+run only with `Physics`, `PhysicsEvents` and `PhysicsStreaming`; the body map is built from the active world only on a
+step with a nonzero hit. New seam `PhysicsStreaming::insert_placed(ws, placement, body)` (`sf_physics_bevy`
+`stream.rs`): a host-spawned body `body()` finds (tests use it). Tests `tests_impact.rs` (6 headless exact): every
+frame's hits equal the spec's from that frame's own contacts (3 m drop breaks 1 hp, 0.2 m none, fixed target only, a
+`DEBRIS` bottle counts, two steps a frame each event once), no hit from unregistered/`DebrisPiece`/`PROJECTILE`/`HELD`.

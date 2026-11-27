@@ -71,6 +71,8 @@
 //!   cosmetic pieces from its seed within `interact.debris.lod_m` of `PhysicsFocus`, capped at
 //!   `interact.debris.awake_max` (oldest fade first), faded on sleep or after `fade_s`, shrunk over
 //!   `shrink_s`, despawned. Never saved, never gameplay.
+//! - Impacts (`IN4b`, `physics` feature, `impact` module docs): a gated physics contact
+//!   (`interact.impact.*`) is a [`PropDamage`] of kind `impact` on each registered side it touches.
 //!
 //! Not here: game wiring (`IN32`).
 
@@ -96,6 +98,8 @@ pub mod debris;
 pub mod destroy;
 pub mod door;
 pub mod focus;
+#[cfg(feature = "physics")]
+pub mod impact;
 pub mod light;
 pub mod rest;
 pub mod seat;
@@ -112,6 +116,8 @@ mod tests_destroy;
 mod tests_door;
 #[cfg(test)]
 mod tests_focus;
+#[cfg(all(test, feature = "physics"))]
+mod tests_impact;
 #[cfg(test)]
 mod tests_light;
 #[cfg(test)]
@@ -131,6 +137,8 @@ pub use destroy::{
 };
 pub use door::{Door, DoorChanged, DoorMoved, DoorRest, DoorSweep, DoorSweeps, DoorSystems, Doors};
 pub use focus::{FocusCandidates, FocusState, PlayerFocus};
+#[cfg(feature = "physics")]
+pub use impact::{ImpactCursor, ImpactSystems};
 pub use light::{GameplayLight, GameplayLights, Light, LightChanged, LightRest, LightSystems, Lights};
 pub use rest::{RestRequested, RestSystems};
 pub use seat::{

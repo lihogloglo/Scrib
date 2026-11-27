@@ -173,6 +173,9 @@ pub(crate) fn build(app: &mut bevy_app::App) {
         )
         .add_systems(FixedUpdate, damage.in_set(DestroySystems::Damage))
         .add_systems(FixedUpdate, release.in_set(DestroySystems::Release));
+    // Physics contacts as damage in (IN4b).
+    #[cfg(feature = "physics")]
+    crate::impact::build(app);
 }
 
 /// `state` clamped to `def`, and whether a reached stage removes the object.

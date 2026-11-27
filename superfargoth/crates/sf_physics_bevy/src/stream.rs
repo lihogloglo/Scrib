@@ -290,6 +290,12 @@ impl PhysicsStreaming {
         self.placed.get(&(worldspace.clone(), id)).copied()
     }
 
+    /// Lists a body the host inserted itself for a placement streaming does not place (its own
+    /// spawn path, tests): [`Self::body`] finds it.
+    pub fn insert_placed(&mut self, worldspace: &WorldspaceId, id: PlacementId, body: BodyId) {
+        self.placed.insert((worldspace.clone(), id), body);
+    }
+
     /// Whether static collision around `pos` is still streaming in (the
     /// collision-ready gate, physics.md "Streaming"): a streaming cell with
     /// content that the horizontal square of half size `margin` around `pos`
