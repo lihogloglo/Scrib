@@ -86,6 +86,7 @@ pub mod scatter_rocks;
 pub mod scatter_species;
 pub mod scatter_stand;
 pub mod shade;
+pub mod sites;
 pub mod stamps;
 pub mod stratovolcano;
 pub mod stream;

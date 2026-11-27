@@ -146,9 +146,10 @@ meaning): header `format, seed, guide_blake3, table_blake3, packs_blake3`; per s
 generated: `site:<row>:<MU id>`, stable while MU's inputs are), `name`, `name_key`, `population`, `culture`,
 `centre_m`, `radius_m`, `laid_out`, `kind` (`town | hamlet | farm | activity | remote | node`), `kept`, `row`,
 `template`, `mode`, `parent`, `ground_m`, `yaw_deg`, `footprint` (ring), `access` [x, y], `access_class`,
-`approach` (polyline), `situation`, `kit`, `clearing_m`, `pad`, `reach`, `buildings[]` and `installations[]` (MU
-serde, passed through). V1 adds `status` (`placed | reseated | dropped`), `moved_m`, `travel_s`, `via`
-(`foot | swim`). Readers check `format` first and reject unknown fields (settle convention). `sf_worldgen::sites`
+`approach` (MU's access kind string, `cliff-stair`, `causeway`..; its line is an installation, `activities.rs:57`),
+`situation`, `kit`, `clearing_m`, `pad`, `reach`, `buildings[]` and `installations[]` (MU serde, passed through),
+plus format 1's `anchor` and header `producer`. V1 adds `status` (`placed | reseated | dropped`), `moved_m`,
+`travel_s`, `via` (`foot | swim`), `reason` (why dropped). Readers check `format` first and reject unknown fields (settle convention). `sf_worldgen::sites`
 is the generic Scrib reader; it names no game.
 
 **WG-V1 reachability.** Grid at `reach.cell_m` over the final ground (guide heights, stamps, the runtime filter's CPU
@@ -216,6 +217,14 @@ back to the region map.
 | WG-P1e | road network nodes (waystations) as sites | SW `crates/roads`, `crates/sites` | P1c | nodes every 15-25 km of trunk, deterministic | census |
 | WG-NM1 | names: MU grammar + pack loader (patch 05) + game grammar pack | SW vendor + `crates/sites`; data pack | P1b | deterministic; no duplicate in 1000 draws or in a world | names in `sites.json` |
 | WG-NM2 | `sf.map.place` per kept site, `discover: Near` | `mw_worldgen` (site mod) | NM1, P3b, MAP1 | one place per kept site; rule and kind exact | map check later |
+
+## As built
+
+- **WG-P1d (2026-11-27)** `sf_worldgen::sites` (`sites.rs`, tests `tests_sites.rs`): `SitesFile::read/from_reader`
+  checks `format` first (1 or 2), `deny_unknown_fields` on every object (a format-2 field in a format-1 file is
+  unknown), duplicate keys refused; format 1 reads as kept `town`s, reach `any`, no access class; `to_json/write`
+  always write format 2, empty fields skipped, so read(write(x)) == x. Required in format 2: header `seed` + three
+  hashes, per site `key, centre_m, kind, kept`.
 
 ## Tunables
 
