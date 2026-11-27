@@ -47,6 +47,7 @@ main/render/GPU ms beside the frame. Below that size the verdict is "inconclusiv
 [Terrain and water](engine/terrain-and-water.md): baked tiles, clipmaps, CDLOD, far shadow map; FFT ocean, wave twin, shore, pools
 [Textures](engine/textures.md): BCn KTX2 cook, de-light, normal-map companions, tangents, runtime layer
 [Physics](engine/physics.md): rapier world, collision from NIF, item bodies, carry, Rapier ragdolls, Delirium takeovers
+[Interaction](engine/interaction.md): smart-object defs and bake, point index, claims, focus and verbs, activation pipeline, seats, swing doors, rest hook
 [UI and menus](engine/ui-and-menus.md): UI kit, CSS theme, screen stack, main and pause menus, options, intro, dev console
 [Saves](engine/saves.md): save file format, atomic write, sections, quickload, save/load screens
 [RPG and scripting](engine/rpg-and-scripting.md): dialogue, journal, quests, stats, MWScript interpreter, parked Luau
