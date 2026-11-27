@@ -122,6 +122,16 @@ impl GameplayLights {
         self.0.get(&placement)
     }
 
+    /// Sets an entry another system owns (a burning object, `IN39c`).
+    pub(crate) fn insert(&mut self, light: GameplayLight) {
+        self.0.insert(light.placement, light);
+    }
+
+    /// Drops an entry another system owns.
+    pub(crate) fn remove(&mut self, placement: PlacementId) {
+        self.0.remove(&placement);
+    }
+
     /// In placement order.
     pub fn iter(&self) -> impl Iterator<Item = &GameplayLight> {
         self.0.values()

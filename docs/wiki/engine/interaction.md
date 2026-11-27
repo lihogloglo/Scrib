@@ -130,7 +130,12 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   `interact.rules.wet_threshold` on bodies not burning, then `step_fire` on the rules' `InteractionObjectStates`;
   `Burning`/`Wet`/`Charred` mirrored into `InteractionStateTags`; `FireCulprits` from a rule's `Added(Burning)`, a heat
   ignition inherits the nearest burning spreader's; rule and heat `Ignited` and `Burnt` -> `from_fire` -> `ChangeInbox`.
-  No fire damage, charred stage or fire lights yet (IN39c).
+  Outputs (IN39c, `outputs` after the step): every transition -> `FireChanged` (a rule's `Removed(Burning)` = `Doused`);
+  each burning destructible takes `PropDamage` kind `DAMAGE_FIRE` of `interact.fire.damage_per_s / tick_hz` with the
+  fire's culprit; a burn-out forces `burnt_stage` (else the last) as `PropStage`, and its fire `Destroyed` on a `Charred`
+  placement is no `WorldChange` (the `Burnt` said it); `BurningObjects` (at, since, region, `light`: at most
+  `interact.fire.lights_max` per region, lit keep their slot, free ones earliest-started first); a burning non-light
+  placement is a `GameplayLights` entry (`interact.fire.light_radius_m`, intensity 1) until it stops burning or unloads.
 - **Impacts (IN4a core, IN4b shell).** `impact_damage(impulse_ns, speed_mps, params)` (`sf_interaction/src/impact.rs`):
   0 under `interact.impact.speed_min_mps` or within the `interact.impact.impulse_min_ns` dead zone, else
   `interact.impact.damage_per_ns x (impulse - dead zone)`; non-finite in -> 0, overflow saturates. Kind `DAMAGE_IMPACT`

@@ -203,6 +203,11 @@ a `Charred` placement maps to no `WorldChange` (its `Burnt` said it). `BurningOb
 until it goes out, no flicker); `FireChanged { tick, placement, output, at }` for the presenter; a burning placement
 that is not a registered light joins `GameplayLights` (`interact.fire.light_radius_m`, intensity 1) while it burns
 and leaves it on Doused, Burnt or its `Remove` (the light registry's `drop_light` covers only registered lights).
+**As built (IN39c, 2026-11-27).** `fire.rs` `outputs` after `step` in `FireSystems`: rule and step transitions (a rule's
+`Removed`/`Expired(Burning)` is a `Doused`) -> `FireChanged`; burnt destructible -> `PropStage` (`DAMAGE_FIRE`, the
+culprit); `BurningObjects` rebuilt from the candidates burning after the step (`since` = core `burning_since`); lit keep
+their slot, the latest past the cap lose it (a live `lights_max` cut), free slots earliest-first; `world_change` drops a
+fire `Destroyed` on `Charred`. Params `fire_damage_per_s`, `fire_lights_max`, `fire_light_radius_m`. 3 headless tests.
 
 **IN39d save.** Core `ObjectStates::rest_bytes(placement, now)` / `from_rest_bytes(.., now)` (version, then per state
 tag id + remaining ticks, `u32::MAX` = until removed) and `Fire::rest_bytes` / `restore` (version, heat bits, elapsed

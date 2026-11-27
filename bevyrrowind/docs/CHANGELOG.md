@@ -3,6 +3,10 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-27 (interaction loop, IN39c): burning things now hurt and light the world: a burning breakable object loses
+  health every second and ends on its charred look (reported once as burnt, not destroyed), every fire lights its
+  surroundings for the AI, and at most a few fires per area get a real light, the oldest first, so lights never
+  jump between fires. Not visible yet: flames, smoke and the lights themselves (IN39f) and the game's inputs (IN39e).
 - 2026-11-27 (interaction loop, IN39b): fire now spreads every tick: a torch-lit rug heats its neighbours until they
   catch, each fire burns out charred, wet ground (outdoors, not under a roof) stays wet and never catches, and whoever
   lit the first fire is blamed for the ones it spread to. Not visible yet: flames, fire damage and fire light (IN39c,

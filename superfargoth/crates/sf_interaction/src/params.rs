@@ -83,6 +83,14 @@ pub struct InteractParams {
     pub fire_burning_max: u16,
     /// Heat checks (source -> target distance tests) per tick, round-robin, count (range 4-512).
     pub fire_spread_checks_per_tick: u16,
+    /// Raw damage a burning destructible takes per second (the host's `(fire, material)` factor
+    /// scales it), 1/s (range 0-100, `IN39c`).
+    pub fire_damage_per_s: f32,
+    /// Fire lights per region, earliest-started first; the rest are flames without a light, count
+    /// (range 0-16, `IN39c`).
+    pub fire_lights_max: u16,
+    /// Reach of a burning object's gameplay light (the AI's light exposure), m (range 1-20, `IN39c`).
+    pub fire_light_radius_m: f32,
     /// Normal speed change below which a contact deals no impact damage, m/s (range 0.5-10).
     pub impact_speed_min_mps: f32,
     /// Impact impulse dead zone: up to it a contact deals nothing, N·s (range 0-50).
@@ -199,6 +207,12 @@ impl Default for InteractParams {
             fire_burning_max: 24,
             // tunables: const (bound from interact.fire.spread_checks_per_tick in sf_interaction_bevy (IN17c2); Guess)
             fire_spread_checks_per_tick: 48,
+            // tunables: const (bound from interact.fire.damage_per_s in sf_interaction_bevy (IN39c); Guess)
+            fire_damage_per_s: 5.0,
+            // tunables: const (bound from interact.fire.lights_max in sf_interaction_bevy (IN39c); Guess, shadowless lights)
+            fire_lights_max: 4,
+            // tunables: const (bound from interact.fire.light_radius_m in sf_interaction_bevy (IN39c); Guess)
+            fire_light_radius_m: 6.0,
             // tunables: const (bound from interact.impact.speed_min_mps in sf_interaction_bevy (IN4a); Guess, Source min impact speed)
             impact_speed_min_mps: 3.0,
             // tunables: const (bound from interact.impact.impulse_min_ns in sf_interaction_bevy (IN4a); Guess, Source minhealthdmg)

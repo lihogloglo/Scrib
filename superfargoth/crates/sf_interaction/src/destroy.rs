@@ -42,6 +42,11 @@ pub const DAMAGE_SCRIPT: TagId = TagId::of("script");
 /// `(impact, material)` factor scales it (stone 0, glass high).
 pub const DAMAGE_IMPACT: TagId = TagId::of("impact");
 
+/// The damage kind of fire (interaction-world-rules.md, `IN39c` fire outputs): a burning
+/// destructible's per-tick damage and its burnt stage; the adapter's `(fire, material)` factor
+/// scales the damage.
+pub const DAMAGE_FIRE: TagId = TagId::of("fire");
+
 /// One break the host released (interaction-destruction.md "Shell and game"): the stage swap, the
 /// spill, the debris and the effect all start from it. "Net" sends its first six fields.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

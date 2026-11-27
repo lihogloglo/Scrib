@@ -239,6 +239,8 @@ fn def_defaults_are_the_struct_defaults() {
         (&FIRE_WIND_REF_MPS, d.fire_wind_ref_mps),
         (&FIRE_RAIN_DOUSE, d.fire_rain_douse),
         (&FIRE_REGION_M, d.fire_region_m),
+        (&FIRE_DAMAGE_PER_S, d.fire_damage_per_s),
+        (&FIRE_LIGHT_RADIUS_M, d.fire_light_radius_m),
         (&IMPACT_SPEED_MIN_MPS, d.impact_speed_min_mps),
         (&IMPACT_IMPULSE_MIN_NS, d.impact_impulse_min_ns),
         (&IMPACT_DAMAGE_PER_NS, d.impact_damage_per_ns),
@@ -268,13 +270,14 @@ fn def_defaults_are_the_struct_defaults() {
     assert_eq!(DEBRIS_AWAKE_MAX.default_value(), u32::from(d.debris_awake_max), "interact.debris.awake_max");
     assert_eq!(RULES_EVALS_PER_TICK.default_value(), u32::from(d.rules_evals_per_tick), "interact.rules.evals_per_tick");
     assert_eq!(FIRE_BURNING_MAX.default_value(), u32::from(d.fire_burning_max), "interact.fire.burning_max");
+    assert_eq!(FIRE_LIGHTS_MAX.default_value(), u32::from(d.fire_lights_max), "interact.fire.lights_max");
     assert_eq!(NOISE_PER_TICK_MAX.default_value(), u32::from(d.noise_per_tick_max), "interact.noise.per_tick_max");
     assert_eq!(
         FIRE_SPREAD_CHECKS_PER_TICK.default_value(),
         u32::from(d.fire_spread_checks_per_tick),
         "interact.fire.spread_checks_per_tick"
     );
-    assert_eq!(floats.len() + counts.len() + 5, TUNABLES.len(), "one def per field but tick_hz");
+    assert_eq!(floats.len() + counts.len() + 6, TUNABLES.len(), "one def per field but tick_hz");
     for (def, field) in floats {
         assert!((def.default_value() - field).abs() < f32::EPSILON, "{}", def.name());
     }

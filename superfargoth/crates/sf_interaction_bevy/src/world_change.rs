@@ -10,7 +10,8 @@
 //!   carries its cause tag (`IN39a2`).
 //! - **Break** ([`Destroyed`]): `Destroyed` on the def's final stage or a removing one
 //!   ([`from_destroyed`], the cause = the hit's damage kind), at the object. One whose placement left
-//!   meanwhile counts only if it removes, at the hit point (no def to count stages by).
+//!   meanwhile counts only if it removes, at the hit point (no def to count stages by). A break of
+//!   kind `fire` on a `Charred` placement counts none: its fire `Burnt` said it (`IN39c`).
 //! - **Owner and home** come from [`ChangeOwners`], filled by the host from its ownership data (none:
 //!   unowned). The core never names crime; the host maps [`sf_interaction::ChangeOwner`] and the
 //!   culprit's `UserKey`.
@@ -26,10 +27,14 @@ use std::collections::BTreeMap;
 
 use bevy_app::{App, FixedUpdate};
 use bevy_ecs::prelude::*;
-use sf_interaction::{ChangeOwner, ChangeSite, WorldChange, fold_tick, from_destroyed, from_door, from_light};
+use sf_interaction::{
+    CHARRED, ChangeOwner, ChangeSite, DAMAGE_FIRE, WorldChange, fold_tick, from_destroyed, from_door, from_light,
+};
 use sf_world::PlacementId;
 
-use crate::{DestroySystems, Destroyed, Destructibles, DoorChanged, DoorSystems, Doors, LightChanged};
+use crate::{
+    DestroySystems, Destroyed, Destructibles, DoorChanged, DoorSystems, Doors, InteractionObjectStates, LightChanged,
+};
 
 /// One lasting change of one object (the core's [`WorldChange`]).
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
@@ -115,6 +120,7 @@ fn emit(
     doors: Res<Doors>,
     registry: Res<Destructibles>,
     owners: Res<ChangeOwners>,
+    object_states: Res<InteractionObjectStates>,
     mut door_changed: MessageReader<DoorChanged>,
     mut light_changed: MessageReader<LightChanged>,
     mut destroyed: MessageReader<Destroyed>,
@@ -131,6 +137,9 @@ fn emit(
     }
     for d in destroyed.read() {
         let e = &d.0;
+        if e.kind == DAMAGE_FIRE && object_states.0.has(e.placement, CHARRED) {
+            continue;
+        }
         let (at, stages) = registry
             .get(e.placement)
             .map_or((e.point, usize::MAX), |o| (o.object.translation, o.destructible().map_or(0, |def| def.stages.len())));

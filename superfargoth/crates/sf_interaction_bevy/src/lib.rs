@@ -167,8 +167,8 @@ pub use destroy::{
 };
 pub use door::{Door, DoorChanged, DoorMoved, DoorRest, DoorSweep, DoorSweeps, DoorSystems, Doors};
 pub use fire::{
-    FireCandidate, FireCandidates, FireCulprit, FireCulprits, FireShelter, FireWeather, FireWetness, FireZones,
-    InteractionFire, ProbeAt, SampleAt,
+    BurningObject, BurningObjects, FireCandidate, FireCandidates, FireChanged, FireCulprit, FireCulprits, FireShelter,
+    FireWeather, FireWetness, FireZones, InteractionFire, ProbeAt, SampleAt,
 };
 pub use focus::{FocusCandidates, FocusState, PlayerFocus};
 #[cfg(feature = "physics")]
@@ -355,6 +355,16 @@ pub const FIRE_BURNING_MAX: Def<u32> = gp_count(def!(count "interact.fire.burnin
 pub const FIRE_SPREAD_CHECKS_PER_TICK: Def<u32> = gp_count(def!(count "interact.fire.spread_checks_per_tick" = 48)
     .range(4, 512)
     .help("Fire heat checks per tick, round-robin with the elapsed time: slows fire, never redirects it (IN17c2)"));
+pub const FIRE_DAMAGE_PER_S: Def<f32> = gp(def!(float "interact.fire.damage_per_s" = 5.0)
+    .range(0.0, 100.0)
+    .help("Raw damage a burning destructible takes per second; the (fire, material) factor scales it (IN39c)"));
+pub const FIRE_LIGHTS_MAX: Def<u32> = pres_count(def!(count "interact.fire.lights_max" = 4)
+    .range(0, 16)
+    .help("Fire lights per fire region, earliest-started first, kept until they go out; the rest are flames without a light (IN39c)"));
+pub const FIRE_LIGHT_RADIUS_M: Def<f32> = gp(def!(float "interact.fire.light_radius_m" = 6.0)
+    .range(1.0, 20.0)
+    .unit(Unit::Meters)
+    .help("Reach of a burning object's gameplay light, the AI's light exposure (IN39c)"));
 pub const IMPACT_SPEED_MIN_MPS: Def<f32> = gp(def!(float "interact.impact.speed_min_mps" = 3.0)
     .range(0.5, 10.0)
     .help("Normal speed change under which a contact deals no impact damage, m/s (Source min speed; IN4a)"));
@@ -455,6 +465,9 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &FIRE_REGION_M,
     &FIRE_BURNING_MAX,
     &FIRE_SPREAD_CHECKS_PER_TICK,
+    &FIRE_DAMAGE_PER_S,
+    &FIRE_LIGHTS_MAX,
+    &FIRE_LIGHT_RADIUS_M,
     &IMPACT_SPEED_MIN_MPS,
     &IMPACT_IMPULSE_MIN_NS,
     &IMPACT_DAMAGE_PER_NS,
@@ -760,6 +773,9 @@ fn bind_rules(app: &mut App) {
     bind!(app, FIRE_SPREAD_CHECKS_PER_TICK, |p, v| {
         p.fire_spread_checks_per_tick = u16::try_from(v).unwrap_or(u16::MAX);
     });
+    bind!(app, FIRE_DAMAGE_PER_S, |p, v| p.fire_damage_per_s = v);
+    bind!(app, FIRE_LIGHTS_MAX, |p, v| p.fire_lights_max = u16::try_from(v).unwrap_or(u16::MAX));
+    bind!(app, FIRE_LIGHT_RADIUS_M, |p, v| p.fire_light_radius_m = v);
     bind!(app, IMPACT_SPEED_MIN_MPS, |p, v| p.impact_speed_min_mps = v);
     bind!(app, IMPACT_IMPULSE_MIN_NS, |p, v| p.impact_impulse_min_ns = v);
     bind!(app, IMPACT_DAMAGE_PER_NS, |p, v| p.impact_damage_per_ns = v);
