@@ -15,6 +15,7 @@
 //! come from the adapter as [`RockTextures`].
 
 mod material;
+pub mod spawner;
 pub mod tunables;
 
 #[cfg(test)]
@@ -22,6 +23,7 @@ mod shader_tests;
 #[cfg(test)]
 mod tests;
 
+pub use spawner::{RockMaterialSet, RockSpawner};
 pub use material::{
     FLAG_ALBEDO, FLAG_FLIP_Y, FLAG_HEX, FLAG_LOD_TINT, FLAG_NORMAL, FLAG_OCCLUSION, FLAG_ORM, ROCK_SHADER, RockExt, RockMaterial,
     RockMaterialSettings, RockParams, RockTextures, rock_material,

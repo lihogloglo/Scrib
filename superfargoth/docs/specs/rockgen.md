@@ -716,3 +716,9 @@ library_rocks(run), libs)` -> `LibraryPlacements { placements, models, dropped }
 base `RecordRef("rockgen", <class>)` (`LIBRARY_BASE_KIND`), `engine_bounds` for the infos; an id `VfsPath::new` refuses
 is dropped too. `mw_world::source::ROCK_LIBRARY = Custom(3)`, not yet in `MOVER_SOLID`. `mw_worldgen` takes `sf_rockgen`
 without features (the app's reader needs `bake`, `mw_boot_bevy` already has it).
+
+**RG-P3 (2026-11-27).** `sf_rockgen_bevy/src/spawner.rs` (+ `spawner/tests.rs`): `RockSpawner::new(libs, meshes,
+&RockMaterialSet, RockLodSettings)` builds every variant's LOD meshes once; `RockMaterialSet { default, by_class }`.
+Parts go straight under `cx.parent` with `cx.local` (no root entity per rock, as `StaticSpawner`), each with the
+worldspace's `RenderLayers`, the variant's engine-frame LOD0 `Aabb` + `NoAutoAabb`; `part_ranges` drops levels whose
+start fade begins past `max_distance` and ends the last kept one at `[max, max + band]`. Gains `sf_world` + `sf_world_bevy`.
