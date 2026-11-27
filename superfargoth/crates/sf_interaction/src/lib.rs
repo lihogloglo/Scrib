@@ -26,6 +26,8 @@
 //! - [`impact`]: `impact_damage`, the raw damage of one gated physics contact.
 //! - [`noise`]: `loudness_m` (material reach x clamped impact speed) and `NoiseMerge` (an object's noise
 //!   within its window heard only when louder, the per-tick cap, loudest first, any arrival order alike).
+//! - [`world_change`]: `WorldChange`, the lasting changes reactions read (kinds as `TagId` rows, pure
+//!   mappers from the door, light, destroy and fire events, `fold_tick`: one event per transition).
 //! - [`cook`]: `interact.cook`, the one-time def bake (stub).
 //! - [`params`]: the core's tunables as plain fields (`interact.*`, bound by `sf_interaction_bevy`).
 //!
@@ -48,6 +50,7 @@ pub mod rules;
 pub mod spot;
 pub mod states;
 pub mod verbs;
+pub mod world_change;
 
 pub use claims::{
     Claim, Claims, EventKind, Granted, Hold, InteractionEvent, InvalidReason, Op, Phase, Refusal, Request, SlotRef,
@@ -84,6 +87,12 @@ pub use rules::{
 pub use spot::{Spot, SpotAnchor, SpotBlockers, SpotQuery, pick_spot, spiral_point, spot_candidates};
 pub use states::{ObjectStates, StateEntry, Ttl};
 pub use verbs::{FocusStabilizer, VerbChoice, VerbTarget, rank_verbs};
+pub use world_change::{
+    CHANGE_BASHED, CHANGE_BURNT, CHANGE_CLOSED, CHANGE_DESTROYED, CHANGE_DISPLACED, CHANGE_DROPPED, CHANGE_IGNITED,
+    CHANGE_KILLED, CHANGE_LANDED, CHANGE_LOCK_BROKEN, CHANGE_LOCKED, CHANGE_OCCUPIED, CHANGE_OPENED, CHANGE_RELIT,
+    CHANGE_SNUFFED, CHANGE_SPILLED, CHANGE_SWITCHED, CHANGE_TAKEN, CHANGE_UNLOCKED, ChangeDetail, ChangeOwner,
+    ChangeSite, SHIPPED_KINDS, WorldChange, fold_tick, from_destroyed, from_door, from_fire, from_light,
+};
 
 #[cfg(test)]
 mod tests_claims;
@@ -107,3 +116,5 @@ mod tests_rules;
 mod tests_spot;
 #[cfg(test)]
 mod tests_states;
+#[cfg(test)]
+mod tests_world_change;

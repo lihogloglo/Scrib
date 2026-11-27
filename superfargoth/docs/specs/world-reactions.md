@@ -199,6 +199,17 @@ owned, wild, dungeon, pinned), so "it depends" is data. Defaults, from shipped g
   oldest); facts aggregated; concerns not saved.
 - Co-op: host game time; any player present in a cell blocks its reset.
 
+**As built (IN14a, 2026-11-27).** `sf_interaction/src/world_change.rs`: the 19 kinds above as `CHANGE_*` `TagId` rows
+(`SHIPPED_KINDS`, `change.<kind>`); `WorldChange { tick, kind, object, at, culprit: Option<UserKey>, owner:
+Option<ChangeOwner>, home, cause, detail }`. The core never names crime: `culprit` is the core's `UserKey` (host maps it to
+`Culprit`) and `ChangeOwner = Actor(ActorKey) | Group(TagId)` (a faction by its record's tag; rank and the lifting global
+stay crime's). What core events lack (`at`, owner, home) comes from the host's `ChangeSite`. Pure mappers `from_door`
+(cause = verb when a user did it), `from_light` (verb, else the rule tag), `from_destroyed` (final stage or a
+model-less stage only; cause = the hit's damage kind), `from_fire` (`Doused` none; culprit and source tag from the
+host). `fold_tick`: per `(tick, object)` a pair (open/close, snuff/relight, lock/unlock) reduces to its last change,
+dropped when it undoes the first; other kinds once, the first. `ChangeDetail::Stage` carries the stage; later kinds add
+variants (force, offset, position). Shell IN14b.
+
 ## Data records (all mod-patchable, adapter ships defaults)
 
 `WorldChangeKinds` (kind ids, default severity, concern kind fed; the IN14 table), `ConcernRules` (kind × relation →

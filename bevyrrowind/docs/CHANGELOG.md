@@ -3,6 +3,9 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-27 (interaction loop, IN14a): the world can now describe lasting changes for NPCs to react to later (a door
+  opened, a lamp snuffed, a crate smashed, a fire started or burnt out, with who did it and who owns it), one per real
+  change: a door flicked open and shut in the same instant counts as nothing. Not reported in the game yet (IN14b).
 - 2026-11-27 (interaction loop, IN18c): NPCs can now hear doors, breaking things and knocks: each interaction noise is
   handed to NPC hearing (a thrown jar's landing draws them to where it fell, not to the thrower).
 - 2026-11-27 (interaction loop, IN18b): doors opening or closing, things breaking and objects knocking or landing now

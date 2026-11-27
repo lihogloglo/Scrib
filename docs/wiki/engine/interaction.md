@@ -140,6 +140,10 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   `sf_ai_bevy::NoiseEvent` after `NoiseSystems::Emit` and `AiPerceptionSystems::Hearing` (heard on the next perception
   tick), stamped with `AiPerceptClock::tick`; `maker` -> `source` (same keys), kind from `InteractionNoiseKinds` (ids from
   256: door, break, object; material tags `register`ed). Skipped while either message type is missing.
+- **World changes (IN14a, core only).** `sf_interaction/src/world_change.rs`: `WorldChange` (kinds `CHANGE_*` as `TagId`
+  rows), pure mappers from `DoorChanged`, `LightChanged`, `Destroyed` (final stage only) and `FireEvent`, the host's
+  `ChangeSite` giving position, owner and home; `fold_tick` keeps one event per transition (toggled back in a tick = none).
+  No shell writes them yet (IN14b).
 
 ## Bevy features used
 
