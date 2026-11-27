@@ -314,6 +314,11 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
   groups, rocks on their own rank stream). Model pick: slots whose size range holds the mark, weighted by region refs.
   Fixture: 1379 trees + 14707 ground plants; with a town and road, 864 fewer stood in them yet the total rose
   (16784: cleared canopy lets the lower layers in). 6 tests + 1 sf_worldgen budget test.
+- **WG-E2i.4** (2026-11-27, `scatter.rs`): the v1 path deleted (tag `dead/scatter-v1`): `Learner`, `Table`, `Entry`,
+  `Scatter`, `Terrain`, `area_census`, `expected`, `budget_keep`, `aligned_up`, `tilt` and `tests_scatter.rs` (7 v1
+  tests; its tile-alone, threads, slope and sea tests live on in E2h's halo tests). `Params` keeps the seven run values
+  the adapter reads (`tile_m`, `seed`, `align_min_tilt_deg`, `slope_margin_deg`, `water_margin_m`, `budget`,
+  `size_priority`) plus `sea_level_m`; ten v1 values left `declared()`. scatter.rs 1898 -> 1358 lines.
 
 ## Tunables
 
@@ -351,7 +356,8 @@ Prefix `scatter.`; source Guess unless noted. Species columns go in the file's `
 | row `size_min_m`, `size_max_m`; `sink_small`, `sink_large` | m; ratio | 0.2-40; 0-0.6 | talus 0.4-12, outcrop 1-20, field 0.3-2; 0.35, 0.15 | Guess |
 | unit `field_stone_per_ha` / `rockfall` | 1/ha / ratio | 0-500 / 0-4 | 20 / 1 | Guess |
 
-Removed with the v1 path (E2i): `clump_wavelength_m`, `clump_strength`, `occupancy_prior`, `occupancy_max`, slope classes, bands.
+Removed with the v1 path (E2i.4): `clump_wavelength_m`, `clump_strength`, `occupancy_prior`, `occupancy_max`, `census_step_m`,
+slope classes (`slope_class_deg`, `slope_classes`), bands (`band_base_m`, `band_ratio`, `bands`).
 
 ## Performance
 
