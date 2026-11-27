@@ -242,7 +242,8 @@ Framework side: combat.md "Non-lethal and mercy" (C20, C21); Q10-Q15 answered as
 
 The table is `mw_interaction`'s `DestructionRules` (interaction-adapter.md "Breakables (IN38; bash IN37)"), keyed
 `(material, DamageType, hit class)`; combat supplies the type and a hit class from the record (blunt, blade, arrow,
-thrown, fist). Example: `(material: "clay", damage: "mw.physical", hit: Blunt, mult: 1.0)`.
+thrown, fist). Example: `(material: "clay", damage: "mw.physical", hit: Blunt, mult: 1.0)`. The shell's `PropDamage` carries one `kind` tag and looks up `(kind, material)` (interaction-destruction.md
+"Shell and game"): C14's writer folds (`DamageType`, hit class) into that tag (IN1-REV 2026-11-27).
 
 ## Difficulty (decision 16)
 
