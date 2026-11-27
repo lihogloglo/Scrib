@@ -187,6 +187,9 @@ pub struct ClassTarget {
     pub weight_mean: f64,
     /// `g`: the competition scale (the calibration; 1 = uncalibrated).
     pub scale: f64,
+    /// `class.<name>.size_max_m`: the cap of the canopy size mark in the class, m; `None` = the rows' own range
+    /// (spec "Counts per biome class", "Ceiling").
+    pub size_max_m: Option<f64>,
 }
 
 /// The canopy targets per class id ([`FieldSample::class`]; spec "Design" 4). A point with no class, a class past
@@ -207,6 +210,7 @@ impl CanopyTargets {
                 stems_per_ha: file.classes.get(n).map_or(0.0, |e| e.v),
                 weight_mean: 1.0,
                 scale: 1.0,
+                size_max_m: file.class_size_max.get(n).map(|e| e.v),
             })
             .collect();
         Self { classes }
@@ -232,6 +236,12 @@ impl CanopyTargets {
         self.get(class).is_some_and(|t| t.stems_per_ha > 0.0 && t.weight_mean > 0.0 && t.scale / t.weight_mean > scale_max)
     }
 
+    /// The cap of the canopy size mark of `class`, m (infinite: none; a canopy row's range then holds).
+    #[must_use]
+    pub fn size_cap(&self, class: Option<u8>) -> f64 {
+        self.get(class).and_then(|t| t.size_max_m).unwrap_or(f64::INFINITY)
+    }
+
     /// `T(c) s(c)`, stems per hectare per unit weight.
     #[must_use]
     pub fn intensity_per_ha(&self, class: Option<u8>, scale_max: f64) -> f64 {
@@ -251,7 +261,7 @@ impl CanopyTargets {
 #[cfg(test)]
 pub(crate) fn test_targets(file: &SpeciesFile) -> &'static CanopyTargets {
     let t = file.species.iter().filter(|s| s.layer == Layer::Canopy).map(|s| s.parent_per_ha * s.offspring_mean).sum();
-    Box::leak(Box::new(CanopyTargets { classes: vec![ClassTarget { stems_per_ha: t, weight_mean: 1.0, scale: 1.0 }] }))
+    Box::leak(Box::new(CanopyTargets { classes: vec![ClassTarget { stems_per_ha: t, weight_mean: 1.0, scale: 1.0, size_max_m: None }] }))
 }
 
 /// The integer key of a candidate; output order (spec "Determinism across tiles").
@@ -287,18 +297,37 @@ pub struct Candidate {
 /// is the e-folds of the count across the range). Weibull: shape `size_shape`, scale the range, truncated at it.
 #[must_use]
 pub fn size_mark(sp: &SpeciesRow, u: f64) -> f64 {
+    size_mark_to(sp, u, f64::INFINITY)
+}
+
+/// [`size_mark`] with the row's law truncated at `cap` m (a class's `size_max_m`, spec "Design" 5): the same law
+/// conditioned on `size <= min(cap, size_max_m)`, by inversion; a cap at or under `size_min_m` gives `size_min_m`.
+/// A cap at or above `size_max_m` is [`size_mark`] bitwise.
+#[must_use]
+pub fn size_mark_to(sp: &SpeciesRow, u: f64, cap: f64) -> f64 {
     let (a, b) = (sp.size_min_m, sp.size_max_m);
     let range = b - a;
     if range <= 0.0 {
         return a;
     }
     let k = sp.size_shape;
-    let x = match sp.size_law {
-        SizeLaw::ReverseJ => -(1.0 - u * (1.0 - (-k).exp())).ln() * range / k,
-        // Maths: F(range) = 1 - exp(-1) at scale = range.
-        SizeLaw::Weibull => range * (-(1.0 - u * (1.0 - (-1.0f64).exp())).ln()).powf(1.0 / k),
+    let x = if cap >= b {
+        match sp.size_law {
+            SizeLaw::ReverseJ => -(1.0 - u * (1.0 - (-k).exp())).ln() * range / k,
+            // Maths: F(range) = 1 - exp(-1) at scale = range.
+            SizeLaw::Weibull => range * (-(1.0 - u * (1.0 - (-1.0f64).exp())).ln()).powf(1.0 / k),
+        }
+    } else if cap <= a {
+        return a;
+    } else {
+        // The CDF at the cap: the law's F(c) unnormalised (rate k / range; Weibull scale range).
+        let c = cap - a;
+        match sp.size_law {
+            SizeLaw::ReverseJ => -(1.0 - u * (1.0 - (-k * c / range).exp())).ln() * range / k,
+            SizeLaw::Weibull => range * (-(1.0 - u * (1.0 - (-(c / range).powf(k)).exp())).ln()).powf(1.0 / k),
+        }
     };
-    (a + x).clamp(a, b)
+    (a + x).clamp(a, b.min(cap))
 }
 
 /// Poisson(`mu`) by inversion of one uniform `u` (bounded: far past the tail the count stops).
@@ -624,12 +653,15 @@ impl CandidateRules<'_> {
         let sample = |x: f64, y: f64| self.sample(fields, sp, x, y);
         let point_ok = |x: f64, y: f64| prior(x, y) > 0.0 && self.point_hats(fields, sp, x, y);
         let Some((ts_max, kappa_max, bg_max)) = self.bounds(s, boost) else { return };
+        // The point's weight and canopy size cap (the class at the point that drew the candidate: a cluster's parent,
+        // a background point itself).
         let weight = |x: f64, y: f64, d: f64| {
             let f = sample(x, y);
-            self.weight(fields, s, &f, ts_max, x, y, d * prior(x, y))
+            let cap = if canopy { self.canopy.size_cap(f.class) } else { f64::INFINITY };
+            (self.weight(fields, s, &f, ts_max, x, y, d * prior(x, y)), cap)
         };
-        // `keep` is the point's uniform for the light thinning (lower layers).
-        let mut emit = |key: CandidateKey, x: f64, y: f64, edge: bool, u: f64, tiebreak: u64, keep: f64| {
+        // `keep` is the point's uniform for the light thinning (lower layers); `cap` the size cap of the drawing class.
+        let mut emit = |key: CandidateKey, x: f64, y: f64, edge: bool, u: f64, tiebreak: u64, keep: f64, cap: f64| {
             if !canopy {
                 let light = stol + (1.0 - stol) * cover.light(x, y);
                 if keep >= light * if edge { boost } else { 1.0 } / boost {
@@ -637,7 +669,7 @@ impl CandidateRules<'_> {
                 }
             }
             let q = if edge && canopy { u * v.edge_size_ratio } else { u };
-            let size_m = size_mark(sp, q);
+            let size_m = size_mark_to(sp, q, cap);
             if cover.blocked(x, y, sp.footprint_ratio * size_m) {
                 return;
             }
@@ -664,7 +696,8 @@ impl CandidateRules<'_> {
                         continue;
                     }
                     let Some((d, _, _)) = stand_at(px, py) else { continue };
-                    if draw(base, j, 2) >= weight(px, py, d) {
+                    let (w, cap) = weight(px, py, d);
+                    if draw(base, j, 2) >= w {
                         continue;
                     }
                     let m = poisson(sp.offspring_mean, draw(base, j, 3));
@@ -684,7 +717,7 @@ impl CandidateRules<'_> {
                             continue;
                         }
                         let key = CandidateKey { layer: sp.layer, species, tile, parent: j as u32, offspring: o as u32 };
-                        emit(key, x, y, edge, draw(ob, o, 2), hash_k(ob, o, 3), draw(ob, o, 4));
+                        emit(key, x, y, edge, draw(ob, o, 2), hash_k(ob, o, 3), draw(ob, o, 4), cap);
                     }
                 }
                 // Background.
@@ -699,11 +732,12 @@ impl CandidateRules<'_> {
                         continue;
                     }
                     let Some((d, edge, forced)) = stand_at(x, y) else { continue };
-                    if draw(bb, i, 2) >= weight(x, y, d) || !self.dry_ground(x, y, forced) {
+                    let (w, cap) = weight(x, y, d);
+                    if draw(bb, i, 2) >= w || !self.dry_ground(x, y, forced) {
                         continue;
                     }
                     let key = CandidateKey { layer: sp.layer, species, tile, parent: BACKGROUND, offspring: i as u32 };
-                    emit(key, x, y, edge, draw(bb, i, 3), hash_k(bb, i, 4), draw(bb, i, 5));
+                    emit(key, x, y, edge, draw(bb, i, 3), hash_k(bb, i, 4), draw(bb, i, 5), cap);
                 }
             }
         }

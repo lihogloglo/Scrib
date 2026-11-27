@@ -543,6 +543,11 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
   E2o.g. x10s: 19.5 s (was 14.1), 2 checks; tundra 37 -> 400 tiles (capped, CV_r 0.96, rse 2.9 %) reached/world 0.99
   (was 0.88), shrubland 51 -> 400 (capped, rse 4.6 %) 1.01, grassland whole (130 = N) 1.00; the four ceiling classes
   keep their pilot (38-103 tiles, rse 6-10 %: taiga 1.14, rainforest 0.91).
+- **WG-E2o.c** (2026-11-27, `scatter_species.rs` `[classes] size_max_m` -> `SpeciesFile::class_size_max`; `scatter.rs`
+  `ClassTarget::size_max_m`, `size_mark_to`; `scatter_calib.rs` first guess + `calibration.toml` `size_max_m`): the cap
+  truncates the row's law (the same law conditioned on `size <= cap`, by inversion; a cap at or above `size_max_m` is
+  bitwise today), read at the drawing point's class (a cluster's parent, a background point itself). x10s (adapter
+  13 / 18 / 13 m): taiga 154 / 250 (flagged), temperate forest 143 / 150, temperate rainforest 199 / 250 (E2o.m 47-64).
 
 ## Tunables
 
@@ -559,7 +564,7 @@ Prefix `scatter.`; source Guess unless noted. Species columns go in the file's `
 | `canopy_stems_per_ha_max` | 1/ha | 50-2000 | 400 | big-world-rendering.md "stand" (V); load only, moves to v1 `Params` at E2q (today a hashed species-file value) |
 | `region_prior_max` | ratio | 1-10 | 3 | Guess |
 | `class.<name>.stems_per_ha` | 1/ha | per row, 0-50 (desert, tundra, grassland) to 0-1000 (forests) | table above | Guess (`scatter_species.toml` `[classes]`) |
-| `class.<name>.size_max_m` | m | 1-40 | unset | Reineke (U); set only after E2o.m (Counts "Ceiling") |
+| `class.<name>.size_max_m` | m | 1-40 | unset; adapter taiga 13, temperate forest 18, temperate rainforest 13 | Reineke (U); Guess from the Matern II ceiling x ~2.2 (E2o.c); set only for a class E2o.m reports off (Counts "Ceiling") |
 | `census_step_m` | m | 4-128 | 16 | Guess (~15 samples per 250 m stand wavelength) |
 | `calib_area_ha` | ha | 10-2000 | 200 | Guess (~2000 winners at 10/ha: ~8 % clustered sampling error, D); class land of the hash-ordered tile sample (E2o.e) |
 | `calib_iters` / `calib_tol` / `calib_saturation` | count / ratio / ratio | 1-8 / 0.01-0.25 / 0-1 | 4 / 0.05 / 0.25 | research Finding 3 (2-4 steps, D); tol and saturation Guess; `calib_iters` also bounds the joint checks (E2o.e) |

@@ -98,7 +98,7 @@ fn declared_defaults_are_valid() {
         assert!(SPECIES_COLUMNS.iter().any(|(n, u)| *n == d.name && *u == d.unit), "{} not a column", d.name);
     }
     for (name, v) in class_defaults() {
-        check_class(name, &class_declared(v)).unwrap();
+        check_class(name, "stems_per_ha", &class_declared(v), &class_declared(0.0)).unwrap();
     }
 }
 

@@ -44,7 +44,7 @@ use std::path::Path;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::scatter::{CandidateRules, CanopyTargets, ClassTarget, M2_PER_HA, mix, size_mark};
+use crate::scatter::{CandidateRules, CanopyTargets, ClassTarget, M2_PER_HA, mix, size_mark_to};
 use crate::scatter_fields::Fields;
 use crate::scatter_species::Layer;
 use crate::scatter_stand::{StandClass, StandMap, StandRules};
@@ -248,6 +248,9 @@ pub struct ClassCalibration {
     pub ceiling: bool,
     /// `intensity_scale_max x m < 1`: the class's weight mean is too low for its target.
     pub low_weight: bool,
+    /// `class.<name>.size_max_m`, m: the canopy size cap of the class (absent: none).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_max_m: Option<f64>,
 }
 
 /// The calibration of every class (module docs).
@@ -271,7 +274,12 @@ impl Calibration {
             classes: self
                 .classes
                 .iter()
-                .map(|c| ClassTarget { stems_per_ha: c.stems_per_ha, weight_mean: c.weight_mean, scale: c.scale })
+                .map(|c| ClassTarget {
+                    stems_per_ha: c.stems_per_ha,
+                    weight_mean: c.weight_mean,
+                    scale: c.scale,
+                    size_max_m: c.size_max_m,
+                })
                 .collect(),
         }
     }
@@ -427,8 +435,9 @@ pub fn relative_se(cv_r: f64, n: usize, class_tiles: usize) -> f64 {
     if n == 0 { 0.0 } else { cv_r * ((1.0 - n as f64 / class_tiles.max(n) as f64) / n as f64).sqrt() }
 }
 
-/// The Matern II first guess of class `c` (module docs), before the clamp.
-fn first_guess(rules: &CandidateRules<'_>, census: &Census, c: usize, target: f64, hi: f64) -> f64 {
+/// The Matern II first guess of class `c` (module docs), before the clamp; `cap` is the class's canopy size cap
+/// (the mean height of the capped size law).
+fn first_guess(rules: &CandidateRules<'_>, census: &Census, c: usize, target: f64, hi: f64, cap: f64) -> f64 {
     let w = &census.species_weight[c];
     let total: f64 = w.iter().sum();
     let r2 = rules
@@ -439,7 +448,7 @@ fn first_guess(rules: &CandidateRules<'_>, census: &Census, c: usize, target: f6
         .filter(|(sp, _)| sp.layer == Layer::Canopy)
         .map(|(sp, &ws)| {
             let q = f64::from(SIZE_QUANTILES);
-            let h = (0..SIZE_QUANTILES).map(|i| size_mark(sp, (f64::from(i) + 0.5) / q)).sum::<f64>() / q;
+            let h = (0..SIZE_QUANTILES).map(|i| size_mark_to(sp, (f64::from(i) + 0.5) / q, cap)).sum::<f64>() / q;
             let r = sp.crown_k * 2.0 * (sp.crown_a_m + sp.crown_b * h);
             if total > 0.0 { ws / total * r * r } else { 0.0 }
         })
@@ -481,6 +490,7 @@ pub fn calibrate(
             area_ha: census.area_ha(c),
             weight_mean: m,
             scale: 1.0,
+            size_max_m: rules.file.class_size_max.get(name).map(|e| e.v),
             ..ClassCalibration::default()
         };
         if count.cells > 0 && (target <= 0.0 || m <= 0.0) {
@@ -496,7 +506,8 @@ pub fn calibrate(
             let sample = calib_tiles(census, &order, c, v.calib_area_ha, v.calib_tiles_min as usize);
             row.pilot_tiles = u32::try_from(sample.tiles.len()).unwrap_or(u32::MAX);
             row.class_tiles = u32::try_from(class_tiles(census, c)).unwrap_or(u32::MAX);
-            let g = first_guess(rules, census, c, target, hi).clamp(lo, hi);
+            let cap = row.size_max_m.unwrap_or(f64::INFINITY);
+            let g = first_guess(rules, census, c, target, hi, cap).clamp(lo, hi);
             row.scale = g;
             its.push(Iterate::new(target, lo, hi, g));
             samples.push((c, sample));

@@ -256,8 +256,8 @@ fn two_class_arm(temperature_c: f64, targets: Option<&CanopyTargets>) -> (Arm, C
     let m = [m[0] / n[0], m[1] / n[1]];
     let own = CanopyTargets {
         classes: vec![
-            ClassTarget { stems_per_ha: 100.0, weight_mean: m[0], scale: 1.0 },
-            ClassTarget { stems_per_ha: 400.0, weight_mean: m[1], scale: 1.0 },
+            ClassTarget { stems_per_ha: 100.0, weight_mean: m[0], scale: 1.0, size_max_m: None },
+            ClassTarget { stems_per_ha: 400.0, weight_mean: m[1], scale: 1.0, size_max_m: None },
         ],
     };
     let used = targets.unwrap_or(&own);
@@ -318,5 +318,108 @@ fn canopy_candidates_meet_the_class_target_and_the_weight_enters_once() {
         let id = Some(c as u8);
         assert!(low_targets.clamps(id, s_max) && !targets.clamps(id, s_max));
         within_3sd(&format!("class {c} canopy clamped"), low.canopy[c], t * low.m[c] * s_max * ha);
+    }
+}
+
+/// The canopy candidates of [`TARGETED`] over [`TWO_RECT`] at 10 C with the targets of `cap` (class 1's
+/// `size_max_m`; T 100 and 400, `m` 1, `g` 1), in key order.
+fn two_class_canopy(cap: Option<f64>) -> Vec<Candidate> {
+    let file = SpeciesFile::parse_toml(TARGETED).expect("fixture parses");
+    let fields = TwoClasses { temperature_c: 10.0, names: vec!["sparse".to_owned(), "dense".to_owned()] };
+    let suit: Vec<Suitability> = file.species.iter().map(|s| Suitability::new(s, fields.class_names())).collect();
+    let canopy_suit = vec![suit[0].clone()];
+    let rules = StandRules { values: &file.values, seed: 55, canopy: &canopy_suit };
+    let grown = [TWO_RECT[0] - 100.0, TWO_RECT[1] - 100.0, TWO_RECT[2] + 100.0, TWO_RECT[3] + 100.0];
+    let stand = StandMap::build(rules, &fields, &|_: f64, _: f64| false, grown);
+    let targets = CanopyTargets {
+        classes: vec![
+            ClassTarget { stems_per_ha: 100.0, weight_mean: 1.0, scale: 1.0, size_max_m: None },
+            ClassTarget { stems_per_ha: 400.0, weight_mean: 1.0, scale: 1.0, size_max_m: cap },
+        ],
+    };
+    let cand = CandidateRules {
+        file: &file,
+        suitability: &suit,
+        seed: 55,
+        tile_m: 256.0,
+        prior: &one,
+        water: &WaterMask::default(),
+        height: &|_: f64, _: f64| 0.0,
+        rocks: None,
+        canopy: &targets,
+    };
+    let mut out = cand.layer_candidates(&fields, &stand, TWO_RECT, Layer::Canopy, &Cover::new(file.values.shade_per_crown));
+    out.sort_by_key(|c| c.key);
+    out
+}
+
+#[test]
+fn class_size_cap_bounds_its_canopy_only() {
+    let base = two_class_canopy(None);
+    let capped = two_class_canopy(Some(4.0));
+    let row = &SpeciesFile::parse_toml(TARGETED).expect("fixture parses").species[0];
+    // A cap at or above the row's size_max_m is today's draw, bitwise.
+    assert_eq!(two_class_canopy(Some(row.size_max_m)), base);
+    assert_eq!(two_class_canopy(Some(40.0)), base);
+    // The cap changes sizes only: the same candidates (keys, points, tie-breaks), class 0 bitwise unchanged.
+    assert_eq!(capped.len(), base.len());
+    let east = |c: &Candidate| c.pos[0] >= 2000.0;
+    let (mut above_before, mut n1) = (0, 0);
+    for (a, b) in base.iter().zip(&capped) {
+        assert_eq!((a.key, a.pos, a.tiebreak), (b.key, b.pos, b.tiebreak));
+        // The class at the drawing point (a cluster's parent) sets the cap; offspring land within the reach.
+        if east(b) && b.pos[0] >= 2000.0 + THOMAS_REACH_SIGMAS * row.cluster_sigma_m {
+            n1 += 1;
+            assert!(b.size_m <= 4.0, "class 1 canopy {} m above the cap", b.size_m);
+            assert!((b.crown_m - (row.crown_a_m + row.crown_b * b.size_m)).abs() < 1e-12);
+            above_before += usize::from(a.size_m > 4.0);
+        }
+        if !east(b) && b.pos[0] < 2000.0 - THOMAS_REACH_SIGMAS * row.cluster_sigma_m {
+            assert_eq!(a, b, "class 0 changed");
+        }
+    }
+    println!("class 1: {n1} candidates, {above_before} above 4 m uncapped");
+    assert!(n1 > 1000 && above_before > n1 / 10, "the fixture must have class 1 sizes above the cap");
+    // The capped law is the row's law truncated: monotone in u, in [size_min_m, cap].
+    for law in [SizeLaw::ReverseJ, SizeLaw::Weibull] {
+        let sp = SpeciesRow { size_law: law, ..row.clone() };
+        let mut last = f64::NEG_INFINITY;
+        for i in 0..=1000 {
+            let h = size_mark_to(&sp, f64::from(i) / 1001.0, 4.0);
+            assert!((sp.size_min_m..=4.0).contains(&h) && h >= last, "{law:?} {h}");
+            last = h;
+        }
+        assert!(last > 3.9, "{law:?}: the capped law reaches the cap: {last}");
+        assert_eq!(size_mark_to(&sp, 0.7, sp.size_min_m - 0.5), sp.size_min_m);
+    }
+}
+
+#[test]
+fn class_size_cap_parses_round_trips_and_rejects_out_of_range() {
+    let class = |e: &str| {
+        format!(
+            "{TARGETED}
+[classes.\"dense\"]
+stems_per_ha = {{ v = 400, unit = \"1/ha\", min = 0, max = 1000, source = \"Guess\" }}
+{e}"
+        )
+    };
+    let ok = SpeciesFile::parse_toml(&class(
+        "size_max_m = { v = 13, unit = \"m\", min = 1, max = 40, source = \"Guess\" }",
+    ))
+    .expect("cap parses");
+    assert_eq!(ok.class_size_max.get("dense").map(|e| e.v), Some(13.0));
+    assert!(SpeciesFile::parse_toml(&class("")).expect("no cap parses").class_size_max.is_empty());
+    assert_eq!(SpeciesFile::parse_toml(&ok.to_toml().expect("writes")).expect("reads back"), ok);
+    let targets = CanopyTargets::uncalibrated(&ok, &["sparse".to_owned(), "dense".to_owned()]);
+    assert_eq!((targets.size_cap(Some(0)), targets.size_cap(Some(1))), (f64::INFINITY, 13.0));
+    for (bad, want) in [
+        ("size_max_m = { v = 50, unit = \"m\", min = 1, max = 40, source = \"Guess\" }", "outside"),
+        ("size_max_m = { v = 13, unit = \"m\", min = 0.5, max = 40, source = \"Guess\" }", "not ordered inside"),
+        ("size_max_m = { v = 13, unit = \"m\", min = 1, max = 60, source = \"Guess\" }", "not ordered inside"),
+        ("size_max_m = { v = 13, unit = \"ratio\", min = 1, max = 40, source = \"Guess\" }", "unit"),
+    ] {
+        let err = SpeciesFile::parse_toml(&class(bad)).expect_err(bad).to_string();
+        assert!(err.contains("size_max_m") && err.contains(want), "{bad}: {err}");
     }
 }

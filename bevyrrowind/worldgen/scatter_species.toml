@@ -28,7 +28,9 @@ footprint_ratio = { unit = "ratio", min = 0, max = 0.5, source = "Guess" }
 hat_slope_deg = { unit = "deg", min = 0, max = 90, source = "Guess" }  # e_max replaced by the learned max slope
 
 # Canopy stems per hectare per class: the spec's "Counts per biome class" (N = 10,000 f / (pi r^2)), stated here so
-# the adapter can tune them (WG-E1c2 overrides put the forest regions in forest classes).
+# the adapter can tune them (WG-E1c2 overrides put the forest regions in forest classes). size_max_m caps the canopy
+# size mark in a class whose target is above the crown ceiling (spec "Counts per biome class", "Ceiling"; WG-E2o.c:
+# Matern II x ~2.2 at R = 1.2 + 0.32 h gives h ~13 m for 250/ha, ~18 m for 150/ha).
 [classes."desert"]
 stems_per_ha = { v = 0, unit = "1/ha", min = 0, max = 50, source = "Guess" }
 [classes."cold desert"]
@@ -45,12 +47,15 @@ stems_per_ha = { v = 20, unit = "1/ha", min = 0, max = 200, source = "Guess" }
 stems_per_ha = { v = 60, unit = "1/ha", min = 0, max = 500, source = "Guess" }
 [classes."taiga"]
 stems_per_ha = { v = 250, unit = "1/ha", min = 0, max = 1000, source = "Guess" }
+size_max_m = { v = 13, unit = "m", min = 1, max = 40, source = "Guess" }
 [classes."temperate forest"]
 stems_per_ha = { v = 150, unit = "1/ha", min = 0, max = 1000, source = "Guess" }
+size_max_m = { v = 18, unit = "m", min = 1, max = 40, source = "Guess" }
 [classes."seasonal forest"]
 stems_per_ha = { v = 150, unit = "1/ha", min = 0, max = 1000, source = "Guess" }
 [classes."temperate rainforest"]
 stems_per_ha = { v = 250, unit = "1/ha", min = 0, max = 1000, source = "Guess" }
+size_max_m = { v = 13, unit = "m", min = 1, max = 40, source = "Guess" }
 [classes."rainforest"]
 stems_per_ha = { v = 300, unit = "1/ha", min = 0, max = 1000, source = "Guess" }
 

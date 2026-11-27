@@ -9,7 +9,8 @@
 //!   `[override_columns]` pattern). A column's unit is fixed ([`SPECIES_COLUMNS`]); the range of a numeric column
 //!   must lie inside its declared one ([`species_declared`]); a hat column's range bounds all four hat values.
 //! - `[classes."<class name>"]`: canopy stems per hectare of one biome class (`stems_per_ha`, a full entry); a
-//!   class left out keeps its default ([`class_defaults`]).
+//!   class left out keeps its default ([`class_defaults`]). Optional `size_max_m` (a full entry, m, 1-40): the cap
+//!   of the canopy size mark in that class (spec "Counts per biome class", "Ceiling"; unset = the rows' range).
 //! - `[[species]]`: one row per species: `name`, `layer` (`canopy`, `understorey`, `ground`), optional `model`,
 //!   `size_law` (`reverse_j`, `weibull`), optional `classes`, numeric column values and hats
 //!   (`hat_<driver> = [e_min, i_min, i_max, e_max]`). A value is allowed only in a declared column and must lie in
@@ -194,6 +195,12 @@ pub fn class_defaults() -> Vec<(&'static str, f64)> {
 fn class_declared(v: f64) -> Entry {
     // tunables: const (the declaration of `class.<name>.stems_per_ha`: unit 1/ha, range 0-2000, spec "Tunables")
     Entry { v, unit: "1/ha".into(), min: 0.0, max: 2000.0, source: "Guess".into(), help: String::new() }
+}
+
+/// Declared bounds of a class's canopy size cap.
+fn class_size_declared(v: f64) -> Entry {
+    // tunables: const (the declaration of `class.<name>.size_max_m`: unit m, range 1-40, spec "Tunables")
+    Entry { v, unit: "m".into(), min: 1.0, max: 40.0, source: "Guess".into(), help: String::new() }
 }
 
 /// One `{ v, unit, min, max, source }` entry.
@@ -476,6 +483,8 @@ pub struct SpeciesFile {
     pub columns: BTreeMap<String, ColumnDecl>,
     /// Canopy stems per hectare per class name (defaults, then the file's entries).
     pub classes: BTreeMap<String, Entry>,
+    /// The canopy size cap per class name, m (only the classes whose entry sets `size_max_m`).
+    pub class_size_max: BTreeMap<String, Entry>,
     /// In file order; names unique.
     pub species: Vec<Species>,
     /// The `[rocks.<context>]` rows given (a context without a row has no rocks).
@@ -558,6 +567,8 @@ struct RawRockUnit {
 #[serde(deny_unknown_fields)]
 struct RawClass {
     stems_per_ha: Entry,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    size_max_m: Option<Entry>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -873,26 +884,26 @@ fn rock_unit(name: &str, raw: &RawRockUnit, columns: &BTreeMap<String, ColumnDec
     })
 }
 
-/// Checks one class entry: non-empty name, unit 1/ha, valid source, range inside the declared one, value in range.
-fn check_class(name: &str, e: &Entry) -> Result<()> {
-    let d = class_declared(0.0);
+/// Checks one class entry `key` against its declaration `d`: non-empty name, the declared unit, valid source, range
+/// inside the declared one, value in range.
+fn check_class(name: &str, key: &str, e: &Entry, d: &Entry) -> Result<()> {
     if name.is_empty() {
         return Err(Error::Invalid("scatter species: empty class name".into()));
     }
     if e.unit != d.unit {
         return Err(Error::Invalid(format!(
-            "scatter species: class {name:?} stems_per_ha unit {:?}, expected {:?}",
+            "scatter species: class {name:?} {key} unit {:?}, expected {:?}",
             e.unit, d.unit
         )));
     }
     crate::recipe::check_source(name, &e.source)?;
     if !(e.min.is_finite() && e.max.is_finite() && e.min <= e.max && e.min >= d.min && e.max <= d.max) {
         return Err(Error::Invalid(format!(
-            "scatter species: class {name:?} range [{}, {}] not ordered inside [{}, {}]",
+            "scatter species: class {name:?} {key} range [{}, {}] not ordered inside [{}, {}]",
             e.min, e.max, d.min, d.max
         )));
     }
-    crate::recipe::check_range(&format!("scatter species: class {name:?} stems_per_ha"), e.v, e.min, e.max)
+    crate::recipe::check_range(&format!("scatter species: class {name:?} {key}"), e.v, e.min, e.max)
 }
 
 impl SpeciesFile {
@@ -904,6 +915,7 @@ impl SpeciesFile {
             declared: declared(),
             columns: BTreeMap::new(),
             classes: class_defaults().into_iter().map(|(n, v)| (n.to_owned(), class_declared(v))).collect(),
+            class_size_max: BTreeMap::new(),
             species: Vec::new(),
             rocks: BTreeMap::new(),
             rock_units: BTreeMap::new(),
@@ -912,8 +924,8 @@ impl SpeciesFile {
 
     /// Parses a species file (module docs): params declared with their unit and a valid source, in range, the
     /// stand thresholds ordered; columns known with their fixed unit, a valid source and a range inside the
-    /// declared one; classes with unit 1/ha in 0..2000; species named uniquely, values only in declared columns
-    /// and in their range, sizes ordered, hats ordered; no unknown key anywhere.
+    /// declared one; classes with unit 1/ha in 0..2000 (an optional size cap in m, 1..40); species named uniquely,
+    /// values only in declared columns and in their range, sizes ordered, hats ordered; no unknown key anywhere.
     pub fn parse_toml(text: &str) -> Result<Self> {
         let file: RawFile = toml::from_str(text)?;
         let mut declared = declared();
@@ -944,8 +956,13 @@ impl SpeciesFile {
         check_columns(&file.columns)?;
         let mut classes: BTreeMap<String, Entry> =
             class_defaults().into_iter().map(|(n, v)| (n.to_owned(), class_declared(v))).collect();
+        let mut class_size_max = BTreeMap::new();
         for (name, c) in file.classes {
-            check_class(&name, &c.stems_per_ha)?;
+            check_class(&name, "stems_per_ha", &c.stems_per_ha, &class_declared(0.0))?;
+            if let Some(e) = c.size_max_m {
+                check_class(&name, "size_max_m", &e, &class_size_declared(0.0))?;
+                class_size_max.insert(name.clone(), e);
+            }
             classes.insert(name, c.stems_per_ha);
         }
         let mut species: Vec<Species> = Vec::with_capacity(file.species.len());
@@ -965,7 +982,7 @@ impl SpeciesFile {
         for (name, raw) in &file.rock_units {
             rock_units.insert(name.clone(), rock_unit(name, raw, &file.columns)?);
         }
-        Ok(Self { values, declared, columns: file.columns, classes, species, rocks, rock_units })
+        Ok(Self { values, declared, columns: file.columns, classes, class_size_max, species, rocks, rock_units })
     }
 
     /// Writes the file with every value explicit (params, columns, classes, each species' numeric values in its
@@ -989,7 +1006,9 @@ impl SpeciesFile {
         let classes = self
             .classes
             .iter()
-            .map(|(n, e)| (n.clone(), RawClass { stems_per_ha: e.clone() }))
+            .map(|(n, e)| {
+                (n.clone(), RawClass { stems_per_ha: e.clone(), size_max_m: self.class_size_max.get(n).cloned() })
+            })
             .collect();
         let declared_col = |c: &str| self.columns.contains_key(c);
         let opt = |c: &str, v: f64| declared_col(c).then_some(v);
