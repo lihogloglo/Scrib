@@ -152,3 +152,78 @@ fn percentiles_nearest_rank() {
     assert_eq!((percentile(&v, 0.5), percentile(&v, 0.95)), (Some(5.0), Some(10.0)));
     assert_eq!(percentile(&[], 0.5), None);
 }
+
+/// A site table as the game ships it: placer keys beside the rules `reach` reads.
+const TABLE: &str = r#"
+[[row]]
+id = "shrine.wayside"
+source = "remote"
+templates = ["shrine"]
+classes = ["Ashlands"]
+slope_max_deg = 12
+density_per_km2 = 0.02
+distance_m = { road = [0, 30], town = [500, 6000], water = [15, 200], anchor = 40, same = 900 }
+reach = "foot"
+
+[[row]]
+id = "ruin.daedric"
+access = "none"
+"#;
+
+#[test]
+fn site_table_rows_become_rules() {
+    let rules = rules_from_str(TABLE).unwrap();
+    assert_eq!(rules.len(), 2);
+    assert_eq!(
+        rules["shrine.wayside"],
+        SiteRule { slope_max_deg: 12.0, water_gap_m: 15.0, anchor_gap_m: 40.0, road_m: [0.0, 30.0] }
+    );
+    assert_eq!(rules["ruin.daedric"], SiteRule::NONE, "a row with no rule keys asks nothing");
+    assert!(rules_from_str("").unwrap().is_empty());
+
+    let err = |t: &str| rules_from_str(t).unwrap_err().to_string();
+    assert!(err("[[row]]\nslope_max_deg = 3\n").contains("row 1: no id"));
+    assert!(err("[[row]]\nid = \"a\"\n[[row]]\nid = \"a\"\n").contains("row a: id repeated"));
+    assert!(err("[[row]]\nid = \"a\"\ndistance_m = { road = [30, 10] }\n").contains("distance_m.road"));
+    assert!(err("[[row]]\nid = \"a\"\ndistance_m = { water = [-1, 10] }\n").contains("distance_m.water"));
+    assert!(err("[[row]]\nid = \"a\"\nslope_max_deg = -1\n").contains("slope_max_deg"));
+    assert!(err("[[row]]\nid = \"a\"\ndistance_m = { anchor = -2 }\n").contains("distance_m.anchor"));
+
+    let dir = std::env::temp_dir().join(format!("sf_worldgen_reach_table_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = dir.join("sites.toml");
+    std::fs::write(&p, "[[row]]\nid = 7\n").unwrap();
+    assert!(read_rules(&p).unwrap_err().to_string().contains("sites.toml"), "the error names the file");
+    std::fs::write(&p, TABLE).unwrap();
+    assert_eq!(read_rules(&p).unwrap(), rules);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_road_row_from_the_table_reseats_onto_the_road() {
+    let dir = std::env::temp_dir().join(format!("sf_worldgen_reach_road_row_{}", std::process::id()));
+    write_fixture(&dir);
+    // One wayside shrine 40 m off the road (y = -100); its row wants it within 30 m.
+    let sites = serde_json::json!({ "format": 2, "seed": 1, "guide_blake3": "g", "table_blake3": "t",
+        "packs_blake3": "p", "sites": [
+            { "key": "home", "centre_m": [100.0, -100.0], "radius_m": 20.0, "kind": "town", "kept": true },
+            { "key": "shrine", "row": "shrine.wayside", "reach": "foot", "centre_m": [300.0, -140.0],
+              "radius_m": 5.0, "kind": "remote", "kept": false },
+        ] });
+    std::fs::write(dir.join("sites.json"), sites.to_string()).unwrap();
+    let mut table = rules_from_str(TABLE).unwrap();
+    table.get_mut("shrine.wayside").unwrap().water_gap_m = 0.0; // the pond is not under test here
+    let mut req = request(&dir);
+    req.rules = table;
+
+    let (valid, census, _) = run_reach(&req).unwrap();
+    let s = valid.site("shrine").unwrap();
+    // Travel-0 road cells within the 60 m reseat radius tie; the least move wins: straight up onto the road.
+    assert_eq!((s.status, s.centre_m, s.moved_m), (Some(Status::Reseated), [300.0, -100.0], Some(40.0)));
+    assert_eq!(census.groups["shrine.wayside"].reseated, 1);
+
+    // No rules for a non-kept site's row: refused.
+    req.rules = BTreeMap::new();
+    assert!(run_reach(&req).is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
+}

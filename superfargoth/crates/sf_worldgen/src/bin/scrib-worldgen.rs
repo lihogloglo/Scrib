@@ -194,8 +194,7 @@ enum Cmd {
     },
     /// Reachability verdicts (`sf_worldgen::reach`, WG-V1): floods the guide's final ground from towns and road
     /// lines, judges every site (placed, re-seated, dropped), writes the site list as format 2 and prints a census.
-    /// Every site that is not kept needs its row's rules, which only the site table gives (not read yet): use it on
-    /// kept-town lists (format 1) until then.
+    /// Every site that is not kept needs its row in the site table (`--table`).
     Reach {
         /// Guide folder (v1): heights, stamps, `water.json`, `anchors.json`.
         #[arg(long)]
@@ -209,6 +208,9 @@ enum Cmd {
         /// Output site list; default `<guide>/sites.valid.json`.
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Site table (`sites.toml`): each row's slope, road, water and anchor rules. None: no rules (kept sites only).
+        #[arg(long)]
+        table: Option<PathBuf>,
         /// One `reach.*` value `name=value`; repeatable.
         #[arg(long = "set")]
         sets: Vec<String>,
@@ -451,11 +453,22 @@ fn climate(
     .map(|_| ())
 }
 
-fn reach(guide: PathBuf, sites: PathBuf, roads: PathBuf, out: Option<PathBuf>, sets: &[String]) -> sf_worldgen::Result<()> {
+/// The `reach` command's arguments.
+struct ReachArgs {
+    guide: PathBuf,
+    sites: PathBuf,
+    roads: PathBuf,
+    out: Option<PathBuf>,
+    table: Option<PathBuf>,
+    sets: Vec<String>,
+}
+
+fn reach(a: ReachArgs) -> sf_worldgen::Result<()> {
     use sf_worldgen::reach::VALID_FILE;
-    use sf_worldgen::reach::run::{ReachRequest, run_reach};
-    let out = out.unwrap_or_else(|| guide.join(VALID_FILE));
-    let req = ReachRequest { guide, sites, roads, out, sets: parse_sets(sets)?, rules: std::collections::BTreeMap::new() };
+    use sf_worldgen::reach::run::{ReachRequest, read_rules, run_reach};
+    let out = a.out.unwrap_or_else(|| a.guide.join(VALID_FILE));
+    let rules = a.table.as_deref().map(read_rules).transpose()?.unwrap_or_default();
+    let req = ReachRequest { guide: a.guide, sites: a.sites, roads: a.roads, out, sets: parse_sets(&a.sets)?, rules };
     let (_, census, t) = run_reach(&req)?;
     print!("{census}");
     println!(
@@ -653,8 +666,9 @@ fn main() -> ExitCode {
             sites,
             roads,
             out,
+            table,
             sets,
-        } => match reach(guide, sites, roads, out, &sets) {
+        } => match reach(ReachArgs { guide, sites, roads, out, table, sets }) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("scrib-worldgen reach: {e}");

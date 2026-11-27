@@ -242,6 +242,10 @@ back to the region map.
   / ground in a river band; anchor footprints moved to the guide frame. Census: per row (kept sites per kind) placed /
   reseated / dropped / unreached, travel p50/p95, land share reached on foot / only swimming. Rules: none yet (the
   site-table reader is WG-V1.4), so non-kept sites error. x10s-b2w: 4 s for 10.2 M cells (ledger).
+- **WG-V1.4 (2026-11-27)** `reach::run::{read_rules, rules_from_str}` + bin `reach --table <sites.toml>`: each
+  `[[row]]`'s `slope_max_deg`, `distance_m.road` `[min, max]`, `distance_m.water` min, `distance_m.anchor` into a
+  `SiteRule` (omitted key = `SiteRule::NONE`'s value); placer keys ignored (SW checks the schema); no id, repeated id,
+  negative or reversed range refused. No `--table` = no rules (kept-only lists).
 
 ## Tunables
 

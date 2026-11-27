@@ -17,6 +17,12 @@
 //! **Census** ([`Census`]): per group (the site's row; kept sites by kind) placed / re-seated / dropped, kept sites
 //! no path reaches, travel time p50 / p95 (nearest rank, over the sites with a travel time), and the share of land
 //! cells reached on foot and only by swimming.
+//!
+//! **Rules** ([`read_rules`], slice WG-V1.4): the site table (`sites.toml`, spec `sites.md` "Site table") gives each
+//! `[[row]]`'s post-road and re-seat rules: `slope_max_deg`, `distance_m.road` `[min, max]`, the minimum of
+//! `distance_m.water` `[min, max]`, `distance_m.anchor` (a minimum gap). A key a row omits asks nothing
+//! ([`SiteRule::NONE`]'s value). Every other key belongs to the placer (SW `worldgen-sites` checks the schema) and is
+//! ignored here; a row with no `id`, a repeated id, a negative or reversed range are refused.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -100,6 +106,75 @@ pub struct Timings {
     pub ground_s: f64,
     pub flood_s: f64,
     pub verdicts_s: f64,
+}
+
+/// The site table as `reach` reads it (module docs, "Rules"): other keys are the placer's.
+#[derive(serde::Deserialize)]
+struct TableFile {
+    #[serde(default)]
+    row: Vec<TableRow>,
+}
+
+#[derive(serde::Deserialize)]
+struct TableRow {
+    id: Option<String>,
+    slope_max_deg: Option<f64>,
+    #[serde(default)]
+    distance_m: TableDistances,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct TableDistances {
+    road: Option<[f64; 2]>,
+    water: Option<[f64; 2]>,
+    anchor: Option<f64>,
+}
+
+/// Reads the site table at `path` into one [`SiteRule`] per row id (module docs, "Rules").
+pub fn read_rules(path: &std::path::Path) -> Result<BTreeMap<String, SiteRule>> {
+    rules_from_str(&std::fs::read_to_string(path)?)
+        .map_err(|e| Error::Invalid(format!("site table {}: {e}", path.display())))
+}
+
+/// [`read_rules`] on the table's text.
+pub fn rules_from_str(text: &str) -> Result<BTreeMap<String, SiteRule>> {
+    let file: TableFile = toml::from_str(text)?;
+    let mut out = BTreeMap::new();
+    for (i, r) in file.row.into_iter().enumerate() {
+        let id = r.id.ok_or_else(|| Error::Invalid(format!("row {}: no id", i + 1)))?;
+        let bad = |what: &str| Error::Invalid(format!("row {id}: {what}"));
+        let nonneg = |v: f64| v >= 0.0; // also false for NaN
+        let mut rule = SiteRule::NONE;
+        if let Some(s) = r.slope_max_deg {
+            if !nonneg(s) {
+                return Err(bad("slope_max_deg below 0"));
+            }
+            rule.slope_max_deg = s;
+        }
+        let range = |name: &str, v: [f64; 2]| {
+            if nonneg(v[0]) && v[1] >= v[0] {
+                Ok(v)
+            } else {
+                Err(bad(&format!("distance_m.{name} is not [min, max] >= 0")))
+            }
+        };
+        if let Some(v) = r.distance_m.road {
+            rule.road_m = range("road", v)?;
+        }
+        if let Some(v) = r.distance_m.water {
+            rule.water_gap_m = range("water", v)?[0];
+        }
+        if let Some(a) = r.distance_m.anchor {
+            if !nonneg(a) {
+                return Err(bad("distance_m.anchor below 0"));
+            }
+            rule.anchor_gap_m = a;
+        }
+        if out.insert(id.clone(), rule).is_some() {
+            return Err(bad("id repeated"));
+        }
+    }
+    Ok(out)
 }
 
 /// The coarsest terrain level whose sample spacing is at most `cell_m` (level 0 when even that is coarser).
