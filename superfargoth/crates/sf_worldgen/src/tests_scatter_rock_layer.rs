@@ -170,14 +170,14 @@ fn neutral() -> NeutralFields {
             temperature_c: 10.0,
             precipitation_mm: 800.0,
             moisture: 0.5,
-            class: None,
+            class: Some(0),
             slope_deg: 0.0,
             aspect_deg: 0.0,
             altitude_m: 100.0,
             curvature: 0.0,
             water_distance_m: 1000.0,
         },
-        class_names: Vec::new(),
+        class_names: vec!["forest".to_owned()],
     }
 }
 
@@ -211,7 +211,7 @@ impl Fixture {
         rocks: bool,
         square: [f64; 4],
     ) -> LayerWinners {
-        let rules = RockRules { file: &self.file, values: values(), seed: SEED, tile_m: 256.0 };
+        let rules = RockRules { file: &self.file, values: values(), seed: SEED, tile_m: 256.0, prior: None };
         let layer = RockLayer { rules: &rules, ground: &Ground };
         let cand = CandidateRules {
             file: &self.file,
@@ -222,6 +222,7 @@ impl Fixture {
             water,
             height: &height,
             rocks: rocks.then_some(layer),
+            canopy: test_targets(&self.file),
         };
         let g = cand.square_reach_m();
         let rect = [square[0] - g, square[1] - g, square[2] + g, square[3] + g];

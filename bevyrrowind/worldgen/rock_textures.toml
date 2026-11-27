@@ -1,0 +1,16 @@
+# RG-P4: which texture each rock class of the library rocks is drawn with (superfargoth/docs/specs/rockgen.md
+# "(f) Placement in the game" step 7). Read by `mw_exterior_bevy::rock_materials`, which builds one `RockMaterial`
+# per class and LOD through the statics' material path (`cooked_material_with` over the bake's companions; the
+# PBR packs' normal and ORM maps when a mod ships them) at the terrain's land-texture tiling.
+#
+# `default` draws every class without its own row. `[class]` rows are `<class> = "<texture>"`, where `<class>` is a
+# built-in rock class (`sf_rockgen::CLASSES`: block, platy, cobble, chipped, talus, jagged, columnar, scoria, slab)
+# and `<texture>` a VFS path (a bare name gets `textures/` and `.dds`, as `--rock-textures`). Unknown keys and
+# unknown classes are rejected. Per geology unit textures (basalt vs tuff) need the unit on the placement: RG-9k.
+#
+# Source: the rock lab's first texture (`level/rock_lab.rs` DEFAULT_TEXTURES, mod `tamrielic-pbr-west-gash`); which
+# texture suits which class is the owner's call in the WG-E3 check, so no class rows yet.
+
+default = "textures/tx_rock_wg_01.dds"
+
+[class]

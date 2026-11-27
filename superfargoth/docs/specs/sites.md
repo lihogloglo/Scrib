@@ -146,9 +146,10 @@ meaning): header `format, seed, guide_blake3, table_blake3, packs_blake3`; per s
 generated: `site:<row>:<MU id>`, stable while MU's inputs are), `name`, `name_key`, `population`, `culture`,
 `centre_m`, `radius_m`, `laid_out`, `kind` (`town | hamlet | farm | activity | remote | node`), `kept`, `row`,
 `template`, `mode`, `parent`, `ground_m`, `yaw_deg`, `footprint` (ring), `access` [x, y], `access_class`,
-`approach` (polyline), `situation`, `kit`, `clearing_m`, `pad`, `reach`, `buildings[]` and `installations[]` (MU
-serde, passed through). V1 adds `status` (`placed | reseated | dropped`), `moved_m`, `travel_s`, `via`
-(`foot | swim`). Readers check `format` first and reject unknown fields (settle convention). `sf_worldgen::sites`
+`approach` (MU's access kind string, `cliff-stair`, `causeway`..; its line is an installation, `activities.rs:57`),
+`situation`, `kit`, `clearing_m`, `pad`, `reach`, `buildings[]` and `installations[]` (MU serde, passed through),
+plus format 1's `anchor` and header `producer`. V1 adds `status` (`placed | reseated | dropped`), `moved_m`,
+`travel_s`, `via` (`foot | swim`), `reason` (why dropped). Readers check `format` first and reject unknown fields (settle convention). `sf_worldgen::sites`
 is the generic Scrib reader; it names no game.
 
 **WG-V1 reachability.** Grid at `reach.cell_m` over the final ground (guide heights, stamps, the runtime filter's CPU
@@ -217,6 +218,50 @@ back to the region map.
 | WG-NM1 | names: MU grammar + pack loader (patch 05) + game grammar pack | SW vendor + `crates/sites`; data pack | P1b | deterministic; no duplicate in 1000 draws or in a world | names in `sites.json` |
 | WG-NM2 | `sf.map.place` per kept site, `discover: Near` | `mw_worldgen` (site mod) | NM1, P3b, MAP1 | one place per kept site; rule and kind exact | map check later |
 
+## As built
+
+- **WG-P1d (2026-11-27)** `sf_worldgen::sites` (`sites.rs`, tests `tests_sites.rs`): `SitesFile::read/from_reader`
+  checks `format` first (1 or 2), `deny_unknown_fields` on every object (a format-2 field in a format-1 file is
+  unknown), duplicate keys refused; format 1 reads as kept `town`s, reach `any`, no access class; `to_json/write`
+  always write format 2, empty fields skipped, so read(write(x)) == x. Required in format 2: header `seed` + three
+  hashes, per site `key, centre_m, kind, kept`.
+- **WG-V1.1 (2026-11-27)** `sf_worldgen::reach` (`reach.rs`, tests `tests_reach.rs`): `ReachGround::sample` (pure
+  per-cell map; height = water surface over water), `ReachMap::flood` runs two serial Dijkstra floods, `foot` (water
+  never entered) and `swim`; µs costs, lowest `(cost, swam)` kept, heap pops ties by cell index. Wall = the ground
+  gradient under the step (2 x 2 cells for a diagonal, rise + cross gradient for a straight step) above
+  `reach.max_walk_deg`, not the step's own rise: a diagonal across a 47 deg face would otherwise read 37 deg and leak.
+  `best(cell, Reach)` gives `(travel_us, Via)`. `reach.*` values declared (`reach::declared`).
+- **WG-V1.2 (2026-11-27)** `reach::{sources, road_lines, verdicts}` (`reach.rs` module docs "Site verdicts", tests
+  `tests_reach.rs`): a site's cells = cell centres inside its ring (else its disc); reseat candidates are ordered by
+  (travel, distance moved, index), the site moves rigidly (centre + ring; `access` stays, `ground_m` cleared,
+  `buildings[]`/`installations[]` untouched); row rules come in as `SiteRule` per `row` (`SiteRule::NONE` = none),
+  a non-kept site with no rule is an error. Kept sites are never moved or dropped. Writes via `SitesFile::write`.
+- **WG-V1.3 (2026-11-27)** `reach::run` (`reach_run.rs`, tests `tests_reach_run.rs`) + `scrib-worldgen reach --guide
+  --sites --roads [--out] [--set reach.*]`: ground = `GuideTiles` height at the coarsest level with spacing <= `cell_m`
+  (level 5 at 18.288 m); water = `WaterMask` with no margin, surface = sea level / lake level (`WaterMask::lake_level`)
+  / ground in a river band; anchor footprints moved to the guide frame. Census: per row (kept sites per kind) placed /
+  reseated / dropped / unreached, travel p50/p95, land share reached on foot / only swimming. Rules: none yet (the
+  site-table reader is WG-V1.4), so non-kept sites error. x10s-b2w: 4 s for 10.2 M cells (ledger).
+- **WG-V1.4 (2026-11-27)** `reach::run::{read_rules, rules_from_str}` + bin `reach --table <sites.toml>`: each
+  `[[row]]`'s `slope_max_deg`, `distance_m.road` `[min, max]`, `distance_m.water` min, `distance_m.anchor` into a
+  `SiteRule` (omitted key = `SiteRule::NONE`'s value); placer keys ignored (SW checks the schema); no id, repeated id,
+  negative or reversed range refused. No `--table` = no rules (kept-only lists).
+- **WG-P2 (2026-11-27)** `sf_worldgen::sites::pads` (`site_pads.rs`, tests `tests_site_pads.rs`) + `scrib-worldgen
+  site-pads --guide [--sites] [--set pad.*]`: per `pad` site not dropped, a `pad:<key>` stamp on `pad.spacing_m`
+  multiples (ring, else disc; weight smootherstep across `pad.blend_m`; height = lower-middle median inside). Refusals in
+  order anchor (weight overlap with any guide stamp, both ways), overlap (earlier pad), water (was wet, within the margin
+  of a shore/bank, or below sea + margin), cut, band (slope at 0 < w < 1 over `pad.max_band_deg`, new). Pads go last;
+  a run drops the old ones first (same bytes twice). Refused sites keep their V1 verdict (judged unpadded).
+- **WG-V1b.1 (2026-11-27)** `sf_worldgen::sites::clearings::Clearings` (`site_clearings.rs`, tests
+  `tests_site_clearings.rs`): sites not dropped and not kept towns (their anchor stamps and WG-X5 built-up mask already
+  clear them; a format-1 `radius_m` is a town extent) give ring + `clearing_m` (else disc + `clearing_m`); roads give
+  capsules of `width_m / 2 + clearing.road_m` round chords every `clearing.road_step_m` (new, 2 m) of the ribbon spline.
+  Sparse 64 m bucket grid (speed only; equals one bucket on a 70 k point grid, any order).
+- **WG-V1b.2 (2026-11-27)** game exclusion: `mw_worldgen::flora::World::excluded` = stamps OR `Clearings::contains`
+  (`flora.rs`; `WithTowns` adds the towns on top, so flora and rocks both skip them), clearings from
+  `flora::guide_clearings(<guide>)`: `sites.valid.json`, else `sites.json`, plus `roads.json`, each when present.
+  Census `ClearingCensus` (sites, road segments, candidates only the clearings took) in the `worldgen flora:` line.
+
 ## Tunables
 
 | Name | Unit | Range | Default | Source |
@@ -227,6 +272,7 @@ back to the region map.
 | `sites.anchor_gap_m` | m | 0-1000 | 150 | Guess |
 | `sites.<row>.clearing_m` | m | 0-60 | 12 | Guess (owner Q1) |
 | `clearing.road_m` | m | 0-30 | 6 | Guess (owner Q1) |
+| `clearing.road_step_m` | m | 0.5-20 | 2 | chord error h²/8R (2.5 cm on a 20 m bend), quality/cost, Guess |
 | `reach.cell_m` | m | 2-60 | guide spacing (18.288) | quality/cost, Guess |
 | `reach.max_walk_deg` | deg | read | 46 | `MoverParams::max_slope_deg` (`mover.rs:91`) |
 | `reach.swim_factor` | x | 1-10 | 3 | Guess |
@@ -234,6 +280,8 @@ back to the region map.
 | `pad.blend_m` | m | 2-30 | 8 | Guess |
 | `pad.max_cut_m` | m | 0-10 | 3 | Guess |
 | `pad.water_margin_m` | m | 0-5 | 1 | Guess |
+| `pad.spacing_m` | m | 0.5-10 | 2 | Guess (4 samples across the default blend; quality/cost) |
+| `pad.max_band_deg` | deg | 20-70 | 46 | `MoverParams::max_slope_deg` (as `reach.max_walk_deg`) |
 
 MU's own numbers (`ATTACHED_M`, `REMOTE_M`, budgets, `remote.rate`, `most`, `spacing`) stay MU's; the pack sets the
 data ones. Tobler's constants are maths.

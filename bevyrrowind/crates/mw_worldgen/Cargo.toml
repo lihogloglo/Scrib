@@ -18,6 +18,8 @@ serde.workspace = true
 serde_json.workspace = true
 sf_coords.workspace = true
 sf_records.workspace = true
+# RG-P2 library rocks as placements: the decoded variant libraries (`sf_rockgen::Libraries`); Bevy-free, no features.
+sf_rockgen.workspace = true
 sf_vfs.workspace = true
 sf_world.workspace = true
 sf_worldgen.workspace = true
@@ -26,6 +28,10 @@ tes3 = { workspace = true, features = ["esp"] }
 toml.workspace = true
 
 [dev-dependencies]
+# WG-E2m measurement on x10s: the player's install, its archives, model bounds (all Bevy-free, in the graph).
+mw_install.workspace = true
+mw_nif.workspace = true
+mw_vfs.workspace = true
 tempfile.workspace = true
 
 [lints]

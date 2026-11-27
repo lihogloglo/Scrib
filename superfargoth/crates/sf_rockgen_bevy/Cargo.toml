@@ -31,11 +31,18 @@ bevy_render.workspace = true
 bevy_shader.workspace = true
 bevy_transform = { workspace = true, features = ["std", "bevy-support"] }
 sf_rockgen.workspace = true
+# RockSpawner: the library-rock placement spawner (rockgen.md "(f)" point 6).
+sf_world.workspace = true
+sf_world_bevy.workspace = true
 sf_tunables.workspace = true
 sf_tunables_bevy.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
+# RockSpawner tests: placements, ids, the LOD screen (all already in sf_world_bevy's closure).
+sf_coords.workspace = true
+sf_model = { path = "../sf_model", version = "0.1.0", default-features = false }
+sf_vfs.workspace = true
 # Shader compile checks (no GPU, no picture): wesl links the rock stage against the vendored bevy_pbr
 # modules per def set, as Bevy's shader cache does; naga validates (as sf_character_bevy's).
 naga = { workspace = true, features = ["wgsl-in"] }

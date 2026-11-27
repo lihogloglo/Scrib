@@ -11,6 +11,7 @@
 //! scrib-worldgen climate --base GUIDE [--params CLIMATE.toml] [--classes CLASSES.toml] [--set NAME=V]... --out DIR
 //! scrib-worldgen place --base GUIDE --geology GEOLOGY.toml [--recipe LANDFORMS.toml] [--set NAME=V]... --out DIR [--world-filter FILTER.toml]
 //! scrib-worldgen landforms GUIDE [--names NAMES.json] [--scale S] [--origin X,Y] [--set NAME=V]... --out DIR
+//! scrib-worldgen reach --guide GUIDE --sites SITES.json --roads ROADS.json [--out FILE] [--set reach.NAME=V]...
 //! ```
 
 use std::path::PathBuf;
@@ -190,6 +191,43 @@ enum Cmd {
         /// Per-world filter file (`steep_fade*` values) copied into the output as `filter.toml`.
         #[arg(long)]
         world_filter: Option<PathBuf>,
+    },
+    /// Reachability verdicts (`sf_worldgen::reach`, WG-V1): floods the guide's final ground from towns and road
+    /// lines, judges every site (placed, re-seated, dropped), writes the site list as format 2 and prints a census.
+    /// Every site that is not kept needs its row in the site table (`--table`).
+    Reach {
+        /// Guide folder (v1): heights, stamps, `water.json`, `anchors.json`.
+        #[arg(long)]
+        guide: PathBuf,
+        /// Site list (`sites.json` format 1 or 2).
+        #[arg(long)]
+        sites: PathBuf,
+        /// Road network (`roads.json`).
+        #[arg(long)]
+        roads: PathBuf,
+        /// Output site list; default `<guide>/sites.valid.json`.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Site table (`sites.toml`): each row's slope, road, water and anchor rules. None: no rules (kept sites only).
+        #[arg(long)]
+        table: Option<PathBuf>,
+        /// One `reach.*` value `name=value`; repeatable.
+        #[arg(long = "set")]
+        sets: Vec<String>,
+    },
+    /// Site pads (`sf_worldgen::sites::pads`, WG-P2): flattens the footprint of every judged site with `pad = true`
+    /// to its median ground, fading across `pad.blend_m`; refuses pads that cut too deep, touch water, overlap a
+    /// stamp or make a steep band. The pads replace the guide's old ones at the end of its `stamps.json`.
+    SitePads {
+        /// Guide folder (v1): heights, stamps, `water.json`; its `stamps.json` gets the pads.
+        #[arg(long)]
+        guide: PathBuf,
+        /// Judged site list; default `<guide>/sites.valid.json`.
+        #[arg(long)]
+        sites: Option<PathBuf>,
+        /// One `pad.*` value `name=value`; repeatable.
+        #[arg(long = "set")]
+        sets: Vec<String>,
     },
     /// Fast steerable macro sharp-landform pass (`sf_worldgen::cliffs`): asymmetric fault scarps, stepped rock
     /// shelves, slope oversteepening, coastal headlands, explicit strokes and hardness-aware thermal talus.
@@ -429,6 +467,45 @@ fn climate(
     .map(|_| ())
 }
 
+/// The `reach` command's arguments.
+struct ReachArgs {
+    guide: PathBuf,
+    sites: PathBuf,
+    roads: PathBuf,
+    out: Option<PathBuf>,
+    table: Option<PathBuf>,
+    sets: Vec<String>,
+}
+
+fn reach(a: ReachArgs) -> sf_worldgen::Result<()> {
+    use sf_worldgen::reach::VALID_FILE;
+    use sf_worldgen::reach::run::{ReachRequest, read_rules, run_reach};
+    let out = a.out.unwrap_or_else(|| a.guide.join(VALID_FILE));
+    let rules = a.table.as_deref().map(read_rules).transpose()?.unwrap_or_default();
+    let req = ReachRequest { guide: a.guide, sites: a.sites, roads: a.roads, out, sets: parse_sets(&a.sets)?, rules };
+    let (_, census, t) = run_reach(&req)?;
+    print!("{census}");
+    println!(
+        "wrote {} (ground {:.1} s, floods {:.1} s, verdicts {:.1} s)",
+        req.out.display(),
+        t.ground_s,
+        t.flood_s,
+        t.verdicts_s
+    );
+    Ok(())
+}
+
+fn site_pads(guide: PathBuf, sites: Option<PathBuf>, sets: &[String]) -> sf_worldgen::Result<()> {
+    use sf_worldgen::reach::VALID_FILE;
+    use sf_worldgen::sites::pads::{PadRequest, run_pads};
+    let sites = sites.unwrap_or_else(|| guide.join(VALID_FILE));
+    let req = PadRequest { guide, sites, sets: parse_sets(sets)? };
+    let rep = run_pads(&req)?;
+    print!("{rep}");
+    println!("wrote {}", req.guide.join("stamps.json").display());
+    Ok(())
+}
+
 fn measure(a: MeasureArgs) -> sf_worldgen::Result<()> {
     use sf_worldgen::measure::{MeasureParams, MeasureRequest, Summit, run_measure};
     let bad = |m: &str| sf_worldgen::Error::Invalid(m.into());
@@ -606,6 +683,27 @@ fn main() -> ExitCode {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("scrib-worldgen place: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Cmd::Reach {
+            guide,
+            sites,
+            roads,
+            out,
+            table,
+            sets,
+        } => match reach(ReachArgs { guide, sites, roads, out, table, sets }) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("scrib-worldgen reach: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Cmd::SitePads { guide, sites, sets } => match site_pads(guide, sites, &sets) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("scrib-worldgen site-pads: {e}");
                 ExitCode::FAILURE
             }
         },

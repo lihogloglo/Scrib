@@ -77,7 +77,7 @@ fn values(size_dim: f64, sort_beta: f64) -> RockValues {
 const ALL: [f64; 4] = [-200.0, -200.0, 400.0, LENGTH_M + 200.0];
 
 fn talus(file: &SpeciesFile, values: RockValues, rect: [f64; 4]) -> Vec<RockCandidate> {
-    RockRules { file, values, seed: 7, tile_m: 256.0 }.talus_candidates(&Scarp::new(), rect)
+    RockRules { file, values, seed: 7, tile_m: 256.0, prior: None }.talus_candidates(&Scarp::new(), &no_fields(), rect)
 }
 
 /// Least-squares slope of ln N(>s) on ln s at nine log-spaced sizes from `s_min` to `8 s_min`.
@@ -271,7 +271,7 @@ fn plain_values() -> RockValues {
 const PLAIN: [f64; 4] = [-100.0, -100.0, 1100.0, 1300.0];
 
 fn plain_rules(file: &SpeciesFile) -> RockRules<'_> {
-    RockRules { file, values: plain_values(), seed: 11, tile_m: 256.0 }
+    RockRules { file, values: plain_values(), seed: 11, tile_m: 256.0, prior: None }
 }
 
 /// g(r) over `[r0, r1)` of the points in `[0, side)^2`, centres kept `r1` from the border (edge correction).
@@ -294,7 +294,7 @@ fn outcrop_children_are_smaller_than_their_parent() {
     let f = plain_file();
     let r = plain_rules(&f);
     let v = r.values;
-    let rocks = r.outcrop_candidates(&Plain, PLAIN);
+    let rocks = r.outcrop_candidates(&Plain, &no_fields(), PLAIN);
     let parents: std::collections::BTreeMap<_, _> =
         rocks.iter().filter(|c| c.key.offspring == 0).map(|c| ((c.key.tile, c.key.parent), *c)).collect();
     assert!(parents.len() > 500, "{} parents", parents.len());
@@ -328,8 +328,8 @@ fn outcrops_and_field_stones_clump_at_sigma() {
     let r = plain_rules(&f);
     let v = r.values;
     let side = 700.0;
-    let outcrop: Vec<[f64; 2]> = r.outcrop_candidates(&Plain, PLAIN).iter().map(|c| c.pos).collect();
-    let field_c = r.field_candidates(&Plain, PLAIN);
+    let outcrop: Vec<[f64; 2]> = r.outcrop_candidates(&Plain, &no_fields(), PLAIN).iter().map(|c| c.pos).collect();
+    let field_c = r.field_candidates(&Plain, &no_fields(), PLAIN);
     let field: Vec<[f64; 2]> = field_c.iter().map(|c| c.pos).collect();
     let (so, sf) = (v.cluster_sigma_m, v.field_cluster_sigma_m);
     let (go, gf) =
@@ -346,8 +346,8 @@ fn outcrops_and_field_stones_clump_at_sigma() {
     assert!((n as f64 - want).abs() < 0.1 * want, "{n} vs {want}");
     // No row, no rocks.
     let none = SpeciesFile::parse_toml("[rock_units.basalt]\n").unwrap();
-    let rn = RockRules { file: &none, values: v, seed: 11, tile_m: 256.0 };
-    assert!(rn.outcrop_candidates(&Plain, PLAIN).is_empty() && rn.field_candidates(&Plain, PLAIN).is_empty());
+    let rn = RockRules { file: &none, values: v, seed: 11, tile_m: 256.0, prior: None };
+    assert!(rn.outcrop_candidates(&Plain, &no_fields(), PLAIN).is_empty() && rn.field_candidates(&Plain, &no_fields(), PLAIN).is_empty());
 }
 
 #[test]
@@ -355,9 +355,9 @@ fn outcrops_and_field_stones_tile_alone() {
     let f = plain_file();
     let r = plain_rules(&f);
     for build in [RockRules::outcrop_candidates, RockRules::field_candidates] {
-        let all = build(&r, &Plain, PLAIN);
+        let all = build(&r, &Plain, &no_fields(), PLAIN);
         for rect in [[0.0, 0.0, 256.0, 256.0], [-37.5, 700.0, 64.0, 1100.25], [500.0, -10.0, 900.0, 12.0]] {
-            let alone = build(&r, &Plain, rect);
+            let alone = build(&r, &Plain, &no_fields(), rect);
             let inside: Vec<RockCandidate> = all
                 .iter()
                 .filter(|c| c.pos[0] >= rect[0] && c.pos[0] < rect[2] && c.pos[1] >= rect[1] && c.pos[1] < rect[3])
@@ -366,5 +366,436 @@ fn outcrops_and_field_stones_tile_alone() {
             assert!(!alone.is_empty(), "rect {rect:?}");
             assert_eq!(alone, inside, "rect {rect:?}");
         }
+    }
+}
+
+// WG-E3e: mesh pick and pose. Synthetic kept rocks (talus, one per parent index) on flat ground or on a 30 deg slope
+// facing east. Basalt's talus entries: classes `a` (weight 1) and `b` (weight 3), the pack model `m` (axis 2 m, scale
+// 0.5-2: sizes 1-4 m, weight 1); `bare` lists only `m`. Row 0.4-12 m, default sinks, align from the file.
+
+/// A uniform slope of `slope_deg` facing east (0: flat); unit `unit` everywhere.
+struct Slope {
+    slope_deg: f64,
+    unit: &'static str,
+}
+
+impl RockGround for Slope {
+    fn height_m(&self, x: f64, _y: f64) -> f64 {
+        -x * self.slope_deg.to_radians().tan()
+    }
+    fn slope_aspect_deg(&self, _x: f64, _y: f64) -> (f64, f64) {
+        (self.slope_deg, 90.0)
+    }
+    fn cliff(&self, _x: f64, _y: f64) -> bool {
+        false
+    }
+    fn unit(&self, _x: f64, _y: f64) -> Option<&str> {
+        Some(self.unit)
+    }
+}
+
+fn pick_file(align: f64) -> SpeciesFile {
+    let src = format!(
+        r#"
+[columns]
+size_min_m = {{ unit = "m", min = 0.2, max = 40, source = "Guess" }}
+size_max_m = {{ unit = "m", min = 0.2, max = 40, source = "Guess" }}
+align = {{ unit = "ratio", min = 0, max = 1, source = "Guess" }}
+
+[rocks.talus]
+size_min_m = 0.4
+size_max_m = 12
+align = {align}
+
+[rock_units.basalt]
+talus = [
+  {{ kind = "class", class = "a", weight = 1 }},
+  {{ kind = "class", class = "b", weight = 3 }},
+  {{ kind = "model", model = "m", axis_m = 2, scale_min = 0.5, scale_max = 2, weight = 1 }},
+]
+
+[rock_units.bare]
+talus = [{{ kind = "model", model = "m", axis_m = 2, scale_min = 0.5, scale_max = 2, weight = 1 }}]
+"#
+    );
+    SpeciesFile::parse_toml(&src).unwrap()
+}
+
+fn pick_params(share: f64, tilt: f64) -> crate::scatter::Params {
+    crate::scatter::Params { rock_pack_model_share: share, rock_tilt_jitter_deg: tilt, ..crate::scatter::Params::default() }
+}
+
+/// `n` kept talus rocks of size `size(i)`, keys (tile 0 0, parent i, offspring 0).
+fn rocks(n: u32, size: impl Fn(u32) -> f64) -> Vec<RockCandidate> {
+    (0..n)
+        .map(|i| RockCandidate {
+            key: RockKey { context: RockContext::Talus, tile: (0, 0), parent: i, offspring: 0 },
+            pos: [f64::from(i % 100), f64::from(i / 100)],
+            size_m: size(i),
+            tiebreak: 0,
+            source: [0.0, 0.0],
+            regime: None,
+        })
+        .collect()
+}
+
+fn name(e: &RockEntry) -> &str {
+    match e {
+        RockEntry::Class { class, .. } => class,
+        RockEntry::Model { model, .. } => model,
+    }
+}
+
+/// `|got - p n| <= 3 sqrt(n p (1 - p))`.
+fn within_3_sigma(got: usize, n: usize, p: f64) -> bool {
+    let (g, n) = (got as f64, n as f64);
+    (g - p * n).abs() <= 3.0 * (n * p * (1.0 - p)).sqrt()
+}
+
+#[test]
+fn pick_entry_shares_hold_within_three_sigma() {
+    let f = pick_file(0.0);
+    let g = Slope { slope_deg: 0.0, unit: "basalt" };
+    for share in [0.25, 0.5, 0.8] {
+        let prm = pick_params(share, 15.0);
+        // s = 2 m: the model fits; the kind first at `share`, then a:b = 1:3 among the classes.
+        let picks: Vec<_> = rocks(10_000, |_| 2.0).iter().map(|c| pick(&f, &prm, &g, c).unwrap()).collect();
+        let m = picks.iter().filter(|p| name(p.entry) == "m").count();
+        let a = picks.iter().filter(|p| name(p.entry) == "a").count();
+        assert!(within_3_sigma(m, picks.len(), share), "share {share}: {m} models of {}", picks.len());
+        assert!(within_3_sigma(a, picks.len() - m, 0.25), "share {share}: {a} a of {} classes", picks.len() - m);
+    }
+    // s = 8 m: no model fits, the classes carry every rock at 1:3.
+    let prm = pick_params(0.5, 15.0);
+    let picks: Vec<_> = rocks(10_000, |_| 8.0).iter().map(|c| pick(&f, &prm, &g, c).unwrap()).collect();
+    assert!(picks.iter().all(|p| matches!(p.entry, RockEntry::Class { .. })));
+    let a = picks.iter().filter(|p| name(p.entry) == "a").count();
+    assert!(within_3_sigma(a, picks.len(), 0.25), "{a} a of {}", picks.len());
+}
+
+#[test]
+fn pick_never_draws_a_pack_model_outside_its_scale_range() {
+    let f = pick_file(0.0);
+    let g = Slope { slope_deg: 0.0, unit: "basalt" };
+    let sized = rocks(10_000, |i| pareto_size(0.4, 12.0, 1.0, f64::from(i) / 10_000.0));
+    for share in [0.0, 0.5, 1.0] {
+        let prm = pick_params(share, 15.0);
+        let mut models = 0;
+        for c in &sized {
+            let p = pick(&f, &prm, &g, c).unwrap();
+            let fits = (1.0..=4.0).contains(&c.size_m);
+            match p.entry {
+                RockEntry::Model { axis_m, .. } => {
+                    models += 1;
+                    assert!(fits, "model at {} m", c.size_m);
+                    assert_eq!(p.scale, c.size_m / axis_m);
+                }
+                RockEntry::Class { .. } => {
+                    assert_eq!(p.scale, c.size_m);
+                    // Share 1: a pack model wherever one fits.
+                    assert!(!(share == 1.0 && fits), "class at {} m with share 1", c.size_m);
+                }
+            }
+        }
+        // Share 0: library only.
+        assert_eq!(models == 0, share == 0.0, "share {share}: {models} models");
+    }
+    // A unit with only pack models: share 0 leaves its rocks without a mesh; share 0.5 gives them the model where it
+    // fits and nothing elsewhere.
+    let bare = Slope { slope_deg: 0.0, unit: "bare" };
+    for c in &sized {
+        assert!(pick(&f, &pick_params(0.0, 15.0), &bare, c).is_none());
+        let p = pick(&f, &pick_params(0.5, 15.0), &bare, c);
+        assert_eq!(p.is_some(), (1.0..=4.0).contains(&c.size_m), "{} m", c.size_m);
+    }
+}
+
+#[test]
+fn pick_sinks_small_stones_deep_and_big_blocks_high() {
+    let f = pick_file(0.0);
+    let g = Slope { slope_deg: 0.0, unit: "basalt" };
+    let prm = pick_params(0.5, 15.0);
+    let row = f.rocks[&RockContext::Talus];
+    let sink = |s: f64| pick(&f, &prm, &g, &rocks(1, |_| s)[0]).unwrap().sink;
+    assert_eq!(sink(0.4), row.sink_small);
+    assert_eq!(sink(12.0), row.sink_large);
+    let mid = sink((0.4f64 * 12.0).sqrt());
+    assert!((mid - f64::midpoint(row.sink_small, row.sink_large)).abs() < 1e-12, "{mid}");
+    assert!(sink(1.0) > sink(5.0));
+}
+
+fn angle_deg(a: [f64; 3], b: [f64; 3]) -> f64 {
+    (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]).clamp(-1.0, 1.0).acos().to_degrees()
+}
+
+#[test]
+fn pick_up_follows_align_and_tilts_within_the_jitter() {
+    let g = Slope { slope_deg: 30.0, unit: "basalt" };
+    let normal = [30f64.to_radians().sin(), 0.0, 30f64.to_radians().cos()];
+    let cs = rocks(2000, |_| 2.0);
+    // No jitter: align 0 is upright, align 1 the normal (leaning downslope, east).
+    for (align, want) in [(0.0, [0.0, 0.0, 1.0]), (1.0, normal)] {
+        let f = pick_file(align);
+        for c in &cs {
+            let up = pick(&f, &pick_params(0.5, 0.0), &g, c).unwrap().up;
+            assert!(angle_deg(up, want) < 1e-6, "align {align}: {up:?}");
+        }
+    }
+    // Jitter 15 deg: every up within 15 deg of the aligned axis, spread over the range; yaw over the turn.
+    let f = pick_file(1.0);
+    let picks: Vec<_> = cs.iter().map(|c| pick(&f, &pick_params(0.5, 15.0), &g, c).unwrap()).collect();
+    let tilts: Vec<f64> = picks.iter().map(|p| angle_deg(p.up, normal)).collect();
+    assert!(tilts.iter().all(|t| *t <= 15.0 + 1e-9));
+    assert!(tilts.iter().any(|t| *t > 14.0) && tilts.iter().any(|t| *t < 1.0));
+    assert!(picks.iter().all(|p| (0.0..std::f64::consts::TAU).contains(&p.yaw_rad) && p.up.iter().all(|v| v.is_finite())));
+    assert!(picks.iter().any(|p| p.yaw_rad > 6.0) && picks.iter().any(|p| p.yaw_rad < 0.3));
+}
+
+#[test]
+fn pick_tile_alone() {
+    let f = file(0.4, 12.0);
+    let v = values(2.0, 0.4);
+    let prm = pick_params(0.5, 15.0);
+    let g = Scarp::new();
+    let all = talus(&f, v, ALL);
+    for rect in [[0.0, 0.0, 256.0, 256.0], [-37.5, 900.0, 64.0, 1100.25]] {
+        let alone: Vec<_> = talus(&f, v, rect).iter().map(|c| pick(&f, &prm, &g, c)).collect();
+        let inside: Vec<_> = all
+            .iter()
+            .filter(|c| c.pos[0] >= rect[0] && c.pos[0] < rect[2] && c.pos[1] >= rect[1] && c.pos[1] < rect[3])
+            .map(|c| pick(&f, &prm, &g, c))
+            .collect();
+        assert!(!alone.is_empty() && alone.iter().all(Option::is_some));
+        assert_eq!(alone, inside, "rect {rect:?}");
+    }
+}
+
+// RG-9j: the regime key. On the plain ground over a two-class grid (taiga west of x = 450, desert east), basalt's
+// frost override swaps its outcrop and field entries for `frost_block` and triples its field stones.
+
+/// Fields with no class anywhere (the rock layer without a climate).
+fn no_fields() -> crate::scatter_fields::NeutralFields {
+    crate::scatter_fields::NeutralFields {
+        sample: crate::scatter_fields::FieldSample {
+            temperature_c: 10.0,
+            precipitation_mm: 800.0,
+            moisture: 0.5,
+            class: None,
+            slope_deg: 0.0,
+            aspect_deg: 0.0,
+            altitude_m: 100.0,
+            curvature: 0.0,
+            water_distance_m: 1000.0,
+        },
+        class_names: Vec::new(),
+    }
+}
+
+/// 100 m samples over the plain rect: class 0 (`taiga`) in columns 0-6 (x < 450), class 1 (`desert`) east of it.
+fn two_class_fields() -> crate::scatter_fields::GridFields {
+    let mut g = crate::scatter_fields::GridFields::filled(
+        15,
+        17,
+        100.0,
+        [-200.0, 1400.0],
+        &no_fields().sample,
+        vec!["taiga".to_owned(), "desert".to_owned()],
+    );
+    for (i, c) in g.classes.iter_mut().enumerate() {
+        *c = u8::from(i % 15 >= 7);
+    }
+    g
+}
+
+/// The plain file with `[rock_regimes]` (taiga frost, desert arid) and, with `overrides`, basalt's frost table.
+fn regime_file(overrides: bool) -> SpeciesFile {
+    let mut src = r#"
+[columns]
+size_min_m = { unit = "m", min = 0.2, max = 40, source = "Guess" }
+size_max_m = { unit = "m", min = 0.2, max = 40, source = "Guess" }
+field_stone_per_ha = { unit = "1/ha", min = 0, max = 500, source = "Guess" }
+
+[rocks.outcrop]
+size_min_m = 1
+size_max_m = 20
+
+[rocks.field]
+size_min_m = 0.3
+size_max_m = 2
+
+[rock_regimes]
+"taiga" = "frost"
+"desert" = "arid"
+
+[rock_units.basalt]
+field_stone_per_ha = 100
+outcrop = [{ kind = "class", class = "block", weight = 1 }]
+field = [{ kind = "class", class = "block", weight = 1 }]
+
+[rock_units.tuff]
+field_stone_per_ha = 0
+"#
+    .to_owned();
+    if overrides {
+        src.push_str(
+            r#"
+[rock_units.basalt.regime.frost]
+field_stone_per_ha = 300
+outcrop = [{ kind = "class", class = "frost_block", weight = 1 }]
+field = [{ kind = "class", class = "frost_block", weight = 1 }]
+"#,
+        );
+    }
+    SpeciesFile::parse_toml(&src).unwrap()
+}
+
+fn plain_rocks(r: &RockRules<'_>, fields: &dyn Fields, rect: [f64; 4]) -> Vec<RockCandidate> {
+    let mut v = r.outcrop_candidates(&Plain, fields, rect);
+    v.extend(r.field_candidates(&Plain, fields, rect));
+    v
+}
+
+#[test]
+fn every_rock_of_a_frost_parent_draws_only_frost_entries() {
+    let f = regime_file(true);
+    let r = plain_rules(&f);
+    let fields = two_class_fields();
+    let frost = f.rock_regime_names.iter().position(|n| n == "frost").and_then(|i| u8::try_from(i).ok());
+    let prm = pick_params(0.5, 0.0);
+    let rocks = plain_rocks(&r, &fields, PLAIN);
+    let (mut n_frost, mut n_arid) = ([0usize; 2], [0usize; 2]);
+    for c in &rocks {
+        let parent_frost = Fields::sample(&fields, c.source[0], c.source[1]).class == Some(0);
+        assert_eq!(c.regime == frost, parent_frost, "{:?}: the regime is the parent's", c.key);
+        assert!(c.regime.is_some(), "both classes map");
+        let p = pick(&f, &prm, &Plain, c).unwrap();
+        assert_eq!(name(p.entry), if parent_frost { "frost_block" } else { "block" }, "{:?}", c.key);
+        let k = usize::from(c.key.context == RockContext::Field);
+        if parent_frost { n_frost[k] += 1; } else { n_arid[k] += 1; }
+        assert_eq!(parent_frost, c.source[0] < 450.0, "taiga lies west of x = 450");
+    }
+    assert!(n_frost.iter().chain(&n_arid).all(|&n| n > 100), "frost {n_frost:?}, arid {n_arid:?}");
+    // The frost half (x in [-100, 450)) is 550 m wide, the arid one 350 m of flat ground (steep from `STEEP_X`):
+    // per metre the frost field stones are about three times denser (300 vs 100 per ha).
+    let per_m = |n: usize, w: f64| n as f64 / w;
+    let ratio = per_m(n_frost[1], 550.0) / per_m(n_arid[1], STEEP_X - 450.0);
+    assert!((2.0..4.5).contains(&ratio), "frost / arid field-stone density {ratio}");
+}
+
+#[test]
+fn without_rock_regimes_the_rocks_are_todays() {
+    let plain = plain_file();
+    let grid = two_class_fields();
+    let today = plain_rocks(&plain_rules(&plain), &no_fields(), PLAIN);
+    assert!(!today.is_empty());
+    assert_eq!(plain_rocks(&plain_rules(&plain), &grid, PLAIN), today, "no table: the climate is never read");
+    assert!(today.iter().all(|c| c.regime.is_none()));
+    let mapped = regime_file(false);
+    let tagged = plain_rocks(&plain_rules(&mapped), &grid, PLAIN);
+    let untag = |v: &[RockCandidate]| v.iter().map(|c| RockCandidate { regime: None, ..*c }).collect::<Vec<_>>();
+    assert_eq!(untag(&tagged), today, "a map with no override only tags the rocks");
+    assert!(tagged.iter().all(|c| c.regime.is_some()));
+    let prm = pick_params(0.5, 0.0);
+    for (a, b) in tagged.iter().zip(&today) {
+        assert_eq!(pick(&mapped, &prm, &Plain, a), pick(&plain, &prm, &Plain, b));
+    }
+}
+
+#[test]
+fn regime_rocks_tile_alone() {
+    let f = regime_file(true);
+    let r = plain_rules(&f);
+    let fields = two_class_fields();
+    let all = plain_rocks(&r, &fields, PLAIN);
+    for rect in [[300.0, 0.0, 556.0, 256.0], [-37.5, 700.0, 640.0, 1100.25]] {
+        let alone = plain_rocks(&r, &fields, rect);
+        let inside: Vec<RockCandidate> = all
+            .iter()
+            .filter(|c| c.pos[0] >= rect[0] && c.pos[0] < rect[2] && c.pos[1] >= rect[1] && c.pos[1] < rect[3])
+            .copied()
+            .collect();
+        assert!(!alone.is_empty(), "rect {rect:?}");
+        let key = |v: &[RockCandidate]| {
+            let mut v = v.to_vec();
+            v.sort_by_key(|c| c.key);
+            v
+        };
+        assert_eq!(key(&alone), key(&inside), "rect {rect:?}");
+    }
+}
+
+// WG-E3f.2: the field-stone region prior on the parent intensity.
+
+/// FNV-1a over every field of the candidates (keys, position, size, tiebreak, source, regime bits).
+fn digest(v: &[RockCandidate]) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325_u64;
+    let mut eat = |w: u64| {
+        for b in w.to_le_bytes() {
+            h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    for c in v {
+        eat(u64::from(c.key.parent) << 32 | u64::from(c.key.offspring));
+        eat(c.key.tile.0 as u64 ^ (c.key.tile.1 as u64) << 32);
+        for f in [c.pos[0], c.pos[1], c.size_m, c.source[0], c.source[1]] {
+            eat(f.to_bits());
+        }
+        eat(c.tiebreak);
+        eat(c.regime.map_or(0, |r| u64::from(r) + 1));
+    }
+    h
+}
+
+#[test]
+fn field_stones_without_a_prior_are_todays() {
+    let f = plain_file();
+    let got = digest(&plain_rules(&f).field_candidates(&Plain, &no_fields(), PLAIN));
+    // Captured on the code before the prior existed (2026-11-27).
+    assert_eq!(got, 0x3a24_ed5c_19d4_3d6b, "field digest {got:#018x}");
+}
+
+/// Prior 0.5 west of `x = 400`, 1 east (the flat basalt plain is x < 800, 100 <= y < 900 kept off the edges).
+fn half_prior(x: f64, _y: f64) -> f64 {
+    if x < 400.0 { 0.5 } else { 1.0 }
+}
+
+fn count_in(v: &[RockCandidate], x0: f64, x1: f64) -> usize {
+    v.iter().filter(|c| (x0..x1).contains(&c.pos[0]) && (100.0..900.0).contains(&c.pos[1])).count()
+}
+
+#[test]
+fn a_prior_of_half_halves_the_field_stones_within_three_sigma() {
+    let f = plain_file();
+    let r = RockRules { prior: Some(&half_prior), ..plain_rules(&f) };
+    let got = r.field_candidates(&Plain, &no_fields(), PLAIN);
+    // 100 stones/ha on 400 x 800 m: 3200 at prior 1, 1600 at 0.5. A Thomas count varies as n (1 + child mean).
+    let full = 100.0 * 400.0 * 800.0 / M2_PER_HA;
+    let m = r.values.field_child_mean;
+    for (n, want) in [(count_in(&got, 0.0, 400.0), 0.5 * full), (count_in(&got, 400.0, STEEP_X), full)] {
+        let sigma = (want * (1.0 + m)).sqrt();
+        println!("{n} field stones on {want} expected (sigma {sigma:.0})");
+        assert!((n as f64 - want).abs() <= 3.0 * sigma, "{n} vs {want}");
+    }
+    // Clamped: a prior above `region_prior_max` places what the max places, a negative or NaN one nothing.
+    let pmax = f.values.region_prior_max;
+    let at = |p: &(dyn Fn(f64, f64) -> f64 + Sync)| RockRules { prior: Some(p), ..plain_rules(&f) }.field_candidates(&Plain, &no_fields(), PLAIN);
+    assert_eq!(at(&|_, _| 4.0 * pmax), at(&move |_, _| pmax));
+    assert!(at(&|_, _| -1.0).is_empty() && at(&|_, _| f64::NAN).is_empty());
+}
+
+#[test]
+fn field_stones_with_a_prior_tile_alone() {
+    let f = plain_file();
+    let r = RockRules { prior: Some(&half_prior), ..plain_rules(&f) };
+    let all = r.field_candidates(&Plain, &no_fields(), PLAIN);
+    for rect in [[300.0, 0.0, 556.0, 256.0], [-37.5, 700.0, 640.0, 1100.25], [390.0, 100.0, 410.0, 900.0]] {
+        let alone = r.field_candidates(&Plain, &no_fields(), rect);
+        let inside: Vec<RockCandidate> = all
+            .iter()
+            .filter(|c| c.pos[0] >= rect[0] && c.pos[0] < rect[2] && c.pos[1] >= rect[1] && c.pos[1] < rect[3])
+            .copied()
+            .collect();
+        assert!(!alone.is_empty(), "rect {rect:?}");
+        assert_eq!(alone, inside, "rect {rect:?}");
     }
 }

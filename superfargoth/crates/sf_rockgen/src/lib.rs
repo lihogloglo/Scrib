@@ -20,6 +20,7 @@ pub mod formations;
 pub mod library;
 pub mod mesher;
 mod noise;
+pub mod placed;
 pub mod sdf;
 
 #[cfg(test)]
@@ -31,6 +32,7 @@ pub use boulder::{BoulderParams, generate_boulder};
 pub use classes::{CLASSES, Family, RockClass};
 pub use formations::{FORMATIONS, Formation, generate_formation};
 pub use library::{Hull, HullSettings, Library, LibrarySettings, Variant, build_library, library_key, variant_seed};
+pub use placed::{Libraries, Resolved};
 
 /// One triangle mesh: counter-clockwise front faces seen from outside, unit normals (the SDF gradient on smooth
 /// vertices; on a crease, each side's own face-normal average, [`RockMesh::split_creases`]).

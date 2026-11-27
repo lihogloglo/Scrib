@@ -38,6 +38,8 @@ mw_saves_bevy.workspace = true
 mw_scripts_bevy.workspace = true
 mw_walkers_bevy.workspace = true
 mw_world.workspace = true
+# `rock_materials.rs` (RG-P4): the rock texture table.
+serde.workspace = true
 sf_anim_bevy.workspace = true
 sf_anim_graph.workspace = true
 sf_app_bevy.workspace = true
@@ -100,6 +102,8 @@ sf_world_bevy.workspace = true
 # Road ribbons of a generated world (`worldgen_roads.rs`, GR-1b): `roads.json` and the draped ribbon builder.
 sf_worldgen.workspace = true
 tes3 = { workspace = true, features = ["esp"] }
+# `rock_materials.rs` (RG-P4): the adapter's `worldgen/rock_textures.toml`.
+toml.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]

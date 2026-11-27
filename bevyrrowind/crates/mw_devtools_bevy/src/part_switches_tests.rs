@@ -70,7 +70,7 @@ fn availability(app: &App, name: &str) -> Option<String> {
 #[test]
 fn every_part_is_mapped_or_has_a_row() {
     let parts: Vec<Part> = Part::all().collect();
-    assert_eq!(parts.len(), 82, "a new Part needs a row in PART_ROWS (and maybe MAPPED)");
+    assert_eq!(parts.len(), 83, "a new Part needs a row in PART_ROWS (and maybe MAPPED)");
     assert_eq!(PART_ROWS.len(), parts.len());
     for (row, part) in PART_ROWS.iter().zip(&parts) {
         assert_eq!(row.part, *part, "PART_ROWS in Part order");

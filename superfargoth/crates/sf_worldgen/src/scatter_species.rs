@@ -9,7 +9,8 @@
 //!   `[override_columns]` pattern). A column's unit is fixed ([`SPECIES_COLUMNS`]); the range of a numeric column
 //!   must lie inside its declared one ([`species_declared`]); a hat column's range bounds all four hat values.
 //! - `[classes."<class name>"]`: canopy stems per hectare of one biome class (`stems_per_ha`, a full entry); a
-//!   class left out keeps its default ([`class_defaults`]).
+//!   class left out keeps its default ([`class_defaults`]). Optional `size_max_m` (a full entry, m, 1-40): the cap
+//!   of the canopy size mark in that class (spec "Counts per biome class", "Ceiling"; unset = the rows' range).
 //! - `[[species]]`: one row per species: `name`, `layer` (`canopy`, `understorey`, `ground`), optional `model`,
 //!   `size_law` (`reverse_j`, `weibull`), optional `classes`, numeric column values and hats
 //!   (`hat_<driver> = [e_min, i_min, i_max, e_max]`). A value is allowed only in a declared column and must lie in
@@ -24,6 +25,12 @@
 //!   `{ kind = "class", class, weight }` (a library class by name) or
 //!   `{ kind = "model", model, axis_m, scale_min, scale_max, weight }` (a pack model with its longest axis and
 //!   allowed scale range). Weights are finite and positive; an entry is not repeated within its context.
+//! - `[rock_regimes]` (slice RG-9j, `rockgen.md` "(e) Typology"): weathering regimes, `"<climate class>" =
+//!   "<regime>"`, each class one of the file's classes. The framework's map for its own class table is
+//!   `rock_regimes.toml` ([`default_rock_regimes`]); a game on that table copies it. No table: no regime anywhere.
+//! - `[rock_units."<unit>".regime."<regime>"]`: a unit's overrides in one regime (a name `[rock_regimes]` maps
+//!   to): optional `field_stone_per_ha` and per context an entry list that replaces the unit's (an empty list:
+//!   none of that context in this regime).
 //!
 //! [`SpeciesFile::to_toml`] writes every value explicitly, so a written file parses back to the same
 //! [`SpeciesFile`]. Nothing here names a game: species, models and classes are the adapter's data.
@@ -101,11 +108,27 @@ fn vegetation_declared() -> Vec<Declared> {
           "fixed rounds of the competition; round 1 is Matern II"),
         d("scatter.shade_per_crown", 1.0, "ratio", 0.2, 3.0, "Guess",
           "optical depth a canopy crown adds over the ground below it (light = exp(-sum))"),
-        d("scatter.canopy_stems_per_ha_max", 400.0, "1/ha", 50.0, 2000.0,
-          "Reference(big-world-rendering.md Cost model, the stand case)",
-          "cap on canopy stems per hectare of a tile, kept in rank order"),
         d("scatter.region_prior_max", 3.0, "ratio", 1.0, 10.0, "Guess",
           "upper bound of a learned region prior on parent intensity"),
+        d("scatter.census_step_m", 16.0, "m", 4.0, 128.0, "Guess",
+          "grid step of the class census (class land area and canopy weight mean)"),
+        d("scatter.calib_area_ha", 200.0, "ha", 10.0, 2000.0, "Guess",
+          "class land of the canopy calibration's pilot sample, tiles in one hashed world order"),
+        d("scatter.calib_iters", 4.0, "count", 1.0, 8.0, "Guess",
+          "most fixed-point steps of the canopy calibration per class"),
+        d("scatter.calib_tol", 0.05, "ratio", 0.01, 0.25, "Guess",
+          "calibration stops when winners per ha are this close to the class target"),
+        d("scatter.calib_saturation", 0.25, "ratio", 0.0, 1.0, "Guess",
+          "a raise of the competition scale by f that raises winners by less than this x f is the crown ceiling"),
+        d("scatter.calib_z", 2.0, "ratio", 1.0, 3.0, "Reference(Cochran 1977 Sampling Techniques, t = 2)",
+          "standard errors of the calibration's winners per ha that the sample size keeps within calib_tol"),
+        d("scatter.calib_tiles_min", 30.0, "count", 10.0, 100.0,
+          "Reference(Cochran 1977 Sampling Techniques, large-sample ratio variance)",
+          "fewest parent tiles holding the class in the calibration's pilot sample"),
+        d("scatter.calib_tiles_max", 400.0, "count", 50.0, 4000.0, "Guess",
+          "most parent tiles of a class's sized calibration sample (cost bound)"),
+        d("scatter.intensity_scale_max", 16.0, "ratio", 1.0, 40.0, "Guess",
+          "bound of the canopy class multiplier g / m"),
     ]
 }
 
@@ -175,6 +198,12 @@ pub fn class_defaults() -> Vec<(&'static str, f64)> {
 fn class_declared(v: f64) -> Entry {
     // tunables: const (the declaration of `class.<name>.stems_per_ha`: unit 1/ha, range 0-2000, spec "Tunables")
     Entry { v, unit: "1/ha".into(), min: 0.0, max: 2000.0, source: "Guess".into(), help: String::new() }
+}
+
+/// Declared bounds of a class's canopy size cap.
+fn class_size_declared(v: f64) -> Entry {
+    // tunables: const (the declaration of `class.<name>.size_max_m`: unit m, range 1-40, spec "Tunables")
+    Entry { v, unit: "m".into(), min: 1.0, max: 40.0, source: "Guess".into(), help: String::new() }
 }
 
 /// One `{ v, unit, min, max, source }` entry.
@@ -292,8 +321,16 @@ pub struct ScatterValues {
     pub field_step_m: f64,
     pub competition_rounds: u32,
     pub shade_per_crown: f64,
-    pub canopy_stems_per_ha_max: f64,
     pub region_prior_max: f64,
+    pub census_step_m: f64,
+    pub calib_area_ha: f64,
+    pub calib_iters: u32,
+    pub calib_tol: f64,
+    pub calib_saturation: f64,
+    pub calib_z: f64,
+    pub calib_tiles_min: u32,
+    pub calib_tiles_max: u32,
+    pub intensity_scale_max: f64,
 }
 
 impl ScatterValues {
@@ -317,10 +354,19 @@ impl ScatterValues {
                 "scatter species: stand thresholds clearing {c} < sparse {s} < inner {i} do not hold"
             )));
         }
-        let rounds = get("scatter.competition_rounds")?;
-        if rounds.fract() != 0.0 {
+        let whole = |name: &str| -> Result<f64> {
+            let n = get(name)?;
+            if n.fract() != 0.0 {
+                return Err(Error::Invalid(format!("scatter species: {name} = {n} is not a whole count")));
+            }
+            Ok(n)
+        };
+        let rounds = whole("scatter.competition_rounds")?;
+        let iters = whole("scatter.calib_iters")?;
+        let (tiles_min, tiles_max) = (whole("scatter.calib_tiles_min")?, whole("scatter.calib_tiles_max")?);
+        if tiles_min > tiles_max {
             return Err(Error::Invalid(format!(
-                "scatter species: scatter.competition_rounds = {rounds} is not a whole count"
+                "scatter species: calib_tiles_min {tiles_min} above calib_tiles_max {tiles_max}"
             )));
         }
         Ok(Self {
@@ -336,8 +382,21 @@ impl ScatterValues {
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             competition_rounds: rounds as u32,
             shade_per_crown: get("scatter.shade_per_crown")?,
-            canopy_stems_per_ha_max: get("scatter.canopy_stems_per_ha_max")?,
             region_prior_max: get("scatter.region_prior_max")?,
+            census_step_m: get("scatter.census_step_m")?,
+            calib_area_ha: get("scatter.calib_area_ha")?,
+            // Whole and inside 1..=8 (checked above).
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            calib_iters: iters as u32,
+            calib_tol: get("scatter.calib_tol")?,
+            calib_saturation: get("scatter.calib_saturation")?,
+            calib_z: get("scatter.calib_z")?,
+            // Whole and inside 10..=100 / 50..=4000 (checked above).
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            calib_tiles_min: tiles_min as u32,
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            calib_tiles_max: tiles_max as u32,
+            intensity_scale_max: get("scatter.intensity_scale_max")?,
         })
     }
 }
@@ -398,6 +457,15 @@ impl RockEntry {
     }
 }
 
+/// A rock unit's overrides in one weathering regime (`[rock_units."<unit>".regime."<regime>"]`, RG-9j).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RegimeOverride {
+    /// Field stones per hectare in the regime; `None` keeps the unit's.
+    pub field_stone_per_ha: Option<f64>,
+    /// Entry lists replacing the unit's, per context given (an empty list: none of that context in the regime).
+    pub entries: BTreeMap<RockContext, Vec<RockEntry>>,
+}
+
 /// One rock unit (a geology unit of the adapter): its values and the mesh entries of each context.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RockUnit {
@@ -405,6 +473,8 @@ pub struct RockUnit {
     pub rockfall: f64,
     /// Entries per context; a context with none is left out.
     pub entries: BTreeMap<RockContext, Vec<RockEntry>>,
+    /// Overrides per regime name (RG-9j); empty: the unit is the same in every regime.
+    pub regimes: BTreeMap<String, RegimeOverride>,
 }
 
 impl RockUnit {
@@ -412,6 +482,30 @@ impl RockUnit {
     #[must_use]
     pub fn entries(&self, context: RockContext) -> &[RockEntry] {
         self.entries.get(&context).map_or(&[], Vec::as_slice)
+    }
+
+    /// The entries of one context in `regime`: the regime's list when it gives one, else the unit's.
+    #[must_use]
+    pub fn entries_in(&self, context: RockContext, regime: Option<&str>) -> &[RockEntry] {
+        regime
+            .and_then(|r| self.regimes.get(r))
+            .and_then(|o| o.entries.get(&context))
+            .map_or_else(|| self.entries(context), Vec::as_slice)
+    }
+
+    /// Field stones per hectare in `regime`: the regime's value when it gives one, else the unit's.
+    #[must_use]
+    pub fn field_stone_in(&self, regime: Option<&str>) -> f64 {
+        regime
+            .and_then(|r| self.regimes.get(r))
+            .and_then(|o| o.field_stone_per_ha)
+            .unwrap_or(self.field_stone_per_ha)
+    }
+
+    /// The largest field-stone density of the unit over its regimes (the parent intensity bound).
+    #[must_use]
+    pub fn field_stone_max(&self) -> f64 {
+        self.regimes.values().filter_map(|o| o.field_stone_per_ha).fold(self.field_stone_per_ha, f64::max)
     }
 }
 
@@ -425,12 +519,18 @@ pub struct SpeciesFile {
     pub columns: BTreeMap<String, ColumnDecl>,
     /// Canopy stems per hectare per class name (defaults, then the file's entries).
     pub classes: BTreeMap<String, Entry>,
+    /// The canopy size cap per class name, m (only the classes whose entry sets `size_max_m`).
+    pub class_size_max: BTreeMap<String, Entry>,
     /// In file order; names unique.
     pub species: Vec<Species>,
     /// The `[rocks.<context>]` rows given (a context without a row has no rocks).
     pub rocks: BTreeMap<RockContext, RockRow>,
     /// The `[rock_units."<unit>"]` tables, by unit name.
     pub rock_units: BTreeMap<String, RockUnit>,
+    /// The `[rock_regimes]` table: regime name per climate class name (RG-9j).
+    pub rock_regimes: BTreeMap<String, String>,
+    /// The distinct regime names of `rock_regimes`, sorted: a regime id (`u8`) is an index here.
+    pub rock_regime_names: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -448,6 +548,8 @@ struct RawFile {
     rocks: RawRocks,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     rock_units: BTreeMap<String, RawRockUnit>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    rock_regimes: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -501,12 +603,42 @@ struct RawRockUnit {
     outcrop: Vec<RockEntry>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     field: Vec<RockEntry>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    regime: BTreeMap<String, RawRegime>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRegime {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    field_stone_per_ha: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    talus: Option<Vec<RockEntry>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    outcrop: Option<Vec<RockEntry>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    field: Option<Vec<RockEntry>>,
+}
+
+impl RawRegime {
+    /// The written form of one override: every value and list it gives, nothing else.
+    fn of(o: &RegimeOverride) -> Self {
+        let list = |c: RockContext| o.entries.get(&c).cloned();
+        Self {
+            field_stone_per_ha: o.field_stone_per_ha,
+            talus: list(RockContext::Talus),
+            outcrop: list(RockContext::Outcrop),
+            field: list(RockContext::Field),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawClass {
     stems_per_ha: Entry,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    size_max_m: Option<Entry>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -790,8 +922,26 @@ fn check_entry(owner: &str, e: &RockEntry) -> Result<()> {
     Ok(())
 }
 
-/// Resolves one rock unit: a non-empty name, its values in their columns, entries valid and not repeated.
-fn rock_unit(name: &str, raw: &RawRockUnit, columns: &BTreeMap<String, ColumnDecl>) -> Result<RockUnit> {
+/// Checks one entry list of `owner`: every entry valid, none repeated.
+fn check_list(owner: &str, list: &[RockEntry]) -> Result<()> {
+    for (i, e) in list.iter().enumerate() {
+        check_entry(owner, e)?;
+        if list[..i].iter().any(|p| p.name() == e.name()) {
+            let (kind, n) = e.name();
+            return Err(Error::Invalid(format!("scatter species: {owner} {kind} {n:?} repeated")));
+        }
+    }
+    Ok(())
+}
+
+/// Resolves one rock unit: a non-empty name, its values in their columns, entries valid and not repeated, every
+/// regime override of a known regime (`regimes`: the file's regime names) under the same checks.
+fn rock_unit(
+    name: &str,
+    raw: &RawRockUnit,
+    columns: &BTreeMap<String, ColumnDecl>,
+    regimes: &[String],
+) -> Result<RockUnit> {
     if name.is_empty() {
         return Err(Error::Invalid("scatter species: empty rock unit name".into()));
     }
@@ -803,45 +953,89 @@ fn rock_unit(name: &str, raw: &RawRockUnit, columns: &BTreeMap<String, ColumnDec
         (RockContext::Outcrop, &raw.outcrop),
         (RockContext::Field, &raw.field),
     ] {
-        let owner = format!("{owner} {context:?}");
-        for (i, e) in list.iter().enumerate() {
-            check_entry(&owner, e)?;
-            if list[..i].iter().any(|p| p.name() == e.name()) {
-                let (kind, n) = e.name();
-                return Err(Error::Invalid(format!("scatter species: {owner} {kind} {n:?} repeated")));
-            }
-        }
+        check_list(&format!("{owner} {context:?}"), list)?;
         if !list.is_empty() {
             entries.insert(context, list.clone());
         }
+    }
+    let mut overrides = BTreeMap::new();
+    for (r, o) in &raw.regime {
+        if !regimes.contains(r) {
+            return Err(Error::Invalid(format!("scatter species: {owner} regime {r:?} is not a [rock_regimes] regime")));
+        }
+        let owner = format!("{owner} regime {r:?}");
+        let field_stone_per_ha = o
+            .field_stone_per_ha
+            .map(|v| rock_value(&owner, "field_stone_per_ha", Some(v), columns, &declared))
+            .transpose()?;
+        let mut entries = BTreeMap::new();
+        for (context, list) in [
+            (RockContext::Talus, &o.talus),
+            (RockContext::Outcrop, &o.outcrop),
+            (RockContext::Field, &o.field),
+        ] {
+            if let Some(list) = list {
+                check_list(&format!("{owner} {context:?}"), list)?;
+                entries.insert(context, list.clone());
+            }
+        }
+        overrides.insert(r.clone(), RegimeOverride { field_stone_per_ha, entries });
     }
     Ok(RockUnit {
         field_stone_per_ha: rock_value(&owner, "field_stone_per_ha", raw.field_stone_per_ha, columns, &declared)?,
         rockfall: rock_value(&owner, "rockfall", raw.rockfall, columns, &declared)?,
         entries,
+        regimes: overrides,
     })
 }
 
-/// Checks one class entry: non-empty name, unit 1/ha, valid source, range inside the declared one, value in range.
-fn check_class(name: &str, e: &Entry) -> Result<()> {
-    let d = class_declared(0.0);
+/// The distinct regime names of a `[rock_regimes]` table, sorted: every class one of `classes`, every regime name
+/// non-empty, at most [`u8::MAX`] regimes (an id is a `u8`).
+fn regime_names(map: &BTreeMap<String, String>, classes: &BTreeMap<String, Entry>) -> Result<Vec<String>> {
+    for (class, regime) in map {
+        if !classes.contains_key(class) {
+            return Err(Error::Invalid(format!("scatter species: [rock_regimes] class {class:?} is not a known class")));
+        }
+        if regime.is_empty() {
+            return Err(Error::Invalid(format!("scatter species: [rock_regimes] class {class:?} has an empty regime")));
+        }
+    }
+    let names: Vec<String> = map.values().cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+    if names.len() > usize::from(u8::MAX) {
+        return Err(Error::Invalid(format!("scatter species: {} regimes, at most {}", names.len(), u8::MAX)));
+    }
+    Ok(names)
+}
+
+/// The framework's weathering regimes of its own climate class table (`rock_regimes.toml`; `rockgen.md` "(e)
+/// Typology": frost, arid, semi-arid, temperate, wet), regime name per class name.
+#[must_use]
+pub fn default_rock_regimes() -> BTreeMap<String, String> {
+    SpeciesFile::parse_toml(include_str!("rock_regimes.toml"))
+        .unwrap_or_else(|e| unreachable!("shipped rock_regimes.toml: {e}"))
+        .rock_regimes
+}
+
+/// Checks one class entry `key` against its declaration `d`: non-empty name, the declared unit, valid source, range
+/// inside the declared one, value in range.
+fn check_class(name: &str, key: &str, e: &Entry, d: &Entry) -> Result<()> {
     if name.is_empty() {
         return Err(Error::Invalid("scatter species: empty class name".into()));
     }
     if e.unit != d.unit {
         return Err(Error::Invalid(format!(
-            "scatter species: class {name:?} stems_per_ha unit {:?}, expected {:?}",
+            "scatter species: class {name:?} {key} unit {:?}, expected {:?}",
             e.unit, d.unit
         )));
     }
     crate::recipe::check_source(name, &e.source)?;
     if !(e.min.is_finite() && e.max.is_finite() && e.min <= e.max && e.min >= d.min && e.max <= d.max) {
         return Err(Error::Invalid(format!(
-            "scatter species: class {name:?} range [{}, {}] not ordered inside [{}, {}]",
+            "scatter species: class {name:?} {key} range [{}, {}] not ordered inside [{}, {}]",
             e.min, e.max, d.min, d.max
         )));
     }
-    crate::recipe::check_range(&format!("scatter species: class {name:?} stems_per_ha"), e.v, e.min, e.max)
+    crate::recipe::check_range(&format!("scatter species: class {name:?} {key}"), e.v, e.min, e.max)
 }
 
 impl SpeciesFile {
@@ -853,16 +1047,38 @@ impl SpeciesFile {
             declared: declared(),
             columns: BTreeMap::new(),
             classes: class_defaults().into_iter().map(|(n, v)| (n.to_owned(), class_declared(v))).collect(),
+            class_size_max: BTreeMap::new(),
             species: Vec::new(),
             rocks: BTreeMap::new(),
             rock_units: BTreeMap::new(),
+            rock_regimes: BTreeMap::new(),
+            rock_regime_names: Vec::new(),
         }
+    }
+
+    /// The name of regime id `id` (an index of [`Self::rock_regime_names`]); `None` for no regime or an unknown id.
+    #[must_use]
+    pub fn regime_name(&self, id: Option<u8>) -> Option<&str> {
+        id.and_then(|i| self.rock_regime_names.get(usize::from(i))).map(String::as_str)
+    }
+
+    /// The regime id of each class of `class_names` (a climate product's class list: the ids
+    /// [`crate::scatter_fields::FieldSample::class`] indexes); `None` for a class `[rock_regimes]` does not map.
+    #[must_use]
+    pub fn regime_ids(&self, class_names: &[String]) -> Vec<Option<u8>> {
+        class_names
+            .iter()
+            .map(|c| {
+                let r = self.rock_regimes.get(c)?;
+                self.rock_regime_names.iter().position(|n| n == r).and_then(|i| u8::try_from(i).ok())
+            })
+            .collect()
     }
 
     /// Parses a species file (module docs): params declared with their unit and a valid source, in range, the
     /// stand thresholds ordered; columns known with their fixed unit, a valid source and a range inside the
-    /// declared one; classes with unit 1/ha in 0..2000; species named uniquely, values only in declared columns
-    /// and in their range, sizes ordered, hats ordered; no unknown key anywhere.
+    /// declared one; classes with unit 1/ha in 0..2000 (an optional size cap in m, 1..40); species named uniquely,
+    /// values only in declared columns and in their range, sizes ordered, hats ordered; no unknown key anywhere.
     pub fn parse_toml(text: &str) -> Result<Self> {
         let file: RawFile = toml::from_str(text)?;
         let mut declared = declared();
@@ -893,8 +1109,13 @@ impl SpeciesFile {
         check_columns(&file.columns)?;
         let mut classes: BTreeMap<String, Entry> =
             class_defaults().into_iter().map(|(n, v)| (n.to_owned(), class_declared(v))).collect();
+        let mut class_size_max = BTreeMap::new();
         for (name, c) in file.classes {
-            check_class(&name, &c.stems_per_ha)?;
+            check_class(&name, "stems_per_ha", &c.stems_per_ha, &class_declared(0.0))?;
+            if let Some(e) = c.size_max_m {
+                check_class(&name, "size_max_m", &e, &class_size_declared(0.0))?;
+                class_size_max.insert(name.clone(), e);
+            }
             classes.insert(name, c.stems_per_ha);
         }
         let mut species: Vec<Species> = Vec::with_capacity(file.species.len());
@@ -910,11 +1131,23 @@ impl SpeciesFile {
                 rocks.insert(context, rock_row(context, raw, &file.columns)?);
             }
         }
+        let rock_regime_names = regime_names(&file.rock_regimes, &classes)?;
         let mut rock_units = BTreeMap::new();
         for (name, raw) in &file.rock_units {
-            rock_units.insert(name.clone(), rock_unit(name, raw, &file.columns)?);
+            rock_units.insert(name.clone(), rock_unit(name, raw, &file.columns, &rock_regime_names)?);
         }
-        Ok(Self { values, declared, columns: file.columns, classes, species, rocks, rock_units })
+        Ok(Self {
+            values,
+            declared,
+            columns: file.columns,
+            classes,
+            class_size_max,
+            species,
+            rocks,
+            rock_units,
+            rock_regimes: file.rock_regimes,
+            rock_regime_names,
+        })
     }
 
     /// Writes the file with every value explicit (params, columns, classes, each species' numeric values in its
@@ -938,7 +1171,9 @@ impl SpeciesFile {
         let classes = self
             .classes
             .iter()
-            .map(|(n, e)| (n.clone(), RawClass { stems_per_ha: e.clone() }))
+            .map(|(n, e)| {
+                (n.clone(), RawClass { stems_per_ha: e.clone(), size_max_m: self.class_size_max.get(n).cloned() })
+            })
             .collect();
         let declared_col = |c: &str| self.columns.contains_key(c);
         let opt = |c: &str, v: f64| declared_col(c).then_some(v);
@@ -998,11 +1233,20 @@ impl SpeciesFile {
                     talus: u.entries(RockContext::Talus).to_vec(),
                     outcrop: u.entries(RockContext::Outcrop).to_vec(),
                     field: u.entries(RockContext::Field).to_vec(),
+                    regime: u.regimes.iter().map(|(r, o)| (r.clone(), RawRegime::of(o))).collect(),
                 };
                 (n.clone(), raw)
             })
             .collect();
-        let raw = RawFile { params, columns: self.columns.clone(), classes, species, rocks, rock_units };
+        let raw = RawFile {
+            params,
+            columns: self.columns.clone(),
+            classes,
+            species,
+            rocks,
+            rock_units,
+            rock_regimes: self.rock_regimes.clone(),
+        };
         toml::to_string(&raw).map_err(|e| Error::Invalid(e.to_string()))
     }
 }

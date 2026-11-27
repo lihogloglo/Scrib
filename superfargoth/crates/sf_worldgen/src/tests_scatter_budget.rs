@@ -81,7 +81,7 @@ impl Fields for Ramp {
             temperature_c: 10.0,
             precipitation_mm: 800.0,
             moisture: 0.5,
-            class: None,
+            class: Some(0),
             slope_deg: y * SLOPE_PER_M,
             aspect_deg: 0.0,
             altitude_m: 100.0,
@@ -133,6 +133,7 @@ impl Fixture {
             water: &self.water,
             height: &height,
             rocks: None,
+            canopy: test_targets(&self.file),
         }
     }
 
@@ -276,4 +277,238 @@ fn the_budget_keeps_smallest_entry_first_so_large_instances_first() {
     // The rank is uniform: its mean over the set is near 1/2.
     let mean_u = won.iter().map(|c| budget_rank(SEED, &c.key)).sum::<f64>() / won.len() as f64;
     assert!((mean_u - 0.5).abs() < 0.02, "mean rank {mean_u}");
+}
+
+/// WG-E2i.3: the four groups of pass 10. Synthetic rocks beside the fixture's plants: each group (rocks, canopy,
+/// understorey, ground) keeps `round(budget x n_g / n)`, budgets nest, the rocks' cut is the same on reversed input,
+/// and with no rocks the plants' cut is [`budget_cut`]'s.
+#[test]
+fn the_rock_group_keeps_its_share_beside_the_plant_layers() {
+    use crate::scatter_rocks::{RockCandidate, RockKey};
+    use crate::scatter_species::RockContext;
+    let fx = Fixture::new();
+    let plants = fx.whole();
+    let contexts = [RockContext::Talus, RockContext::Outcrop, RockContext::Field];
+    let rocks: Vec<RockCandidate> = (0..3000u32)
+        .map(|i| RockCandidate {
+            key: RockKey { context: contexts[(i % 3) as usize], tile: ((i % 7) as i32, 0), parent: i / 21, offspring: i % 21 },
+            pos: [f64::from(i % 50), f64::from(i / 50)],
+            size_m: 0.3 + f64::from(i % 17),
+            tiebreak: u64::from(i),
+            source: [0.0, 0.0],
+            regime: None,
+        })
+        .collect();
+    let w = LayerWinners { rocks, plants };
+    let n = w.rocks.len() + w.plants.len();
+    let mut previous: Option<(Vec<bool>, Vec<bool>)> = None;
+    for b in [0.0, 10.0, 500.0, (n / 4) as f64, (n / 2) as f64, (n - 1) as f64, n as f64] {
+        let (rk, pk) = budget_cut_layers(SEED, &w, b, 1.0);
+        assert_eq!((rk.len(), pk.len()), (w.rocks.len(), w.plants.len()));
+        let want = |n_g: usize| if b >= n as f64 { n_g } else { ((b * n_g as f64 / n as f64).round() as usize).min(n_g) };
+        assert_eq!(rk.iter().filter(|&&k| k).count(), want(w.rocks.len()), "rocks at budget {b}");
+        for l in [Layer::Canopy, Layer::Understorey, Layer::Ground] {
+            let n_l = w.plants.iter().filter(|c| c.key.layer == l).count();
+            let got = w.plants.iter().zip(&pk).filter(|(c, k)| **k && c.key.layer == l).count();
+            assert_eq!(got, want(n_l), "{l:?} at budget {b}");
+        }
+        if let Some((pr, pp)) = &previous {
+            assert!(pr.iter().zip(&rk).chain(pp.iter().zip(&pk)).all(|(a, b)| !a || *b), "budget {b} nests");
+        }
+        previous = Some((rk, pk));
+    }
+    // Order independent: the reversed rocks keep the same keys.
+    let b = (n / 3) as f64;
+    let kept = |w: &LayerWinners| {
+        let (rk, _) = budget_cut_layers(SEED, w, b, 1.0);
+        let mut k: Vec<RockKey> = w.rocks.iter().zip(rk).filter(|x| x.1).map(|x| x.0.key).collect();
+        k.sort_unstable();
+        k
+    };
+    let mut rev = w.clone();
+    rev.rocks.reverse();
+    assert_eq!(kept(&w), kept(&rev));
+    // No rocks: the plants' cut alone.
+    let only = LayerWinners { rocks: Vec::new(), plants: w.plants.clone() };
+    assert_eq!(budget_cut_layers(SEED, &only, b, 1.0).1, budget_cut(SEED, &w.plants, b, 1.0));
+}
+
+/// WG-E2p: the full radius (spec "Design" 10). With a focus at the fixture square's centre and a radius over about a
+/// quarter of it: every instance inside is kept at every budget (inside == the unbudgeted set there); the total is
+/// `max(budget, inside)` capped by the set (up to the per-group rounding); the outside set nests with the budget and
+/// keeps its groups' shares of the global remainder; no focus, or a radius 0, is [`budget_cut_layers`]' cut.
+#[test]
+fn the_full_radius_keeps_everything_inside_and_one_remainder_outside() {
+    use crate::scatter_rocks::{RockCandidate, RockKey};
+    use crate::scatter_species::RockContext;
+    let fx = Fixture::new();
+    let plants = fx.whole();
+    let rocks: Vec<RockCandidate> = (0..2000u32)
+        .map(|i| RockCandidate {
+            key: RockKey { context: RockContext::Field, tile: ((i % 2) as i32, 0), parent: i / 10, offspring: i % 10 },
+            pos: [f64::from(i % 40) * 12.8, f64::from(i / 40) * 10.24],
+            size_m: 0.3 + f64::from(i % 13),
+            tiebreak: u64::from(i),
+            source: [0.0, 0.0],
+            regime: None,
+        })
+        .collect();
+    let w = LayerWinners { rocks, plants };
+    let n = w.rocks.len() + w.plants.len();
+    let focus = Focus { at: [SIDE / 2.0, SIDE / 2.0], radius_m: SIDE / 3.5 };
+    let near = |p: [f64; 2]| (p[0] - focus.at[0]).powi(2) + (p[1] - focus.at[1]).powi(2) <= focus.radius_m.powi(2);
+    let group = |c: &Candidate| layer_group(c.key.layer) as usize;
+    let mut inside = [w.rocks.iter().filter(|c| near(c.pos)).count(), 0, 0, 0];
+    for c in w.plants.iter().filter(|c| near(c.pos)) {
+        inside[group(c)] += 1;
+    }
+    let n_in: usize = inside.iter().sum();
+    assert!(n_in > 0 && n_in < n / 2, "the fixture's radius holds a part of the set: {n_in} of {n}");
+    let mut outside = [w.rocks.len() - inside[0], 0, 0, 0];
+    for c in &w.plants {
+        outside[group(c)] += 1;
+    }
+    for g in 1..4 {
+        outside[g] -= inside[g];
+    }
+    let n_out = n - n_in;
+    let budgets = [0.0, 10.0, (n_in / 2) as f64, n_in as f64, (n_in + n_out / 3) as f64, (n - 1) as f64, n as f64, 2.0 * n as f64];
+    let mut previous: Option<FocusCut> = None;
+    for b in budgets {
+        let cut = budget_cut_focus(SEED, &w, b, 1.0, Some(focus));
+        assert_eq!(cut, budget_cut_focus(SEED, &w, b, 1.0, Some(focus)), "pure");
+        assert_eq!(cut.inside, inside, "inside per group at budget {b}");
+        let rocks_in = w.rocks.iter().zip(&cut.rocks).filter(|(c, _)| near(c.pos));
+        let plants_in = w.plants.iter().zip(&cut.plants).filter(|(c, _)| near(c.pos));
+        assert!(rocks_in.map(|x| *x.1).chain(plants_in.map(|x| *x.1)).all(|k| k), "everything inside kept at budget {b}");
+        // Outside: each group keeps its share of the one remainder.
+        let remainder = (b - n_in as f64).max(0.0);
+        let want = |g: usize| {
+            if remainder >= n_out as f64 { outside[g] } else { ((remainder * outside[g] as f64 / n_out as f64).round() as usize).min(outside[g]) }
+        };
+        let mut got = [w.rocks.iter().zip(&cut.rocks).filter(|(c, k)| **k && !near(c.pos)).count(), 0, 0, 0];
+        for (c, _) in w.plants.iter().zip(&cut.plants).filter(|(c, k)| **k && !near(c.pos)) {
+            got[group(c)] += 1;
+        }
+        for (g, &n_g) in got.iter().enumerate() {
+            assert_eq!(n_g, want(g), "outside group {g} at budget {b}");
+        }
+        let kept = cut.rocks.iter().chain(&cut.plants).filter(|&&k| k).count();
+        let total = b.max(n_in as f64).min(n as f64);
+        assert!((kept as f64 - total).abs() <= 2.0, "total {kept} at budget {b}, want {total}");
+        if let Some(p) = &previous {
+            let nests = p.rocks.iter().zip(&cut.rocks).chain(p.plants.iter().zip(&cut.plants)).all(|(a, b)| !a || *b);
+            assert!(nests, "budget {b} keeps a superset of the one below");
+        }
+        previous = Some(cut);
+    }
+    // No focus, or radius 0: today's cut, nothing inside.
+    for b in [0.0, (n / 3) as f64, n as f64] {
+        let (rk, pk) = budget_cut_layers(SEED, &w, b, 1.0);
+        for f in [None, Some(Focus { radius_m: 0.0, ..focus })] {
+            let cut = budget_cut_focus(SEED, &w, b, 1.0, f);
+            assert_eq!((&cut.rocks, &cut.plants, cut.inside), (&rk, &pk, [0; 4]), "no full radius at budget {b}");
+        }
+    }
+}
+
+/// A synthetic stand for WG-E2q: 1 ha tiles (100 m) of `canopy[t]` canopy and 300 understorey instances each, at
+/// hashed positions inside their tile, plus 200 rocks.
+#[allow(clippy::cast_possible_wrap)] // tile indices 0..2
+fn stand_fixture(canopy: [u32; 4]) -> LayerWinners {
+    use crate::scatter_rocks::{RockCandidate, RockKey};
+    use crate::scatter_species::RockContext;
+    let at = |t: u32, i: u32, salt: u64| {
+        let h = mix(u64::from(t) << 40 | u64::from(i) << 8 | salt);
+        let (ox, oy) = (f64::from(t % 2) * 100.0, f64::from(t / 2) * 100.0);
+        [ox + unit(h) * 100.0, oy + unit(mix(h)) * 100.0]
+    };
+    let mut plants = Vec::new();
+    for t in 0..4u32 {
+        for (layer, n) in [(Layer::Canopy, canopy[t as usize]), (Layer::Understorey, 300)] {
+            for i in 0..n {
+                let key = CandidateKey { layer, species: t, tile: ((t % 2) as i32, (t / 2) as i32), parent: i / 7, offspring: i % 7 };
+                let size_m = if layer == Layer::Canopy { 4.0 + f64::from(i % 17) } else { 0.5 + f64::from(i % 5) * 0.3 };
+                plants.push(Candidate { key, pos: at(t, i, layer as u64), size_m, crown_m: 1.0, tiebreak: u64::from(i) });
+            }
+        }
+    }
+    let rocks = (0..200u32)
+        .map(|i| RockCandidate {
+            key: RockKey { context: RockContext::Field, tile: (0, 0), parent: i / 10, offspring: i % 10 },
+            pos: at(i % 4, i, 9),
+            size_m: 0.3 + f64::from(i % 13),
+            tiebreak: u64::from(i),
+            source: [0.0, 0.0],
+            regime: None,
+        })
+        .collect();
+    LayerWinners { rocks, plants }
+}
+
+/// WG-E2q: the stand cap keeps at most `round(cap x tile area)` canopy instances per tile, the lowest budget ranks,
+/// before the full radius (inside it too) and the budget; lower layers and rocks are never capped; a cap above every
+/// tile's density is the uncapped cut; budgets still nest.
+#[test]
+fn the_stand_cap_keeps_the_lowest_ranks_per_tile_before_the_radius_and_budget() {
+    let w = stand_fixture([600, 400, 100, 1000]);
+    let stand = Stand { tile_m: 100.0, stems_per_ha_max: 400.0 };
+    let capped = stand_cap(SEED, &w.plants, stand);
+    assert_eq!(capped, stand_cap(SEED, &w.plants, stand), "pure");
+    let tile = |c: &Candidate| ((c.pos[0] / 100.0).floor() as i32, (c.pos[1] / 100.0).floor() as i32);
+    let canopy_kept = |keep: &[bool], t: (i32, i32)| {
+        w.plants.iter().zip(keep).filter(|(c, k)| **k && c.key.layer == Layer::Canopy && tile(c) == t).count()
+    };
+    for (t, n) in [((0, 0), 600), ((1, 0), 400), ((0, 1), 100), ((1, 1), 1000)] {
+        assert_eq!(canopy_kept(&capped, t), n.min(400), "tile {t:?}");
+        // The survivors are the lowest ranks of their tile.
+        let rank = |keep: bool| {
+            w.plants.iter().zip(&capped).filter(move |(c, k)| **k == keep && c.key.layer == Layer::Canopy && tile(c) == t)
+                .map(|(c, _)| budget_rank(SEED, &c.key))
+        };
+        let (top, low) = (rank(true).fold(0.0, f64::max), rank(false).fold(1.0, f64::min));
+        assert!(top < low, "tile {t:?}: survivor rank {top} under dropped {low}");
+    }
+    let under = w.plants.iter().zip(&capped).filter(|(c, _)| c.key.layer != Layer::Canopy);
+    assert!(under.clone().all(|(_, k)| *k) && under.count() == 1200, "lower layers never capped");
+    let prm = |budget: f64, cap: f64, focus: Option<[f64; 2]>| Params {
+        seed: SEED,
+        tile_m: 100.0,
+        budget,
+        size_priority: 1.0,
+        full_radius_m: 300.0,
+        focus,
+        canopy_stems_per_ha_max: cap,
+        ..Params::default()
+    };
+    let centre = Some([100.0, 100.0]);
+    let n = w.rocks.len() + w.plants.len();
+    let n_capped = w.rocks.len() + capped.iter().filter(|&&k| k).count();
+    // Inside the radius (here the whole fixture) and with any budget, no tile above the cap.
+    for b in [0.0, 500.0, n as f64] {
+        let cut = budget_cut_load(&w, &prm(b, 400.0, centre));
+        assert!(cut.plants.iter().zip(&capped).all(|(k, c)| !k || *c), "a capped plant is never kept at budget {b}");
+        assert_eq!(cut.plants, capped, "the radius covers the fixture: every survivor kept at budget {b}");
+        assert_eq!(cut.inside.iter().sum::<usize>(), n_capped, "inside counts the survivors only");
+        assert!(cut.rocks.iter().all(|&k| k), "rocks never capped");
+    }
+    // Without a focus: the budget cuts the survivors (their count is the set), and budgets nest.
+    let mut previous: Option<FocusCut> = None;
+    for b in [0.0, 300.0, 1000.0, (n_capped - 1) as f64, n_capped as f64, n as f64] {
+        let cut = budget_cut_load(&w, &prm(b, 400.0, None));
+        assert!(cut.plants.iter().zip(&capped).all(|(k, c)| !k || *c), "capped never kept at budget {b}");
+        let kept = cut.rocks.iter().chain(&cut.plants).filter(|&&k| k).count();
+        assert!((kept as f64 - b.min(n_capped as f64)).abs() <= 2.0, "kept {kept} at budget {b} of {n_capped}");
+        if let Some(p) = &previous {
+            let nests = p.rocks.iter().zip(&cut.rocks).chain(p.plants.iter().zip(&cut.plants)).all(|(a, b)| !a || *b);
+            assert!(nests, "budget {b} keeps a superset of the one below");
+        }
+        previous = Some(cut);
+    }
+    // A cap above every tile's density (1000/ha here) is the uncapped cut, with a focus or without.
+    for b in [0.0, 700.0, n as f64] {
+        for (focus, f) in [(None, None), (centre, Some(Focus { at: [100.0, 100.0], radius_m: 300.0 }))] {
+            assert_eq!(budget_cut_load(&w, &prm(b, 2000.0, focus)), budget_cut_focus(SEED, &w, b, 1.0, f), "cap 2000 at {b}");
+        }
+    }
 }

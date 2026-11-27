@@ -284,3 +284,47 @@ fn measure_drainage_area_on_a_guide() {
         println!("  >= {a:.0e} m2: {:.3} % of land", 100.0 * above as f64 / land.len() as f64);
     }
 }
+
+#[test]
+fn reads_the_product_back_exactly_and_refuses_a_tampered_file() {
+    let gd = guide();
+    let table = ClassTable::whittaker();
+    let file = file_with(vec![pin_ash_plain()]);
+    let map = build(&gd, &file, &table).unwrap();
+    let dir = std::env::temp_dir().join(format!("sf_worldgen_climate_read_{}", std::process::id()));
+    map.write(&dir, &file.declared).unwrap();
+
+    let back = ClimateMap::read(&dir).unwrap();
+    assert_eq!((back.w, back.h, back.spacing_m, back.origin_m), (map.w, map.h, map.spacing_m, map.origin_m));
+    assert_eq!(back.temperature, map.temperature);
+    assert_eq!(back.precipitation, map.precipitation);
+    assert_eq!(back.moisture, map.moisture);
+    assert_eq!(back.classes, map.classes);
+    assert_eq!(back.class_names, map.class_names);
+    assert_eq!(back.overrides, map.overrides);
+    assert_eq!(back.mfd_stuck, map.mfd_stuck);
+    // JSON floats: serde_json without `float_roundtrip` may land one ulp off.
+    for (a, b) in [
+        (back.budget.inflow, map.budget.inflow),
+        (back.budget.source, map.budget.source),
+        (back.budget.rain, map.budget.rain),
+        (back.budget.outflow, map.budget.outflow),
+    ] {
+        assert!((a - b).abs() <= 1e-12 * b.abs().max(1.0), "budget {a} vs {b}");
+    }
+    assert_eq!(back.hash(), map.hash());
+
+    // One flipped byte in a raster: refused, naming the file.
+    let path = dir.join("climate").join("moisture.f32");
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[5] ^= 0x01;
+    std::fs::write(&path, &bytes).unwrap();
+    let err = ClimateMap::read(&dir).unwrap_err().to_string();
+    assert!(err.contains("moisture.f32 blake3"), "{err}");
+    // A truncated file: refused on its size.
+    bytes.truncate(bytes.len() - 4);
+    std::fs::write(&path, &bytes).unwrap();
+    let err = ClimateMap::read(&dir).unwrap_err().to_string();
+    assert!(err.contains("moisture.f32 is 764 bytes"), "{err}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}

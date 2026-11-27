@@ -98,7 +98,7 @@ fn declared_defaults_are_valid() {
         assert!(SPECIES_COLUMNS.iter().any(|(n, u)| *n == d.name && *u == d.unit), "{} not a column", d.name);
     }
     for (name, v) in class_defaults() {
-        check_class(name, &class_declared(v)).unwrap();
+        check_class(name, "stems_per_ha", &class_declared(v), &class_declared(0.0)).unwrap();
     }
 }
 
@@ -268,4 +268,89 @@ fn bad_rock_weights_kinds_and_values_are_refused() {
     rock_refused("size_min_m = 0.3\n", "", "missing field `size_min_m`");
     rock_refused("size_min_m = 0.3\n", "size_min_m = 0.1\n", "size_min_m = 0.1 outside");
     rock_refused("[rock_units.ash]", "[rock_units.\"\"]", "empty rock unit name");
+}
+
+// RG-9j: weathering regimes. `[rock_regimes]` maps classes to regimes; a unit overrides its field-stone density and
+// entry lists per regime; the shipped default covers the shipped class table.
+
+/// Two regimes over three default classes; `lava` overrides frost (field stones, talus) and wet (no field stones).
+const REGIMES: &str = r#"
+[columns]
+size_min_m = { unit = "m", min = 0.2, max = 40, source = "Guess" }
+size_max_m = { unit = "m", min = 0.2, max = 40, source = "Guess" }
+field_stone_per_ha = { unit = "1/ha", min = 0, max = 500, source = "Guess" }
+
+[rocks.talus]
+size_min_m = 0.4
+size_max_m = 12
+
+[rock_regimes]
+"taiga" = "frost"
+"tundra" = "frost"
+"rainforest" = "wet"
+
+[rock_units.lava]
+field_stone_per_ha = 20
+talus = [{ kind = "class", class = "block", weight = 1 }]
+field = [{ kind = "class", class = "cobble", weight = 1 }]
+
+[rock_units.lava.regime.frost]
+field_stone_per_ha = 80
+talus = [{ kind = "class", class = "frost_block", weight = 2 }]
+
+[rock_units.lava.regime.wet]
+field = []
+"#;
+
+#[test]
+#[allow(clippy::float_cmp)]
+fn rock_regimes_parse_override_and_round_trip() {
+    let f = parse(REGIMES).unwrap();
+    assert_eq!(f.rock_regime_names, ["frost", "wet"]);
+    assert_eq!(f.rock_regimes["tundra"], "frost");
+    let lava = &f.rock_units["lava"];
+    assert_eq!((lava.field_stone_in(None), lava.field_stone_in(Some("frost")), lava.field_stone_in(Some("wet"))), (20.0, 80.0, 20.0));
+    assert_eq!(lava.field_stone_max(), 80.0);
+    let frost_block = [RockEntry::Class { class: "frost_block".into(), weight: 2.0 }];
+    assert_eq!(lava.entries_in(RockContext::Talus, Some("frost")), frost_block);
+    assert_eq!(lava.entries_in(RockContext::Talus, Some("wet")), lava.entries(RockContext::Talus), "no list: the unit's");
+    assert_eq!(lava.entries_in(RockContext::Talus, None), lava.entries(RockContext::Talus));
+    assert!(lava.entries_in(RockContext::Field, Some("wet")).is_empty(), "an empty list: none in the regime");
+    assert_eq!(lava.entries_in(RockContext::Field, Some("frost")).len(), 1);
+    let names: Vec<String> = ["rainforest", "desert", "taiga"].map(str::to_owned).to_vec();
+    assert_eq!(f.regime_ids(&names), [Some(1), None, Some(0)]);
+    assert_eq!((f.regime_name(Some(0)), f.regime_name(Some(1)), f.regime_name(Some(2)), f.regime_name(None)), (Some("frost"), Some("wet"), None, None));
+    let text = f.to_toml().unwrap();
+    let g = parse(&text).unwrap();
+    assert_eq!(f, g);
+    assert_eq!(text, g.to_toml().unwrap(), "writing is stable");
+    let none = parse("[rock_units.lava]\n").unwrap();
+    assert!(none.rock_regimes.is_empty() && none.rock_regime_names.is_empty());
+}
+
+#[test]
+fn unknown_regime_classes_and_names_are_refused() {
+    let refused = |from: &str, to: &str, want: &str| {
+        assert!(REGIMES.contains(from), "regime fixture lacks {from:?}");
+        let text = REGIMES.replacen(from, to, 1);
+        let err = parse(&text).expect_err(&format!("accepted: {from:?} -> {to:?}")).to_string();
+        assert!(err.contains(want), "{from:?} -> {to:?}: {err:?} lacks {want:?}");
+    };
+    refused("\"taiga\" = \"frost\"", "\"boreal\" = \"frost\"", "[rock_regimes] class \"boreal\" is not a known class");
+    refused("\"rainforest\" = \"wet\"", "\"rainforest\" = \"\"", "class \"rainforest\" has an empty regime");
+    refused("regime.wet]", "regime.arid]", "rock unit \"lava\" regime \"arid\" is not a [rock_regimes] regime");
+    refused("field_stone_per_ha = 80", "field_stone_per_ha = 900", "regime \"frost\" field_stone_per_ha = 900 outside");
+    refused("weight = 2 }]", "weight = 0 }]", "regime \"frost\" Talus class \"frost_block\" weight 0");
+    refused("field = []", "scree = []", "unknown field `scree`");
+}
+
+#[test]
+fn the_shipped_default_regimes_cover_the_shipped_class_table() {
+    let map = default_rock_regimes();
+    let table = crate::climate_classes::ClassTable::whittaker();
+    let classes: std::collections::BTreeSet<&str> = table.names().iter().map(String::as_str).collect();
+    let mapped: std::collections::BTreeSet<&str> = map.keys().map(String::as_str).collect();
+    assert_eq!(mapped, classes, "every shipped class has a regime, and only those");
+    let regimes: std::collections::BTreeSet<&str> = map.values().map(String::as_str).collect();
+    assert_eq!(regimes, ["arid", "frost", "semi-arid", "temperate", "wet"].into_iter().collect());
 }

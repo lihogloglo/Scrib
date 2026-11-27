@@ -307,6 +307,110 @@ row lands: `tafoni` (RG-9c), `bedded` (RG-9d), `entablature` (RG-9e), `spatter` 
 (scatter density per regime, RG-9j); vent-distance fining, river imbrication (later scatter fields); breadcrust crack
 grooves, exfoliation shells (Later: low value per T§5); ropy pahoehoe (a texture, pack data).
 
+### (f) Placement in the game (RG-P, specced 2026-11-27)
+
+Reviewed 2026-11-27 (adversarial, every cited path read): fixed the physics scaled-copy growth (point 8), the shared
+solid list with the navmesh (8), string interning (4), the index's `ModelInfo` type (5), the end-band rule and the P3
+range test (6), and named the unused `Library::pick` (3).
+
+The scatter's **library rocks** (`mw_worldgen` `flora_rocks.rs:377` `RockPlacement`: class name, variant hash,
+transform whose uniform scale is the size mark in m, `sink` share of the short axis, regime) reach the generated world
+as ordinary streamed placements of one content-pack class, drawn by a rock spawner. Research:
+`docs/research/rock-placement-game-2026-11-27.md` (option B). Scale (WG-E3m, x10s): ~1.66 M library rocks, ~3-8 k in a
+1 km ring, each up to `lod_levels` LOD entities.
+
+**Reuse check (V = source read 2026-11-27).** Bevy 0.20: entities sharing one `Mesh` and one material handle batch
+into one instanced draw with GPU preprocessing and multi-draw indirect; `MeshTag` rides per instance and does not split
+the batch (it is a field of the per-instance `MeshUniform`, `vendor/bevy_pbr/src/render/mesh.rs:605-606`, filled at
+`:1261-1275`, V); LOD is one entity per level with `VisibilityRange`
+(dithered crossfade, V); there is no instance-list component outside our vendored `gpu_instance_batch` (V), so shared
+handles are the native path. Framework: `PlacementClass::Custom(u16)` is "Content-pack defined"
+(`sf_world/src/placement.rs:77-78`, V) and `PlacementSpawners` maps a class to a `PlacementSpawner` with
+`needs_model` (`sf_world_bevy/src/spawn.rs:105-123`, V): the streamed index, pages, rings, R0 activation and the physics
+hook (`sf_physics_bevy/src/stream.rs:500-517`, V) all come for free. Cooking variants into `mesh.cook` (research
+option A) would lose the approved UV-less triplanar `RockMaterial` (`ModelTemplate` parts are `StandardMaterial`,
+`spawn.rs:38-54`, V); a second rock streamer (option C) would duplicate `sf_world_bevy`. Crates: none needed beyond
+Bevy's batching (not surveyed further, U).
+
+**Industry comparison (U unless marked).** UE PCG's Static Mesh Spawner emits (mesh, transform) instances per
+partition cell into ISM/HISM, at edit time or around generation sources, per-instance LOD (Epic docs, U); Far Cry 5
+generates placements offline in Houdini and streams them as instanced entities (Carrier GDC 2018, U); Horizon Zero
+Dawn places on the GPU at runtime from maps (van Muijden GDC 2017, U); OpenMW: rocks are `STAT` references, one each
+(V, our pack-model rocks). Ours = the FC5 / UE edit-time pattern: offline product (`rocks.bin`), instances in the
+world's own streamed partition, one shared mesh and one shared collision shape per variant. Gap: no HLOD / far-field
+proxy for rocks (the generated world has the far field off, `mw_exterior_bevy/src/worldgen.rs:10-13`); rocks end at
+their ring with the dithered end band.
+
+**Design.**
+
+1. **Libraries, loaded once.** `sf_rockgen::placed::Libraries` (Bevy-free): class name -> decoded `Library`
+   (`bake::decode` of each `rockgen.library` product the boot bake made, `mw_boot_bevy/src/bake.rs:287-297`), read
+   once by the app and shared as `Arc<Libraries>` by the content builder, the spawner and the physics shape source.
+2. **Id scheme.** A library variant's model id is the `VfsPath` `rockgen/<class>/<index>` (`model_id` /
+   `parse_model_id`). It is never mounted: the spawner's `needs_model` is false (no `mesh.cook` load) and the shape
+   source matches the `rockgen/` prefix before the bake lookup. Class names are lowercase ASCII without separators
+   (`sf_rockgen/src/classes.rs` names), so `VfsPath::new` (lowercases, `/` joins, `sf_vfs/src/path.rs`) keeps them.
+3. **Resolution at content build, not at spawn.** `Libraries::resolve(class, variant_hash, size_mark_m, sink)` ->
+   `Resolved { index, scale, lift_m }`: `index = variant_hash mod variants.len()` (the scatter's documented contract,
+   `sf_worldgen/src/scatter_rocks.rs:506`), `scale = Library::scale_for(size_mark_m)` (mark / reference size, both the
+   longest LOD0 side), `lift_m = (0.5 - sink) x bounds.extent().z x scale` (sf_rockgen's +Z is the short axis and the
+   mesh is centred, `boulder.rs:6-7, 305`; the rock lab seats rocks the same way, `level/rock_lab.rs:381-385`). The
+   placement's position moves by `lift_m` along its rotated up (+Y), its scale becomes `splat(scale)`. Unknown class
+   or an empty library: the rock is dropped and counted in the summary line. `Library::pick(seed)` (`library.rs:125`,
+   a mix64 + multiply-shift over a placement seed) is not used: the scatter's hash is already uniform 64-bit (modulo
+   bias <= 32 / 2^64) and modulo is its documented contract; one rule, stated on the scatter side.
+4. **The placement.** Class `ROCK_LIBRARY = PlacementClass::Custom(3)` (adapter constant beside `CONTAINER` 1 and
+   `ACTIVATOR` 2, `mw_world/src/source.rs:25-27`), `base = RecordRef::new("rockgen", <class>)`, `model = Some(id)`,
+   flags default, id = `library_rocks`' (`ROCK_ID_NAMESPACE`). They join `WorldgenContent.extra` as `"rocks library"`
+   (`worldgen.rs:101-108`). Regime is dropped until the cover (RG-9i) needs it (then it enters the id or the material
+   key, decided there). Memory: ~130 B per placement, ~215 MB on x10s beside the 20.8 M flora placements (+8 %). That
+   inline size holds only if the strings are shared: `RecordRef::new` and `VfsPath::new` each allocate an `Arc<str>`
+   (`sf_world/src/records.rs:101-107`, `sf_vfs/src/path.rs:11`), so the builder makes one `RecordRef` per class and one
+   `VfsPath` per (class, index) and clones them (a refcount), never one per rock.
+5. **Bounds for the index.** `WorldgenContent` gains `models: HashMap<VfsPath, sf_world::ModelInfo>` (`min`, `max`,
+   `bytes`, `lod_distance`: `sf_world/src/index.rs:27-34`, not `sf_model::ModelInfo`): per used id the variant's
+   LOD0 bounds in the engine frame (`[x, y, z] -> [x, z, -y]`, as `rock_mesh`, `sf_rockgen_bevy/src/lib.rs:140-141`),
+   `bytes 0` (meshes are shared and resident for the session; the per-placement overhead covers the entity),
+   `lod_distance 0` (no limit known: the ring end and size culling decide). `worldgen.rs` `add` (`:204-215`) looks up
+   these before the bake's `model_infos`, so library rocks index with real extents, not as points.
+6. **Spawner** (`sf_rockgen_bevy::RockSpawner`, framework): holds per (class, index) the LOD mesh handles (built once
+   from the libraries with `rock_mesh`), per class one `RockMaterial` handle per LOD (plus a default set), and
+   `RockLodSettings`. `spawn`: parse the id; a root under `cx.parent` with `cx.local`; children `lod_bundles` with
+   ranges `lod_ranges(reference size x scale, levels, settings)` (`sf_rockgen_bevy/src/lib.rs:189`; its last level is
+   open-ended) whose last level is ended by `chain_ranges`' rule (`spawn.rs:351-365`): with `cx.end_band > 0` its end
+   margin is `[max_distance, max_distance + end_band]`, else it ends at `cx.max_distance` (already size-culled:
+   `SpawnCx::end`, `spawn.rs:76-86`). Every range goes through `shared_range` (`spawn.rs:407-427`: Bevy's 65535 range
+   slots; per-instance ranges must be snapped); `NoCpuCulling` on the parts when `StaticGpuCulling::on` (the rule the
+   `StaticSpawner` applies to `Static` only, `spawn.rs:284-313`; library rocks never move, so they take it too);
+   `MeshTag` = the id's low 32 bits (texture offset). Returns the part count. The parts carry no `lod_live::LodPart`, so
+   a live `LodScreen` change does not re-range them until their cell re-streams: accepted, rock switches follow their
+   own `rockgen.lod.*` law, not the screen error.
+   Same shadow behaviour as the statics (casters by default). The LOD switch law stays `size x lod1_distance x
+   growth^k` (owner-approved in the rock lab; distance proportional to size = a constant projected size, the screen-size
+   rule UE uses).
+7. **Materials (adapter).** `bevyrrowind/worldgen/rock_textures.toml`: `default` texture and per-class rows (initial
+   default `textures/tx_rock_wg_01.dds`, the rock lab's first, `level/rock_lab.rs:41-45`), built per class and LOD with
+   the rock lab's path (`cooked_material_with` + `RockTextures::from_standard`, tiling = the terrain's texel repeat),
+   factored out of `rock_lab.rs` so both use one builder. Per geology unit textures (basalt vs tuff) need the unit on
+   the placement: later, with RG-9k.
+8. **Collision.** `ROCK_LIBRARY` joins `mw_world::source::MOVER_SOLID` (`source.rs:31-32`), the one list the physics
+   hook (`hook_physics(.., MOVER_SOLID)`, `mw_walkers_bevy/src/physics.rs:688-693`) and the navmesh filter
+   (`mw_bake::nav::is_solid`, `nav.rs:141-144`) share, never a second list. The game's `ShapeLoader` (the
+   `PhysicsShapeSource` closure, `physics.rs:102-107`; type `sf_physics_bevy/src/stream.rs:53`) answers `rockgen/` ids
+   with the variant `Hull` as a `CollisionMesh` (points axis-converted as the mesh; the conversion is a proper rotation,
+   so the outward winding holds; `SurfaceId::DEFAULT` until the adapter names a stone surface) -> `StaticShape` (parry
+   `TriMesh`). The generated world has no nav bake yet; when it gets one, its geometry source must answer `rockgen/`
+   ids the same way, or `is_solid` rocks add no geometry (the rule for an empty `collision.cook`). **Scaled copies.**
+   The hook scales a mesh by a cached copy per exact scale (`stream.rs:650-660`; `MeshShape.scaled`,
+   `sf_physics/src/shape.rs:30, 80-95`: a `Vec` searched linearly, keyed by the scale's bits, never evicted). Pack
+   statics reuse a few scales; library rocks have a continuous scale, so every rock ever activated would leave one copy
+   for the session. RG-P5b therefore prunes the cache: a copy no body holds (its `SharedShape` strong count back to the
+   cache's own) is dropped when its body is removed, so the cache is bounded by the live R0 bodies. Industry: PhysX
+   `PxMeshScale` and Jolt `ScaledShape` apply a per-instance scale to one shared mesh without a copy (U); parry has no
+   scaled-mesh wrapper, so a copy per live scale is our equivalent. A convex-polyhedron shape kind would be cheaper for
+   contacts but is a new `ShapeRef` kind for every static: not in RG-P.
+9. **Switch.** `--off rocklibrary` (one word, as `--off farfield`) leaves the list out (the A/B arm for the WG-E3 check and `perf ab`).
+
 ## Tunables (slice RG-1, `rockgen.boulder.*`, all `Lifetime::Bake`, `Scope::Dev`)
 
 `size_m` 2 (0.2-40 m), `aspect` [0.75, 0.55] (ratio), `joint_sets` 3 (0-3), `joint_jitter_deg` 12 (0-45),
@@ -339,7 +443,7 @@ rock placement: scree fans below faces instead of rocks in lines along them); cl
 - **RG-2 (built 2026-11-22): variant library + convex hulls.** `Library` per class from seeds, `collision` feature
   (`parry3d` hull). Bake product **RG-2b** (built 2026-11-22; `sf_bake` product keyed by `library_key` + code
   version, serialised `Variant`/`Hull`); scatter wiring (class + size law per species, `pick`/`scale_for`, hulls to
-  `sf_physics` statics) is the placement slice. Test: library deterministic; hull contains every LOD0 vertex within tolerance.
+  `sf_physics` statics) is the placement slice (scatter side: WG-E3f; game side: RG-P, "(f)"). Test: library deterministic; hull contains every LOD0 vertex within tolerance.
 - **RG-3 (built 2026-11-22, before RG-2 at the owner's request): viewer + material.** `sf_rockgen_bevy` mesh
   conversion, `VisibilityRange` LODs, triplanar `RockMaterial` (scaffold copy of the terrain functions), the game's
   `level:rock-lab` greybox. Owner look RG-3: one family, too smooth (river boulders) -> sharp families (RG-4).
@@ -361,6 +465,47 @@ rock placement: scree fans below faces instead of rocks in lines along them); cl
 - **RG-A1 (adapter, `mw_worldgen`):** rock types (basalt, ash tuff, red mountain scoria...), size laws, texture
   layers from the mounted packs, scatter species mapping (mapping: WG-E3f,
   `worldgen-scatter.md` Rocks), cave-mouth sites from the game's cave doors.
+
+**Placement rows (RG-P, "(f)"; specced 2026-11-27, none built).** Order P1 -> P2 -> P3 -> P4 -> P5a -> P5b -> P6;
+P3 and P4 need only P1. Then the WG-E3 owner check (`visual-checks/worldgen.md`), with `--off rocklibrary` as its arm.
+
+- **RG-P1: `sf_rockgen::placed`** (Bevy-free; `Libraries` + `read_libraries(store, manifest, class names)` under the
+  existing `bake` feature; `model_id` / `parse_model_id`, `Libraries::resolve` -> `Resolved { index, scale, lift_m }`,
+  `variant(class, index)`; claims `sf_rockgen/src/placed.rs`, `lib.rs`, tests). Test: id round trip for every built-in
+  class name and `parse_model_id` refuses other prefixes or a non-number index; on a 3-variant fixture library `resolve`
+  gives `index = hash % 3`, `scale = mark / size_m`, `lift_m = (0.5 - sink) x extent.z x scale` exactly; unknown class
+  and empty library give `None`; `read_libraries` over a store baked by `LibraryStep` gives `content_hash`-equal libraries
+  (it reads `manifest.get(LIBRARY_STEP, <class name>)`: the product subject is the class name, `bake.rs:82-84`; a class
+  the manifest lacks is absent, not an error).
+- **RG-P2: library rocks as placements** (`mw_worldgen` `flora_rocks.rs` `library_placements(run, libs) ->
+  (Vec<Placement>, HashMap<VfsPath, ModelInfo>, dropped)`; `ROCK_LIBRARY` in `mw_world/src/source.rs`; `mw_worldgen`
+  gains the `sf_rockgen` dependency: manifest, `cargo deny`, hakari). Test (fixture run + fixture `Libraries`): one
+  placement per library rock with `library_rocks`' ids, class `ROCK_LIBRARY`, scale and lift exact, model ids parse
+  back; each info's bounds are the variant's LOD0 bounds axis-converted; an unknown class is dropped and counted.
+- **RG-P3: `RockSpawner`** (`sf_rockgen_bevy` new `spawner.rs`; gains `sf_world_bevy`: manifest, deny, hakari). Test
+  (headless `World` with mesh and material assets): a rock spawns `lod_levels` parts under its root, two rocks of one
+  variant share mesh handles and two classes' rocks share none, with `end_band > 0` the last part's end margin equals
+  `shared_range` of `[max_distance, max_distance + end_band]` and with 0 it ends at `shared_range` of `max_distance`,
+  every part's range equals `shared_range` of the unsnapped `lod_ranges` value (compare to the snap of the expected
+  input, not by re-snapping the output: the log-grid rounding is not guaranteed idempotent), `NoCpuCulling` present iff
+  `StaticGpuCulling(true)`, an unknown id spawns 0, `needs_model` false.
+- **RG-P4: rock materials from adapter data** (`bevyrrowind/worldgen/rock_textures.toml`; `mw_exterior_bevy` new
+  `rock_materials.rs` builder, `level/rock_lab.rs` uses it). Test: the shipped file parses; every class row names a
+  built-in class; a class without a row takes `default`; unknown keys rejected (pure parse + resolve test).
+- **RG-P5a: draw wiring** (app `world.rs` loads `Arc<Libraries>` and passes it to `flora::extra`; `WorldgenContent.models`;
+  `worldgen.rs` `add` reads them before `model_infos`, registers `RockSpawner` for `ROCK_LIBRARY` when the content has
+  library rocks; `--off rocklibrary`). Test: the `world_content.rs` content-index test with a fixture library rock
+  indexes it with model info (not a point) and the log line counts `+ rocks library N`.
+- **RG-P5b: collision** (`mw_world/src/source.rs`: `ROCK_LIBRARY` in `MOVER_SOLID`; `mw_walkers_bevy/src/physics.rs`:
+  `rockgen/` branch in the shape source; `sf_physics/src/shape.rs`: prune scaled copies no body holds). Test: a fixture
+  hull id gives a `StaticShape` whose AABB equals the axis-converted hull points'; a non-`rockgen/` path still takes the
+  `collision.cook` lookup; an unknown variant gives `None`; `MeshShape` with three scaled copies of which one is still
+  held keeps exactly that one after the prune (`sf_physics` unit test); `nav/tests.rs` `is_solid` over `MOVER_SOLID`
+  still passes. `sf_physics` and `mw_walkers_bevy` are also edited by the interaction and NPC AI lanes: touch only the
+  named functions (merge risk).
+- **RG-P6: measurement** (`mw_worldgen` test only, `#[ignore = "measurement: rock placements"]` on `SCRIB_X10S`):
+  library placements, dropped, index build seconds and MB with and without them, library rocks per 1 km ring at three
+  points. Ledger line. Frame cost (`perf ab` on `--off rocklibrary`) goes with the WG-E3 owner sitting.
 
 **Typology rows (RG-9, "(e) Typology"; specced 2026-11-27, none built).** Order: data first (9a, 9b), then the
 scatter key and the adapter (9j, 9k), then parameters and recipes (9c-9g), then the cover (9h, 9i). Each new boulder
@@ -425,7 +570,8 @@ RG-9h re-records it, see there). Reviewed 2026-11-27 against the source (fixes: 
 - **RG-9j: regime key in the scatter** (`sf_worldgen::scatter_species`, `scatter_rocks`). `[rock_regimes]` maps
   climate class names to regime names (framework default for its `climate_classes.toml`, "(e)"); `[rock_units.
   "<unit>".regime."<name>"]` overrides per context the entry lists and `field_stone_per_ha`; a candidate reads
-  `FieldSample::class` at its point; placements carry `regime: Option<u8>`. Test: round trip; unknown class or regime
+  `FieldSample::class` at its parent's point (as built: one clump one regime, where the unit is read); placements
+  carry `regime: Option<u8>`. Test: round trip; unknown class or regime
   rejected; on a two-class `GridFields` fixture every rock in the frost half draws only frost entries (exact); no
   `[rock_regimes]` gives today's placements bitwise (tile-alone hash).
 - **RG-9k: adapter data** (`bevyrrowind/worldgen/scatter_species.toml`, after WG-E3f creates it): the "(e)" unit table
@@ -448,105 +594,49 @@ Typology (RG-9), scope and taste only:
 
 ## As built
 
-**RG-1 (2026-11-22).** `superfargoth/crates/sf_rockgen` (`lib.rs` mesh types + hash, `noise.rs` counter-hash value
-noise, `boulder.rs` SDF + generator, `boulder/tunables.rs`, `tests.rs`). Tunables are declared (`TUNABLES`) but not
-yet registered in the game's catalog (RG-3, with the viewer). Measured 2026-11-22 (`test -p sf_rockgen --release
-measure_boulders -- --ignored --nocapture --test-threads=1`, owner laptop, 24 seeds, resolution 40), ms per rock
-and mean triangles LOD0/1/2/3: default block 18.7 ms, 429/214/107/53; platy 7.3 ms, 352/175/87/43; cobble 8.4 ms,
-445/222/110/54; chipped (24 chips, 12 m) 24.8 ms, 415/207/104/51. Phases (default): field sampling ~9 ms (≈ 80 ns per
-evaluated sample, noise in the band dominates), surface nets ~1 ms (12.5 k raw triangles), LOD chain ~4 ms, normals
-+ compaction the rest. A 6-class × 16-variant library ≈ 2 s on one thread. LOD0 is low (~430 triangles for any size:
-error is in cells) by design for triplanar-shaded rock; the owner judges at RG-3 (raise `resolution` or lower
-`lod0_error_voxels` if edges read faceted).
+- Rows RG-1, RG-4, RG-3, RG-4b, RG-2, RG-2b and RG-8a: [archive/rockgen-history.md](archive/rockgen-history.md).
 
-**RG-4 (2026-11-22).** `sf_rockgen`: `sdf.rs` (`Solid`: hard planes per piece, `snap`, `surface`, pits), `classes.rs`
-(`CLASSES`: 9 presets with family, analogue, source, tint; the 4 RG-3 classes unchanged), `columns.rs` (Voronoi
-prisms, shared faces as `Piece::hard` planes), `mesher.rs` (ambiguous-face resolve, `separate_coincident` at 2^-17,
-`resplit_quads` along the crease). Sampling keeps rounding >= 2 cells for topology, the snap uses the hard field.
-LOD chain on snapped positions, falling back to the smooth net if no closed LOD0 (level valid only above 0.5x the
-net's volume). `RockMesh::split_creases` (angle-weighted smoothing groups) on every LOD. Resolution scales as
-res x max(1, size/2 m)^0.5, capped 128. Rock lab: 9 columns 22 m apart, keys N crease, Q edge snap, cameras
-`eroded`, `sharp`, `sharp_near`. Measured (release, 24 seeds; ms/rock, LOD0 tris, wrong-way LOD0 tris / total):
-block 2 m 25.9 ms 428 (0); talus 2 m 29.8 ms 117 (9 %); jagged 2 m 59.6 ms 92, 12 m 542 ms 705 (7 %); scoria 2 m
-64.6 ms 1687 (0); slab 2 m 15.6 ms 109 (1 %); columnar 2 m 364 ms 24 141 tris = broken budget (its snapped LOD0 never
-closes, falls back to the smooth chain; 3.1 s at 12 m).
+**RG-9j (2026-11-27, ecosystems loop).** `scatter_species`: `[rock_regimes]` (class -> regime, classes checked
+against the file's class table, <= 255 regimes, ids = sorted names), `[rock_units."<u>".regime."<r>"]` (`RegimeOverride`:
+optional `field_stone_per_ha`, per-context lists that replace the unit's, `[]` = none), `entries_in` / `field_stone_in`;
+the framework map ships as `rock_regimes.toml` (`default_rock_regimes`). `scatter_rocks`: candidates take `&dyn Fields`,
+read the class at the parent (only when a class maps; else no sample, bitwise today's), field-stone bound over the
+overrides, outcrop parents kept by the regime's list; `RockCandidate::regime` rides in `rocks.bin`'s former pad word
+(0 = none, id + 1), so `FORMAT` 3 products stay valid. `pick` uses the regime's entries. 5 tests (species round trip,
+refusals, shipped default; frost-parent rocks draw only frost entries, no table = today's, tile alone).
 
-**RG-3 (2026-11-22).** `superfargoth/crates/sf_rockgen_bevy` (`lib.rs` plugin, mesh conversion, LOD ranges, viewer
-classes, tunable readers; `material.rs`; `shaders/rock.wesl`; `tunables.rs`; `tests.rs`, `shader_tests.rs`).
-- **Mesh:** `rock_mesh` maps `sf_rockgen`'s frame (+Z short axis) to Bevy's +Y up, `(x, y, z) → (x, z, -y)` (a
-  rotation: winding kept), positions + normals + `u32` indices, no UVs or tangents.
-- **LOD:** one entity per LOD under the rock's root, each with Bevy's `VisibilityRange` (Bevy 0.20
-  `bevy_camera::visibility::range`: per-entity distance ranges with dithered crossfade, the far field's mechanism):
-  LOD k from `size × lod1_distance × growth^(k-1)` (8 sizes, ×2), crossfade ±`fade` (10 %), last LOD open-ended.
-  Tunables `rockgen.lod.*` (Respawn).
-- **Material:** `RockMaterial = ExtendedMaterial<StandardMaterial, RockExt>`, forward only, non-bindless (a field
-  uses texture sets × LODs materials). Fragment: Bevy's `pbr_input_from_standard_material`, then base colour, normal
-  (whiteout-blended, XY rebuilt so RGB and BC5 maps both work), roughness/metallic (Bevy ORM channels G/B) and
-  occlusion (R, only for a packed ORM) from a world-axis triplanar of the texture set with Mikkelsen hex-tiling per
-  projection; prepass and shadows are Bevy's (geometric normal). Projection origin is the rock's translation plus a
-  `MeshTag` offset, so the texture is fixed on the rock under the floating origin; the adapter passes the terrain's
-  land-texture tiling (texel density matches the ground). Live tunables `rockgen.material.*` (blend exponent 6, hex
-  on, rotation 1, contrast 7, scale 1: the terrain's values). **Scaffold:** `surface.wesl`'s triplanar/hex functions
-  read the terrain's arrays and parameter slots and could not be imported unedited while `wg-lodfix` edits that file,
-  so `rock.wesl` carries a named minimal copy ("rock triplanar scaffold", non-periodic hex grid); RG-3b removes it.
-- **Textures** come from the adapter as `RockTextures` (the game builds them with the statics' path,
-  `cooked_material_with` over the bake's companions: a texture no static references may have albedo only; RG-A1 routes
-  rock layers through the terrain's companion conversion).
-- **Tunables live:** `RockgenPlugin` registers `sf_rockgen`'s `rockgen.boulder.*` and its own lists in the store; the
-  game's catalog (`mw_devtools_bevy::perf::tunables::CATALOG`) lists both. Viewer classes (`CLASSES`: block, platy,
-  cobble, chipped) are the RG-1 test overrides, adapter data at RG-A1.
-- **Viewer:** `bevyrrowind` `level:rock-lab` (scene `level-rock-lab`, `test-levels.md` "Rock lab"): 56 rocks generated
-  on the async compute pool; keys X texture, Z class, R new seed, L LOD tint, M wireframe, I info.
-- Tests: `rock_mesh_conversion_is_sane` (counts, indices unchanged, unit normals, no NaN, rotation, Y short),
-  `lod_ranges_chain`, `tunable_defaults_are_boulder_defaults`, `rock_fragment_compiles_for_every_def_set` (wesl link +
-  naga validate, 4 def sets incl. the dither and the game's view features), `uniform_and_flags_match_rust`.
+**RG-P1 (2026-11-27).** `sf_rockgen/src/placed.rs` (+ `placed/tests.rs`): `Libraries`, `Resolved`, `model_id` /
+`parse_model_id` (prefix `MODEL_PREFIX`; ids with a sign, a leading zero or a separator in the class are refused, so the
+round trip is exact), `resolve` and `variant` as "(f)" 2-3; `read_libraries` + `ReadError` under `bake`. Ids are plain
+`String`s (the crate takes no `sf_vfs`): the content builder wraps them in a `VfsPath`, unchanged by its lowercasing.
 
-**RG-4b (2026-11-22, rockgen-col).** `edge_snap` default false (owner: rounded edges; snap = the lab's Q arm), which
-exposed columnar's LOD0 not closing. Cause (measured): every meshopt level pinched (2-54 doubly used directed edges) so
-LOD0 fell back to the raw net (24-160 k tris), from sealed interior bubbles along shared column faces, sub-cell slits
-where per-piece rounding of shared floor/chip planes disagreed, and coincident sheets at concave steps. Fix (all
-`sf_rockgen`): `Solid::with_cap` (shared planes smooth-maxed once over the union), `mesher::fill_cavities` (flood fill of
-the noise band, only for solids with shared faces), `mesher::unpinch` (non-manifold split: radial face pairing + one
-vertex copy per fan, as CGAL PMP `duplicate_non_manifold_vertices`; retry schedule + raw-net fallback kept behind),
-`separate_duplicates` on the unsnapped path, two exact speed-ups (ambiguity re-passes only near flips, union early-out).
-Columnar 2 m 388 -> 97 ms, LOD0/1/2/3 26803/20340/11123/762 -> 1360/679/338/168; 12 m 3013 -> 727 ms, 162 k -> 4267
-LOD0; snap arm closes now (805 at 2 m). 17 of 384 other rocks changed (pinched levels now at the nominal ratio, e.g.
-scoria LOD3 306 -> 224); same error bound. Left: columnar interior stays near zero along shared faces (block skip
-can't prune; a per-shared-face union term would make the cavity fill unnecessary).
+**RG-P2 (2026-11-27).** `mw_worldgen` `flora_rocks.rs`: `library_placements(run, libs)` = `resolve_library_rocks(
+library_rocks(run), libs)` -> `LibraryPlacements { placements, models, dropped }` (a struct, not the planned tuple);
+base `RecordRef("rockgen", <class>)` (`LIBRARY_BASE_KIND`), `engine_bounds` for the infos; an id `VfsPath::new` refuses
+is dropped too. `mw_world::source::ROCK_LIBRARY = Custom(3)`, not yet in `MOVER_SOLID`. `mw_worldgen` takes `sf_rockgen`
+without features (the app's reader needs `bake`, `mw_boot_bevy` already has it).
 
-**RG-2 (2026-11-22, rockgen-rg2).** `sf_rockgen::library` (`build_library(params, &LibrarySettings, seed) -> Library {
-key, size_m, variants }`, `Library::pick(placement_seed)`, `scale_for(size_m)`, `content_hash`; `Variant { seed, lods,
-hull }`; `Hull { points, triangles, error_m }` plain arrays, `Hull::to_parry()` -> `ConvexPolyhedron` behind feature
-`collision` = optional `parry3d`). Variant seeds don't depend on the count (growing a library keeps earlier variants);
-variants built at the class size, instances scaled; `library_key` covers every clamped param + count + hull settings
-(a new `BoulderParams` field must join it to compile); parallel by index, equal to serial. **Hull from LOD0 points**
-(the spec's "lowest LOD" would miss LOD0 vertices, every LOD is a subset of LOD0), reduced by a greedy quickhull
-refinement (parry3d has no hull reducer) until every vertex is within `min(0.01 x size, 0.05 m)` or 255 vertices
-(PhysX `PxConvexMeshDesc` vertex limit). The hull is inside the mesh's convex hull by at most `error_m`; over
-concavities (pits, grooves) it is solid where the mesh is open, as any single-hull simple collision. Tunables
-`rockgen.library.variants` 16 (8-32), `rockgen.collision.hull_tolerance` 0.01, `hull_tolerance_max_m` 0.05,
-`hull_max_vertices` 255. Release, 16 variants at 2 m: library 19-185 ms per class (all 9: 0.67 s), hull 48-109
-vertices (exact hull 89-249), 0.9-4.9 ms per hull, max error 20 mm.
+**RG-P3 (2026-11-27).** `sf_rockgen_bevy/src/spawner.rs` (+ `spawner/tests.rs`): `RockSpawner::new(libs, meshes,
+&RockMaterialSet, RockLodSettings)` builds every variant's LOD meshes once; `RockMaterialSet { default, by_class }`.
+Parts go straight under `cx.parent` with `cx.local` (no root entity per rock, as `StaticSpawner`), each with the
+worldspace's `RenderLayers`, the variant's engine-frame LOD0 `Aabb` + `NoAutoAabb`; `part_ranges` drops levels whose
+start fade begins past `max_distance` and ends the last kept one at `[max, max + band]`. Gains `sf_world` + `sf_world_bevy`.
 
-**RG-2b (2026-11-22, rockgen-rg2b).** `sf_rockgen::bake` (feature `bake` = sf_bake + serde + postcard; crate stays
-Bevy-free): step `rockgen.library`, subject = class name, all 9 `CLASSES`; `version()` = `library::LIBRARY_FORMAT`
-(doc lists the generator files that must bump it; also inside `library_key`, so one bump re-keys everything). Planned
-parameters: `library_key(params, settings, seed)` + whether hulls are built; reads nothing, so one class's param change
-re-bakes only that class. Class seeds `class_seed(LIBRARY_SEED, name)`. Output = postcard `Library` (store-compressed,
-as `lod.policy` / `nav.*`); `decode(&[u8])`. Registered by the game in `mw_boot_bevy/src/bake.rs`
-(`bake_rock_libraries`, features `bake,collision`), after the pipeline catalog, before the manifest. Release: 9 x 16
-variants 0.59 s cold (4142 KiB), 8.6 ms warm. **Gap:** the bake passes the tunables' defaults (no tunable store in the
-bake yet), so a mod override of `rockgen.*` doesn't reach the baked library ("everything is a mod"): the placement
-slice or a bake-tunables slice passes adapter/mod values through `LibraryStep::new`.
+**RG-P4 (2026-11-27).** `bevyrrowind/worldgen/rock_textures.toml` (`default` = `tx_rock_wg_01`, no class rows: which
+texture suits which class is the owner's WG-E3 call) read by `mw_exterior_bevy::rock_materials`: `RockTextureTable::parse`
+(unknown keys, non built-in classes, empty textures rejected; paths normalized as `--rock-textures`), `material_set(..)`
+-> `RockMaterialSet` with every built-in class (its texture x its `tint`; equal pairs share handles, one batch) and an
+untinted `default`. `rock_textures` + `lod_materials` are the rock lab's path, which now calls them. Gains `serde`, `toml`.
 
-**RG-8a (2026-11-23, first try, owner ask "spires, volcanic towers, arches").** `sf_rockgen::formations`: presets
-`FORMATIONS` (Guess numbers, as `CLASSES`) over three recipes, all unions of convex pieces in the boulder `Solid`, so
-the mesher, LODs, crease normals and snap are shared: `Stack` (polygonal frustum bands between jittered boundaries,
-hardness-recessed, optional caprock and wave notch, lean, twist, drift, foot flare; hoodoo, pinnacle, sea_stack),
-`Neck` (the columnar cluster standing tall, tapered by shared cap planes; volcanic_neck) and `Arch` (half ring of
-convex segments, radial cuts + outer tangent + inner chord, thinning to the crown, on flared legs; the spec's capsule
-subtraction needs an SDF difference the `Solid` doesn't have). Pieces overlap 15 % (≥ 3 cells) so the union has no
-seam. `generate_formation(f, mesh, size_m, seed)` takes the boulder params for meshing only. Also
-`rockgen.boulder.aspect_spread` (octaves, default 1, in the library key): each seed scales both aspect ratios by its
-own `2^(±spread)` on a separate stream. Shown in the rock lab's formation row. Open: recipes as adapter data (RG-A1),
-placement rules, V-HACD or per-piece hulls for collision, an SDF difference for carved arches and caves (RG-7).
+**RG-P5a (2026-11-27).** App `world.rs` `rock_libraries` reads every built-in class's product (none baked or one
+unreadable: logged, left out; `--off rocklibrary` = new `Part::RockLibrary`: not read) and passes them to
+`mw_worldgen::flora::extra`, which now returns `Extra { lists, models }` (list `"rocks library"` = `LIBRARY_ROCKS`).
+`WorldgenContent` gains `models` (looked up before the bake's by `content_models`) and `rock_libraries`; with a
+`ROCK_LIBRARY` placement, `worldgen::add` registers the `RockSpawner` in `Startup` after `exterior::setup_spawners`
+(before the `PostStartup` hooks, so RG-P5b's physics hook will wrap it), materials at the max variant LOD count.
+
+**RG-P6 (2026-11-27).** `mw_worldgen` `tests_rocks_x10.rs` `rock_placements_on_x10s` (ignored, release, `SCRIB_X10S`;
+stand-in library seed, no towns): of 16,286 budgeted rocks (2.21 M before the 200 k budget) 9,628 are library rocks, all
+placed (0 dropped), 128 variants (16 x 8 classes; block 2,970 ... talus 75); index +9,628 placements, +2,647 cells, +1
+page, +1.0 MB (18.4 -> 19.4), build +0.00 s; at most 22 per km2 (1,352 km2 occupied), 23-41 within 1 km of the densest,
+p90 and p50 km2. Frame cost goes with the WG-E3 sitting.
