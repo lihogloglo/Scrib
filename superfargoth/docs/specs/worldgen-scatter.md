@@ -128,7 +128,9 @@ first), canopy, understorey, ground flora. "Shared" = the rocks slice reuses it 
      the class's species mix (`g0` = the upper end below when `x >= 0.9`), clamped like every iterate to `[1, intensity_scale_max x m(c)]` (`s` <= its bound; when that upper
      end is below 1, `g` is it and the class carries the low-weight warning); then `g := clamp(g x T / W, ...)`
      (fixed point: `W(g) / g` falls as intensity rises, so a step from below undershoots and one from above stays
-     above, monotone either way), at most `calib_iters` steps, stop when `|W - T| <= calib_tol x T`; `W = 0` sets `g`
+     above, monotone either way; E2o.2: from the second step on the secant in log-log, `g x (T / W)^(1/b)`, `b` the
+     slope of `ln W` over `ln g` through the last two measurements clamped to `[calib_saturation, 1]`, since `W` flattens
+     as crowns pack and the plain fixed point crawled, 601 -> 465 per ha in 4 steps for T 400), at most `calib_iters` steps, stop when `|W - T| <= calib_tol x T`; `W = 0` sets `g`
      to the upper end. **Ceiling:** a raise of `g` by a fraction f that raises `W` by less than
      `calib_saturation x f`, or `g` at the upper end with `W < (1 - calib_tol) T`, means the target is not reachable
      (packed crowns: above what the class's sizes allow, research Finding 4; or the multiplier clamp); stop, keep
@@ -448,6 +450,10 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
   Design 4 (`T(c) s(c) D share prior`, one acceptance at the parent and at a background point, offspring Poisson
   plain), lower layers `su` once; `census_step_m`, `calib_*`, `intensity_scale_max` declared. `flora` passes
   `CanopyTargets::uncalibrated` (`m` = `g` = 1) until E2o.3. Test `canopy_candidates_meet_the_class_target_and_the_weight_enters_once`.
+- **WG-E2o.2** (2026-11-27, new `scatter_calib.rs`; `scatter.rs` `square_canopy`, `canopy_weight`): `census` (row
+  sums in order, per class and per parent tile) and `calibrate` (classes iterate together, one canopy run per step
+  over the active classes' purest tiles; fixed point then log-log secant), `Calibration::write`/`read`
+  `<dir>/scatter/calibration.toml`, warnings returned. Fixture: T 100 met at the first guess, T 400 in 4 steps, 2000 flagged.
 
 ## Tunables
 

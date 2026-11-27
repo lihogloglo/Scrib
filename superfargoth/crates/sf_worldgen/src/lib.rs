@@ -82,6 +82,7 @@ pub mod resample;
 pub mod roads;
 pub mod run;
 pub mod scatter;
+pub mod scatter_calib;
 pub mod scatter_product;
 pub mod scatter_fields;
 pub mod scatter_rocks;

@@ -531,6 +531,34 @@ impl CandidateRules<'_> {
         if sum > 0.0 { su / sum } else { 0.0 }
     }
 
+    /// The canopy weight `sum_s w_s = D sum_s share_s p_s` at `(x, y)` over the canopy species (`d` = the stand
+    /// density `D` there, `p_s` the region prior clamped to `[0, region_prior_max]`), and each species' `w_s` in
+    /// `per_species` (indexed like the file's species, 0 off the canopy; spec "Design" 4, the class census).
+    pub(crate) fn canopy_weight(&self, fields: &dyn Fields, x: f64, y: f64, d: f64, per_species: &mut [f64]) -> f64 {
+        let pmax = self.file.values.region_prior_max;
+        let mut su_sum = 0.0;
+        for (s, sp) in self.file.species.iter().enumerate() {
+            per_species[s] = 0.0;
+            if sp.layer == Layer::Canopy {
+                let su = self.suitability[s].at(&self.sample(fields, sp, x, y));
+                per_species[s] = su;
+                su_sum += su;
+            }
+        }
+        if su_sum <= 0.0 {
+            per_species.fill(0.0);
+            return 0.0;
+        }
+        let mut total = 0.0;
+        for (s, w) in per_species.iter_mut().enumerate() {
+            if *w > 0.0 {
+                *w = d * (*w / su_sum) * (self.prior)(s, x, y).clamp(0.0, pmax);
+                total += *w;
+            }
+        }
+        total
+    }
+
     /// (`max_c T(c) s(c)` for the canopy, else 0; parent and background intensity bounds per m2) of species `s`:
     /// candidates per m2 at weight 1 are canopy `max T s x prior_max`, lower layers `parent_per_ha x offspring_mean x
     /// prior_max x boost`; the parents carry `1 - b` of it, the background `b`. `None`: a canopy with no class target.
@@ -846,6 +874,18 @@ impl CandidateRules<'_> {
     /// [`Self::square_reach_m`]. Bitwise the same as any larger build cut to the square.
     #[must_use]
     pub fn square_layers(&self, fields: &dyn Fields, stand: &StandMap, square: [f64; 4]) -> LayerWinners {
+        self.square_layers_through(fields, stand, square, Layer::Ground)
+    }
+
+    /// The canopy winners inside `square`: [`Self::square_layers`]' canopy (under the rocks), bitwise, without the
+    /// lower layers (the bake calibration, WG-E2o.2).
+    #[must_use]
+    pub fn square_canopy(&self, fields: &dyn Fields, stand: &StandMap, square: [f64; 4]) -> Vec<Candidate> {
+        self.square_layers_through(fields, stand, square, Layer::Canopy).plants
+    }
+
+    /// [`Self::square_layers`] for the layers up to `last` in pass order (the grows stay those of every layer).
+    fn square_layers_through(&self, fields: &dyn Fields, stand: &StandMap, square: [f64; 4], last: Layer) -> LayerWinners {
         let mut cover = Cover::new(self.file.values.shade_per_crown);
         let mut out = LayerWinners::default();
         if let (Some(rl), Some(g)) = (self.rocks, self.rock_grow_m()) {
@@ -853,7 +893,7 @@ impl CandidateRules<'_> {
             cover.add_rocks(&won);
             out.rocks = won.into_iter().filter(|c| in_rect(c.pos, square)).collect();
         }
-        for (layer, g) in self.layer_grows() {
+        for (layer, g) in self.layer_grows().into_iter().filter(|&(l, _)| l <= last) {
             let cands = self.layer_candidates(fields, stand, grown(square, g), layer, &cover);
             let won = compete_layer(self.file, &cands, self.file.values.competition_rounds);
             let winners: Vec<Candidate> = cands.into_iter().zip(won).filter(|(_, w)| *w).map(|(c, _)| c).collect();
@@ -871,7 +911,7 @@ impl CandidateRules<'_> {
     }
 
     /// The square of tile `(tx, ty)`.
-    fn tile_square(&self, (tx, ty): (i32, i32)) -> [f64; 4] {
+    pub(crate) fn tile_square(&self, (tx, ty): (i32, i32)) -> [f64; 4] {
         let t = self.tile_m;
         let (x0, y0) = (f64::from(tx) * t, f64::from(ty) * t);
         [x0, y0, x0 + t, y0 + t]
