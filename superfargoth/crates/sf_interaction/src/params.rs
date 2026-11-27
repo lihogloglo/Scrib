@@ -77,6 +77,12 @@ pub struct InteractParams {
     pub fire_wind_ref_mps: f32,
     /// Surface wetness at which rain puts a burning body out, ratio (range 0-1).
     pub fire_rain_douse: f32,
+    /// Side of the square fire budget regions on the ground plane, m (range 16-256).
+    pub fire_region_m: f32,
+    /// Burning bodies per region; more ignitions queue, oldest first, count (range 2-128).
+    pub fire_burning_max: u16,
+    /// Heat checks (source -> target distance tests) per tick, round-robin, count (range 4-512).
+    pub fire_spread_checks_per_tick: u16,
     /// Fixed simulation rate leases count in, ticks per second.
     pub tick_hz: f32,
 }
@@ -154,6 +160,12 @@ impl Default for InteractParams {
             fire_wind_ref_mps: 8.0,
             // tunables: const (bound from interact.fire.rain_douse in sf_interaction_bevy (IN17c1); Guess)
             fire_rain_douse: 0.6,
+            // tunables: const (bound from interact.fire.region_m in sf_interaction_bevy (IN17c2); Guess)
+            fire_region_m: 64.0,
+            // tunables: const (bound from interact.fire.burning_max in sf_interaction_bevy (IN17c2); Guess, Far Cry 2 capped fires)
+            fire_burning_max: 24,
+            // tunables: const (bound from interact.fire.spread_checks_per_tick in sf_interaction_bevy (IN17c2); Guess)
+            fire_spread_checks_per_tick: 48,
             // tunables: const (bound from the app's fixed timestep in sf_interaction_bevy; net.md 60 Hz tick)
             tick_hz: 60.0,
         }

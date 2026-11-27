@@ -1,21 +1,26 @@
 //! `IN17c1` fire heat core on synthetic grids: downwind ignites before crosswind before upwind, a wet
 //! row blocks the spread (and without it the fire crosses), rain puts fires out at exactly
 //! `interact.fire.rain_douse`, fuel runs out on its exact tick into `Charred` (never relit), and the same
-//! inputs in any body order give the same events and heat bits.
+//! inputs in any body order give the same events and heat bits. `IN17c2` budgets: ignitions queue at
+//! `interact.fire.burning_max` per region and drain oldest first, a capped grid burns the same set as an
+//! uncapped one (later) within `interact.fire.spread_checks_per_tick`, and a settlement `structure`
+//! never catches from spread.
 
 use glam::{Vec2, Vec3};
 use sf_world::PlacementId;
 
 use crate::*;
 
-const WOOD: Flammable = Flammable { ignite_heat: 1.0, fuel_s: 60.0, burnt_stage: Some(2), spread: true };
+const WOOD: Flammable =
+    Flammable { ignite_heat: 1.0, fuel_s: 60.0, burnt_stage: Some(2), spread: true, structure: false };
 
 fn params() -> InteractParams {
     InteractParams { tick_hz: 60.0, ..InteractParams::default() }
 }
 
 fn body(id: u128, x: f32, z: f32) -> FireBody {
-    FireBody { placement: PlacementId(id), pos: Vec3::new(x, 0.0, z), flammable: WOOD, wetness: 0.0 }
+    let pos = Vec3::new(x, 0.0, z);
+    FireBody { placement: PlacementId(id), pos, flammable: WOOD, wetness: 0.0, in_settlement: false }
 }
 
 /// `side x side` bodies 2 m apart (ids row-major from 0).
@@ -202,4 +207,135 @@ fn same_inputs_any_body_order_same_result() {
     assert_eq!(heat_jitter(PlacementId(3), 9).to_bits(), heat_jitter(PlacementId(3), 9).to_bits());
     assert_ne!(heat_jitter(PlacementId(3), 9).to_bits(), heat_jitter(PlacementId(4), 9).to_bits());
     assert!((-1.0..1.0).contains(&heat_jitter(PlacementId(3), 9)));
+}
+
+/// `body` at `(x, z)` shifted to the middle of the region at the origin (64 m squares).
+fn mid(id: u128, x: f32, z: f32) -> FireBody {
+    body(id, 32.0 + x, 32.0 + z)
+}
+
+#[test]
+fn ignitions_queue_at_the_region_cap_and_drain_oldest_first() {
+    let p = InteractParams { fire_burning_max: 2, fire_jitter: 0.0, ..params() };
+    let mut source = mid(0, 0.0, 0.0);
+    source.flammable.fuel_s = 6.0;
+    // Four targets 1 m from the source, a burning pair in another region.
+    let bodies = [
+        source,
+        mid(1, 1.0, 0.0),
+        mid(2, -1.0, 0.0),
+        mid(3, 0.0, 1.0),
+        mid(4, 0.0, -1.0),
+        mid(10, 100.0, 0.0),
+        mid(11, 101.0, 0.0),
+    ];
+    assert_eq!(fire_region(bodies[0].pos, &p), (0, 0));
+    assert_eq!(fire_region(bodies[5].pos, &p), (2, 0));
+    let mut states = ObjectStates::default();
+    light(&mut states, [0, 10]);
+    let mut fire = Fire::new();
+    let env = FireEnv::default();
+    let ignited = |id| FireEvent { placement: PlacementId(id), output: FireOutput::Ignited };
+    let mut t = 1;
+    let first = loop {
+        let events = step_fire(&mut fire, &mut states, &bodies, &env, Tick(t), &p);
+        if !events.is_empty() {
+            break events;
+        }
+        t += 1;
+        assert!(t < 360, "something ignites before the source burns out");
+    };
+    // The four reach ignite_heat on the same tick: room for one in region (0, 0), the rest queue.
+    assert_eq!(first, vec![ignited(1), ignited(11)], "tick {t}");
+    assert_eq!(fire.queued(), vec![PlacementId(2), PlacementId(3), PlacementId(4)]);
+    for id in [2, 3, 4] {
+        assert!(!states.has(PlacementId(id), BURNING));
+        assert_eq!(fire.heat(PlacementId(id)).to_bits(), 0.0f32.to_bits(), "a queued body takes no heat");
+    }
+    // The source (first seen burning on tick 1) burns out on tick 1 + 6 s: the oldest queued one lights.
+    let out = 1 + p.ticks(6.0);
+    for t in t + 1..out {
+        assert!(step_fire(&mut fire, &mut states, &bodies, &env, Tick(t), &p).is_empty(), "tick {t}");
+    }
+    assert_eq!(
+        step_fire(&mut fire, &mut states, &bodies, &env, Tick(out), &p),
+        vec![FireEvent { placement: PlacementId(0), output: FireOutput::Burnt { stage: Some(2) } }, ignited(2)]
+    );
+    assert_eq!(fire.queued(), vec![PlacementId(3), PlacementId(4)]);
+    // A wet body leaves the queue and never lights, even with room.
+    states.add(PlacementId(3), WET, Ttl::UntilRemoved, Tick(out), &p);
+    states.remove(PlacementId(1), BURNING);
+    assert_eq!(step_fire(&mut fire, &mut states, &bodies, &env, Tick(out + 1), &p), vec![ignited(4)]);
+    assert!(fire.queued().is_empty() && !states.has(PlacementId(3), BURNING));
+}
+
+#[test]
+fn a_capped_grid_burns_the_same_set_later() {
+    let env = FireEnv { wind: Vec2::new(2.0, 1.0) };
+    let bodies: Vec<FireBody> = grid(6)
+        .into_iter()
+        .map(|mut b| {
+            b.flammable.fuel_s = 600.0;
+            b
+        })
+        .collect();
+    let burn = |checks: u16| {
+        let p = InteractParams { fire_burning_max: 128, fire_spread_checks_per_tick: checks, ..params() };
+        let mut states = ObjectStates::default();
+        light(&mut states, [0]);
+        let mut fire = Fire::new();
+        let mut events = Vec::new();
+        for t in 1..=300 * 60 {
+            let tick = step_fire(&mut fire, &mut states, &bodies, &env, Tick(t), &p);
+            events.extend(tick.into_iter().map(|e| (t, e)));
+            assert!(fire.checks() <= usize::from(checks), "tick {t}: {} checks", fire.checks());
+            if (0..36).all(|id| states.has(PlacementId(id), BURNING)) {
+                break;
+            }
+        }
+        events
+    };
+    let set = |events: &[(u64, FireEvent)]| {
+        let mut ids: Vec<u128> = events.iter().map(|(_, e)| e.placement.0).collect();
+        ids.sort_unstable();
+        ids
+    };
+    let free = burn(512);
+    let capped = burn(16);
+    assert_eq!(set(&free), (1..36).collect::<Vec<_>>(), "uncapped: the whole grid ignites");
+    assert_eq!(set(&capped), set(&free), "the cap never redirects the fire");
+    let last = |events: &[(u64, FireEvent)]| events.last().map(|(t, _)| *t).unwrap();
+    assert!(last(&capped) > last(&free), "capped {} vs uncapped {}", last(&capped), last(&free));
+    assert_eq!(burn(u16::MAX), free, "room for every check: exactly the uncapped fire");
+}
+
+#[test]
+fn a_settlement_structure_never_catches_from_spread() {
+    let p = params();
+    let wall = Flammable { structure: true, ..WOOD };
+    let mut in_town = mid(1, 1.0, 0.0);
+    in_town.flammable = wall;
+    in_town.in_settlement = true;
+    let mut in_wild = mid(2, -1.0, 0.0);
+    in_wild.flammable = wall;
+    let mut crate_in_town = mid(3, 0.0, 1.0);
+    crate_in_town.in_settlement = true;
+    let bodies = [mid(0, 0.0, 0.0), in_town, in_wild, crate_in_town];
+    let mut states = ObjectStates::default();
+    light(&mut states, [0]);
+    let mut fire = Fire::new();
+    let env = FireEnv::default();
+    let mut lit = Vec::new();
+    for t in 1..=30 * 60 {
+        for e in step_fire(&mut fire, &mut states, &bodies, &env, Tick(t), &p) {
+            lit.push(e.placement.0);
+        }
+        assert_eq!(fire.heat(PlacementId(1)).to_bits(), 0.0f32.to_bits(), "tick {t}: the town wall takes no heat");
+    }
+    lit.sort_unstable();
+    assert_eq!(lit, vec![2, 3], "the wild wall and the town crate catch, the town wall never");
+    // An authored stage still burns it.
+    states.add(PlacementId(1), BURNING, Ttl::UntilRemoved, Tick(30 * 60), &p);
+    step_fire(&mut fire, &mut states, &bodies, &env, Tick(30 * 60 + 1), &p);
+    assert_eq!(fire.burning_since(PlacementId(1)), Some(Tick(30 * 60 + 1)));
 }

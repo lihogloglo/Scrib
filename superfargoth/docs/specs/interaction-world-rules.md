@@ -106,6 +106,14 @@ heat from the start-of-tick burning set: `falloff(d) = 1 - d / spread_radius_m` 
 bodies take no heat. Bodies sorted by placement, so arrival order is irrelevant. 7 `interact.fire.*` tunables bound.
 5 exact tests (`tests_fire.rs`). Budgets IN17c2; damage per second and wetness -> `Wet` are the host's (IN39).
 
+**As built (IN17c2, 2026-11-27).** `fire.rs`: `fire_region(pos)` (`region_m` squares, XZ); burning bodies per region
+(rule-lit too) capped at `burning_max`, heat ignitions past it queue (`Fire::queued()`, drained oldest first before the
+tick's new ignitions; `Wet`/`Charred`/rule-lit/unsent leave it, queued bodies take no heat). Heat checks = source -> target
+distance tests from 3 x 3 buckets of `spread_radius_m`, at most `spread_checks_per_tick` (at least one target), round-robin
+in placement order from a cursor; a target catches up with its elapsed ticks, each source clamped to the ticks it heated,
+so with room for every check the result is bit-exact IN17c1. `Flammable::structure` (serde default) +
+`FireBody::in_settlement` (host's zone lookup) = immune to spread. 3 exact tests in `tests_fire.rs`.
+
 ### Ground burn grid (IN40)
 
 Per region a coarse grid (`interact.burn.cell_m` cells, `interact.burn.region_cells` a side; one byte of burn, one of

@@ -295,6 +295,16 @@ pub const FIRE_RAIN_DOUSE: Def<f32> = gp(def!(float "interact.fire.rain_douse" =
     .range(0.0, 1.0)
     .unit(Unit::Ratio)
     .help("Surface wetness at which rain puts a burning body out (sf_surface wetness scale; IN17c1)"));
+pub const FIRE_REGION_M: Def<f32> = gp(def!(float "interact.fire.region_m" = 64.0)
+    .range(16.0, 256.0)
+    .unit(Unit::Meters)
+    .help("Side of the square fire budget regions on the ground plane (IN17c2)"));
+pub const FIRE_BURNING_MAX: Def<u32> = gp_count(def!(count "interact.fire.burning_max" = 24)
+    .range(2, 128)
+    .help("Burning bodies per fire region; more ignitions queue, oldest first (Far Cry 2 capped fires; IN17c2)"));
+pub const FIRE_SPREAD_CHECKS_PER_TICK: Def<u32> = gp_count(def!(count "interact.fire.spread_checks_per_tick" = 48)
+    .range(4, 512)
+    .help("Fire heat checks per tick, round-robin with the elapsed time: slows fire, never redirects it (IN17c2)"));
 
 /// The `interact.*` tunables [`InteractParams`] has, bound by [`InteractionPlugin`].
 pub const TUNABLES: &[&dyn AnyDef] = &[
@@ -333,6 +343,9 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &FIRE_WIND_BIAS,
     &FIRE_WIND_REF_MPS,
     &FIRE_RAIN_DOUSE,
+    &FIRE_REGION_M,
+    &FIRE_BURNING_MAX,
+    &FIRE_SPREAD_CHECKS_PER_TICK,
 ];
 
 // --- Resources ----------------------------------------------------------------------------------
@@ -603,7 +616,7 @@ impl Plugin for InteractionPlugin {
     }
 }
 
-/// The `interact.rules.*` (`IN17b`) and `interact.fire.*` (`IN17c1`) gameplay tunables.
+/// The `interact.rules.*` (`IN17b`) and `interact.fire.*` (`IN17c1`, `IN17c2`) gameplay tunables.
 fn bind_rules(app: &mut App) {
     bind!(app, RULES_EVALS_PER_TICK, |p, v| p.rules_evals_per_tick = u16::try_from(v).unwrap_or(u16::MAX));
     bind!(app, RULES_WET_THRESHOLD, |p, v| p.rules_wet_threshold = v);
@@ -615,6 +628,11 @@ fn bind_rules(app: &mut App) {
     bind!(app, FIRE_WIND_BIAS, |p, v| p.fire_wind_bias = v);
     bind!(app, FIRE_WIND_REF_MPS, |p, v| p.fire_wind_ref_mps = v);
     bind!(app, FIRE_RAIN_DOUSE, |p, v| p.fire_rain_douse = v);
+    bind!(app, FIRE_REGION_M, |p, v| p.fire_region_m = v);
+    bind!(app, FIRE_BURNING_MAX, |p, v| p.fire_burning_max = u16::try_from(v).unwrap_or(u16::MAX));
+    bind!(app, FIRE_SPREAD_CHECKS_PER_TICK, |p, v| {
+        p.fire_spread_checks_per_tick = u16::try_from(v).unwrap_or(u16::MAX);
+    });
 }
 
 /// The `interact.debris.*` presentation tunables and, with the `physics` feature, the debris systems.

@@ -87,6 +87,10 @@ pub struct Flammable {
     pub burnt_stage: Option<u8>,
     /// Whether it passes fire on to its neighbours.
     pub spread: bool,
+    /// A building part (the adapter's town rule): inside a settlement zone it never takes heat or
+    /// `Burning` from spread, only from an authored stage or rule.
+    #[serde(default)]
+    pub structure: bool,
 }
 
 /// The rules table, in record order.

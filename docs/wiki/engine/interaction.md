@@ -112,8 +112,10 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
 - **Fire (IN17c1, core only).** `step_fire` (`sf_interaction/src/fire.rs`): rain at `interact.fire.rain_douse` puts a
   burning body out (`Wet`), `fuel_s` after its first `Burning` tick it is `Charred` (`Burnt { stage }`), then flammable
   bodies not burning, `Wet` or `Charred` gain heat from burning spreaders within `interact.fire.spread_radius_m` (linear
-  falloff x `wind_factor` x seeded per-second jitter), cool without one, ignite at `ignite_heat`. No budgets (IN17c2)
-  and no shell system yet (IN39).
+  falloff x `wind_factor` x seeded per-second jitter), cool without one, ignite at `ignite_heat`. Budgets (IN17c2):
+  at most `interact.fire.burning_max` burning per `interact.fire.region_m` square (more ignitions queue, oldest first),
+  at most `interact.fire.spread_checks_per_tick` heat checks per tick round-robin with elapsed time (slower, same
+  set); a `structure` material with `FireBody::in_settlement` never catches from spread. No shell system yet (IN39).
 
 ## Bevy features used
 

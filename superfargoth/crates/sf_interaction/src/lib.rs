@@ -60,7 +60,8 @@ pub use destroy::{
 };
 pub use door::{DOOR_OPEN, DOOR_REST_VERSION, DOOR_STATE_OWNER, DoorChanged, DoorState, VERB_CLOSE, VERB_OPEN, swing_sign};
 pub use fire::{
-    BURNING, CHARRED, Fire, FireBody, FireEnv, FireEvent, FireOutput, WET, heat_jitter, step_fire, wind_factor,
+    BURNING, CHARRED, Fire, FireBody, FireEnv, FireEvent, FireOutput, WET, fire_region, heat_jitter, step_fire,
+    wind_factor,
 };
 pub use entrance::{pick_entrance, pick_exit, to_local};
 pub use index::{IndexedSlot, KindTag, PointIndex, SlotUser, compose};
