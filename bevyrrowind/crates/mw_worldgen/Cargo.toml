@@ -26,6 +26,10 @@ tes3 = { workspace = true, features = ["esp"] }
 toml.workspace = true
 
 [dev-dependencies]
+# WG-E2m measurement on x10s: the player's install, its archives, model bounds (all Bevy-free, in the graph).
+mw_install.workspace = true
+mw_nif.workspace = true
+mw_vfs.workspace = true
 tempfile.workspace = true
 
 [lints]

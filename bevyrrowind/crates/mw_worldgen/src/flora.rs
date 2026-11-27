@@ -1131,7 +1131,7 @@ pub fn placements(run: &FloraRun) -> Vec<Placement> {
 }
 
 /// The inputs of a guide folder's pass: species file, product fields, water, clearings.
-fn guide_inputs(guide: &Path, tiles: &GuideTiles, prm: &Params) -> Result<(SpeciesFile, GridFields, WaterMask, Option<Clearings>), DumpError> {
+pub(crate) fn guide_inputs(guide: &Path, tiles: &GuideTiles, prm: &Params) -> Result<(SpeciesFile, GridFields, WaterMask, Option<Clearings>), DumpError> {
     let file = species_file(guide)?;
     let fields = product_fields(guide, tiles.guide())?;
     let water = match GuideWater::read(guide).map_err(|e| DumpError::Invalid(format!("{}: {e}", guide.display())))? {

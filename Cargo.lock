@@ -6131,7 +6131,10 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "glam 0.33.12",
+ "mw_install",
+ "mw_nif",
  "mw_records",
+ "mw_vfs",
  "mw_world",
  "png",
  "serde",

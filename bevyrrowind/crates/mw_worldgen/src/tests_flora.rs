@@ -419,3 +419,146 @@ fn shipped_species_file_parses_and_names_only_table_classes() {
     }
     assert_eq!(f.classes.len(), 12, "every table class has its stems per hectare");
 }
+
+/// WG-E2m: scatter v2 on the real 10× guide (`target/worldgen/x10s`, or `SCRIB_X10S`), copied to a temp folder with
+/// its climate product made there when it has none: per biome class the land, stems/ha per layer (target: the class's
+/// declared canopy stems/ha) and canopy crown cover (sum of crown discs over the class land), before the budget; then
+/// the seconds of the first load (passes + product written) against the second (product read). No towns (as the
+/// `worldgen-flora` census).
+#[test]
+#[ignore = "measurement: scatter v2 counts and seconds"]
+fn scatter_v2_counts_and_seconds_on_x10s() {
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+    use std::time::Instant;
+
+    let Ok((install, _)) = mw_install::MorrowindInstall::detect(None) else {
+        eprintln!("no Morrowind install detected; skipping");
+        return;
+    };
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let src = std::env::var_os("SCRIB_X10S").map_or_else(|| root.join("target/worldgen/x10s"), PathBuf::from);
+    if !src.join("heights.f32").exists() {
+        eprintln!("no guide at {}; skipping", src.display());
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let (climate, climate_s) = x10s_copy(&src, dir);
+
+    let t = Instant::now();
+    let vfs = mw_vfs::mount_install(&install, sf_vfs::Vfs::builder()).unwrap().vfs;
+    let content = mw_records::load(&vfs, &install.game_files()).unwrap();
+    let load_s = t.elapsed().as_secs_f64();
+    let cache = std::cell::RefCell::new(HashMap::<String, Option<([f32; 3], [f32; 3])>>::new());
+    let bounds = |model: &str| {
+        if let Some(b) = cache.borrow().get(model) {
+            return *b;
+        }
+        let b = sf_vfs::VfsPath::new(model)
+            .ok()
+            .and_then(|path| vfs.read(&path).ok())
+            .and_then(|bytes| mw_nif::load(&bytes).ok())
+            .and_then(|m| mw_nif::visible_bounds(&m));
+        cache.borrow_mut().insert(model.to_owned(), b);
+        b
+    };
+    let tiles = GuideTiles::open(dir, mw_world::ids::exterior()).unwrap();
+    let source = mw_world::MwWorldSource::build(&content.db, &mw_world::SourceOptions::default());
+    let prm = Params::default();
+    let (file, f, water, clearings) = flora::guide_inputs(dir, &tiles, &prm).unwrap();
+    let towns = TownMask::default();
+    let pass = |prm: Params| {
+        let t = Instant::now();
+        let run = flora::scatter_world(&content.db, &source, &bounds, &tiles, &f, &water, &file, clearings.as_ref(), &towns, prm, Some(dir))
+            .unwrap();
+        (run, t.elapsed().as_secs_f64())
+    };
+    let (first, first_s) = pass(prm);
+    let (second, second_s) = pass(prm);
+    // The densities before the budget: the product holds the kept set before the cut.
+    let (full, full_s) = pass(Params { budget: f64::from(u32::MAX), ..prm });
+    assert_eq!(full.product, flora::ProductUse::Read, "a budget change reads the product");
+    assert_eq!(first.product, flora::ProductUse::Wrote, "a fresh copy has no product");
+    assert_eq!(second.product, flora::ProductUse::Read, "same inputs: read");
+    assert_eq!(first.plants, second.plants, "read == passes");
+    assert!(first.plants.iter().all(|p| p.pos.iter().all(|v| v.is_finite()) && p.scale.is_finite() && p.scale > 0.0));
+
+    println!("WG-E2m scatter v2 on {} (climate {climate} in {climate_s:.1} s, content {load_s:.1} s)", src.display());
+    println!("first:  {}", flora::summary_line(&first));
+    println!("second: {}", flora::summary_line(&second));
+    println!("full:   {}", flora::summary_line(&full));
+    println!("load seconds: first {first_s:.1} (passes + write), second {second_s:.1} (product read), no budget {full_s:.1}");
+    class_table(&full, &f);
+}
+
+/// Copies the guide files of `src` into `dir`, with its climate product when it has one, else makes it there;
+/// returns how and the seconds it took.
+fn x10s_copy(src: &std::path::Path, dir: &std::path::Path) -> (&'static str, f64) {
+    use sf_worldgen::climate_map::{ClimateRequest, run_climate};
+    use std::time::Instant;
+    for e in std::fs::read_dir(src).unwrap() {
+        let e = e.unwrap();
+        if e.file_type().unwrap().is_file() {
+            std::fs::copy(e.path(), dir.join(e.file_name())).unwrap();
+        }
+    }
+    let t = Instant::now();
+    let how = if src.join("climate").is_dir() {
+        for e in std::fs::read_dir(src.join("climate")).unwrap() {
+            let e = e.unwrap();
+            std::fs::create_dir_all(dir.join("climate")).unwrap();
+            std::fs::copy(e.path(), dir.join("climate").join(e.file_name())).unwrap();
+        }
+        "copied"
+    } else {
+        let req = ClimateRequest { base: dir.into(), params: None, classes: None, sets: Vec::new(), out: dir.into() };
+        run_climate(&req).unwrap();
+        "made"
+    };
+    let climate_s = t.elapsed().as_secs_f64();
+    (how, climate_s)
+}
+
+/// Prints the per-class table of a run: land, stems/ha per layer against the class's canopy target, crown cover.
+fn class_table(first: &FloraRun, f: &GridFields) {
+    use sf_worldgen::scatter_fields::Fields;
+    let names = f.class_names().to_vec();
+    let n = names.len();
+    let mut land = vec![0u64; n + 1];
+    for a in &first.area {
+        for (c, v) in a.iter().enumerate() {
+            land[c] += v;
+        }
+    }
+    let mut stems = vec![[0usize; 3]; n + 1];
+    let mut crown_m2 = vec![0.0f64; n + 1];
+    for p in &first.plants {
+        let c = f.sample(p.pos[0], p.pos[1]).class.map_or(n, |k| usize::from(k).min(n));
+        stems[c][p.key.layer as usize] += 1;
+        if p.key.layer == Layer::Canopy {
+            let s = &first.learned.file.species[p.key.species as usize];
+            let r = s.crown_a_m + s.crown_b * p.size_m;
+            crown_m2[c] += std::f64::consts::PI * r * r;
+        }
+    }
+    println!("| class | land km2 | target canopy /ha | canopy /ha | understorey /ha | ground /ha | canopy crown cover |");
+    println!("|---|---:|---:|---:|---:|---:|---:|");
+    for c in 0..=n {
+        if land[c] == 0 {
+            continue;
+        }
+        let ha = land[c] as f64 * first.sample_m2 / 1e4;
+        let name = names.get(c).map_or("none", String::as_str);
+        let target = first.learned.file.classes.get(name).map_or(f64::NAN, |e| e.v);
+        let per = |l: usize| stems[c][l] as f64 / ha;
+        println!(
+            "| {name} | {:.1} | {target:.0} | {:.1} | {:.1} | {:.1} | {:.1} % |",
+            ha / 100.0,
+            per(0),
+            per(1),
+            per(2),
+            100.0 * crown_m2[c] / (ha * 1e4)
+        );
+    }
+}

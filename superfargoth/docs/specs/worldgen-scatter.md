@@ -330,6 +330,10 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m. Rocks: E3a-E3d after E2e (th
   Then `place` cuts the budget and poses. Written at load, not by a separate command (UE's derived-data-cache pattern):
   the game's inputs (bake-store model bounds, the guide's towns) exist only there, so another command would hash
   differently. `worldgen-flora` (census) runs without a product. 1 test (write, read, budget read, seed / file stale, damaged rebuilt).
+- **WG-E2m** (2026-11-27, `mw_worldgen` `tests_flora.rs`, ignored): x10s copied to a temp folder, climate made there
+  (2.5 s), no towns or clearings. Release: passes + write 57.8 s (18.47 M kept before the budget: 0.93 M canopy, 6.36 M
+  understorey, 11.19 M ground; the product ~1.2 GB at 64 B a plant), product read + budget + pose 4.4 s. Canopy stems/ha
+  4.8-10.8 in every wooded class against declared 60-250 (taiga 4.8 / 250, rainforest 8.5 / 250), crown cover 3-7 %.
 
 ## Tunables
 
@@ -372,9 +376,9 @@ slope classes (`slope_class_deg`, `slope_classes`), bands (`band_base_m`, `band_
 
 ## Performance
 
-- Bake: measured by WG-E2m. Only v1 is measured (WG-X5, at load): 200k 0.9 s, 1 M 1.4 s, 7.21 M 6.3 s. The halo
-  multiplies candidates by `((256 + 2H)/256)^2` (D). Over a few minutes for the whole world fails the bake rule: the
-  E2m ledger line says so before the owner look.
+- Bake (WG-E2m, x10s, release, all cores): 57.8 s for the whole world, inside the bake rule; the load from the product
+  4.4 s at the 200k budget (v1 at load was 0.9 s), 63.6 s with no budget (pose of 18.5 M dominates). The product is
+  ~1.2 GB (64 B per kept plant).
 - Runtime: 0 ms from the stage (a cached file read at load). The counts' render cost is `big-world-rendering.md`'s.
 
 ## Tests
