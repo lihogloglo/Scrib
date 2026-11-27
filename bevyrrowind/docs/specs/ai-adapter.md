@@ -248,6 +248,11 @@ to a bodiless tier-0 actor (key in `AiLogical`, no entity) lands on its stored s
 its record directives' origin, and wakes the state; its later body serves it (the stored stack wins over the seed). Gap:
 a bodiless push keeps no extras (a script wander's idles), as any script directive across a respawn.
 
+As built (MA2c3b, 2026-11-27): section `mw/ai_runs` v1 (`mw_saves_bevy` `AiRunsSave`, its own `SavedPackage` enum)
+saves `AiRuns` as OpenMW saves `mDone` / `mLastAiPackage`: placement-id keys only (entity bits dropped, as `mw/rpg`),
+default runs left out, no section written when empty; load replaces the runs (a save without it loads none). A done
+flag on an emptied stack now survives a load. `mw_saves_bevy` depends on `mw_walkers_bevy` (already in its closure).
+
 ## AI settings (stats + considerations)
 
 Hello, Fight, Flee, Alarm (`aisetting.hpp`) are magnitude stats on the sheet (`sf_stats`, stats-adapter naming),

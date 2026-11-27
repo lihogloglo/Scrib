@@ -3,6 +3,7 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-27 (npc-ai loop, MA2c3b): saves now remember what the AI script checks read: a script asking whether an NPC finished its AI order (GetAIPackageDone) gets the same answer after loading as before saving.
 - 2026-11-27 (npc-ai loop, MA2c3a): a script that asks a dead NPC which AI package it runs now gets "none" (-1, as in Morrowind), and a script giving AI orders (AITravel and the like) to an off-screen NPC with no body now reaches it: the NPC starts on the order off-screen and keeps on it once its body appears.
 - 2026-11-27 (npc-ai loop, MA22b): saves now also keep where off-screen NPCs are on their walks and what they are doing there, so after a load a far-away NPC carries on from the same spot instead of starting over (`sf/ai` save section v2; older saves load with their NPC orders and no walk positions).
 - 2026-11-27 (npc-ai loop, MA22a): saves now keep what each NPC was told to do: a script's AITravel, AIFollow and the like, and each NPC's own packages, come back as they were after a load (the `sf/ai` save section is registered in the game). Off-screen NPCs' positions along their walk are not saved yet (MA22b).

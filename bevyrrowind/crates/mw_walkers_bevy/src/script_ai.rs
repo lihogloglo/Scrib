@@ -33,8 +33,8 @@
 //! itself (our death clip hands the body to the ragdoll after `crate::physics::DEATH_HANDOFF`). A bodiless push
 //! keeps no extras (a script wander's idle table): a respawn rebuilds only the record
 //! directives' extras (`crate::directives::extras_of`), as for any script directive across a
-//! cell unload. `OpenMW` saves `mDone` / `mLastAiPackage`; [`AiRuns`] is not saved yet (the next tick
-//! rebuilds the last package; a done flag on an empty stack is lost on load).
+//! cell unload. `OpenMW` saves `mDone` / `mLastAiPackage`; so do we: `mw_saves_bevy` writes
+//! [`AiRuns`] as section `mw/ai_runs` (`MA2c3b`).
 
 use std::collections::BTreeMap;
 

@@ -20,6 +20,8 @@ mw_game_core.workspace = true
 mw_player_bevy.workspace = true
 mw_rpg.workspace = true
 mw_rpg_bevy.workspace = true
+# The AI script reads' runs (`mw/ai_runs`, `MA2c3b`).
+mw_walkers_bevy.workspace = true
 mw_world.workspace = true
 serde.workspace = true
 sf_action_bevy.workspace = true

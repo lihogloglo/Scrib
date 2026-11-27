@@ -5867,6 +5867,7 @@ dependencies = [
  "mw_rpg",
  "mw_rpg_bevy",
  "mw_vfs",
+ "mw_walkers_bevy",
  "mw_weather",
  "mw_world",
  "serde",

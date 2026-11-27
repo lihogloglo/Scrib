@@ -80,7 +80,8 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   placement in another worldspace puts the state back (AI10c3 moves bodies). A marked body stays rendered where it
   stood: `drive` stands it first (`walkers.rs:809`), `drive_directives` skips it (`directive_drive.rs:318`); script
   pushes and late packages `wake` it; a script push to a bodiless tier-0 actor lands on its stored stack (MA2c3a,
-  `script_ai.rs` `apply_script_pushes`), and a dead actor reads `GetCurrentAIPackage` -1 (`clear_dead_runs`).
+  `script_ai.rs` `apply_script_pushes`), and a dead actor reads `GetCurrentAIPackage` -1 (`clear_dead_runs`); the reads' `AiRuns` ride saves as `mw/ai_runs`
+  (MA2c3b, `mw_saves_bevy` `AiRunsSave`).
   Proof line `tier0: N logical, Q queued, P placed (X other-space)` (≤ 1/s).
   **Bodies keep their pose across a cell unload** (AI10c3a, `mw_walkers_bevy/src/poses.rs:86` `ActorPoseHook`,
   installed on the actor class at `directives.rs:273`): when an actor placement leaves R0 (not a discard), a body
