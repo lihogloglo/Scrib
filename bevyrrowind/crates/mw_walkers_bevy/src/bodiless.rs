@@ -25,8 +25,7 @@
 //! placement and is skipped. A follower (`LogicalState::follow`) is skipped: its leader's position
 //! is not read here. A loaded cell is not re-read, so a body appears at the next fetch of the cell
 //! it walked into, not at once, unless that cell is Active (below). The kept rotation is
-//! written unchanged (the facing it walked with is not known at tier 0). No proof line yet (it
-//! comes with `AI10c3c2b2`).
+//! written unchanged (the facing it walked with is not known at tier 0).
 //!
 //! **Into an Active cell (`AI10c3c2b1`).** Right after the follow, [`pick`] takes each kept
 //! placement of a bodiless stored actor (not a follower) whose `(worldspace, partition cell)` is
@@ -46,15 +45,21 @@
 //! promotion's (UE5 `MassRepresentation` spawn budget, GTA/RDR on-path ambient spawns out of
 //! view); `OpenMW` instead inserts an actor moved into an active cell at once, wherever it stands
 //! (`apps/openmw/mwworld/worldimp.cpp` `moveObject`, commit b8285cc9). No new tunable.
+//!
+//! **Proof (`AI10c3c2b2`).** The follow's writes and the spawns count into
+//! `sf_ai_bevy::AiBodilessStats` (since start; `ai.stats` prints them), and [`report_bodiless`]
+//! logs [`proof_line`] when they changed, at most once a second.
 
 use std::collections::HashMap;
 use std::sync::PoisonError;
 
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
+use bevy_log::info;
 use bevy_math::{IVec3, Quat};
+use bevy_time::Time;
 use sf_ai::{LogicalState, PromoteConfig, Resolve, resolve_promotion};
-use sf_ai_bevy::{AiActor, AiLogical, AiPromoteSettings};
+use sf_ai_bevy::{AiActor, AiBodilessStats, AiLogical, AiPromoteSettings};
 use sf_coords::WorldPos;
 use sf_ids::{ActorKey, GameInstant};
 use sf_nav::QueryFilter;
@@ -126,14 +131,12 @@ impl Pending {
 }
 
 /// The spawns of bodiless actors into loaded cells (`AI10c3c2b1`, module docs): the waits' retry
-/// instants, this tick's picks, the count since start.
+/// instants and this tick's picks (the counts are `AiBodilessStats`').
 #[derive(Resource, Debug, Default)]
 pub struct BodilessSpawns {
     /// Game instant before which a waiting kept placement is not tried again.
     retry_at: HashMap<PlacementId, GameInstant>,
     pending: Vec<Pending>,
-    /// Bodies spawned into loaded cells since start.
-    pub spawned: u32,
 }
 
 /// The game ms of `config.retry_s` simulated seconds at `time_scale` (game s per simulated s).
@@ -198,6 +201,7 @@ pub(crate) struct SpawnViews<'w, 's> {
     meshes: Option<Res<'w, NavMeshes>>,
     promote: Option<Res<'w, AiPromoteSettings>>,
     filter: Local<'s, Option<QueryFilter>>,
+    stats: Option<ResMut<'w, AiBodilessStats>>,
 }
 
 /// The fixed-tick system around [`follow`] and [`pick`] (module docs): the tier-0 env as
@@ -229,7 +233,7 @@ pub(crate) fn follow_bodiless(
     let (now, scale) = (world.now(), world.time_scale());
     let scheduler = streaming.scheduler();
     let partition_of = |ws: &WorldspaceId| scheduler.directory(ws).map(|d| d.partition);
-    follow(
+    let moved = follow(
         resident.away_mut(),
         &store,
         has_body,
@@ -237,6 +241,11 @@ pub(crate) fn follow_bodiless(
         partition_of,
         |p, to, rotation| overlay.0.write().unwrap_or_else(PoisonError::into_inner).move_to(p, to, rotation),
     );
+    if moved > 0
+        && let Some(stats) = views.stats.as_mut()
+    {
+        stats.moved = stats.moved.saturating_add(u32::try_from(moved).unwrap_or(u32::MAX));
+    }
 
     let config = views.promote.as_ref().map_or_else(PromoteConfig::default, |s| s.config);
     let filter = &*views.filter.get_or_insert_with(|| QueryFilter::for_class(&mw_bake::nav::areas(), mw_bake::nav::HUMANOID));
@@ -292,8 +301,27 @@ pub(crate) fn spawn_bodiless(world: &mut World) {
             spawned += 1;
         }
     });
-    if let Some(mut s) = world.get_resource_mut::<BodilessSpawns>() {
-        s.spawned += spawned;
+    if spawned > 0
+        && let Some(mut s) = world.get_resource_mut::<AiBodilessStats>()
+    {
+        s.spawned = s.spawned.saturating_add(spawned);
+    }
+}
+
+/// `ai.tier0: N bodies spawned into loaded cells, M kept placements moved` (since start).
+pub fn proof_line(s: AiBodilessStats) -> String {
+    format!("ai.tier0: {} bodies spawned into loaded cells, {} kept placements moved", s.spawned, s.moved)
+}
+
+/// Logs [`proof_line`] when the counts changed, at most once a second (module docs, "Proof").
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn report_bodiless(time: Res<Time>, stats: Option<Res<AiBodilessStats>>, mut logged: Local<(AiBodilessStats, Option<f64>)>) {
+    let Some(stats) = stats else { return };
+    let now_s = time.elapsed_secs_f64();
+    let (last, at) = *logged;
+    if *stats != last && at.is_none_or(|t| now_s - t >= crate::logical::LOG_EVERY_S) {
+        info!("{}", proof_line(*stats));
+        *logged = (*stats, Some(now_s));
     }
 }
 

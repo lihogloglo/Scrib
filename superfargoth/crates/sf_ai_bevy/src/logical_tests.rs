@@ -417,6 +417,17 @@ fn ai_stats_prints_the_tier_zero_line() {
 }
 
 #[test]
+fn ai_stats_prints_the_bodiless_line_only_when_the_game_inserts_it() {
+    let mut app = App::new();
+    app.add_plugins((bevy::MinimalPlugins, sf_console_bevy::ConsolePlugin, AiPlugin { timings: false }));
+    app.update();
+    let last = |app: &mut App| tests::info(&tests::run(app, "ai.stats")).last().map(|l| (*l).to_owned());
+    assert!(last(&mut app).is_some_and(|l| l.starts_with("logical: ")), "no bodiless line without the resource");
+    app.insert_resource(AiBodilessStats { spawned: 2, moved: 5 });
+    assert_eq!(last(&mut app).as_deref(), Some("bodiless: 2 bodies spawned into loaded cells, 5 kept placements moved"));
+}
+
+#[test]
 fn promote_per_tick_is_live() {
     assert_eq!(AiPromoteSettings::default().config, PromoteConfig::default());
     assert_eq!(PROMOTE_TUNABLES.len(), 4);

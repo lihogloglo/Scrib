@@ -15,7 +15,7 @@ use bevy_mesh::MeshPlugin;
 use bevy_pbr::StandardMaterial;
 use bevy_time::TimePlugin;
 use sf_ai::{DirectiveStack, GameTime, LogicalState, RouteRef};
-use sf_ai_bevy::{AiActor, AiDirectives, AiLogical, AiLogicalBody};
+use sf_ai_bevy::{AiActor, AiBodilessStats, AiDirectives, AiLogical, AiLogicalBody};
 use sf_character_bevy::CharacterPlacement;
 use sf_controller_bevy::{Mover, MoverParams};
 use sf_coords::{WorldPos, WorldTransform};
@@ -158,6 +158,7 @@ fn scene(anchor_x: f64) -> Scene {
         .init_resource::<AiDirectives>()
         .init_resource::<Tier0Transitions>()
         .init_resource::<BodilessSpawns>()
+        .init_resource::<AiBodilessStats>()
         .add_systems(Update, (enter_tier0, follow_bodiless, spawn_bodiless).chain().after(StreamingSystems::Transition));
     app.finish();
     app.cleanup();
@@ -250,7 +251,11 @@ fn kept(s: &Scene) -> bool {
 }
 
 fn spawned(s: &Scene) -> u32 {
-    s.app.world().resource::<BodilessSpawns>().spawned
+    counts(s).spawned
+}
+
+fn counts(s: &Scene) -> AiBodilessStats {
+    *s.app.world().resource::<AiBodilessStats>()
 }
 
 fn stored(s: &Scene) -> bool {
@@ -310,6 +315,8 @@ fn a_bodiless_walker_entering_an_active_cell_gets_one_body_at_once_at_its_unseen
     let again = the_body(&mut s);
     assert_eq!(s.app.world().get::<SpawnedAt>(again).unwrap().pos, spawned_at.pos, "B's list, at the spawned spot");
     assert_eq!(spawned(&s), 1, "B's fetch, not a second spawn_into");
+    // AI10c3c2b2: one crossing write (A -> B) and one spawn, since start.
+    assert_eq!(counts(&s), AiBodilessStats { spawned: 1, moved: 1 });
 }
 
 #[test]
@@ -348,7 +355,8 @@ fn a_seen_spot_waits_and_is_tried_again_once_unseen() {
     let body = the_body(&mut s);
     assert_eq!(s.app.world().get::<SpawnedAt>(body).unwrap().cell, s.b);
     assert!(!kept(&s));
-    assert_eq!(spawned(&s), 1);
+    // AI10c3c2b2: the waits moved nothing more and spawned nothing.
+    assert_eq!(counts(&s), AiBodilessStats { spawned: 1, moved: 1 });
 }
 
 #[test]
@@ -372,4 +380,14 @@ fn a_walker_entering_an_unloaded_cell_gets_no_body_until_its_fetch() {
     assert_eq!(s.app.world().get::<SpawnedAt>(body).unwrap().cell, s.b);
     assert_eq!(spawned(&s), 0);
     assert!(!kept(&s), "activation dropped the kept entry");
+    // AI10c3c2b2: the follow's one write; the cell's own fetch is no spawn.
+    assert_eq!(counts(&s), AiBodilessStats { spawned: 0, moved: 1 });
+}
+
+#[test]
+fn the_proof_line_reads_the_counts() {
+    assert_eq!(
+        super::proof_line(AiBodilessStats { spawned: 3, moved: 7 }),
+        "ai.tier0: 3 bodies spawned into loaded cells, 7 kept placements moved"
+    );
 }

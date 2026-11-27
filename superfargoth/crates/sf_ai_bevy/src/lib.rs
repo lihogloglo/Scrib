@@ -83,7 +83,7 @@ pub use hearing::{
 };
 pub use light::{AiLightExposure, AiLightInputs};
 pub use logical::{
-    AiLogical, AiLogicalBody, AiLogicalPlugin, AiLogicalStats, AiLogicalSystems, AiPromoteQueue, AiPromoteSettings, AiTierZero,
+    AiBodilessStats, AiLogical, AiLogicalBody, AiLogicalPlugin, AiLogicalStats, AiLogicalSystems, AiPromoteQueue, AiPromoteSettings, AiTierZero,
     LogicalStepStats, PROMOTE_TUNABLES, add_promote_tunables, demote_body, promote_logical, step_logical,
 };
 pub use perception::{

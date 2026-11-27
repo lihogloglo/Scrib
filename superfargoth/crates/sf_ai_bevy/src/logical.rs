@@ -469,6 +469,17 @@ pub struct AiLogicalStats {
     pub promote_us: Option<f32>,
 }
 
+/// Bodies a game's shell spawned for stored actors without one, straight into loaded cells, and
+/// the moves of those actors' kept placements between cells, since start (`ai.stats` prints them
+/// when the resource exists; the game inserts and writes it, `AI10c3c2b2`).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AiBodilessStats {
+    /// Bodies spawned into loaded cells.
+    pub spawned: u32,
+    /// Kept placements moved into another cell.
+    pub moved: u32,
+}
+
 /// Fixed-tick tier-0 sets, chained after [`AiAllocSystems::Allocate`] and before
 /// [`AiPerceptionSystems::Sight`] and `ControllerSystems::Drive`.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]

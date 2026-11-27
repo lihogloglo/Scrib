@@ -316,17 +316,28 @@ pub(crate) const LOG_EVERY_S: f64 = 1.0;
 /// The tier-0 systems on the fixed tick (module docs), only while a [`GameClock`] exists. Needs
 /// `sf_ai_bevy::AiPlugin` (the store, the queue, the sets); `walkers::add_drive` calls it.
 pub fn add(app: &mut App) {
-    app.init_resource::<Tier0Transitions>().init_resource::<Tier0Tick>().init_resource::<crate::bodiless::BodilessSpawns>().add_systems(
-        FixedUpdate,
-        (
-            enter_tier0.after(AiAllocSystems::Allocate).before(AiLogicalSystems::Hold),
-            (note_served, step_tier0, after_step, crate::bodiless::follow_bodiless, crate::bodiless::spawn_bodiless)
-                .chain()
-                .in_set(AiLogicalSystems::Step),
-            promote_tier0.in_set(AiLogicalSystems::Promote),
-        )
-            .run_if(resource_exists::<GameClock>),
-    );
+    app.init_resource::<Tier0Transitions>()
+        .init_resource::<Tier0Tick>()
+        .init_resource::<crate::bodiless::BodilessSpawns>()
+        .init_resource::<sf_ai_bevy::AiBodilessStats>()
+        .add_systems(
+            FixedUpdate,
+            (
+                enter_tier0.after(AiAllocSystems::Allocate).before(AiLogicalSystems::Hold),
+                (
+                    note_served,
+                    step_tier0,
+                    after_step,
+                    crate::bodiless::follow_bodiless,
+                    crate::bodiless::spawn_bodiless,
+                    crate::bodiless::report_bodiless,
+                )
+                    .chain()
+                    .in_set(AiLogicalSystems::Step),
+                promote_tier0.in_set(AiLogicalSystems::Promote),
+            )
+                .run_if(resource_exists::<GameClock>),
+        );
 }
 
 /// The world the tier-0 env reads: the graph, the doors, the traverse tunables, the transitions.

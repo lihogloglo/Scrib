@@ -442,7 +442,11 @@ Fact store, Nemesis-style relations and vendettas, bounded gossip, reputation pe
   along its route, navmesh snap, unseen), at most `ai.tier.promote_per_tick` tries a tick in id order; a wait retries
   after `ai.tier.promote_retry_s` (game ms over the clock's scale). The pick goes to `Streaming::spawn_into` at that spot
   (exclusive system, last of the Step chain), the overlay takes it there, activation drops the kept entry, and
-  `enter_tier0` re-marks the body: the store keeps its state until it is placed. Gaps: no proof line yet (`AI10c3c2b2`).
+  `enter_tier0` re-marks the body: the store keeps its state until it is placed.
+- **As built (AI10c3c2b2, 2026-11-27):** the follow's writes and the spawns count into `sf_ai_bevy::AiBodilessStats`
+  (since start; the game inserts it, `ai.stats` prints `bodiless: N bodies spawned into loaded cells, M kept placements
+  moved` only when it exists); `report_bodiless`, last of the Step chain, logs `ai.tier0: N bodies spawned into loaded
+  cells, M kept placements moved` when they changed, at most once a second. Owner scene AI-17.
 - **CPU tier** = host setting `sim.cpu_tier` (auto from cores, AI9d), apart from the graphics preset. Clients vary
   only presentation.
 

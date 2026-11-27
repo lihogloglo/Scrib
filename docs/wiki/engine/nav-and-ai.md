@@ -100,6 +100,8 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   an actor never loaded since start has nothing kept. Into an Active cell (AI10c3c2b1) it gets its body at once:
   the promotion rules pick an unseen spot on the navmesh (else it waits `ai.tier.promote_retry_s`),
   `spawn_bodiless` calls `Streaming::spawn_into` there, and the body is re-marked and promoted like any stored one.
+  Proof (AI10c3c2b2): `ai.tier0: N bodies spawned into loaded cells, M kept placements moved` (counts since start in
+  `sf_ai_bevy::AiBodilessStats`, also on `ai.stats`).
   Tier 0 core (AI10a, `sf_ai/src/logical.rs`): `LogicalState::step` jumps event to event
   (route arrival, `DirectiveStack::next_deadline`, `LogicalEnv::next_window_edge` hook), each served kind taken up
   through `LogicalTransitions::transition` (StayNear waits in place or walks home, GoTo/Escort walk and end

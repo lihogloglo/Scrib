@@ -10,7 +10,7 @@ use sf_console_bevy::sf_console::{ArgKind, CommandSpec, Param};
 
 use crate::alloc::CPU_TIER_CHOICES;
 use crate::{
-    AiAllocSettings, AiAllocStats, AiDecideStats, AiLibrary, AiLogical, AiLogicalStats, AiSelected, AiTraces, DEFAULT_TRACE_LINES, actor_hex, directives_text,
+    AiAllocSettings, AiAllocStats, AiBodilessStats, AiDecideStats, AiLibrary, AiLogical, AiLogicalStats, AiSelected, AiTraces, DEFAULT_TRACE_LINES, actor_hex, directives_text,
     parse_actor, trace_text,
 };
 
@@ -145,9 +145,17 @@ fn register_summaries(app: &mut App) {
                     l.states, l.stepped, l.queued, l.waiting, l.tried, l.placed,
                 ));
             }
+            if let Some(b) = inv.ctx.get_resource::<AiBodilessStats>() {
+                inv.log.info(&bodiless_text(*b));
+            }
             Ok(())
         },
     );
+}
+
+/// The `ai.stats` line of the bodies spawned for bodiless stored actors (`AI10c3c2b2`).
+fn bodiless_text(b: AiBodilessStats) -> String {
+    format!("bodiless: {} bodies spawned into loaded cells, {} kept placements moved", b.spawned, b.moved)
 }
 
 /// The `ai.tiers` line from the allocator's last run, with the plans of the last second (`AI9g`).
