@@ -324,6 +324,39 @@ pub const IMPACT_DAMAGE_PER_NS: Def<f32> = gp(def!(float "interact.impact.damage
     .range(0.0, 10.0)
     .unit(Unit::Ratio)
     .help("Impact damage per N·s of impulse past the dead zone (Source physdamagescale; IN4a)"));
+pub const NOISE_MIN_SPEED_MPS: Def<f32> = gp(def!(float "interact.noise.min_speed_mps" = 1.0)
+    .range(0.0, 5.0)
+    .help("Impact speed under which a contact makes no noise, m/s (IN18a)"));
+pub const NOISE_REF_SPEED_MPS: Def<f32> = gp(def!(float "interact.noise.ref_speed_mps" = 5.0)
+    .range(1.0, 20.0)
+    .help("Impact speed at which a material is heard at its impact reach, m/s (IN18a)"));
+pub const NOISE_SPEED_MUL_MAX: Def<f32> = gp(def!(float "interact.noise.speed_mul_max" = 2.0)
+    .range(1.0, 4.0)
+    .unit(Unit::Ratio)
+    .help("Most an impact's speed multiplies its material's noise reach (IN18a)"));
+pub const NOISE_MERGE_S: Def<f32> = gp(def!(float "interact.noise.merge_s" = 0.25)
+    .range(0.0, 2.0)
+    .unit(Unit::Seconds)
+    .help("One object's noise window: inside it only a louder noise is heard (one rattle, one noise; IN18a)"));
+pub const NOISE_PER_TICK_MAX: Def<u32> = gp_count(def!(count "interact.noise.per_tick_max" = 16)
+    .range(1, 128)
+    .help("Noises heard per tick, loudest kept (IN18a)"));
+pub const NOISE_REVEAL_M: Def<f32> = gp(def!(float "interact.noise.reveal_m" = 1.5)
+    .range(0.0, 5.0)
+    .unit(Unit::Meters)
+    .help("A dropped prop's landing reveals a dropper within this distance (IN18a)"));
+pub const NOISE_DOOR_REACH_M: Def<f32> = gp(def!(float "interact.noise.door_reach_m" = 8.0)
+    .range(0.0, 40.0)
+    .unit(Unit::Meters)
+    .help("Reach of a door opening or closing, before the material's ratio (IN18a)"));
+pub const NOISE_BASH_REACH_M: Def<f32> = gp(def!(float "interact.noise.bash_reach_m" = 20.0)
+    .range(0.0, 60.0)
+    .unit(Unit::Meters)
+    .help("Reach of a blow on a lock or door, before the material's ratio (IN18a)"));
+pub const NOISE_LOCKPICK_REACH_M: Def<f32> = gp(def!(float "interact.noise.lockpick_reach_m" = 3.0)
+    .range(0.0, 20.0)
+    .unit(Unit::Meters)
+    .help("Reach of a lock pick attempt, before the material's ratio (IN18a)"));
 
 /// The `interact.*` tunables [`InteractParams`] has, bound by [`InteractionPlugin`].
 pub const TUNABLES: &[&dyn AnyDef] = &[
@@ -368,6 +401,15 @@ pub const TUNABLES: &[&dyn AnyDef] = &[
     &IMPACT_SPEED_MIN_MPS,
     &IMPACT_IMPULSE_MIN_NS,
     &IMPACT_DAMAGE_PER_NS,
+    &NOISE_MIN_SPEED_MPS,
+    &NOISE_REF_SPEED_MPS,
+    &NOISE_SPEED_MUL_MAX,
+    &NOISE_MERGE_S,
+    &NOISE_PER_TICK_MAX,
+    &NOISE_REVEAL_M,
+    &NOISE_DOOR_REACH_M,
+    &NOISE_BASH_REACH_M,
+    &NOISE_LOCKPICK_REACH_M,
 ];
 
 // --- Resources ----------------------------------------------------------------------------------
@@ -638,8 +680,8 @@ impl Plugin for InteractionPlugin {
     }
 }
 
-/// The `interact.rules.*` (`IN17b`), `interact.fire.*` (`IN17c1`, `IN17c2`) and `interact.impact.*`
-/// (`IN4a`) gameplay tunables.
+/// The `interact.rules.*` (`IN17b`), `interact.fire.*` (`IN17c1`, `IN17c2`), `interact.impact.*`
+/// (`IN4a`) and `interact.noise.*` (`IN18a`) gameplay tunables.
 fn bind_rules(app: &mut App) {
     bind!(app, RULES_EVALS_PER_TICK, |p, v| p.rules_evals_per_tick = u16::try_from(v).unwrap_or(u16::MAX));
     bind!(app, RULES_WET_THRESHOLD, |p, v| p.rules_wet_threshold = v);
@@ -659,6 +701,15 @@ fn bind_rules(app: &mut App) {
     bind!(app, IMPACT_SPEED_MIN_MPS, |p, v| p.impact_speed_min_mps = v);
     bind!(app, IMPACT_IMPULSE_MIN_NS, |p, v| p.impact_impulse_min_ns = v);
     bind!(app, IMPACT_DAMAGE_PER_NS, |p, v| p.impact_damage_per_ns = v);
+    bind!(app, NOISE_MIN_SPEED_MPS, |p, v| p.noise_min_speed_mps = v);
+    bind!(app, NOISE_REF_SPEED_MPS, |p, v| p.noise_ref_speed_mps = v);
+    bind!(app, NOISE_SPEED_MUL_MAX, |p, v| p.noise_speed_mul_max = v);
+    bind!(app, NOISE_MERGE_S, |p, v| p.noise_merge_s = v);
+    bind!(app, NOISE_PER_TICK_MAX, |p, v| p.noise_per_tick_max = u16::try_from(v).unwrap_or(u16::MAX));
+    bind!(app, NOISE_REVEAL_M, |p, v| p.noise_reveal_m = v);
+    bind!(app, NOISE_DOOR_REACH_M, |p, v| p.noise_door_reach_m = v);
+    bind!(app, NOISE_BASH_REACH_M, |p, v| p.noise_bash_reach_m = v);
+    bind!(app, NOISE_LOCKPICK_REACH_M, |p, v| p.noise_lockpick_reach_m = v);
 }
 
 /// The `interact.debris.*` presentation tunables and, with the `physics` feature, the debris systems.

@@ -242,6 +242,14 @@ fn def_defaults_are_the_struct_defaults() {
         (&IMPACT_SPEED_MIN_MPS, d.impact_speed_min_mps),
         (&IMPACT_IMPULSE_MIN_NS, d.impact_impulse_min_ns),
         (&IMPACT_DAMAGE_PER_NS, d.impact_damage_per_ns),
+        (&NOISE_MIN_SPEED_MPS, d.noise_min_speed_mps),
+        (&NOISE_REF_SPEED_MPS, d.noise_ref_speed_mps),
+        (&NOISE_SPEED_MUL_MAX, d.noise_speed_mul_max),
+        (&NOISE_MERGE_S, d.noise_merge_s),
+        (&NOISE_REVEAL_M, d.noise_reveal_m),
+        (&NOISE_DOOR_REACH_M, d.noise_door_reach_m),
+        (&NOISE_BASH_REACH_M, d.noise_bash_reach_m),
+        (&NOISE_LOCKPICK_REACH_M, d.noise_lockpick_reach_m),
     ];
     let counts = [
         (&PRIORITY_AMBIENT, d.priority_ambient),
@@ -256,12 +264,13 @@ fn def_defaults_are_the_struct_defaults() {
     assert_eq!(DEBRIS_AWAKE_MAX.default_value(), u32::from(d.debris_awake_max), "interact.debris.awake_max");
     assert_eq!(RULES_EVALS_PER_TICK.default_value(), u32::from(d.rules_evals_per_tick), "interact.rules.evals_per_tick");
     assert_eq!(FIRE_BURNING_MAX.default_value(), u32::from(d.fire_burning_max), "interact.fire.burning_max");
+    assert_eq!(NOISE_PER_TICK_MAX.default_value(), u32::from(d.noise_per_tick_max), "interact.noise.per_tick_max");
     assert_eq!(
         FIRE_SPREAD_CHECKS_PER_TICK.default_value(),
         u32::from(d.fire_spread_checks_per_tick),
         "interact.fire.spread_checks_per_tick"
     );
-    assert_eq!(floats.len() + counts.len() + 4, TUNABLES.len(), "one def per field but tick_hz");
+    assert_eq!(floats.len() + counts.len() + 5, TUNABLES.len(), "one def per field but tick_hz");
     for (def, field) in floats {
         assert!((def.default_value() - field).abs() < f32::EPSILON, "{}", def.name());
     }

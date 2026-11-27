@@ -190,6 +190,15 @@ waits for its type (AI28). Tests: `tests_light.rs` (6, whole pipeline).
   The landing also emits `WorldChange::Landed { culprit }`: a witness who saw the throw (crime `WitnessQuery`,
   world-reactions.md) raises `Nuisance` (AI28); IN36 makes a seen hit on a person an assault.
 
+**As built (IN18a, 2026-11-27).** `sf_interaction/src/noise.rs`: `loudness_m(reach, v, params) -> Option<f32>` (none
+under `min_speed_mps`, for a silent material or non-finite input; `max`/`min`, so a NaN tunable is silent, never a
+panic); `Noise { source, at, kind, loudness_m, maker, reveals_maker, case: NoiseCase }` (the shell adds tick + space);
+`NoiseMerge::step(tick, noises)`: one per object a tick (its loudest), inside the object's `merge_s` window (from its
+first heard noise, at least one tick) only a louder one is heard (nothing is held back, the loudest is never missed),
+then the `per_tick_max` loudest; a cut noise opens no window; a total order on every field. The 9 `interact.noise.*`
+on `InteractParams`, bound in `bind_rules`. 5 exact tests (`tests_noise.rs`). The material reach ratio for doors,
+bashes and picks is the shell's (IN18b).
+
 ## Reuse check (CONTRIBUTING rule 0)
 
 - **Bevy 0.20:** `FixedUpdate`, messages and observers, `Image` assets for the burn texture; no chemistry, fire or

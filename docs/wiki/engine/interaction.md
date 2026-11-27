@@ -126,6 +126,11 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   count) and sends the same raw `PropDamage` to each registered side, `dir` into that side; `culprit` the user who threw either body
   (`Thrown`, fed from `CarryOutcome::Thrown { body }` of an `InteractionUser` holder, kept until the body sleeps, is held
   again or leaves; the other body's thrower first), else `None` (IN4c, `impact.rs`).
+- **Noise (IN18a, core only).** `loudness_m(reach, v, params)` (`sf_interaction/src/noise.rs`): the material's
+  `impact_reach_m` x `clamp(v / interact.noise.ref_speed_mps, 0, speed_mul_max)`, none under `min_speed_mps`.
+  `NoiseMerge::step` thins one tick's `Noise`s: an object's loudest, inside its `interact.noise.merge_s` window only a
+  louder one, at most `per_tick_max` loudest first (a cut noise opens no window), any arrival order alike. No shell
+  system writes `InteractionNoise` yet (IN18b).
 
 ## Bevy features used
 

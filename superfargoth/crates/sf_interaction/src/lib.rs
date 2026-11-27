@@ -23,6 +23,9 @@
 //!   (first match in record order, budgeted, oldest first, the same result whatever the arrival order).
 //! - [`fire`]: the fire heat core: `step_fire` (heat from burning neighbours with falloff, wind and seeded
 //!   jitter, ignition at the material's `ignite_heat`, fuel then `Charred`, `Wet` takes no heat, rain douses).
+//! - [`impact`]: `impact_damage`, the raw damage of one gated physics contact.
+//! - [`noise`]: `loudness_m` (material reach x clamped impact speed) and `NoiseMerge` (an object's noise
+//!   within its window heard only when louder, the per-tick cap, loudest first, any arrival order alike).
 //! - [`cook`]: `interact.cook`, the one-time def bake (stub).
 //! - [`params`]: the core's tunables as plain fields (`interact.*`, bound by `sf_interaction_bevy`).
 //!
@@ -38,6 +41,7 @@ pub mod fire;
 pub mod impact;
 pub mod index;
 pub mod light;
+pub mod noise;
 pub mod params;
 pub mod rest;
 pub mod rules;
@@ -71,6 +75,7 @@ pub use light::{
     LIGHT_REST_LIT, LIGHT_REST_UNLIT, LIGHT_STATE_OWNER, LIT, LightChanged, LightDef, LightRefusal, LightState,
     VERB_RELIGHT, VERB_SNUFF,
 };
+pub use noise::{Noise, NoiseCase, NoiseMerge, loudness_m};
 pub use params::InteractParams;
 pub use rest::VERB_SLEEP;
 pub use rules::{
@@ -92,6 +97,8 @@ mod tests_fire;
 mod tests_impact;
 #[cfg(test)]
 mod tests_light;
+#[cfg(test)]
+mod tests_noise;
 #[cfg(test)]
 mod tests_queries;
 #[cfg(test)]

@@ -3,6 +3,9 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-27 (interaction loop, IN18a): the rules for how far a knock, a break or a door is heard: a harder hit
+  carries further (up to twice a material's reach), a rattle of bounces counts as one noise, and only the loudest
+  noises of a moment are kept. Nothing makes these noises in the game yet (IN18b).
 - 2026-11-27 (interaction loop, IN4c): a thrown object that breaks something now remembers who threw it: the break is blamed on the player who threw it (for both the thrown thing and what it hit) until it comes to rest; a dropped or knocked object blames no one.
 - 2026-11-27 (interaction loop, IN4b): hard physics hits now damage breakable objects: a jar dropped from a shelf height or thrown onto a wall loses health and can break, and a heavy thing falling on a breakable crate chips it; gentle drops, cosmetic shards, projectiles and the carried item never count. Who threw it is not tracked yet (IN4c).
 - 2026-11-27 (interaction loop, IN4a): the interaction core can turn a physics hit into prop damage: `impact_damage` from the contact's impulse past a dead zone, nothing under a speed floor (a resting or sliding object never chips); three `interact.impact.*` tunables. Not yet wired to physics (IN4b).

@@ -89,6 +89,24 @@ pub struct InteractParams {
     pub impact_impulse_min_ns: f32,
     /// Impact damage per N·s of impulse past the dead zone, ratio (range 0-10).
     pub impact_damage_per_ns: f32,
+    /// Impact speed under which a contact makes no noise, m/s (range 0-5).
+    pub noise_min_speed_mps: f32,
+    /// Impact speed at which a material is heard at its `impact_reach_m`, m/s (range 1-20).
+    pub noise_ref_speed_mps: f32,
+    /// Most an impact's speed multiplies its material's reach, ratio (range 1-4).
+    pub noise_speed_mul_max: f32,
+    /// One object's noise window: inside it only a louder noise is heard, s (range 0-2).
+    pub noise_merge_s: f32,
+    /// Noises heard per tick, loudest kept, count (range 1-128).
+    pub noise_per_tick_max: u16,
+    /// A dropped prop's landing reveals a dropper within this distance, m (range 0-5).
+    pub noise_reveal_m: f32,
+    /// Reach of a door opening or closing, before the material's ratio, m (range 0-40).
+    pub noise_door_reach_m: f32,
+    /// Reach of a blow on a lock or door, before the material's ratio, m (range 0-60).
+    pub noise_bash_reach_m: f32,
+    /// Reach of a lock pick attempt, before the material's ratio, m (range 0-20).
+    pub noise_lockpick_reach_m: f32,
     /// Fixed simulation rate leases count in, ticks per second.
     pub tick_hz: f32,
 }
@@ -178,6 +196,24 @@ impl Default for InteractParams {
             impact_impulse_min_ns: 0.5,
             // tunables: const (bound from interact.impact.damage_per_ns in sf_interaction_bevy (IN4a); Guess, Source physdamagescale)
             impact_damage_per_ns: 0.5,
+            // tunables: const (bound from interact.noise.min_speed_mps in sf_interaction_bevy (IN18a); Guess)
+            noise_min_speed_mps: 1.0,
+            // tunables: const (bound from interact.noise.ref_speed_mps in sf_interaction_bevy (IN18a); Guess)
+            noise_ref_speed_mps: 5.0,
+            // tunables: const (bound from interact.noise.speed_mul_max in sf_interaction_bevy (IN18a); Guess)
+            noise_speed_mul_max: 2.0,
+            // tunables: const (bound from interact.noise.merge_s in sf_interaction_bevy (IN18a); Guess, one rattle one noise)
+            noise_merge_s: 0.25,
+            // tunables: const (bound from interact.noise.per_tick_max in sf_interaction_bevy (IN18a); Guess)
+            noise_per_tick_max: 16,
+            // tunables: const (bound from interact.noise.reveal_m in sf_interaction_bevy (IN18a); Guess)
+            noise_reveal_m: 1.5,
+            // tunables: const (bound from interact.noise.door_reach_m in sf_interaction_bevy (IN18a); Guess)
+            noise_door_reach_m: 8.0,
+            // tunables: const (bound from interact.noise.bash_reach_m in sf_interaction_bevy (IN18a); Guess)
+            noise_bash_reach_m: 20.0,
+            // tunables: const (bound from interact.noise.lockpick_reach_m in sf_interaction_bevy (IN18a); Guess)
+            noise_lockpick_reach_m: 3.0,
             // tunables: const (bound from the app's fixed timestep in sf_interaction_bevy; net.md 60 Hz tick)
             tick_hz: 60.0,
         }
