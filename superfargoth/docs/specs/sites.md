@@ -231,6 +231,11 @@ back to the region map.
   gradient under the step (2 x 2 cells for a diagonal, rise + cross gradient for a straight step) above
   `reach.max_walk_deg`, not the step's own rise: a diagonal across a 47 deg face would otherwise read 37 deg and leak.
   `best(cell, Reach)` gives `(travel_us, Via)`. `reach.*` values declared (`reach::declared`).
+- **WG-V1.2 (2026-11-27)** `reach::{sources, road_lines, verdicts}` (`reach.rs` module docs "Site verdicts", tests
+  `tests_reach.rs`): a site's cells = cell centres inside its ring (else its disc); reseat candidates are ordered by
+  (travel, distance moved, index), the site moves rigidly (centre + ring; `access` stays, `ground_m` cleared,
+  `buildings[]`/`installations[]` untouched); row rules come in as `SiteRule` per `row` (`SiteRule::NONE` = none),
+  a non-kept site with no rule is an error. Kept sites are never moved or dropped. Writes via `SitesFile::write`.
 
 ## Tunables
 

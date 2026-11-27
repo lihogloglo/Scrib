@@ -1,4 +1,7 @@
-//! Tests of the reachability flood core (WG-V1.1; spec `sites.md` "Tests").
+//! Tests of `reach`: the flood core (WG-V1.1) and site verdicts (WG-V1.2; spec `sites.md` "Tests").
+
+// Verdict positions are cell centres and integer-metre moves, so they compare exactly.
+#![allow(clippy::float_cmp)]
 
 use super::*;
 
@@ -158,4 +161,154 @@ fn frame_and_checks() {
     let mut d = declared();
     d.iter_mut().find(|p| p.name == "reach.swim_factor").unwrap().v = 0.5;
     assert!(ReachValues::from_declared(&d).unwrap_err().to_string().contains("reach.swim_factor"));
+}
+
+// ---- Site verdicts (WG-V1.2) ----
+
+/// The archipelago without a bridge, a kept town on the mainland at (20, -50) and a 4 m road along row 5 from
+/// x 0 to 70, and the test sites: `open` (mainland), `wet` (in the strait, foot), `isle` (island, foot), `isle-swim`
+/// (island, swim), `noaccess` (mainland, access none), `far` (mainland, 50 m from the road; its row wants <= 25 m).
+fn verdict_fixture(anchors: &[Footprint]) -> SitesFile {
+    let g = archipelago(false);
+    let net = RoadNetwork::from_reader(
+        r#"{ "format": 1, "segments": [{ "id": 1, "class": "local", "surface": "dirt", "width_m": 4.0, "a": 0,
+              "b": 1, "points": [[0.0, -50.0], [70.0, -50.0]], "crossings": [], "length_m": 70.0, "grade": 0.0 }],
+             "junctions": [] }"#
+            .as_bytes(),
+    )
+    .unwrap();
+    let site = |key: &str, row: &str, reach: &str, c: [f64; 2]| {
+        serde_json::json!({ "key": key, "row": row, "reach": reach, "centre_m": c, "radius_m": 5.0,
+                            "kind": "remote", "kept": false })
+    };
+    let mut noaccess = site("noaccess", "r", "foot", [30.0, -100.0]);
+    noaccess["access_class"] = "none".into();
+    let file = serde_json::json!({ "format": 2, "seed": 7, "guide_blake3": "g", "table_blake3": "t",
+        "packs_blake3": "p", "sites": [
+            { "key": "home", "centre_m": [20.0, -50.0], "radius_m": 15.0, "kind": "town", "kept": true },
+            site("open", "r", "foot", [50.0, -20.0]),
+            site("wet", "wet", "foot", [90.0, -50.0]),
+            site("isle", "r", "foot", [150.0, -50.0]),
+            site("isle-swim", "r", "swim", [150.0, -50.0]),
+            noaccess,
+            site("far", "road", "foot", [40.0, -100.0]),
+        ] });
+    let file = SitesFile::from_reader(file.to_string().as_bytes()).unwrap();
+    let v = values(46.0);
+    let roads = road_lines(&net, C);
+    let src = sources(&g, &file.sites, &roads);
+    let map = ReachMap::flood(&g, &src, &v).unwrap();
+    let rules = BTreeMap::from([
+        ("r".to_owned(), SiteRule::NONE),
+        ("wet".to_owned(), SiteRule { water_gap_m: 8.0, anchor_gap_m: 10.0, ..SiteRule::NONE }),
+        ("road".to_owned(), SiteRule { road_m: [0.0, 25.0], ..SiteRule::NONE }),
+    ]);
+    let inp = VerdictInput { ground: &g, map: &map, roads: &roads, anchors, rules: &rules };
+    verdicts(&inp, &v, &file).unwrap()
+}
+
+fn cell(x: usize, y: usize) -> usize {
+    y * 30 + x
+}
+
+#[test]
+fn sources_are_town_cells_and_the_road_line() {
+    let g = archipelago(false);
+    let net = RoadNetwork {
+        segments: vec![crate::roads::Segment {
+            id: 1,
+            class: crate::roads::RoadClass::Trail,
+            surface: String::new(),
+            width_m: 2.0,
+            a: 0,
+            b: 1,
+            points: vec![[0.0, -50.0], [70.0, -50.0]],
+            crossings: Vec::new(),
+            length_m: 70.0,
+            grade: 0.0,
+        }],
+        junctions: Vec::new(),
+        warnings: Vec::new(),
+        unreachable: Vec::new(),
+    };
+    let town = SitesFile::from_reader(
+        r#"{ "format": 1, "sites": [{ "key": "t", "population": 1, "culture": "c", "centre_m": [20.0, -100.0],
+             "radius_m": 15.0 }] }"#
+            .as_bytes(),
+    )
+    .unwrap();
+    let src = sources(&g, &town.sites, &road_lines(&net, C));
+    // The 3 x 3 town block around (2, 10) and the road's cells (0..=7, 5): a 2 m trail still marks its line.
+    let mut expected: Vec<usize> = (1..=3).flat_map(|x| (9..=11).map(move |y| cell(x, y))).collect();
+    expected.extend((0..=7).map(|x| cell(x, 5)));
+    expected.sort_unstable();
+    assert_eq!(src, expected);
+}
+
+#[test]
+fn verdicts_placed_reseated_dropped_exact() {
+    let out = verdict_fixture(&[]);
+    let s = |k: &str| out.site(k).unwrap();
+    // Kept town: placed where it stands, a source (travel 0).
+    assert_eq!((s("home").status, s("home").travel_s, s("home").via), (Some(Status::Placed), Some(0.0), Some(Via::Foot)));
+    // Mainland: placed, travel = the foot flood at its one cell.
+    let g = archipelago(false);
+    let open = s("open");
+    assert_eq!((open.status, open.via, open.moved_m), (Some(Status::Placed), Some(Via::Foot), None));
+    assert!(open.travel_s.unwrap() > 0.0);
+    // In the strait: re-seated to the cheapest reachable cell within 60 m meeting its row. Road cells cost 0; the
+    // nearest, (7, 5), is 10 m from the water (disc 5 + gap 8 = 13 refuses it), so (6, 5) at 30 m.
+    let wet = s("wet");
+    assert_eq!(wet.status, Some(Status::Reseated));
+    assert_eq!(wet.centre_m, g.centre(cell(6, 5)));
+    assert_eq!((wet.moved_m, wet.travel_s, wet.via), (Some(30.0), Some(0.0), Some(Via::Foot)));
+    assert!(wet.reason.is_empty());
+    // On the island on foot: nothing reachable within 60 m (the mainland is 80 m away).
+    let isle = s("isle");
+    assert_eq!((isle.status, isle.travel_s, isle.via), (Some(Status::Dropped), None, None));
+    assert_eq!(isle.reason, "unreached (foot); no cell within 60 m meets its reach demand");
+    assert_eq!(isle.centre_m, [150.0, -50.0]);
+    // Swimming there is allowed: placed, via swim.
+    assert_eq!((s("isle-swim").status, s("isle-swim").via), (Some(Status::Placed), Some(Via::Swim)));
+    // `access: none` passes when reachable as demanded.
+    assert_eq!((s("noaccess").status, s("noaccess").via), (Some(Status::Placed), Some(Via::Foot)));
+    // 50 m from the road, its row wants <= 25 m: re-seated to the nearest cost-0 cell, the town's (3, 6), 10 m off
+    // the road.
+    let far = s("far");
+    assert_eq!(far.status, Some(Status::Reseated));
+    assert_eq!(far.centre_m, g.centre(cell(3, 6)));
+    assert_eq!(far.moved_m, Some(10f64.hypot(40.0)));
+}
+
+#[test]
+fn verdict_anchor_gap_and_file_round_trip() {
+    // An anchor disc at (60, -60), r 2, and row `wet`'s 10 m anchor gap refuse (7, 5), (6, 5) and (5, 5): (4, 5).
+    let anchor = Footprint { discs: vec![[60.0, -60.0, 2.0]] };
+    let out = verdict_fixture(std::slice::from_ref(&anchor));
+    let wet = out.site("wet").unwrap();
+    assert_eq!((wet.status, wet.centre_m, wet.moved_m), (Some(Status::Reseated), [40.0, -50.0], Some(50.0)));
+    // Same verdicts twice; the product round-trips through `sites.valid.json`.
+    assert_eq!(verdict_fixture(&[anchor]), out);
+    let dir = std::env::temp_dir().join(format!("sf_worldgen_reach_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(VALID_FILE);
+    out.write(&path).unwrap();
+    assert_eq!(SitesFile::read(&path).unwrap(), out);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn verdict_unknown_row_is_an_error() {
+    let g = archipelago(false);
+    let map = ReachMap::flood(&g, &[0], &ReachValues::default()).unwrap();
+    let file = SitesFile::from_reader(
+        r#"{ "format": 2, "seed": 1, "guide_blake3": "g", "table_blake3": "t", "packs_blake3": "p", "sites": [
+             { "key": "x", "row": "nope", "centre_m": [10.0, -10.0], "kind": "remote", "kept": false }] }"#
+            .as_bytes(),
+    )
+    .unwrap();
+    let rules = BTreeMap::new();
+    let inp = VerdictInput { ground: &g, map: &map, roads: &[], anchors: &[], rules: &rules };
+    let e = verdicts(&inp, &ReachValues::default(), &file).unwrap_err();
+    assert!(e.to_string().contains("site x names row \"nope\""), "{e}");
 }
