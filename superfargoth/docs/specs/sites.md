@@ -246,6 +246,12 @@ back to the region map.
   `[[row]]`'s `slope_max_deg`, `distance_m.road` `[min, max]`, `distance_m.water` min, `distance_m.anchor` into a
   `SiteRule` (omitted key = `SiteRule::NONE`'s value); placer keys ignored (SW checks the schema); no id, repeated id,
   negative or reversed range refused. No `--table` = no rules (kept-only lists).
+- **WG-P2 (2026-11-27)** `sf_worldgen::sites::pads` (`site_pads.rs`, tests `tests_site_pads.rs`) + `scrib-worldgen
+  site-pads --guide [--sites] [--set pad.*]`: per `pad` site not dropped, a `pad:<key>` stamp on `pad.spacing_m`
+  multiples (ring, else disc; weight smootherstep across `pad.blend_m`; height = lower-middle median inside). Refusals in
+  order anchor (weight overlap with any guide stamp, both ways), overlap (earlier pad), water (was wet, within the margin
+  of a shore/bank, or below sea + margin), cut, band (slope at 0 < w < 1 over `pad.max_band_deg`, new). Pads go last;
+  a run drops the old ones first (same bytes twice). Refused sites keep their V1 verdict (judged unpadded).
 
 ## Tunables
 
@@ -264,6 +270,8 @@ back to the region map.
 | `pad.blend_m` | m | 2-30 | 8 | Guess |
 | `pad.max_cut_m` | m | 0-10 | 3 | Guess |
 | `pad.water_margin_m` | m | 0-5 | 1 | Guess |
+| `pad.spacing_m` | m | 0.5-10 | 2 | Guess (4 samples across the default blend; quality/cost) |
+| `pad.max_band_deg` | deg | 20-70 | 46 | `MoverParams::max_slope_deg` (as `reach.max_walk_deg`) |
 
 MU's own numbers (`ATTACHED_M`, `REMOTE_M`, budgets, `remote.rate`, `most`, `spacing`) stay MU's; the pack sets the
 data ones. Tobler's constants are maths.

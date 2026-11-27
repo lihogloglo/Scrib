@@ -447,7 +447,7 @@ impl ReachGround {
 }
 
 /// Even-odd point in polygon (a ring is closed implicitly; a point on an edge falls either way).
-fn in_ring(ring: &[[f64; 2]], p: [f64; 2]) -> bool {
+pub(crate) fn in_ring(ring: &[[f64; 2]], p: [f64; 2]) -> bool {
     let mut inside = false;
     let mut j = ring.len() - 1;
     for i in 0..ring.len() {
@@ -461,7 +461,7 @@ fn in_ring(ring: &[[f64; 2]], p: [f64; 2]) -> bool {
 }
 
 /// A site's disc radius: `radius_m`, else the farthest ring point from the centre.
-fn disc_m(s: &Site) -> f64 {
+pub(crate) fn disc_m(s: &Site) -> f64 {
     if s.radius_m > 0.0 {
         return s.radius_m;
     }

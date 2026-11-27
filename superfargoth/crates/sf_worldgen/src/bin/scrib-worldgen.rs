@@ -215,6 +215,20 @@ enum Cmd {
         #[arg(long = "set")]
         sets: Vec<String>,
     },
+    /// Site pads (`sf_worldgen::sites::pads`, WG-P2): flattens the footprint of every judged site with `pad = true`
+    /// to its median ground, fading across `pad.blend_m`; refuses pads that cut too deep, touch water, overlap a
+    /// stamp or make a steep band. The pads replace the guide's old ones at the end of its `stamps.json`.
+    SitePads {
+        /// Guide folder (v1): heights, stamps, `water.json`; its `stamps.json` gets the pads.
+        #[arg(long)]
+        guide: PathBuf,
+        /// Judged site list; default `<guide>/sites.valid.json`.
+        #[arg(long)]
+        sites: Option<PathBuf>,
+        /// One `pad.*` value `name=value`; repeatable.
+        #[arg(long = "set")]
+        sets: Vec<String>,
+    },
     /// Fast steerable macro sharp-landform pass (`sf_worldgen::cliffs`): asymmetric fault scarps, stepped rock
     /// shelves, slope oversteepening, coastal headlands, explicit strokes and hardness-aware thermal talus.
     Cliffs {
@@ -481,6 +495,17 @@ fn reach(a: ReachArgs) -> sf_worldgen::Result<()> {
     Ok(())
 }
 
+fn site_pads(guide: PathBuf, sites: Option<PathBuf>, sets: &[String]) -> sf_worldgen::Result<()> {
+    use sf_worldgen::reach::VALID_FILE;
+    use sf_worldgen::sites::pads::{PadRequest, run_pads};
+    let sites = sites.unwrap_or_else(|| guide.join(VALID_FILE));
+    let req = PadRequest { guide, sites, sets: parse_sets(sets)? };
+    let rep = run_pads(&req)?;
+    print!("{rep}");
+    println!("wrote {}", req.guide.join("stamps.json").display());
+    Ok(())
+}
+
 fn measure(a: MeasureArgs) -> sf_worldgen::Result<()> {
     use sf_worldgen::measure::{MeasureParams, MeasureRequest, Summit, run_measure};
     let bad = |m: &str| sf_worldgen::Error::Invalid(m.into());
@@ -672,6 +697,13 @@ fn main() -> ExitCode {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("scrib-worldgen reach: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Cmd::SitePads { guide, sites, sets } => match site_pads(guide, sites, &sets) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("scrib-worldgen site-pads: {e}");
                 ExitCode::FAILURE
             }
         },

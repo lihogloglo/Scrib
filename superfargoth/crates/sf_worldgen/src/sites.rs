@@ -31,6 +31,9 @@ use crate::{Error, Result};
 #[path = "tests_sites.rs"]
 mod tests;
 
+#[path = "site_pads.rs"]
+pub mod pads;
+
 /// The `sites.json` format this module writes (and reads, beside [`FORMAT_V1`]).
 // tunables: const (format version)
 pub const FORMAT: u32 = 2;
