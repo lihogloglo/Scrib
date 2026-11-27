@@ -278,6 +278,7 @@ pub(crate) fn damage(
                 culprit: h.culprit,
                 overkill: if stage + 1 == final_stage { hit.overkill } else { 0.0 },
                 removes,
+                kind: h.kind,
             });
         }
         d.state = hit.state;

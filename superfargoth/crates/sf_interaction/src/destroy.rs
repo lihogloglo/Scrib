@@ -61,6 +61,8 @@ pub struct Destroyed {
     pub overkill: f32,
     /// The stage removes the object (its `model` is `None`).
     pub removes: bool,
+    /// The hit's damage kind (`PropDamage::kind`): a `WorldChange`'s cause, a melee break's reveal.
+    pub kind: TagId,
 }
 
 /// One splitmix64 step (Steele, Lea, Flood 2014; the `SplittableRandom` finaliser): mixes `z`

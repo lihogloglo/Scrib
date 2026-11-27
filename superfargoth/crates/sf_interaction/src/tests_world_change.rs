@@ -167,6 +167,7 @@ fn destroyed(stage: u8, removes: bool) -> Destroyed {
         culprit: Some(player()),
         overkill: 0.0,
         removes,
+        kind: DAMAGE_IMPACT,
     }
 }
 
@@ -174,15 +175,15 @@ fn destroyed(stage: u8, removes: bool) -> Destroyed {
 fn only_the_final_stage_is_destroyed() {
     let s = site();
     assert_eq!(
-        from_destroyed(&destroyed(0, false), 3, &s, Some(DAMAGE_IMPACT)),
+        from_destroyed(&destroyed(0, false), 3, &s),
         None
     );
     assert_eq!(
-        from_destroyed(&destroyed(1, false), 3, &s, Some(DAMAGE_IMPACT)),
+        from_destroyed(&destroyed(1, false), 3, &s),
         None
     );
     let last =
-        from_destroyed(&destroyed(2, false), 3, &s, Some(DAMAGE_IMPACT)).expect("final stage");
+        from_destroyed(&destroyed(2, false), 3, &s).expect("final stage");
     assert_eq!(
         (
             last.kind,
@@ -202,7 +203,7 @@ fn only_the_final_stage_is_destroyed() {
         )
     );
     // A stage with no model removes the object, final or not.
-    let gone = from_destroyed(&destroyed(1, true), 3, &s, None).expect("removed");
+    let gone = from_destroyed(&destroyed(1, true), 3, &s).expect("removed");
     assert_eq!(gone.detail, ChangeDetail::Stage(None));
     // Two final stages in one tick (an overkill): one `Destroyed`, the first.
     assert_eq!(folded(vec![last, gone]), vec![last]);

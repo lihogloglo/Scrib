@@ -92,6 +92,7 @@ fn broke(placement: PlacementId, removes: bool) -> Destroyed {
         culprit: None,
         overkill: 0.0,
         removes,
+        kind: sf_interaction::DAMAGE_IMPACT,
     })
 }
 

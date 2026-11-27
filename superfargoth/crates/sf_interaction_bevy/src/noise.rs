@@ -14,7 +14,7 @@
 //! - **Break** ([`Destroyed`] of a registered destructible): at the object, the material's reach x
 //!   `interact.noise.speed_mul_max` (a break is as loud as the hardest impact), kind
 //!   [`NOISE_BREAK`], the culprit as maker, not revealed. Not yet: a melee break reveals its maker
-//!   (`Destroyed` does not carry the hit's damage kind).
+//!   (`Destroyed::kind` carries the hit's damage kind since `IN14b`; the reveal rule is a later row).
 //! - **Impact** (`physics` feature): each `PhysicsEvent::Contact` of this step (its own
 //!   [`NoiseCursor`], reset in `First`) between bodies of indexed placements with a known material,
 //!   at the contact point, [`sf_interaction::loudness_m`]`(impact_reach_m, speed)` of the louder side (one contact,

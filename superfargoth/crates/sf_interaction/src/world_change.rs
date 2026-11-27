@@ -207,18 +207,13 @@ pub fn from_light(e: &LightChanged, site: &ChangeSite, rule: Option<TagId>) -> W
 }
 
 /// `Destroyed` when `e` crossed the def's final stage (`stage_count` stages) or removes the object; an
-/// earlier stage is damage, not a change. `cause` = the hit's damage kind.
+/// earlier stage is damage, not a change. The cause is the hit's damage kind ([`Destroyed::kind`]).
 #[must_use]
-pub fn from_destroyed(
-    e: &Destroyed,
-    stage_count: usize,
-    site: &ChangeSite,
-    cause: Option<TagId>,
-) -> Option<WorldChange> {
+pub fn from_destroyed(e: &Destroyed, stage_count: usize, site: &ChangeSite) -> Option<WorldChange> {
     let last = usize::from(e.stage) + 1 >= stage_count;
     (last || e.removes).then(|| WorldChange {
         culprit: e.culprit,
-        cause,
+        cause: Some(e.kind),
         detail: ChangeDetail::Stage((!e.removes).then_some(e.stage)),
         ..change(e.tick, CHANGE_DESTROYED, e.placement, site)
     })

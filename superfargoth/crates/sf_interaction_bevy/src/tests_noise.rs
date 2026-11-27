@@ -25,7 +25,7 @@ const JAR: PlacementId = PlacementId(11);
 const WOOD: TagId = TagId::of("wood");
 const GLASS: TagId = TagId::of("glass");
 
-fn player() -> UserKey {
+pub(super) fn player() -> UserKey {
     UserKey::Player(PlayerKey(1))
 }
 
@@ -34,7 +34,7 @@ fn material(id: TagId, reach: f32) -> MaterialDef {
 }
 
 /// A swing door of `material` whose leaf centre is 1 m above the object's origin.
-fn door(material: Option<TagId>) -> Arc<InteractableDef> {
+pub(super) fn door(material: Option<TagId>) -> Arc<InteractableDef> {
     let leaf = DoorDef { hinge: Vec3::new(0.5, 1.0, 0.0), axis: Vec3::Y, open_deg: 90.0, both_ways: false, close_behind: false };
     let verb = VerbDef { verb: VERB_OPEN, priority: 0, requires: TagFilter { none: smallvec![DOOR_OPEN], ..TagFilter::default() } };
     let slot = SlotDef {
@@ -64,7 +64,7 @@ fn door(material: Option<TagId>) -> Arc<InteractableDef> {
 }
 
 /// A jar of `material` with `health` hp and one removing stage at 0.
-fn jar(material: Option<TagId>, health: f32) -> Arc<InteractableDef> {
+pub(super) fn jar(material: Option<TagId>, health: f32) -> Arc<InteractableDef> {
     let stage =
         Stage { at: 0.0, model: None, debris: smallvec![], chunks: None, effect: None, on_break: BreakAction::None };
     Arc::new(InteractableDef {
@@ -92,7 +92,7 @@ fn hear(mut noises: MessageReader<InteractionNoise>, mut heard: ResMut<Heard>) {
 }
 
 /// A host with wood (15 m) and glass (6 m) in the material table.
-fn base() -> App {
+pub(super) fn base() -> App {
     let mut app = App::new();
     app.add_plugins((TunablesPlugin, InteractionPlugin))
         .insert_resource(Time::<Fixed>::from_hz(60.0))
@@ -106,7 +106,7 @@ fn base() -> App {
     app
 }
 
-fn insert(app: &mut App, placement: PlacementId, def: Arc<InteractableDef>, object: Frame) {
+pub(super) fn insert(app: &mut App, placement: PlacementId, def: Arc<InteractableDef>, object: Frame) {
     let owner = app.world_mut().spawn_empty().id();
     app.world_mut().write_message(IndexChange::Insert { placement, def, object, owner, disabled: SmallVec::new() });
     app.world_mut().run_schedule(FixedUpdate);
@@ -119,7 +119,7 @@ fn tick(app: &mut App) -> Vec<InteractionNoise> {
     std::mem::take(&mut app.world_mut().resource_mut::<Heard>().0)
 }
 
-fn now(app: &App) -> Tick {
+pub(super) fn now(app: &App) -> Tick {
     app.world().resource::<InteractionTick>().0
 }
 
@@ -184,6 +184,7 @@ fn a_break_is_one_noise_at_the_object_with_its_material_reach_times_the_speed_ca
             culprit: Some(player()),
             overkill: 0.0,
             removes: stage == 1,
+            kind: sf_interaction::DAMAGE_IMPACT,
         })
     };
     // Two stages crossed by one hit: one noise.

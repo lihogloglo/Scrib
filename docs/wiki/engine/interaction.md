@@ -140,10 +140,13 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   `sf_ai_bevy::NoiseEvent` after `NoiseSystems::Emit` and `AiPerceptionSystems::Hearing` (heard on the next perception
   tick), stamped with `AiPerceptClock::tick`; `maker` -> `source` (same keys), kind from `InteractionNoiseKinds` (ids from
   256: door, break, object; material tags `register`ed). Skipped while either message type is missing.
-- **World changes (IN14a, core only).** `sf_interaction/src/world_change.rs`: `WorldChange` (kinds `CHANGE_*` as `TagId`
-  rows), pure mappers from `DoorChanged`, `LightChanged`, `Destroyed` (final stage only) and `FireEvent`, the host's
-  `ChangeSite` giving position, owner and home; `fold_tick` keeps one event per transition (toggled back in a tick = none).
-  No shell writes them yet (IN14b).
+- **World changes (IN14a core, IN14b shell).** `sf_interaction/src/world_change.rs`: `WorldChange` (kinds `CHANGE_*` as
+  `TagId` rows), pure mappers from `DoorChanged`, `LightChanged`, `Destroyed` (final stage only; cause = `Destroyed::kind`,
+  the hit's damage kind) and `FireEvent`; `fold_tick` keeps one event per transition (toggled back in a tick = none).
+  `sf_interaction_bevy/src/world_change.rs` writes `WorldChanged` in `FixedUpdate` (`WorldChangeSystems`, after
+  `DoorSystems::Commit` + `DestroySystems::Release`) from registered doors (at the object), lights (at the flame) and
+  breaks (a left placement only if it removes, at the hit point); owner/home from the host-filled `ChangeOwners`
+  (the game fills nothing yet; fire changes wait for the fire shell IN39).
 
 ## Bevy features used
 

@@ -210,6 +210,13 @@ host). `fold_tick`: per `(tick, object)` a pair (open/close, snuff/relight, lock
 dropped when it undoes the first; other kinds once, the first. `ChangeDetail::Stage` carries the stage; later kinds add
 variants (force, offset, position). Shell IN14b.
 
+**As built (IN14b, 2026-11-27).** `sf_interaction_bevy/src/world_change.rs`: `WorldChanged(WorldChange)` written in
+`FixedUpdate` (`WorldChangeSystems`, after `DoorSystems::Commit` and `DestroySystems::Release`): the step's `DoorChanged`
+of registered doors (at the object), `LightChanged` (at the flame, no rule cause yet), `Destroyed` (the core event now
+carries the hit's damage `kind`, the cause; a placement that left counts only if its stage removes, at the hit point),
+stably sorted by tick, then `fold_tick`. Owner and home from `ChangeOwners` (host-filled; unfilled = unowned). Fire waits
+for its shell (IN39).
+
 ## Data records (all mod-patchable, adapter ships defaults)
 
 `WorldChangeKinds` (kind ids, default severity, concern kind fed; the IN14 table), `ConcernRules` (kind × relation →

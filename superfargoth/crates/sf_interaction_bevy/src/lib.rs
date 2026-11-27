@@ -109,6 +109,7 @@ pub mod noise;
 pub mod rest;
 pub mod seat;
 pub mod seat_clips;
+pub mod world_change;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -131,6 +132,8 @@ mod tests_noise;
 mod tests_rest;
 #[cfg(test)]
 mod tests_seat;
+#[cfg(test)]
+mod tests_world_change;
 
 pub use activate::{
     ActivateCommand, ActivationSystems, InteractionDefs, InteractionStateTags, PendingUse, PendingUses, ScriptActivate,
@@ -155,6 +158,7 @@ pub use seat::{
     EndPoseFree, EndPoseTest, InteractionUser, SeatClips, SeatLoss, SeatPhase, SeatReport, SeatStep, SeatSystems, SeatUse, SeatUses,
     seat_target,
 };
+pub use world_change::{ChangeOwners, ChangeOwnership, WorldChangeSystems, WorldChanged};
 pub use seat_clips::{SIT_APPROACH, SIT_ENTER, SIT_EXIT, SIT_LOOP, SeatClipSets, SeatClipSystems, SeatSet, bind_seat_clips};
 /// The Bevy-free core, for crates that read or write this shell's messages without their own
 /// dependency on it (`sf_interaction::DoorChanged`, `UserKey`).
@@ -669,7 +673,7 @@ impl Plugin for InteractionPlugin {
             .add_systems(FixedUpdate, bind_seat_clips.in_set(SeatClipSystems))
             .add_systems(FixedUpdate, seat::seat_events.in_set(SeatSystems::Events));
         destroy::build(app);
-        noise::build(app);
+        build_reports(app);
         bind!(app, PRIORITY_AMBIENT, |p, v| p.priority_ambient = to_u8(v));
         bind!(app, PRIORITY_SCHEDULE, |p, v| p.priority_schedule = to_u8(v));
         bind!(app, PRIORITY_QUEST, |p, v| p.priority_quest = to_u8(v));
@@ -726,6 +730,12 @@ fn bind_rules(app: &mut App) {
     bind!(app, NOISE_BASH_REACH_M, |p, v| p.noise_bash_reach_m = v);
     bind!(app, NOISE_LOCKPICK_REACH_M, |p, v| p.noise_lockpick_reach_m = v);
     bind!(app, NOISE_MATERIAL_REF_M, |p, v| p.noise_material_ref_m = v);
+}
+
+/// What the shell reports to the host's AI and crime: noises ([`noise`]) and lasting changes ([`world_change`]).
+fn build_reports(app: &mut App) {
+    noise::build(app);
+    world_change::build(app);
 }
 
 /// The `interact.debris.*` presentation tunables and, with the `physics` feature, the debris systems.
