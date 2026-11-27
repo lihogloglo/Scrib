@@ -97,7 +97,9 @@ method set (`mw_ai::methods`) and walk over `sf_nav` via `NavCorridor` (`PathWal
   keeps the placement as the overlay holds it (`ResidentActors` away map); `follow_bodiless`, last of the Step chain,
   moves it in the overlay (kept rotation) on the tick a routed, non-following stored actor's logical position enters
   another cell or worldspace, so that cell's next fetch spawns the body there; no body and no state = pruned. Gaps:
-  an actor never loaded since start has nothing kept; a loaded cell is not re-read (AI10c3c2b).
+  an actor never loaded since start has nothing kept. Into an Active cell (AI10c3c2b1) it gets its body at once:
+  the promotion rules pick an unseen spot on the navmesh (else it waits `ai.tier.promote_retry_s`),
+  `spawn_bodiless` calls `Streaming::spawn_into` there, and the body is re-marked and promoted like any stored one.
   Tier 0 core (AI10a, `sf_ai/src/logical.rs`): `LogicalState::step` jumps event to event
   (route arrival, `DirectiveStack::next_deadline`, `LogicalEnv::next_window_edge` hook), each served kind taken up
   through `LogicalTransitions::transition` (StayNear waits in place or walks home, GoTo/Escort walk and end

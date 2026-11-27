@@ -316,11 +316,13 @@ pub(crate) const LOG_EVERY_S: f64 = 1.0;
 /// The tier-0 systems on the fixed tick (module docs), only while a [`GameClock`] exists. Needs
 /// `sf_ai_bevy::AiPlugin` (the store, the queue, the sets); `walkers::add_drive` calls it.
 pub fn add(app: &mut App) {
-    app.init_resource::<Tier0Transitions>().init_resource::<Tier0Tick>().add_systems(
+    app.init_resource::<Tier0Transitions>().init_resource::<Tier0Tick>().init_resource::<crate::bodiless::BodilessSpawns>().add_systems(
         FixedUpdate,
         (
             enter_tier0.after(AiAllocSystems::Allocate).before(AiLogicalSystems::Hold),
-            (note_served, step_tier0, after_step, crate::bodiless::follow_bodiless).chain().in_set(AiLogicalSystems::Step),
+            (note_served, step_tier0, after_step, crate::bodiless::follow_bodiless, crate::bodiless::spawn_bodiless)
+                .chain()
+                .in_set(AiLogicalSystems::Step),
             promote_tier0.in_set(AiLogicalSystems::Promote),
         )
             .run_if(resource_exists::<GameClock>),
@@ -378,13 +380,13 @@ fn find(index: &[(ActorKey, Entity)], key: ActorKey) -> Option<Entity> {
 }
 
 /// The view radius of an actor without a body: the default capsule's ([`actor_sphere`]'s rule).
-fn default_radius_m() -> f32 {
+pub(crate) fn default_radius_m() -> f32 {
     let p = MoverParams::default();
     (p.height * 0.5).max(p.radius)
 }
 
 #[allow(clippy::needless_pass_by_value, clippy::type_complexity)]
-fn enter_tier0(
+pub(crate) fn enter_tier0(
     clock: Res<GameClock>,
     directives: Res<AiDirectives>,
     mut store: ResMut<AiLogical>,

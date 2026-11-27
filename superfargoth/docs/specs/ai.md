@@ -437,6 +437,12 @@ Fact store, Nemesis-style relations and vendettas, bounded gossip, reputation pe
   kept rotation) when its logical position's `(worldspace, partition cell)` changes: one write per crossing; entries
   with neither body nor state are pruned. Gaps: actors never loaded since start, followers; loaded cells wait for
   `AI10c3c2b`.
+- **As built (AI10c3c2b1, 2026-11-27):** same module. Right after the follow, a kept bodiless stored actor (not a
+  follower) whose cell is Active is resolved by `sf_ai::resolve_promotion` (the promotion's `ViewsEnv`: spot, then back
+  along its route, navmesh snap, unseen), at most `ai.tier.promote_per_tick` tries a tick in id order; a wait retries
+  after `ai.tier.promote_retry_s` (game ms over the clock's scale). The pick goes to `Streaming::spawn_into` at that spot
+  (exclusive system, last of the Step chain), the overlay takes it there, activation drops the kept entry, and
+  `enter_tier0` re-marks the body: the store keeps its state until it is placed. Gaps: no proof line yet (`AI10c3c2b2`).
 - **CPU tier** = host setting `sim.cpu_tier` (auto from cores, AI9d), apart from the graphics preset. Clients vary
   only presentation.
 
