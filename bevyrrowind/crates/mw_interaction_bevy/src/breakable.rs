@@ -1,11 +1,12 @@
 //! Breakables into the destruction shell (crate docs, "Breakables"; superfargoth
 //! `docs/specs/interaction-destruction.md` "Game wiring" and "Dev source", slice `IN38b1`).
 //!
-//! - **Records** ([`BreakablesTable`]): every breakable `CONT` and `MISC` record by id, classified
+//! - **Records** ([`BreakablesTable`]): every breakable `CONT`, `MISC` and `STAT` record by id, classified
 //!   once from the host's record db ([`insert_records`], `mw_interaction::breakable::classify`): a
 //!   record is refused when its own script handles activation or death ([`ACTIVATION_BLOCKS`]) or
 //!   when any `SCPT` or dialogue result names it (`mw_world::source::collect_script_tokens`).
-//!   Decorative `STAT` urns are counted but not listed: their live removal is `IN38c`.
+//!   Decorative `STAT` urns and pots are listed too (`IN38c2`): [`insert_records`] returns their ids,
+//!   which the host makes live (`mw_scripts_bevy::LiveStatics`) so a break can remove one.
 //! - **Def** ([`attach`]): the index hook (`index.rs`) gives a breakable placement its
 //!   `destructible_def` (live [`BreakSettings`]) and material, on top of its furniture def or as a
 //!   slotless def of its own; the shell's `Destructibles` registers it from the `Insert`. The
@@ -18,9 +19,9 @@
 //! - **Dev source** ([`dev_break`], the `dev` feature registers it): `Delete` writes one
 //!   `PropDamage` of the def's full health, kind blunt, on the player's focused placement.
 //!
-//! Log: `interact: breakables: N records (...), M refused (...), S decorative statics (IN38c)`.
+//! Log: `interact: breakables: N records (...), M refused (...), S of them decorative statics`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, PoisonError};
 
 use bevy_ecs::prelude::*;
@@ -47,7 +48,7 @@ pub const ACTIVATION_BLOCKS: &[&str] = &["onactivate", "ondeath", "onmurder", "o
 /// The dev source's key (`visual-checks.md` key table).
 pub const DEV_BREAK_KEY: KeyCode = KeyCode::Delete;
 
-/// Every breakable `CONT` / `MISC` record, by id.
+/// Every breakable `CONT` / `MISC` / `STAT` record, by id.
 #[derive(Resource, Clone, Debug, Default)]
 pub struct BreakablesTable(pub Arc<BTreeMap<RecordId, Breakable>>);
 
@@ -61,11 +62,11 @@ impl BreakablesTable {
 /// What [`BreakablesTable::build`] found, for the log line.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BreakCounts {
-    /// Listed records per class.
+    /// Listed `CONT` / `MISC` records per class.
     pub breakable: BTreeMap<BreakClass, u32>,
     /// Refused records per reason.
     pub refused: BTreeMap<Refusal, u32>,
-    /// Breakable decorative `STAT`s, not listed (`IN38c`).
+    /// Listed decorative `STAT`s (`IN38c2`).
     pub statics: u32,
 }
 
@@ -99,9 +100,12 @@ impl BreakablesTable {
             match mw_interaction::breakable::classify(&facts) {
                 Eligibility::Not => {}
                 Eligibility::Refused(_, r) => *counts.refused.entry(r).or_default() += 1,
-                Eligibility::Breakable(_) if source == Source::Static => counts.statics += 1,
                 Eligibility::Breakable(b) => {
-                    *counts.breakable.entry(b.class).or_default() += 1;
+                    if source == Source::Static {
+                        counts.statics += 1;
+                    } else {
+                        *counts.breakable.entry(b.class).or_default() += 1;
+                    }
                     table.insert(id.clone(), b);
                 }
             }
@@ -117,23 +121,32 @@ impl BreakablesTable {
         }
         (Self(Arc::new(table)), counts)
     }
+
+    /// The listed records that are `STAT`s in `db`: what the host makes live (module docs, "Records").
+    #[must_use]
+    pub fn static_ids(&self, db: &RecordDb) -> HashSet<String> {
+        self.0.keys().filter(|id| db.get::<Static>(id).is_some()).map(|id| id.as_str().to_owned()).collect()
+    }
 }
 
-/// Inserts the content's [`BreakablesTable`] (the host's record db) and logs its counts.
-pub fn insert_records(app: &mut bevy_app::App, db: &RecordDb) {
+/// Inserts the content's [`BreakablesTable`] (the host's record db), logs its counts and returns
+/// its decorative statics' ids ([`BreakablesTable::static_ids`]).
+pub fn insert_records(app: &mut bevy_app::App, db: &RecordDb) -> HashSet<String> {
     fn list<K: std::fmt::Debug>(m: &BTreeMap<K, u32>) -> String {
         m.iter().map(|(k, n)| format!("{k:?} {n}")).collect::<Vec<_>>().join(", ")
     }
     let (table, counts) = BreakablesTable::build(db);
     info!(
-        "interact: breakables: {} records ({}), {} refused ({}), {} decorative statics (IN38c)",
+        "interact: breakables: {} records ({}), {} refused ({}), {} of them decorative statics",
         table.0.len(),
         list(&counts.breakable),
         counts.refused.values().sum::<u32>(),
         list(&counts.refused),
         counts.statics,
     );
+    let statics = table.static_ids(db);
     app.insert_resource(table);
+    statics
 }
 
 /// The breakables' tunables (`mw.rules.interaction.break*`), bound live.

@@ -24,8 +24,14 @@
 //!   reference: only live, moved and spawned placements carry one here) keeps its store under the
 //!   dead id (warn): nothing is lost.
 //!
+//! - **Static** (`IN38c2`; interaction-destruction.md "Static removal"): a decorative `STAT` urn
+//!   is live like a container (`mw_scripts_bevy::LiveStatics`): `remove_live` drops its `Fixed`
+//!   collider, removes it from the overlay and despawns its `LiveRoot` when it was entity-drawn;
+//!   then `Streaming::hide_covered` stops the static scene drawing it (its instances inactive,
+//!   one way). It spills nothing (not a `CONT`).
+//!
 //! Not yet (own rows): loot, salvage and the stage effect; a model swap stage (no adapter def has
-//! one: `IN38a` gives one removing stage), debris (`IN1c`), decorative `STAT` urns (`IN38c`).
+//! one: `IN38a` gives one removing stage), debris (`IN1c`), urns kept out of the precombine (`IN38c3`).
 //! Classic rules: no destructible defs, no `Destroyed`, nothing runs.
 
 use std::sync::PoisonError;
@@ -37,7 +43,7 @@ use bevy_log::{debug, info, warn};
 use mw_interaction::breakable::draw;
 use mw_interaction::{LOOSE_STATE_OWNER, LooseItem, SpillParams, health_loss, kept_count, lost_fraction, scatter, spill_draw};
 use mw_rpg::{ATTR_HEALTH, MwItemClass, item_health, trade_item};
-use mw_scripts_bevy::{ActivePlacements, LiveRoot};
+use mw_scripts_bevy::{ActivePlacement, ActivePlacements, LiveRoot};
 use sf_coords::WorldTransform;
 use sf_interaction_bevy::sf_interaction::{self, BreakAction};
 use sf_interaction_bevy::{DestroySystems, Destroyed, Destructibles};
@@ -45,7 +51,7 @@ use sf_physics_bevy::{ItemMotion, ItemPivot};
 use sf_records::{RecordDb, RecordId};
 use sf_rpg::{ActorKey, ItemStack};
 use sf_vfs::VfsPath;
-use sf_world::{IndexedPlacement, Placement, PlacementFlags, PlacementId, RecordRef, WorldspaceId};
+use sf_world::{IndexedPlacement, Placement, PlacementClass, PlacementFlags, PlacementId, RecordRef, WorldspaceId};
 use sf_world_bevy::{PlacementSpawners, SpawnWhenReady, Streaming, WorldOverlay};
 use tes3::esp::Container;
 
@@ -112,6 +118,9 @@ pub fn remove_broken(world: &mut World, id: PlacementId) -> Removal {
 /// [`remove_broken`], with where the placement was (live, or moved / spawned in the overlay).
 fn take_out(world: &mut World, id: PlacementId) -> (Removal, Option<Spot>) {
     let (how, spot) = if let Some(a) = ActivePlacements::remove_live(world, id) {
+        if a.placement.placement.class == PlacementClass::Static {
+            hide_static(world, &a);
+        }
         (Removal::Live, Some(Spot { worldspace: a.worldspace, placement: a.placement.placement }))
     } else {
         let Some(overlay) = world.get_resource::<WorldOverlay>() else { return (Removal::Gone, None) };
@@ -133,6 +142,17 @@ fn take_out(world: &mut World, id: PlacementId) -> (Removal, Option<Spot>) {
         world.despawn(e);
     }
     (how, spot)
+}
+
+/// A live breakable static (`IN38c2`, module docs "Static"): the scene stops drawing it now (an
+/// entity-drawn one went with its `LiveRoot`: the hide finds nothing).
+fn hide_static(world: &mut World, a: &ActivePlacement) {
+    if !world.contains_resource::<Streaming>() {
+        return;
+    }
+    let id = a.placement.placement.id;
+    let hidden = world.resource_scope(|world, mut streaming: Mut<Streaming>| streaming.hide_covered(world, &a.worldspace, a.cell, id));
+    debug!("break {:032x}: static {}", id.0, if hidden { "hidden in the scene" } else { "entity-drawn" });
 }
 
 /// Lands the store of broken container `b.placement` on the floor (module docs, "Spill").

@@ -334,7 +334,8 @@ overlay removed it (B5b).
 `mw_rpg_bevy` `breakable.rs`, host `mw_exterior_bevy` `exterior.rs`). `BreakablesTable` lists the `Source::Static`
 breakables like `CONT`/`MISC` (the index hook already wraps `PlacementClass::Static`, `index.rs:134`, so the def attaches
 and the registry registers them). `mw_scripts_bevy` gains `LiveStatics(HashSet<record id>)` (a resource the host fills
-from the table; empty under Classic rules): a `Static` placement whose base is listed joins `ActivePlacements` and,
+from the table; the rule switch is live, so under Classic rules the list stays but is inert: no def attaches, nothing
+breaks, an entity-drawn urn only gains its root): a `Static` placement whose base is listed joins `ActivePlacements` and,
 when it spawns as an entity (scene off, a failed chain, the entity parts of a `Split`, a promotion), spawns under a
 `LiveRoot` like a container; no other static changes (thousands per active ring stay out of both). `remove_broken`'s
 `Live` arm for a static: `ActivePlacements::remove_live` (deactivation hooks: the collider goes; overlay removal; roots),
@@ -446,3 +447,12 @@ set, inserts the id into `promoted` (shared with promotions, so either one refus
 `promoted` (one `PromotePlacement`). Tests: `sf_world_bevy` `tests.rs` `hide_covered_is_one_way_and_only_for_what_the_scene_draws`
 (recording `TestScene`: one `hidden`, second hide false, promotion after it dropped, uncovered / not resident / unknown
 false); `sf_scene_bevy` `residency_tests.rs` `hidden_queues_one_inactive_write_per_instance_and_stays_gone_with_the_overlay`.
+
+## As built (IN38c2, 2026-11-27)
+
+`BreakablesTable::build` lists `STAT` breakables (counted apart in `BreakCounts::statics`); `static_ids(db)` and
+`insert_records`'s return give their ids, which the host puts in `mw_scripts_bevy::LiveStatics(Arc<HashSet<String>>)`
+(record id text: the crate takes no `sf_records` edge). `ScriptHandleHook`'s `liveness` makes a listed static live and
+rooted. `mw_rpg_bevy` `take_out`: a `Static` from `remove_live` then `hide_static` (`Streaming::hide_covered` under
+`resource_scope`, no-op without `Streaming`). Tests: `mw_scripts_bevy` `tests.rs` (listed vs unlisted), `mw_rpg_bevy`
+`tests_breakable.rs` (scene- and entity-drawn urn); the hide's true half is `sf_world_bevy`'s (no streamed cell here).

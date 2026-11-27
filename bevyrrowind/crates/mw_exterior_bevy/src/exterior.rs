@@ -798,8 +798,10 @@ pub fn run(vfs: Arc<Vfs>, options: ExteriorOptions) -> Result<(), Box<dyn std::e
     // IN19c: the fire lights' records (snuff / relight defs; none without loaded records).
     if let Some(db) = options.actors.as_deref() {
         mw_interaction_bevy::light::insert_records(&mut app, db);
-        // IN38b1: the breakable CONT / MISC records (none without loaded records: nothing breaks).
-        mw_interaction_bevy::breakable::insert_records(&mut app, db);
+        // IN38b1: the breakable CONT / MISC / STAT records (none without loaded records: nothing breaks);
+        // IN38c2: their decorative statics are live, so a break can take one out of the static scene.
+        let statics = mw_interaction_bevy::breakable::insert_records(&mut app, db);
+        app.insert_resource(mw_scripts_bevy::LiveStatics(Arc::new(statics)));
     }
     // `--use-door` and the `BEVYRROWIND_AUTO` dev hook (physics.rs) wait for it.
     app.add_systems(Update, mark_settled.run_if(in_state(WorldAlive)));

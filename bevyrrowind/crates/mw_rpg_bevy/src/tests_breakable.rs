@@ -2,7 +2,8 @@
 //! once (hooks, overlay, visuals), leaves a standing stage alone, and an unloaded placement's
 //! break removes it from the overlay alone. `IN38b3c`: the spill (every stack whole at no
 //! overkill, thinned and worn by a vaporising one, the take reading the loose blob, an unloaded
-//! container spilling into the overlay alone).
+//! container spilling into the overlay alone). `IN38c2`: a live breakable static, scene-drawn
+//! or entity-drawn, broken out of the world.
 
 #![allow(clippy::default_trait_access, reason = "the crate has no math dependency to name IVec3 / Vec3")]
 
@@ -21,7 +22,7 @@ use sf_physics_bevy::ItemMotion;
 use sf_records::{RecordDb, RecordId};
 use sf_rpg::{AttrValue, PlayerId};
 use sf_world::{IndexedPlacement, Partition, Placement, PlacementClass, PlacementFlags, PlacementId, RecordRef, WorldspaceId};
-use sf_world_bevy::{ActivateCx, PlacementSpawner, PlacementSpawners, SpawnCx, WorldOverlay};
+use sf_world_bevy::{ActivateCx, PlacementSpawner, PlacementSpawners, SpawnCx, Streaming, StreamingConfig, WorldOverlay};
 use tes3::esp::{Container, FixedString, MiscItem, Weapon};
 
 use crate::breakable::{Removal, remove_broken};
@@ -128,6 +129,57 @@ fn an_unloaded_placement_break_removes_it_from_the_overlay_only() {
     assert!(app.world().get_entity(root).is_ok());
     assert_eq!(remove_broken(app.world_mut(), FAR_CRATE), Removal::Gone);
     assert_eq!(remove_broken(app.world_mut(), CRATE), Removal::Live);
+}
+
+// -- IN38c2: a decorative static ---------------------------------------------------------------
+
+const URN: PlacementId = PlacementId(82);
+const DRAWN_URN: PlacementId = PlacementId(83);
+
+/// Two live `furn_urn_01` statics: [`URN`] drawn by the scene (no entity), [`DRAWN_URN`] as an
+/// entity under its root; a `Streaming` with no resident cell. Returns (app, deactivations, root).
+fn static_app() -> (App, Arc<AtomicU32>, Entity) {
+    let deactivated = Arc::new(AtomicU32::new(0));
+    let mut app = App::new();
+    let mut spawners = PlacementSpawners::default();
+    spawners.set(PlacementClass::Static, Arc::new(Counting(deactivated.clone())));
+    app.insert_resource(spawners)
+        .init_resource::<ActivePlacements>()
+        .init_resource::<WorldOverlay>()
+        .insert_resource(Streaming::new(StreamingConfig::default()));
+    crate::breakable::add(&mut app, |_| SpillParams::default());
+    let world = app.world_mut();
+    let cell_entity = world.spawn_empty().id();
+    let root = world.spawn((LiveRoot(DRAWN_URN), ChildOf(cell_entity))).id();
+    for id in [URN, DRAWN_URN] {
+        let mut placement = placed(id);
+        placement.placement.base = RecordRef::new("STAT", "furn_urn_01");
+        placement.placement.class = PlacementClass::Static;
+        let entry = ActivePlacement { placement, worldspace: ws(), cell: Default::default(), cell_entity };
+        world.resource_mut::<ActivePlacements>().0.insert(id, entry);
+    }
+    (app, deactivated, root)
+}
+
+#[test]
+fn a_broken_static_loses_its_body_and_overlay_place_whether_the_scene_or_an_entity_draws_it() {
+    let (mut app, deactivated, root) = static_app();
+    // Scene-drawn: the collider's hook once, the overlay removal; the hide finds no resident
+    // cell here (its true half is `sf_world_bevy`'s `hide_covered` test) and spawns nothing.
+    app.world_mut().write_message(broke(URN, true));
+    app.world_mut().run_schedule(FixedUpdate);
+    assert_eq!(deactivated.load(Ordering::Relaxed), 1);
+    assert!(removed(&app, URN) && !removed(&app, DRAWN_URN));
+    assert!(app.world().get_entity(root).is_ok());
+    assert_eq!(app.world().resource::<Streaming>().pending_spawns(), 0, "a static spills nothing");
+
+    // Entity-drawn: its root goes with it; a second break finds it gone.
+    app.world_mut().write_message(broke(DRAWN_URN, true));
+    app.world_mut().run_schedule(FixedUpdate);
+    assert_eq!(deactivated.load(Ordering::Relaxed), 2);
+    assert!(removed(&app, DRAWN_URN) && app.world().get_entity(root).is_err());
+    assert!(app.world().resource::<ActivePlacements>().0.is_empty());
+    assert_eq!(remove_broken(app.world_mut(), DRAWN_URN), Removal::Gone);
 }
 
 // -- IN38b3c: the spill ------------------------------------------------------------------------

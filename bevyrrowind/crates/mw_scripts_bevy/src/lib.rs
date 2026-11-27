@@ -9,7 +9,7 @@
 //! `content.scripts`, in load order), plus the shared `mw.legacy` context owned by the builtin
 //! mod `mw` (scripting-adapter.md; W3 starts translated scripts in it, L2 only creates it).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
@@ -101,6 +101,7 @@ pub fn add(app: &mut App, vfs: Arc<Vfs>, auto_activate: u32) {
         .init_resource::<SpawnTemplates>()
         .init_resource::<LiveSpawned>()
         .init_resource::<ActivePlacements>()
+        .init_resource::<LiveStatics>()
         .add_systems(PostStartup, hook_placements)
         .add_systems(Update, (track_player, cell_facts, activate.after(FocusUpdate), game_clock).chain().before(ScriptSlot::Update))
         .add_systems(Update, (report, apply_world_commands).after(ScriptSlot::Update));
@@ -239,6 +240,24 @@ pub const LIVE_CLASSES: [PlacementClass; 3] = [PlacementClass::Dynamic, Placemen
 /// the physics `ItemPivot`).
 const ROOTED_CLASSES: [PlacementClass; 1] = [mw_world::source::CONTAINER];
 
+/// The `Static` records whose placements are live like a container (`IN38c2`: the breakable
+/// decorative urns and pots, superfargoth `interaction-destruction.md` "Static removal"), by
+/// record id text: they join [`ActivePlacements`] at R0 and spawn under a [`LiveRoot`] when
+/// drawn as an entity. Every other static stays out of both. The host fills it from the
+/// breakables table; empty (the default) leaves statics as they were.
+#[derive(Resource, Clone, Debug, Default)]
+pub struct LiveStatics(pub Arc<HashSet<String>>);
+
+/// Whether `p` is live (in [`ActivePlacements`] while in R0) and, second, rooted (its visuals
+/// under a [`LiveRoot`]).
+fn liveness(world: &World, p: &Placement) -> (bool, bool) {
+    if p.class == PlacementClass::Static {
+        let listed = world.get_resource::<LiveStatics>().is_some_and(|s| s.0.contains(p.base.id.as_str()));
+        return (listed, listed);
+    }
+    (LIVE_CLASSES.contains(&p.class), ROOTED_CLASSES.contains(&p.class))
+}
+
 /// The entity a [`ROOTED_CLASSES`] placement's visuals spawn under, one per spawned level; it
 /// carries the placement's pose, the visuals keep their scale. Despawned with its cell level,
 /// or at once by [`ActivePlacements::remove_live`].
@@ -281,15 +300,15 @@ impl ActivePlacements {
     }
 }
 
-/// Registers placements entering R0 in [`ScriptPlacements`] (the [`LIVE_CLASSES`] also in
-/// [`ActivePlacements`]) and removes them on leaving; spawns [`ROOTED_CLASSES`] visuals under a
-/// [`LiveRoot`].
+/// Registers placements entering R0 in [`ScriptPlacements`] (the [`LIVE_CLASSES`] and the
+/// [`LiveStatics`] also in [`ActivePlacements`]) and removes them on leaving; spawns
+/// [`ROOTED_CLASSES`] and [`LiveStatics`] visuals under a [`LiveRoot`].
 struct ScriptHandleHook(Arc<dyn PlacementSpawner>);
 
 impl PlacementSpawner for ScriptHandleHook {
     fn spawn(&self, world: &mut World, cx: &SpawnCx<'_>, placement: &IndexedPlacement) -> u32 {
         let p = &placement.placement;
-        if !ROOTED_CLASSES.contains(&p.class) {
+        if !liveness(world, p).1 {
             return self.0.spawn(world, cx, placement);
         }
         // As the physics `ItemPivot`: the root takes the pose, the visuals the scale (LOD ranges read it).
@@ -322,7 +341,7 @@ impl PlacementSpawner for ScriptHandleHook {
                 },
             );
         }
-        if LIVE_CLASSES.contains(&p.class)
+        if liveness(world, p).0
             && let Some(mut active) = world.get_resource_mut::<ActivePlacements>()
         {
             let entry = ActivePlacement { placement: placement.clone(), worldspace: cx.worldspace.clone(), cell: cx.cell, cell_entity: cx.cell_entity };

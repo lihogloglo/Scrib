@@ -1,4 +1,5 @@
-//! Headless tests of the placement hook: which classes become script handles at R0.
+//! Headless tests of the placement hook: which classes become script handles at R0, which are live
+//! (`ActivePlacements`) and rooted (`LiveRoot`), the listed statics (`IN38c2`) among them.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -15,7 +16,7 @@ use sf_script_bevy::ScriptPlacements;
 use sf_world::{IndexedPlacement, Level, Placement, PlacementClass, PlacementFlags, PlacementId, RecordRef, WorldspaceId};
 use sf_world_bevy::{ActivateCx, EndInputs, LoadedModel, PlacementSpawner, PlacementSpawners, SpawnCx, StreamingConfig, WorldOverlay};
 
-use crate::{ActivePlacements, HANDLE_CLASSES, LiveRoot, hook_placements};
+use crate::{ActivePlacements, HANDLE_CLASSES, LiveRoot, LiveStatics, hook_placements};
 
 /// The class's own spawner: does nothing.
 struct Nothing;
@@ -180,4 +181,40 @@ fn a_container_is_live_under_its_root_and_a_live_removal_takes_it_out_once() {
     assert_eq!(count, 0);
     let world = app.world_mut();
     assert_eq!(world.query::<&LiveRoot>().iter(world).count(), 0);
+}
+
+#[test]
+fn a_listed_static_is_live_and_rooted_and_an_unlisted_one_is_not() {
+    let deactivated = Arc::new(AtomicU32::new(0));
+    let mut app = App::new();
+    let mut spawners = PlacementSpawners::default();
+    spawners.set_default(Some(Arc::new(Nothing))).set(PlacementClass::Static, Arc::new(Probe(deactivated.clone())));
+    app.insert_resource(spawners)
+        .init_resource::<ScriptPlacements>()
+        .init_resource::<ActivePlacements>()
+        .init_resource::<WorldOverlay>()
+        .insert_resource(LiveStatics(Arc::new(std::collections::HashSet::from(["furn_urn_01".to_owned()]))))
+        .add_systems(PostStartup, hook_placements);
+    app.update();
+    let urn = placed(12, "STAT", "furn_urn_01", PlacementClass::Static);
+    let wall = placed(13, "STAT", "ex_wall", PlacementClass::Static);
+
+    // Entity-drawn: the urn under its root (root + visual), the wall as before.
+    let (count, _) = spawn_visuals(&mut app, &urn);
+    assert_eq!(count, 2);
+    assert_eq!(spawn_visuals(&mut app, &wall).0, 1);
+    let world = app.world_mut();
+    let roots: Vec<LiveRoot> = world.query::<&LiveRoot>().iter(world).copied().collect();
+    assert_eq!(roots, [LiveRoot(PlacementId(12))]);
+
+    // R0: the urn is live, the wall a script handle only; both leave with their cell.
+    residency(&mut app, &urn, true);
+    residency(&mut app, &wall, true);
+    let active = &app.world().resource::<ActivePlacements>().0;
+    assert_eq!(active.keys().copied().collect::<Vec<_>>(), [PlacementId(12)]);
+    assert_eq!(app.world().resource::<ScriptPlacements>().loaded.len(), 2);
+    residency(&mut app, &urn, false);
+    residency(&mut app, &wall, false);
+    assert!(app.world().resource::<ActivePlacements>().0.is_empty());
+    assert_eq!(deactivated.load(Ordering::Relaxed), 2);
 }

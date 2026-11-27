@@ -72,8 +72,10 @@ fn table_lists_breakables_and_refuses_scripted_ones() {
             ("contain_crate_01", Breakable { class: BreakClass::Crate, spills: true }),
             ("contain_crate_tidy", Breakable { class: BreakClass::Crate, spills: true }),
             (POT_BASE, Breakable { class: BreakClass::Pottery, spills: false }),
+            ("furn_urn_01", Breakable { class: BreakClass::Urn, spills: false }),
         ])
     );
+    assert_eq!(table.static_ids(&db), std::collections::HashSet::from(["furn_urn_01".to_owned()]));
     assert_eq!(
         counts,
         BreakCounts {

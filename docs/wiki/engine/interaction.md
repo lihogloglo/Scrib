@@ -42,9 +42,11 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   tick) and queues each crossed stage; `Release` sends at most `breaks_per_tick` `Destroyed` (hit tick, `break_seed`)
   and `Remove { OwnerDestroyed }` for a removing stage of a resident object (claims end next tick). `DestructRest`
   restores clamped, no event. Drops: gone, factor <= 0, non-script kinds on `ignore_external`.
-- **Game breakables.** `mw_interaction_bevy/src/breakable.rs` (IN38b1): `BreakablesTable` (CONT + MISC records,
+- **Game breakables.** `mw_interaction_bevy/src/breakable.rs` (IN38b1): `BreakablesTable` (CONT + MISC + STAT records,
   `classify` with script facts: own script with an `OnActivate`-like block, or named by any script/dialogue token,
-  refuses; STAT urns counted only, IN38c); the index hook (`index.rs`, now also on `Dynamic`) attaches
+  refuses; STAT urns and pots listed since IN38c2, their ids made live by the host as `mw_scripts_bevy::LiveStatics`:
+  they join `ActivePlacements` and an entity-drawn one spawns under a `LiveRoot`; a removing break runs `remove_live`
+  then `Streaming::hide_covered`, `mw_rpg_bevy` `breakable.rs`); the index hook (`index.rs`, now also on `Dynamic`) attaches
   `destructible_def` + material to the furniture def or a slotless def (kept indexed with sitting off), then sends
   `DestructRest` from overlay owner `destruct`; `DestructionRules` = `damage_rules(BreakSettings)` live; standing
   `DestructChanged` saved to the overlay (a removing state writes none). Dev build: `Delete` breaks the focus.
@@ -124,7 +126,7 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
 
 - No rest UI: `RestRequested` is only logged. Lying down (IN3b) and lean (IN3c) wait for baked bed and lean clips.
 - `interact.cook` is a stub (`sf_interaction/src/cook.rs:16`); defs are cooked by the game's bake step only.
-- Carry and world rules are spec only; breaking removes the object and spills a container's contents, no debris (IN1c), no `STAT` urns (IN38c).
+- Carry and world rules are spec only; breaking removes the object and spills a container's contents, no debris (IN1c); `STAT` urns in the near precombine (`--off scene` arm) stay drawn until IN38c3 keeps them out of it.
 - Lights: off-by-default lights get no def; the loop sound and the AI's light copy don't follow `LightChanged` yet.
 - History of each slice: [ledger](../../ledger/interaction.md).
 

@@ -3,6 +3,7 @@
 One line per finished session, newest first (moved verbatim from the ROADMAP "Recent" section 2026-10-25). Not read at session start. Older history: `archive/`.
 
 ## Recent (last ~10 entries; older ones drop into the archive)
+- 2026-11-27 (interaction loop, IN38c2): decorative urns and pots (Morrowind `STAT`s) now break like crates: the collider, the drawn object and its saved place go at once (the precombine view, `--off scene`, still draws them until IN38c3).
 - 2026-11-27 (interaction loop, IN38c1): the streaming layer can now remove one object the static scene draws in batches (all its pieces vanish at once, nothing replaces it); groundwork for breaking decorative urns and pots (IN38c2).
 - 2026-11-27 (interaction loop, IN38b3c): breaking a crate, barrel, sack or urn now spills what it held on the floor around it: an ordinary smash keeps everything, a crushing blow destroys part of each stack and wears weapons and armour (gold always survives); the items fall, settle, can be picked up with their count and condition, and stay where they landed across reloads and saves.
 - 2026-11-27 (interaction loop, IN38b3b): an item that left a loaded area while still moving (thrown, falling) now comes back moving with the speed it had, instead of frozen in the air; a spilled item can be placed so it drops and settles (IN38b3c).
