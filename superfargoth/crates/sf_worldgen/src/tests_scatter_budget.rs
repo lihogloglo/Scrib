@@ -409,3 +409,103 @@ fn the_full_radius_keeps_everything_inside_and_one_remainder_outside() {
         }
     }
 }
+
+/// A synthetic stand for WG-E2q: 1 ha tiles (100 m) of `canopy[t]` canopy and 300 understorey instances each, at
+/// hashed positions inside their tile, plus 200 rocks.
+#[allow(clippy::cast_possible_wrap)] // tile indices 0..2
+fn stand_fixture(canopy: [u32; 4]) -> LayerWinners {
+    use crate::scatter_rocks::{RockCandidate, RockKey};
+    use crate::scatter_species::RockContext;
+    let at = |t: u32, i: u32, salt: u64| {
+        let h = mix(u64::from(t) << 40 | u64::from(i) << 8 | salt);
+        let (ox, oy) = (f64::from(t % 2) * 100.0, f64::from(t / 2) * 100.0);
+        [ox + unit(h) * 100.0, oy + unit(mix(h)) * 100.0]
+    };
+    let mut plants = Vec::new();
+    for t in 0..4u32 {
+        for (layer, n) in [(Layer::Canopy, canopy[t as usize]), (Layer::Understorey, 300)] {
+            for i in 0..n {
+                let key = CandidateKey { layer, species: t, tile: ((t % 2) as i32, (t / 2) as i32), parent: i / 7, offspring: i % 7 };
+                let size_m = if layer == Layer::Canopy { 4.0 + f64::from(i % 17) } else { 0.5 + f64::from(i % 5) * 0.3 };
+                plants.push(Candidate { key, pos: at(t, i, layer as u64), size_m, crown_m: 1.0, tiebreak: u64::from(i) });
+            }
+        }
+    }
+    let rocks = (0..200u32)
+        .map(|i| RockCandidate {
+            key: RockKey { context: RockContext::Field, tile: (0, 0), parent: i / 10, offspring: i % 10 },
+            pos: at(i % 4, i, 9),
+            size_m: 0.3 + f64::from(i % 13),
+            tiebreak: u64::from(i),
+            source: [0.0, 0.0],
+        })
+        .collect();
+    LayerWinners { rocks, plants }
+}
+
+/// WG-E2q: the stand cap keeps at most `round(cap x tile area)` canopy instances per tile, the lowest budget ranks,
+/// before the full radius (inside it too) and the budget; lower layers and rocks are never capped; a cap above every
+/// tile's density is the uncapped cut; budgets still nest.
+#[test]
+fn the_stand_cap_keeps_the_lowest_ranks_per_tile_before_the_radius_and_budget() {
+    let w = stand_fixture([600, 400, 100, 1000]);
+    let stand = Stand { tile_m: 100.0, stems_per_ha_max: 400.0 };
+    let capped = stand_cap(SEED, &w.plants, stand);
+    assert_eq!(capped, stand_cap(SEED, &w.plants, stand), "pure");
+    let tile = |c: &Candidate| ((c.pos[0] / 100.0).floor() as i32, (c.pos[1] / 100.0).floor() as i32);
+    let canopy_kept = |keep: &[bool], t: (i32, i32)| {
+        w.plants.iter().zip(keep).filter(|(c, k)| **k && c.key.layer == Layer::Canopy && tile(c) == t).count()
+    };
+    for (t, n) in [((0, 0), 600), ((1, 0), 400), ((0, 1), 100), ((1, 1), 1000)] {
+        assert_eq!(canopy_kept(&capped, t), n.min(400), "tile {t:?}");
+        // The survivors are the lowest ranks of their tile.
+        let rank = |keep: bool| {
+            w.plants.iter().zip(&capped).filter(move |(c, k)| **k == keep && c.key.layer == Layer::Canopy && tile(c) == t)
+                .map(|(c, _)| budget_rank(SEED, &c.key))
+        };
+        let (top, low) = (rank(true).fold(0.0, f64::max), rank(false).fold(1.0, f64::min));
+        assert!(top < low, "tile {t:?}: survivor rank {top} under dropped {low}");
+    }
+    let under = w.plants.iter().zip(&capped).filter(|(c, _)| c.key.layer != Layer::Canopy);
+    assert!(under.clone().all(|(_, k)| *k) && under.count() == 1200, "lower layers never capped");
+    let prm = |budget: f64, cap: f64, focus: Option<[f64; 2]>| Params {
+        seed: SEED,
+        tile_m: 100.0,
+        budget,
+        size_priority: 1.0,
+        full_radius_m: 300.0,
+        focus,
+        canopy_stems_per_ha_max: cap,
+        ..Params::default()
+    };
+    let centre = Some([100.0, 100.0]);
+    let n = w.rocks.len() + w.plants.len();
+    let n_capped = w.rocks.len() + capped.iter().filter(|&&k| k).count();
+    // Inside the radius (here the whole fixture) and with any budget, no tile above the cap.
+    for b in [0.0, 500.0, n as f64] {
+        let cut = budget_cut_load(&w, &prm(b, 400.0, centre));
+        assert!(cut.plants.iter().zip(&capped).all(|(k, c)| !k || *c), "a capped plant is never kept at budget {b}");
+        assert_eq!(cut.plants, capped, "the radius covers the fixture: every survivor kept at budget {b}");
+        assert_eq!(cut.inside.iter().sum::<usize>(), n_capped, "inside counts the survivors only");
+        assert!(cut.rocks.iter().all(|&k| k), "rocks never capped");
+    }
+    // Without a focus: the budget cuts the survivors (their count is the set), and budgets nest.
+    let mut previous: Option<FocusCut> = None;
+    for b in [0.0, 300.0, 1000.0, (n_capped - 1) as f64, n_capped as f64, n as f64] {
+        let cut = budget_cut_load(&w, &prm(b, 400.0, None));
+        assert!(cut.plants.iter().zip(&capped).all(|(k, c)| !k || *c), "capped never kept at budget {b}");
+        let kept = cut.rocks.iter().chain(&cut.plants).filter(|&&k| k).count();
+        assert!((kept as f64 - b.min(n_capped as f64)).abs() <= 2.0, "kept {kept} at budget {b} of {n_capped}");
+        if let Some(p) = &previous {
+            let nests = p.rocks.iter().zip(&cut.rocks).chain(p.plants.iter().zip(&cut.plants)).all(|(a, b)| !a || *b);
+            assert!(nests, "budget {b} keeps a superset of the one below");
+        }
+        previous = Some(cut);
+    }
+    // A cap above every tile's density (1000/ha here) is the uncapped cut, with a focus or without.
+    for b in [0.0, 700.0, n as f64] {
+        for (focus, f) in [(None, None), (centre, Some(Focus { at: [100.0, 100.0], radius_m: 300.0 }))] {
+            assert_eq!(budget_cut_load(&w, &prm(b, 2000.0, focus)), budget_cut_focus(SEED, &w, b, 1.0, f), "cap 2000 at {b}");
+        }
+    }
+}

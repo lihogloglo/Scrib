@@ -214,8 +214,8 @@ first), canopy, understorey, ground flora. "Shared" = the rocks slice reuses it 
     one `t_g` per group by the v1 bisection: budgets nest exactly, smallest cut first, gaps left open (LOD-style; no
     re-competition). Groups: canopy, understorey, ground, rocks (WG-E3). All at load, none in the product hash: the
     load values are declared beside `scatter.budget` in `scatter.rs`'s v1 `Params` (not hashed, V `product_inputs`)
-    and set by `--set` the way the app reads `scatter.budget` (`world.rs:96-100`). `canopy_stems_per_ha_max` is today
-    a species-file value (`scatter_species.rs:104`, hashed, never read, E2n): E2q moves it to `Params` (REVIEW).
+    and set by `--set` the way the app reads `scatter.budget` (`world.rs` `flora_load_params`). `canopy_stems_per_ha_max` was a
+    species-file value (hashed, never read, E2n); since E2q it is declared in `scatter.rs` and read into `Params`.
     - **Stand cap** (E2q, applied first, inside the full radius too): per product tile (`tile_m` 256 m, 6.55 ha, by
       position), canopy instances above `round(canopy_stems_per_ha_max x tile area)` are dropped in rank order
       (largest `u` first: a uniform thinning, sizes kept unbiased; the survivor set is budget-independent, so the
@@ -552,6 +552,10 @@ for WG-E1c3 and WG-V1b. Order a to h, then i, j, m; then the density fix o.1, o.
   case), `Params::full_radius_m` (declared `scatter.full_radius_m` 1000 m) + `Params::focus`; `flora::place` reads both;
   `flora::extra` takes the load `Params`; app `world.rs` `flora_load_params`: focus `(eye.x, -eye.z)`, both `--set` values
   range-checked; log `worldgen flora: full radius ...` with placed inside per group): as Design 10, one global remainder.
+- **WG-E2q** (2026-11-27, `scatter.rs` `Stand`, `stand_cap`, `budget_cut_load` (cap, then `budget_cut_focus` on the
+  survivors: capped plants are out of `n`, the shares and the inside count), `Params::canopy_stems_per_ha_max` (moved
+  from `scatter_species.rs`, so no longer in the product hash); `flora::place` calls `budget_cut_load`; app `--set
+  scatter.canopy_stems_per_ha_max` range-checked): as Design 10, cap tile = `scatter.tile_m` by position, rank = `budget_rank`.
 
 ## Tunables
 
@@ -565,7 +569,7 @@ Prefix `scatter.`; source Guess unless noted. Species columns go in the file's `
 | `field_step_m` | m | 1-16 | 4 | Guess (WG-R: 4-8 m) |
 | `competition_rounds` | count | 1-6 | 3 | Guess (D) |
 | `shade_per_crown` | ratio | 0.2-3 | 1.0 | Makowski form (V), value Guess |
-| `canopy_stems_per_ha_max` | 1/ha | 50-2000 | 400 | big-world-rendering.md "stand" (V); load only, moves to v1 `Params` at E2q (today a hashed species-file value) |
+| `canopy_stems_per_ha_max` | 1/ha | 50-2000 | 400 | big-world-rendering.md "stand" (V); load only, v1 `Params` (`scatter.rs`, since E2q; not hashed) |
 | `region_prior_max` | ratio | 1-10 | 3 | Guess |
 | `class.<name>.stems_per_ha` | 1/ha | per row, 0-50 (desert, tundra, grassland) to 0-1000 (forests) | table above | Guess (`scatter_species.toml` `[classes]`) |
 | `class.<name>.size_max_m` | m | 1-40 | unset; adapter taiga 13, temperate forest 18, temperate rainforest 13 | Reineke (U); Guess from the Matern II ceiling x ~2.2 (E2o.c); set only for a class E2o.m reports off (Counts "Ceiling") |

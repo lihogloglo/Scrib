@@ -1076,3 +1076,51 @@ fn calibration_gap(
     let checks = cal.classes.iter().map(|c| c.joint_checks).max().unwrap_or(0);
     println!("calibration: {:.1} s, {checks} joint checks", cal.seconds);
 }
+
+/// WG-E2q: the stand cap at load. On the fixture's kept set, a cap at half the densest tile's canopy leaves no tile
+/// above `round(cap x tile area)`, keeps the lower layers and a subset of the canopy, and is not in the product hash
+/// (a change reads it); a cap above every tile (2000/ha) places what no cap places.
+#[test]
+fn the_stand_cap_thins_the_densest_tiles_at_load() {
+    use flora::ProductUse;
+    use std::collections::{BTreeMap, BTreeSet};
+    let m = mosaic();
+    let regions = regions();
+    let l = learned(&m);
+    let t = tiles(&m);
+    let towns = TownMask::default();
+    let world = World::new(&m, &regions, &t, None, &towns);
+    let f = fields(&world);
+    let prm = Params { budget: f64::from(u32::MAX), ..Params::default() };
+    let prior = flora::region_prior(&l.density, &[vec![0; 3], vec![1, 0, 0]]);
+    let water = WaterMask::sea(0.0, prm.water_margin_m);
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let run = |prm: &Params| {
+        let (plants, _, used, _) = flora::scatter_cached(d, &l, &world, &f, &water, &prior, prm).unwrap();
+        (plants, used)
+    };
+    let (open, used) = run(&Params { canopy_stems_per_ha_max: f64::MAX, ..prm });
+    assert_eq!(used, ProductUse::Wrote);
+    let per_tile = |v: &[flora::Plant]| {
+        let mut n: BTreeMap<(i64, i64), usize> = BTreeMap::new();
+        for p in v.iter().filter(|p| p.key.layer == Layer::Canopy) {
+            *n.entry(((p.pos[0] / prm.tile_m).floor() as i64, (p.pos[1] / prm.tile_m).floor() as i64)).or_default() += 1;
+        }
+        n
+    };
+    let densest = per_tile(&open).into_values().max().unwrap_or(0);
+    assert!(densest >= 4, "the fixture has a canopy stand: {densest} in its densest tile");
+    let area_ha = prm.tile_m * prm.tile_m / 10_000.0;
+    let limit = densest / 2;
+    let capped = Params { canopy_stems_per_ha_max: limit as f64 / area_ha, ..prm };
+    let (cut, used) = run(&capped);
+    assert_eq!(used, ProductUse::Read, "the cap is a load value: the product is read");
+    assert!(per_tile(&cut).into_values().all(|n| n <= limit), "no tile above {limit}");
+    let keys = |v: &[flora::Plant], canopy: bool| {
+        v.iter().filter(|p| (p.key.layer == Layer::Canopy) == canopy).map(|p| p.key).collect::<BTreeSet<_>>()
+    };
+    assert_eq!(keys(&cut, false), keys(&open, false), "lower layers never capped");
+    assert!(keys(&cut, true).len() < keys(&open, true).len() && keys(&cut, true).is_subset(&keys(&open, true)));
+    assert_eq!(run(&Params { canopy_stems_per_ha_max: 2000.0, ..prm }).0, open, "a cap above every tile is no cap");
+}

@@ -55,7 +55,7 @@ use sf_worldgen::climate_map::ClimateMap;
 use sf_worldgen::guide::Guide;
 use sf_worldgen::reach::VALID_FILE;
 use sf_worldgen::roads::RoadNetwork;
-use sf_worldgen::scatter::{CandidateKey, CandidateRules, CanopyTargets, Focus, LayerWinners, Params, WaterMask, budget_cut_focus};
+use sf_worldgen::scatter::{CandidateKey, CandidateRules, CanopyTargets, LayerWinners, Params, WaterMask, budget_cut_load};
 use sf_worldgen::scatter_calib::{self, Calibration};
 use sf_worldgen::scatter_product::{self, InputsHash};
 use sf_worldgen::scatter_fields::{Fields, GridFields, Suitability};
@@ -944,8 +944,9 @@ pub fn winners(
     })
 }
 
-/// The load half of a pass on a kept set: the budget (four groups; with `prm.focus`, every instance within
-/// `prm.full_radius_m` of it placed and one remainder outside, [`budget_cut_focus`], WG-E2p), then the pose. Returns
+/// The load half of a pass on a kept set ([`budget_cut_load`]): the stand cap per tile (`prm.canopy_stems_per_ha_max`,
+/// WG-E2q), then the budget (four groups; with `prm.focus`, every survivor within `prm.full_radius_m` of it placed and
+/// one remainder outside, WG-E2p), then the pose. Returns
 /// (plants, full count per budget group).
 #[must_use]
 pub fn place(learned: &Learned, world: &World<'_>, prm: &Params, won: &LayerWinners) -> (Vec<Plant>, [usize; 4]) {
@@ -953,8 +954,7 @@ pub fn place(learned: &Learned, world: &World<'_>, prm: &Params, won: &LayerWinn
     for c in &won.plants {
         full[1 + c.key.layer as usize] += 1;
     }
-    let focus = prm.focus.map(|at| Focus { at, radius_m: prm.full_radius_m });
-    let keep = budget_cut_focus(prm.seed, won, prm.budget, prm.size_priority, focus).plants;
+    let keep = budget_cut_load(won, prm).plants;
     let plants = won.plants.iter().zip(keep).filter(|(_, k)| *k).filter_map(|(c, _)| pose(learned, world, prm.seed, c)).collect();
     (plants, full)
 }
@@ -1201,7 +1201,8 @@ pub(crate) fn guide_inputs(guide: &Path, tiles: &GuideTiles, prm: &Params) -> Re
 }
 
 /// The hook of `view world:<dir>` (`mw_exterior_bevy::worldgen::WorldgenContent::extra`): the flora pass at `prm`'s
-/// load values (the declared defaults with the app's `--set scatter.budget` / `scatter.full_radius_m` and its start
+/// load values (the declared defaults with the app's `--set scatter.budget`, `scatter.full_radius_m`,
+/// `scatter.canopy_stems_per_ha_max` and its start
 /// position as the focus, WG-E2p) on the `guide` folder's products
 /// ([`species_file`], [`product_fields`], `water.json`, [`guide_clearings`]) outside the guide's `towns` (one
 /// placement list per town, `bounds` covering their models), logged; an error is logged and gives nothing.

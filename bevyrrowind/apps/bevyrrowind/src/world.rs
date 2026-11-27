@@ -235,12 +235,18 @@ fn with_exterior_layers(
 }
 
 /// The flora pass's load values, read before the app because the pass runs before it: `--set scatter.budget=<count>`
-/// (WG-X5) and `--set scatter.full_radius_m=<m>` (WG-E2p), each checked against its declared range and taken out of
-/// `set` (load-time values, not app tunables: the app's `--set` check would reject the names); the focus is the start
-/// position `eye` in the scatter plane (x east, y north: `(eye.x, -eye.z)`, the inverse of `flora::placements`).
+/// (WG-X5), `--set scatter.full_radius_m=<m>` (WG-E2p) and `--set scatter.canopy_stems_per_ha_max=<1/ha>` (WG-E2q),
+/// each checked against its declared range and taken out of `set` (load-time values, not app tunables: the app's
+/// `--set` check would reject the names); the focus is the start position `eye` in the scatter plane (x east, y north:
+/// `(eye.x, -eye.z)`, the inverse of `flora::placements`).
 fn flora_load_params(set: &mut Vec<String>, eye: glam::DVec3) -> Result<sf_worldgen::scatter::Params, String> {
     let mut flora = sf_worldgen::scatter::Params { focus: Some([eye.x, -eye.z]), ..Default::default() };
-    for (name, slot) in [("scatter.budget", &mut flora.budget), ("scatter.full_radius_m", &mut flora.full_radius_m)] {
+    let slots = [
+        ("scatter.budget", &mut flora.budget),
+        ("scatter.full_radius_m", &mut flora.full_radius_m),
+        ("scatter.canopy_stems_per_ha_max", &mut flora.canopy_stems_per_ha_max),
+    ];
+    for (name, slot) in slots {
         let prefix = format!("{name}=");
         if let Some(raw) = set.iter().find_map(|s| s.strip_prefix(prefix.as_str())) {
             let d = sf_worldgen::scatter::declared().into_iter().find(|d| d.name == name).ok_or(format!("--set {name}: undeclared"))?;

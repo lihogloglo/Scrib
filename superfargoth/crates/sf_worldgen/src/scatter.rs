@@ -75,6 +75,9 @@ pub fn declared() -> Vec<Declared> {
         d("scatter.full_radius_m", 1000.0, "m", 0.0, 8000.0,
           "Guess(UE PCG runtime generation radius, U; spec Design 10: 1 km holds ~75 k of a 200 k budget on x10s)",
           "every kept instance this close to the focus (the start position) is placed whatever the budget; 0 = off"),
+        d("scatter.canopy_stems_per_ha_max", 400.0, "1/ha", 50.0, 2000.0,
+          "Reference(big-world-rendering.md Cost model, the stand case)",
+          "cap on canopy stems per hectare of a tile at load, lowest ranks kept; before the full radius and the budget"),
     ]
 }
 
@@ -93,6 +96,8 @@ pub struct Params {
     /// The focus of the full radius in the scatter plane, m (x east, y north): the host's start position, a fact of
     /// the load (not a tunable); `None` = the whole-world cut.
     pub focus: Option<[f64; 2]>,
+    /// Stand cap, canopy stems per hectare of a tile ([`stand_cap`], WG-E2q). Load only, like `budget`.
+    pub canopy_stems_per_ha_max: f64,
     /// Sea level of the terrain, metres (a fact of the terrain, not a tunable; 0 by default).
     pub sea_level_m: f64,
 }
@@ -110,6 +115,7 @@ impl Default for Params {
             size_priority: v("scatter.size_priority"),
             full_radius_m: v("scatter.full_radius_m"),
             focus: None,
+            canopy_stems_per_ha_max: v("scatter.canopy_stems_per_ha_max"),
             sea_level_m: 0.0, // tunables: const (a fact of the terrain the host passes, not a tunable)
         }
     }
@@ -1582,50 +1588,125 @@ pub struct FocusCut {
 /// outside set, smallest entry first (a per-group remainder would let the total pass the budget whenever one
 /// group's inside exceeds its share). Total `max(budget, inside)` capped by the set (up to the per-group rounding);
 /// budgets nest at a fixed focus. No focus or a radius at most 0: [`budget_cut_layers`]' cut, nothing inside.
-// Counts of instances: far under 2^52.
-#[allow(clippy::cast_precision_loss)]
 #[must_use]
 pub fn budget_cut_focus(seed: u64, w: &LayerWinners, budget: f64, size_priority: f64, focus: Option<Focus>) -> FocusCut {
+    cut_eligible(seed, w, budget, size_priority, focus, None)
+}
+
+/// The stand cap of pass 10 (spec "Design" 10, WG-E2q): per tile of edge `tile_m` (by position), at most
+/// `round(stems_per_ha_max x tile area)` canopy instances, the lowest [`budget_rank`]s (ties by key): a uniform
+/// thinning that keeps the sizes unbiased. Lower layers and rocks are never capped.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stand {
+    /// Edge of a cap tile, m (the product's `scatter.tile_m`).
+    pub tile_m: f64,
+    /// Canopy stems per hectare of a tile (`scatter.canopy_stems_per_ha_max`).
+    pub stems_per_ha_max: f64,
+}
+
+/// Which of `plants` the [`Stand`] cap keeps, in input order. The survivors depend on the seed, the set and the cap
+/// only (not the budget), so the budgets cut after it still nest.
+// Tile indices of positions in any world (|x| / tile_m far under 2^62); counts far under 2^52.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[must_use]
+pub fn stand_cap(seed: u64, plants: &[Candidate], stand: Stand) -> Vec<bool> {
+    let mut keep = vec![true; plants.len()];
+    let cap = (stand.stems_per_ha_max.max(0.0) * stand.tile_m * stand.tile_m / M2_PER_HA).round() as usize;
+    let mut tiles: BTreeMap<(i64, i64), Vec<(f64, usize)>> = BTreeMap::new();
+    for (i, c) in plants.iter().enumerate().filter(|(_, c)| c.key.layer == Layer::Canopy) {
+        let t = ((c.pos[0] / stand.tile_m).floor() as i64, (c.pos[1] / stand.tile_m).floor() as i64);
+        tiles.entry(t).or_default().push((budget_rank(seed, &c.key), i));
+    }
+    let order = |a: &(f64, usize), b: &(f64, usize)| a.0.total_cmp(&b.0).then(plants[a.1].key.cmp(&plants[b.1].key));
+    for members in tiles.values_mut().filter(|m| m.len() > cap) {
+        if cap > 0 {
+            members.select_nth_unstable_by(cap - 1, order);
+        }
+        for &(_, i) in &members[cap..] {
+            keep[i] = false;
+        }
+    }
+    keep
+}
+
+/// The whole load cut of pass 10 from the load [`Params`]: the [`stand_cap`] first (`tile_m`,
+/// `canopy_stems_per_ha_max`; inside the full radius too), then [`budget_cut_focus`] on its survivors (`budget`,
+/// `size_priority`, `focus` with `full_radius_m`). A capped instance is never kept, nor counted inside or in `n`.
+#[must_use]
+pub fn budget_cut_load(w: &LayerWinners, prm: &Params) -> FocusCut {
+    let focus = prm.focus.map(|at| Focus { at, radius_m: prm.full_radius_m });
+    let stand = Stand { tile_m: prm.tile_m, stems_per_ha_max: prm.canopy_stems_per_ha_max };
+    let capped = stand_cap(prm.seed, &w.plants, stand);
+    cut_eligible(prm.seed, w, prm.budget, prm.size_priority, focus, Some(&capped))
+}
+
+/// [`budget_cut_focus`] over the rocks and the `plants_eligible` plants only (every plant when `None`): the others
+/// are neither kept nor counted in `n`, inside or the groups' shares.
+// Counts of instances: far under 2^52.
+#[allow(clippy::cast_precision_loss)]
+fn cut_eligible(
+    seed: u64,
+    w: &LayerWinners,
+    budget: f64,
+    size_priority: f64,
+    focus: Option<Focus>,
+    plants_eligible: Option<&[bool]>,
+) -> FocusCut {
     let nr = w.rocks.len();
-    let n = nr + w.plants.len();
-    let rocks = w.rocks.iter().enumerate().map(|(i, c)| {
-        (0, budget_entry(rock_budget_rank(seed, &c.key), c.size_m, size_priority), i)
-    });
-    let plants = w.plants.iter().enumerate().map(|(i, c)| {
-        (layer_group(c.key.layer), budget_entry(budget_rank(seed, &c.key), c.size_m, size_priority), nr + i)
-    });
-    let entries: Vec<(u8, f64, usize)> = rocks.chain(plants).collect();
+    // `idx[j]`: the index (rocks, then plants) of eligible instance `j`.
+    let idx: Vec<usize> = (0..nr)
+        .chain((0..w.plants.len()).filter(|&i| plants_eligible.is_none_or(|e| e[i])).map(|i| nr + i))
+        .collect();
+    let n = idx.len();
+    let entries: Vec<(u8, f64, usize)> = idx
+        .iter()
+        .enumerate()
+        .map(|(j, &i)| {
+            if i < nr {
+                let c = &w.rocks[i];
+                (0, budget_entry(rock_budget_rank(seed, &c.key), c.size_m, size_priority), j)
+            } else {
+                let c = &w.plants[i - nr];
+                (layer_group(c.key.layer), budget_entry(budget_rank(seed, &c.key), c.size_m, size_priority), j)
+            }
+        })
+        .collect();
     let tie = |a: usize, b: usize| {
+        let (a, b) = (idx[a], idx[b]);
         if a < nr { w.rocks[a].key.cmp(&w.rocks[b].key) } else { w.plants[a - nr].key.cmp(&w.plants[b - nr].key) }
     };
     let mut inside = [0usize; 4];
-    let mut keep = match focus.filter(|f| f.radius_m > 0.0) {
+    let kept = match focus.filter(|f| f.radius_m > 0.0) {
         None => cut_groups(n, budget, entries, &tie),
         Some(f) => {
             let r2 = f.radius_m * f.radius_m;
-            let pos = |i: usize| if i < nr { w.rocks[i].pos } else { w.plants[i - nr].pos };
+            let pos = |j: usize| if idx[j] < nr { w.rocks[idx[j]].pos } else { w.plants[idx[j] - nr].pos };
             let near = |p: [f64; 2]| (p[0] - f.at[0]).powi(2) + (p[1] - f.at[1]).powi(2) <= r2;
             let mut keep = vec![false; n];
-            // The outside set, renumbered 0.. (`out[j]` its index in `entries`' numbering).
+            // The outside set, renumbered 0.. (`out[k]` its index in `entries`' numbering).
             let mut out = Vec::new();
             let mut out_entries = Vec::new();
-            for (g, e, i) in entries {
-                if near(pos(i)) {
-                    keep[i] = true;
+            for (g, e, j) in entries {
+                if near(pos(j)) {
+                    keep[j] = true;
                     inside[usize::from(g)] += 1;
                 } else {
                     out_entries.push((g, e, out.len()));
-                    out.push(i);
+                    out.push(j);
                 }
             }
             let remainder = (budget - inside.iter().sum::<usize>() as f64).max(0.0);
             let cut = cut_groups(out.len(), remainder, out_entries, &|a, b| tie(out[a], out[b]));
-            for (j, k) in cut.into_iter().enumerate() {
-                keep[out[j]] |= k;
+            for (k, c) in cut.into_iter().enumerate() {
+                keep[out[k]] |= c;
             }
             keep
         }
     };
+    let mut keep = vec![false; nr + w.plants.len()];
+    for (j, k) in kept.into_iter().enumerate() {
+        keep[idx[j]] = k;
+    }
     let plants = keep.split_off(nr);
     FocusCut { rocks: keep, plants, inside }
 }
