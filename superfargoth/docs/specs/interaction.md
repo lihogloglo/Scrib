@@ -761,6 +761,13 @@ Sims' surface "slots" on tables and shelves where a carried object goes (communi
 find-then-claim split; it departs from EQS by trying points in fixed order with one validity test instead of scoring,
 so tier 0 needs no physics or trace, only `floor`.
 
+## As built (IN46a, 2026-11-27)
+
+`SlotKind::Surface { family }` (`def.rs`) and `KindTag::Surface { family }` (`index.rs`): the family is pushed into
+`IndexedSlot::tags` after the verb, like a pose family, so `find_slots` finds a surface by `place` or `place.shelf`.
+`rank_verbs` skips Surface slots (`verbs.rs`), so the prompt and activation never see them. Test:
+`surface_slot_is_indexed_with_its_family_and_never_offered` (`tests_queries.rs`). `spot.rs` is IN46b.
+
 ## As built (IN3a, 2026-11-27)
 
 `sf_interaction::VERB_SLEEP` (`rest.rs`); `sf_interaction_bevy::rest`: `RestRequested { tick, user, actor, placement,

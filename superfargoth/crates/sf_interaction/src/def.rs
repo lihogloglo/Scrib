@@ -148,6 +148,9 @@ pub enum SlotKind {
     Workstation(WorkstationDef),
     /// Snuff/relight a light-bearing object ((d) World rules, IN28).
     Light(LightDef),
+    /// A put-down point for carried props (a shelf board, a table top): a claim target, never a use
+    /// (`rank_verbs` skips it; interaction.md "Errand spots").
+    Surface { family: TagId },
 }
 
 /// A hinged leaf (IN33 builds the swing).

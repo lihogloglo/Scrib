@@ -240,6 +240,33 @@ fn rank_verbs_hides_slot_verbs_whose_claim_would_be_refused() {
     assert!(c.claim_on(s(1, 0)).is_none());
 }
 
+/// A shelf with one put-down point (slot 0) and a seat beside it (slot 1).
+fn shelf() -> InteractableDef {
+    let surface = slot_def(
+        SlotKind::Surface { family: tag("place.shelf") },
+        verb("place", 5, TagFilter::default()),
+        at(0.0, 1.2, 0.0),
+        smallvec![],
+    );
+    def(vec![surface, seat("sit")], smallvec![], vec![])
+}
+
+#[test]
+fn surface_slot_is_indexed_with_its_family_and_never_offered() {
+    let d = shelf();
+    let mut ix: PointIndex<u32> = PointIndex::new();
+    ix.insert_placement(p(1), &d, &at(2.0, 0.0, 0.0), &1, |_| true);
+    let entry = ix.get(s(1, 0)).expect("surface indexed");
+    assert_eq!(entry.kind, KindTag::Surface { family: tag("place.shelf") });
+    assert_eq!(entry.tags.as_slice(), &[tag("place"), tag("place.shelf")]);
+    for f in [any_of("place"), any_of("place.shelf")] {
+        assert_eq!(refs(ix.find_slots(Vec3::ZERO, 5.0, &f, SlotUser::default(), linear)), vec![s(1, 0)]);
+    }
+    let choices = rank_verbs(&d, p(1), &[], |_| true);
+    assert_eq!(verbs_of(&choices), vec![tag("sit")], "the surface is a claim target, the seat a use");
+    assert_eq!(choices[0].target, VerbTarget::Slot(s(1, 1)));
+}
+
 /// 10 Hz: switch 0.15 s = 2 ticks, hold 0.35 s = 3 ticks (0.35 as f32 is just under, 3.4999 rounds down).
 fn focus_params() -> InteractParams {
     InteractParams { tick_hz: 10.0, ..InteractParams::default() }

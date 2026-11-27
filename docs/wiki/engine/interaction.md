@@ -15,7 +15,8 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
 `mw_interaction_bevy`.
 
 - **Defs.** `InteractableDef` (`superfargoth/crates/sf_interaction/src/def.rs:69`) holds `SlotDef`s
-  (`def.rs:95`, kind `SlotKind` `def.rs:140`: pose, door, lever, ...) and `VerbDef`s (`def.rs:131`).
+  (`def.rs:97`, kind `SlotKind` `def.rs:142`: pose, door, lever, ..., and `Surface`, a put-down point for carried
+  props that is claimed, never used) and `VerbDef`s (`def.rs:133`).
   The bake builds them once: `mw_bake::interact::interact_defs` (`bevyrrowind/crates/mw_bake/src/interact.rs:131`,
   product `mw.interact.defs`, `VERSION` 3 at `interact.rs:188`) classifies census furniture by id and model
   (`mw_interaction/src/furniture.rs:54`), measures its mesh (`measure.rs:79`) and calls `def_for`
@@ -35,7 +36,7 @@ systems), the Morrowind adapter `mw_interaction` (defs from records and meshes) 
   (`mw_interaction_bevy/src/input.rs:106`). `InteractionSystems::Focus` (`sf_interaction_bevy/src/focus.rs:139`)
   keeps each player's `FocusState` with a `FocusStabilizer` (`sf_interaction/src/verbs.rs:65`: switch margin +
   dwell, frozen while interact is held). Offered verbs come from `offered_verbs`
-  (`sf_interaction_bevy/src/activate.rs:216`, `rank_verbs` in `verbs.rs:31`), the same check validation uses,
+  (`sf_interaction_bevy/src/activate.rs:216`, `rank_verbs` in `verbs.rs:32`, which skips `Surface` slots), the same check validation uses,
   so the prompt never offers a refused use. The prompt text comes from the adapter's rows
   (`mw_interaction/src/activation.rs:218` `ROWS`; `input.rs:75`).
 - **Activation pipeline** (module docs `sf_interaction_bevy/src/activate.rs:1`): `ActivateCommand` (the game's
